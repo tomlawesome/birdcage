@@ -1,0 +1,45 @@
+name: branch policy
+
+# GitHub branch protection has no native "only accept PRs from branch X"
+# rule -- required status checks and required reviews both operate on
+# the target branch, not on where the PR is coming from. This is the
+# actual enforcement mechanism for the three-lane promotion flow (dev ->
+# preview -> main only, no shortcuts): a required status check that
+# fails a PR outright if its head/base combination isn't one of the
+# allowed hops. Add this job's name to preview/main's required status
+# checks so a violating PR literally can't be merged, not just flagged.
+on:
+  pull_request:
+    branches: [main, preview]
+    types: [opened, reopened, synchronize, edited]
+
+# This job only reads the PR event payload (github.event.pull_request.*)
+# -- no checkout, no API calls -- so the GITHUB_TOKEN needs no scopes at
+# all, rather than inheriting the default (broader) permission set.
+permissions: {}
+
+jobs:
+  enforce:
+    name: Enforce dev -> preview -> main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate head/base branch combination
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+        run: |
+          echo "PR: $HEAD -> $BASE"
+          case "$BASE" in
+            main)
+              if [ "$HEAD" != "preview" ]; then
+                echo "::error::main only accepts PRs from preview (got '$HEAD') -- promote dev -> preview first, then preview -> main."
+                exit 1
+              fi
+              ;;
+            preview)
+              if [ "$HEAD" != "dev" ]; then
+                echo "::error::preview only accepts PRs from dev (got '$HEAD')."
+                exit 1
+              fi
+              ;;
+          esac
