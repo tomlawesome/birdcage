@@ -1,0 +1,3 @@
+# See docs/adr/0002-gitflow-branching.md -- all changes reach `preview`/`main`
+# via protected PRs; this file identifies the required reviewer for those.
+* @tomlawesome
