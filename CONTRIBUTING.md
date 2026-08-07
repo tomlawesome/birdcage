@@ -62,3 +62,11 @@ it further down the road:
   see SECURITY.md), consider requiring these checks on `dev` too, not
   just `preview`/`main` -- `tomlawesome/threadbeam` does this and it's
   a reasonable bar to match here.
+
+## Security by design
+
+New features are researched before they are designed — including an
+explicit CVE search and a comparison against known secure and insecure
+implementations. See
+[docs/security-by-design.md](docs/security-by-design.md) for what that
+requires and why.
