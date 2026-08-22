@@ -1,0 +1,18 @@
+fail-on-severity: high
+fail-on-scopes: runtime, development, unknown
+license-check: true
+vulnerability-check: true
+warn-only: false
+show-openssf-scorecard: false
+show-patched-versions: true
+allow-licenses:
+  - 0BSD
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - CC0-1.0
+  - ISC
+  - MIT
+  - MIT-0
+  - MPL-2.0
+  - Unlicense
