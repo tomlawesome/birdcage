@@ -1,8 +1,11 @@
 # Contributing
 
-Birdcage is a small, currently solo-maintained project. This document exists
-so expectations are explicit even before there are external contributors,
-not because a heavy process is needed yet.
+Birdcage is a small, solo-maintained project. This document records how the
+maintainer works in this repository, so expectations are explicit.
+
+**Outside pull requests are not accepted.** Bug reports and issues are
+welcome and read, but they are information for the maintainer rather than
+work items, and changes are not taken from outside contributors.
 
 ## Branching
 
