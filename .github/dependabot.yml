@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Birdcage has no application dependencies yet -- the backend is Go
+  # (ADR-0001) but no module exists. GitHub Actions are the only external
+  # inputs that can drift today, so they are the only ecosystem here. Add a
+  # `gomod` entry alongside this one when go.mod lands.
+  - package-ecosystem: github-actions
+    directory: /
+    # Target the integration branch explicitly rather than inheriting the
+    # repository default, so updates keep following dev -> preview -> main
+    # even if the default branch changes.
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
