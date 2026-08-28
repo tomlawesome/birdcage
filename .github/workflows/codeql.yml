@@ -33,20 +33,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Birdcage is documentation and workflows only at this point, so
-        # `actions` is the sole language with anything to analyze. The
-        # backend is Go (ADR-0001), and CodeQL fails outright on a language
-        # whose sources it cannot find -- so the Go entry stays commented
-        # out until the first Go file lands, at which point uncomment it,
-        # let it report once, and add `CodeQL (go)` to the required checks
-        # on dev, preview, main and hotfix/**.
         include:
           # The Actions extractor only supports build-mode: none -- there
           # is nothing to compile. Go is compiled and needs autobuild.
+          # The first Go source has landed (ADR-0001), so the Go entry is
+          # live. Once `CodeQL (go)` has reported at least once on dev,
+          # add it to the required checks on dev, preview, main and
+          # hotfix/** -- requiring a context that has never reported
+          # blocks every PR permanently.
           - language: actions
             build-mode: none
-          # - language: go
-          #   build-mode: autobuild
+          - language: go
+            build-mode: autobuild
 
     steps:
       - name: Check out repository
