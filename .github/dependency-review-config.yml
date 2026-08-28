@@ -16,3 +16,13 @@ allow-licenses:
   - MIT-0
   - MPL-2.0
   - Unlicense
+# golang.org/x/sys is exempted from the license check: its LICENSE file
+# is BSD-3-Clause (already allowed above), but ClearlyDefined reports
+# the standard Google patent grant in its PATENTS file (shipped with all
+# Go x/ modules) as the compound expression
+# "BSD-3-Clause AND LicenseRef-scancode-google-patent-license-golang",
+# which does not match the plain allowlist entry. That grant gives users
+# additional rights rather than imposing new restrictions. Versionless,
+# so dependabot bumps of the module keep working without policy edits.
+allow-dependencies-licenses:
+  - pkg:golang/golang.org/x/sys
