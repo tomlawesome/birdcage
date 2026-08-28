@@ -1,6 +1,7 @@
 # Security policy
 
-Birdcage is pre-implementation (see [docs/v1-scope.md](docs/v1-scope.md)) --
+Birdcage is in early implementation (only the OpenCanary UDP syslog
+ingestion bridge has landed; see [docs/v1-scope.md](docs/v1-scope.md)) --
 this document describes the threat model and hardening it is designed
 against, so that model is fixed before code lands rather than retrofitted
 around whatever got built first. Update it as implementation reveals
@@ -45,11 +46,21 @@ authentication is tracked for after v1
 
 ## Network exposure
 
-Not yet finalized -- birdcage's HTTP surface doesn't exist yet
-([issue #3](https://github.com/tomlawesome/birdcage/issues/3)). This
-section will list each listener (dashboard HTTP, any ingestion port) and
-its auth/TLS status once implemented, in the same format as mikroview's
-SECURITY.md.
+- **OpenCanary syslog ingestion — UDP, default `:5514`** (override with
+  `BIRDCAGE_SYSLOG_ADDR`). **No authentication, no TLS.** OpenCanary
+  instances push their hits here as plain UDP syslog datagrams, so anyone
+  who can reach the port can inject forged alerts claiming any
+  `instance_id`, at any volume. This is accepted under the v1 "no
+  built-in authentication" stance above: the listener must be bound to a
+  loopback or trusted-LAN-only interface (see "Recommended deployment
+  hardening") and must never be exposed to the internet or an untrusted
+  network. It binds the unprivileged port 5514 (not 514) so birdcage can
+  run as a non-root container; operators point each OpenCanary instance's
+  syslog handler `address` at this port.
+- **Dashboard HTTP — not implemented yet**
+  ([issue #3](https://github.com/tomlawesome/birdcage/issues/3)). It will
+  be listed here with its auth/TLS status once it lands, in the same
+  format as mikroview's SECURITY.md.
 
 ## Recommended deployment hardening
 

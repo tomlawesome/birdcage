@@ -8,7 +8,8 @@ around each hit, and integration with CrowdSec and RouterOS (via a
 dedicated service account) to attempt automated mitigating action against
 confirmed threats.
 
-Birdcage is pre-implementation. See:
+Birdcage is in early implementation — the first component to land is the
+OpenCanary UDP syslog ingestion bridge (`cmd/birdcage`). See:
 
 - [docs/v1-scope.md](docs/v1-scope.md) — what's in v1 vs. explicitly
   deferred, and the tracking epics.
