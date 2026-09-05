@@ -4,10 +4,9 @@
 # list, and by the `licence` workflow (.github/workflows/licence.yml) that
 # calls that script on every pull request and on push to dev/preview/main.
 #
-# allow-licenses is copied verbatim from the retired
-# .github/dependency-review-config.yml (the GitHub dependency-review
-# licence check this replaced -- see the `licence` workflow header and the
-# commit message for why).
+# Replaces the retired .github/dependency-review-config.yml (the GitHub
+# dependency-review licence check -- see the `licence` workflow header and
+# the commit message for why).
 #
 # The golang.org/x/sys exemption that config carried is NOT reproduced
 # here. It existed only because ClearlyDefined reports x/sys's licence as
