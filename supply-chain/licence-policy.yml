@@ -1,0 +1,40 @@
+# Licence policy for Birdcage's shipped dependencies -- the Go modules
+# linked into the built binary, not build/test tooling. Read by
+# scripts/licence-check.sh, which runs `go-licenses check` against this
+# list, and by the `licence` workflow (.github/workflows/licence.yml) that
+# calls that script on every pull request and on push to dev/preview/main.
+#
+# allow-licenses is copied verbatim from the retired
+# .github/dependency-review-config.yml (the GitHub dependency-review
+# licence check this replaced -- see the `licence` workflow header and the
+# commit message for why).
+#
+# The golang.org/x/sys exemption that config carried is NOT reproduced
+# here. It existed only because ClearlyDefined reports x/sys's licence as
+# the compound expression "BSD-3-Clause AND
+# LicenseRef-scancode-google-patent-license-golang" (the standard Google
+# patent grant shipped in every Go x/ module's PATENTS file), which does
+# not match a plain allowlist entry. go-licenses instead reads the
+# module's actual LICENSE file, which for x/sys is plain BSD-3-Clause --
+# already on the list below -- so no exemption is needed. Verified by
+# running `go-licenses check` with this policy: x/sys passes without one
+# (see the commit message for the output).
+#
+# A licence is never added to this list to make one specific package
+# pass. An exception for a package whose licence is genuinely outside
+# this list is instead an exact entry under allow-dependencies-licenses,
+# in the form `pkg:golang/<module>@<version>`, with a comment giving the
+# reason and a review date.
+allow-licenses:
+  - 0BSD
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - CC0-1.0
+  - ISC
+  - MIT
+  - MIT-0
+  - MPL-2.0
+  - Unlicense
+
+allow-dependencies-licenses: []
