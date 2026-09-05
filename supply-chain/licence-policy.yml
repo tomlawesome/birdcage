@@ -25,16 +25,12 @@
 # this list is instead an exact entry under allow-dependencies-licenses,
 # in the form `pkg:golang/<module>@<version>`, with a comment giving the
 # reason and a review date.
+# Only the licences a shipped module actually uses (`go-licenses report
+# ./...`), not a general list of acceptable ones: a dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a reviewed
+# change rather than a silent pass (owner decision, 2026-09-05).
 allow-licenses:
-  - 0BSD
-  - Apache-2.0
-  - BSD-2-Clause
   - BSD-3-Clause
-  - CC0-1.0
-  - ISC
   - MIT
-  - MIT-0
-  - MPL-2.0
-  - Unlicense
 
 allow-dependencies-licenses: []
