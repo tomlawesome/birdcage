@@ -41,4 +41,9 @@ sweep night ran to two lines and broke mid-phrase ("from inside /
 
 ## Verdicts
 
-Pending.
+Owner, 2026-09-12, verbatim: **"Let it go gray. Good idea."**
+
+M (the trace, outlined · silence in ink) is the ratified dashboard
+shell; L dropped. Recorded as `../../../adr/0004-dashboard-shell.md`.
+The visioning rounds for #3 end here; the build follows the ratified
+direction.
