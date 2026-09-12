@@ -8,6 +8,10 @@ around each hit, and integration with CrowdSec and RouterOS (via a
 dedicated service account) to attempt automated mitigating action against
 confirmed threats.
 
+Birdcage is a sidecar to [mikroview](https://github.com/tomlawesome/mikroview):
+same look and sign-in model, separate app, talking to it only through API
+keys ([ADR-0003](docs/adr/0003-mikroview-sidecar.md)).
+
 Birdcage is in early implementation — the first component to land is the
 OpenCanary UDP syslog ingestion bridge (`cmd/birdcage`). See:
 
