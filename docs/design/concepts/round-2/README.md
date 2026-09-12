@@ -67,4 +67,10 @@ inner hits table (selector scoped to `tr > td:first-child`).
 
 ## Verdicts
 
-_(pending)_
+Owner, 2026-09-12 (verbatim): **"The docket is closer. You don't have to
+just reuse the same graphing and stuff, it's the essence of them that's
+important. Think outside the box, generate two more twists on the docket
+version."**
+
+The wire (D) dropped. The docket (E) carries forward as the base for
+round 3, which twists it two ways without re-using mikroview's charts.

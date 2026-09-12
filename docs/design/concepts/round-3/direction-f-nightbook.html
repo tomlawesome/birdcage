@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 3 · F · The night book</title>
+<style>
+  :root {
+    --void: #06080e; --raised: #0f1422; --glass: rgba(15,20,34,.66);
+    --hair: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --ink: #e9eefb; --ink-2: #97a4c4; --ink-3: #55628a; --accent: #9db8e8;
+    --lan: #3987e5; --srv: #199e70; --iot: #c98500; --guest: #d76a9e;
+    --ok: #37b364; --alarm: #ff5470; --now: #e8b05a;
+    --sweep: #ff5470; --repeat: #ff9e64; --inside: #f072c8; --touch: #b8c56a;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--void); color: var(--ink); font: 13.5px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .scene { position: relative; width: 1600px; height: 1000px; margin: 0 auto 40px; overflow: hidden;
+    background: radial-gradient(1100px 600px at 75% -15%, rgba(80,115,205,.07), transparent 60%), var(--void); border-bottom: 1px solid var(--hair-2); }
+  .tag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; font: 9.5px var(--mono); letter-spacing: .12em; color: var(--ink-3); z-index: 9; }
+
+  /* chrome */
+  .wordmark { position: absolute; top: 18px; left: 24px; font-weight: 800; font-size: 15px; letter-spacing: .04em; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  .tabs { position: absolute; top: 21px; left: 150px; display: flex; gap: 20px; font: 12px var(--sans); color: var(--ink-3); }
+  .tabs .on { color: var(--ink); position: relative; }
+  .tabs .on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 1px; background: var(--accent); }
+  .status { position: absolute; top: 20px; right: 40px; display: flex; gap: 16px; align-items: center; font: 11px var(--mono); color: var(--ink-2); }
+  .status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: 1px; }
+  .status .flag { color: var(--alarm); } .status .flag b { color: var(--void); background: var(--alarm); border-radius: 9px; padding: 0 7px; font-weight: 700; font-size: 10.5px; }
+  .status .who { color: var(--ink-3); border: 1px solid var(--hair-2); border-radius: 999px; padding: 2px 10px; }
+  .ranges { display: flex; gap: 4px; margin-right: 8px; } .ranges span { font: 11px var(--mono); color: var(--ink-3); padding: 2px 9px; border-radius: 4px; }
+  .ranges .on { color: var(--ink); background: var(--raised); border: 1px solid var(--hair-2); }
+  .deck { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 30px; align-items: center; }
+  .deck span { writing-mode: sideways-lr; color: var(--ink-3); font: 500 9.5px var(--mono); letter-spacing: .22em; }
+  .deck .on { color: var(--ink); font-size: 12px; letter-spacing: .26em; }
+  .ibtn { position: absolute; left: 14px; bottom: 12px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hair-2); color: var(--ink-3); font: italic 600 11px Georgia, serif; text-align: center; line-height: 16px; }
+
+  /* the book: a margin of times, a column of entries */
+  .book { position: absolute; top: 84px; left: 40px; width: 1060px; }
+  .lookup { display: flex; align-items: baseline; gap: 14px; font: 12px var(--mono); color: var(--ink-3); border-bottom: 1px dashed var(--hair-2); padding: 0 0 6px 130px; margin-bottom: 26px; }
+  .lookup .term { color: var(--ink); } .lookup .term i { color: var(--ink-3); font-style: normal; margin-left: 6px; }
+  .day { font: 600 9.5px var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; padding-left: 130px; margin: 22px 0 10px; display: flex; gap: 14px; align-items: baseline; }
+  .day b { color: var(--ink-2); font-weight: 600; } .day .r { color: var(--alarm); }
+  .entry { display: grid; grid-template-columns: 110px 20px 1fr; column-gap: 0; padding: 8px 0 10px; border-bottom: 1px solid var(--hair); }
+  .entry .when { font: 11px var(--mono); color: var(--ink-3); text-align: right; padding-right: 14px; padding-top: 3px; line-height: 1.6; }
+  .entry .when b { color: var(--ink-2); font-weight: 500; display: block; }
+  .entry .mark { font: 700 12px var(--mono); padding-top: 2px; }
+  .m-sweep { color: var(--sweep); } .m-repeat { color: var(--repeat); } .m-inside { color: var(--inside); } .m-touch { color: var(--touch); }
+  .entry .text { font: 14.5px/1.55 var(--sans); color: var(--ink-2); padding-left: 14px; }
+  .text b { color: var(--ink); font-weight: 600; }
+  .text .ip { font: 13px var(--mono); color: var(--ink); }
+  .text .c { font: 12.5px var(--mono); font-weight: 600; white-space: nowrap; }
+  .c.lan { color: var(--lan); } .c.srv { color: var(--srv); } .c.iot { color: var(--iot); } .c.guest { color: var(--guest); }
+  .text .port { font: 12.5px var(--mono); color: var(--ink-2); }
+  .text .kind { font: 700 10px var(--mono); letter-spacing: .08em; border-radius: 3px; padding: 1px 6px; margin-right: 6px; vertical-align: 2px; }
+  .k-sweep { color: var(--sweep); background: rgba(255,84,112,.12); } .k-repeat { color: var(--repeat); background: rgba(255,158,100,.12); }
+  .k-inside { color: var(--inside); background: rgba(240,114,200,.12); } .k-touch { color: var(--touch); background: rgba(184,197,106,.12); }
+  .text .more { color: var(--accent); font-size: 12.5px; }
+  .lines { font: 10.5px/1.7 var(--mono); color: var(--ink-3); white-space: pre; margin: 8px 0 0; overflow: hidden; }
+  .lines .hi { color: var(--ink-2); }
+  .acts { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+  .pill { font: 600 11px var(--sans); color: var(--accent); border: 1px solid var(--hair-2); border-radius: 999px; padding: 4px 16px; }
+  .pill.quiet { color: var(--ink-3); } .pill.warn { color: var(--now); border-color: rgba(232,176,90,.5); }
+  .acts .why { font: 10.5px var(--mono); color: var(--ink-3); margin-left: 6px; }
+  .entry.open { background: rgba(160,185,230,.035); margin: 0 -12px; padding: 10px 12px 14px; border-bottom-color: var(--hair-2); }
+  .entry.hit .text { font-size: 13.5px; }
+  .entry.hit .when { padding-top: 1px; }
+  .quiet-line { padding-left: 130px; font: 12.5px var(--sans); color: var(--ink-3); margin-top: 18px; font-style: italic; }
+
+  /* the roll: canaries, right column, as a stanza */
+  .roll { position: absolute; top: 84px; left: 1160px; width: 360px; }
+  .roll .lab { font: 600 9.5px var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; margin-bottom: 12px; }
+  .bird { display: grid; grid-template-columns: 12px 1fr; column-gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--hair); }
+  .bird .bar { width: 3px; border-radius: 2px; margin-top: 3px; }
+  .bird .n { font: 650 12px var(--mono); color: var(--ink); }
+  .bird .e { font: 11px var(--sans); color: var(--ink-3); }
+  .bird .s { font: 11px var(--mono); color: var(--ink-2); margin-top: 3px; }
+  .bird .s .beat { color: var(--ok); } .bird .s .swept { color: var(--alarm); font-weight: 700; } .bird .s .rep { color: var(--repeat); font-weight: 700; }
+  .roll .sum { font: 12.5px var(--sans); color: var(--ink-3); margin-top: 16px; line-height: 1.55; } .roll .sum b { color: var(--ink-2); font-weight: 500; }
+  .roll .mv { display: inline-block; margin-top: 14px; }
+
+  .foot { position: absolute; left: 0; right: 40px; bottom: 14px; display: flex; justify-content: center; gap: 60px; font: 12.5px var(--sans); color: var(--ink-2); }
+  .foot b { color: var(--ink); font-weight: 600; } .foot .r { color: var(--alarm); }
+  @media (prefers-reduced-motion: no-preference) { .status .dot { animation: pulse 1.8s ease-in-out infinite; } @keyframes pulse { 50% { opacity: .4; } } }
+</style>
+</head>
+<body>
+
+<!-- ============ SCENE 1 — THE BOOK, TONIGHT ============ -->
+<section class="scene" id="f-book" aria-label="The night book — visitors as entries in a watch log">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class="on">the book</span><span>canaries</span><span>audit log</span></div>
+  <div class="status">
+    <div class="ranges"><span>15 m</span><span>1 h</span><span class="on">24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span><span class="flag">⚑ <b>1</b></span><span>◎ 4 visitors</span><span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span class="on">THE BOOK</span><span>VISITORS</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="book">
+    <div class="lookup"><span>look up an address, a canary, a port, a word —</span><span>or click one in an entry</span></div>
+
+    <div class="day"><span>tonight · fri 12 sep</span><b>3 visitors</b><span class="r">1 flagged</span><span>232 hits</span></div>
+
+    <div class="entry">
+      <div class="when"><b>22:04:31</b>and counting</div>
+      <div class="mark m-sweep">✱</div>
+      <div class="text"><span class="kind k-sweep">SWEEP</span><span class="ip">203.0.113.42</span> is walking the cage. It arrived at <span class="c lan">canary-lan</span> <span class="port">:22</span> at 21:55, then <span class="c srv">canary-srv</span> <span class="port">:22</span> and <span class="port">:3306</span>, then <span class="c iot">canary-iot</span>, and reached <span class="c guest">canary-guest</span> thirty seconds ago — <b>every canary in nine minutes</b>, in address order, seven tries, every one a default password. Nobody has seen this address before tonight; CrowdSec has nothing on it. <span class="more">open ▸</span>
+        <div class="lines">22:04:31 canary-guest 4002 ssh  LOGIN    203.0.113.42:52011 → 10.0.40.250:22   root / 123456
+22:04:02 canary-guest 4002 ssh  LOGIN    203.0.113.42:51990 → 10.0.40.250:22   admin / admin
+<span class="hi">… 5 earlier lines</span></div>
+      </div>
+    </div>
+
+    <div class="entry">
+      <div class="when"><b>21:59:10</b>every ~20 min</div>
+      <div class="mark m-repeat">✱</div>
+      <div class="text"><span class="kind k-repeat">REPEAT</span><span class="ip">198.51.100.7</span> knocked on <span class="c iot">canary-iot</span> <span class="port">:445</span> again — the same IPC$ share, the 221st time in six days, on schedule. The router has been blocking it since Tuesday on a community list; it keeps knocking anyway. <span class="more">open ▸</span></div>
+    </div>
+
+    <div class="entry">
+      <div class="when"><b>19:11:22</b>3 h ago</div>
+      <div class="mark m-inside">✱</div>
+      <div class="text"><span class="kind k-inside">FROM INSIDE</span><span class="ip">10.0.40.23</span>, a device on the guest network, browsed the front page of <span class="c lan">canary-lan</span> <span class="port">:80</span> and eighteen seconds later tried <b>/admin</b>. Twice, then nothing. Inside addresses are never blocked automatically (#33). <span class="more">open ▸</span></div>
+    </div>
+
+    <div class="day"><span>yesterday · thu 11 sep</span><b>1 visitor</b></div>
+
+    <div class="entry">
+      <div class="when"><b>03:18:40</b>1 d ago</div>
+      <div class="mark m-touch">▲</div>
+      <div class="text"><span class="kind k-touch">ONE TOUCH</span><span class="ip">192.0.2.88</span> logged in to <span class="c srv">canary-srv</span> <span class="port">:21</span> as anonymous, once, and left. <span class="more">open ▸</span></div>
+    </div>
+
+    <div class="quiet-line">The twelve days before that: quiet. The repeat visitor knocking, nothing else.</div>
+  </div>
+
+  <div class="roll">
+    <div class="lab">the canaries</div>
+    <div class="bird"><div class="bar" style="background:var(--lan)"></div><div><div class="n">canary-lan</div><div class="e">the lan · 10.0.10.250</div><div class="s"><span class="beat">● beat 9 s ago</span> · <span class="swept">✱ swept 21:55</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--srv)"></div><div><div class="n">canary-srv</div><div class="e">the servers · 10.0.20.250</div><div class="s"><span class="beat">● beat 41 s ago</span> · <span class="swept">✱ swept 21:56</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--iot)"></div><div><div class="n">canary-iot</div><div class="e">the things · 10.0.30.250</div><div class="s"><span class="beat">● beat 22 s ago</span> · <span class="swept">✱ swept 22:01</span> · <span class="rep">repeat :445</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--guest)"></div><div><div class="n">canary-guest</div><div class="e">the guests · 10.0.40.250</div><div class="s"><span class="beat">● beat 3 s ago</span> · <span class="swept">✱ swept 22:04</span></div></div></div>
+    <div class="sum">All four are phoning home. <b>Birdcage watches; mikroview acts</b> — nothing here blocks anyone until #5 lands.</div>
+    <span class="pill mv">lookback in mikroview ▸</span>
+  </div>
+
+  <div class="foot"><span>a quiet fortnight until <b>21:55</b> tonight — <span class="r">one address is walking the cage right now</span></span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">F · THE NIGHT BOOK · SCENE 1 · TONIGHT</div>
+</section>
+
+<!-- ============ SCENE 2 — THE BOOK, LOOKED UP ============ -->
+<section class="scene" id="f-lookup" aria-label="The night book, looked up by one address — every hit becomes its own line">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class="on">the book</span><span>canaries</span><span>audit log</span></div>
+  <div class="status">
+    <div class="ranges"><span>15 m</span><span class="on">1 h</span><span>24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span><span class="flag">⚑ <b>1</b></span><span>◎ 4 visitors</span><span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span class="on">THE BOOK</span><span>VISITORS</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="book">
+    <div class="lookup"><span class="term">203.0.113.42<i>⌫</i></span><span>7 entries · 4 of 4 canaries · first 21:55:39 · last 22:04:31 · still arriving</span></div>
+
+    <div class="day"><span>tonight · fri 12 sep</span><b>203.0.113.42</b><span class="r">flagged as a sweep 21:55</span></div>
+
+    <div class="entry hit"><div class="when"><b>22:04:31</b>29 s later</div><div class="mark m-sweep">·</div><div class="text">tried <b>root / 123456</b> on <span class="c guest">canary-guest</span> <span class="port">:22</span><div class="lines">22:04:31 canary-guest 4002 ssh  LOGIN    203.0.113.42:52011 → 10.0.40.250:22   root / 123456</div></div></div>
+    <div class="entry hit"><div class="when"><b>22:04:02</b>2 m 15 s later</div><div class="mark m-sweep">·</div><div class="text">tried <b>admin / admin</b> on <span class="c guest">canary-guest</span> <span class="port">:22</span> — the fourth canary<div class="lines">22:04:02 canary-guest 4002 ssh  LOGIN    203.0.113.42:51990 → 10.0.40.250:22   admin / admin</div></div></div>
+    <div class="entry hit"><div class="when"><b>22:01:47</b>4 m 25 s later</div><div class="mark m-sweep">·</div><div class="text">tried <b>root / toor</b> on <span class="c iot">canary-iot</span> <span class="port">:22</span> — the third canary<div class="lines">22:01:47 canary-iot   4002 ssh  LOGIN    203.0.113.42:51904 → 10.0.30.250:22   root / toor</div></div></div>
+    <div class="entry hit"><div class="when"><b>21:57:22</b>24 s later</div><div class="mark m-sweep">·</div><div class="text">tried a <b>root</b> login with an empty password on <span class="c srv">canary-srv</span> <span class="port">:3306</span> — first time it tried anything but ssh<div class="lines">21:57:22 canary-srv   8001 mysql AUTH    203.0.113.42:51830 → 10.0.20.250:3306 root / (empty)</div></div></div>
+    <div class="entry hit"><div class="when"><b>21:56:58</b>1 m 18 s later</div><div class="mark m-sweep">·</div><div class="text">tried <b>root / password</b> on <span class="c srv">canary-srv</span> <span class="port">:22</span> — the second canary<div class="lines">21:56:58 canary-srv   4002 ssh  LOGIN    203.0.113.42:51822 → 10.0.20.250:22   root / password</div></div></div>
+    <div class="entry hit"><div class="when"><b>21:55:40</b>&lt; 1 s later</div><div class="mark m-sweep">·</div><div class="text">tried <b>root / root</b> on <span class="c lan">canary-lan</span> <span class="port">:22</span><div class="lines">21:55:40 canary-lan   4002 ssh  LOGIN    203.0.113.42:51790 → 10.0.10.250:22   root / root</div></div></div>
+    <div class="entry hit"><div class="when"><b>21:55:39</b>first sight</div><div class="mark m-sweep">✱</div><div class="text">opened a connection to <span class="c lan">canary-lan</span> <span class="port">:22</span>, announcing itself as libssh2 — <b>never seen before tonight</b><div class="lines">21:55:39 canary-lan   4001 ssh  SESSION  203.0.113.42:51790 → 10.0.10.250:22   SSH-2.0-libssh2_1.9.0</div></div></div>
+
+    <div class="quiet-line">Nothing from this address in the fourteen days before.</div>
+  </div>
+
+  <div class="roll">
+    <div class="lab">what this address touched</div>
+    <div class="bird"><div class="bar" style="background:var(--lan)"></div><div><div class="n">canary-lan</div><div class="s">21:55:39 · 21:55:40 · <span class="port">:22</span> · 2 tries</div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--srv)"></div><div><div class="n">canary-srv</div><div class="s">21:56:58 · 21:57:22 · <span class="port">:22 :3306</span> · 2 tries</div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--iot)"></div><div><div class="n">canary-iot</div><div class="s">22:01:47 · <span class="port">:22</span> · 1 try</div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--guest)"></div><div><div class="n">canary-guest</div><div class="s">22:04:02 · 22:04:31 · <span class="port">:22</span> · 2 tries</div></div></div>
+    <div class="sum">Address order, top to bottom — <b>a scan, not a stumble</b>. AS64500. Not in CrowdSec.</div>
+    <span class="pill mv">lookback in mikroview ▸</span>
+  </div>
+
+  <div class="foot"><span><b>203.0.113.42</b> → every canary, :22 then :3306 — <span class="r">4 of 4 in 9 min</span> · clear the term to read the whole night</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">F · THE NIGHT BOOK · SCENE 2 · LOOKED UP 203.0.113.42</div>
+</section>
+
+<!-- ============ SCENE 3 — AN ENTRY OPENED ============ -->
+<section class="scene" id="f-open" aria-label="The night book with the sweep entry opened: every line, the route, and what you can do">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class="on">the book</span><span>canaries</span><span>audit log</span></div>
+  <div class="status">
+    <div class="ranges"><span>15 m</span><span>1 h</span><span class="on">24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span><span class="flag">⚑ <b>1</b></span><span>◎ 4 visitors</span><span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span class="on">THE BOOK</span><span>VISITORS</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="book">
+    <div class="lookup"><span>look up an address, a canary, a port, a word —</span><span>or click one in an entry</span></div>
+    <div class="day"><span>tonight · fri 12 sep</span><b>3 visitors</b><span class="r">1 flagged</span><span>232 hits</span></div>
+
+    <div class="entry open">
+      <div class="when"><b>22:04:31</b>and counting<br><br>21:55:39<br>first sight</div>
+      <div class="mark m-sweep">✱</div>
+      <div class="text"><span class="kind k-sweep">SWEEP</span><span class="ip">203.0.113.42</span> is walking the cage. It arrived at <span class="c lan">canary-lan</span> <span class="port">:22</span> at 21:55, then <span class="c srv">canary-srv</span> <span class="port">:22</span> and <span class="port">:3306</span>, then <span class="c iot">canary-iot</span>, and reached <span class="c guest">canary-guest</span> thirty seconds ago — <b>every canary in nine minutes</b>, in address order, seven tries, every one a default password. Nobody has seen this address before tonight (AS64500); CrowdSec has nothing on it. No mitigation has run: blocking arrives with #5, and this address is outside the never-block floor, so it would be eligible. <span class="more">close ▾</span>
+        <div class="lines">22:04:31 canary-guest 4002 ssh  LOGIN    203.0.113.42:52011 → 10.0.40.250:22   root / 123456
+22:04:02 canary-guest 4002 ssh  LOGIN    203.0.113.42:51990 → 10.0.40.250:22   admin / admin
+22:01:47 canary-iot   4002 ssh  LOGIN    203.0.113.42:51904 → 10.0.30.250:22   root / toor
+21:57:22 canary-srv   8001 mysql AUTH    203.0.113.42:51830 → 10.0.20.250:3306 root / (empty)
+21:56:58 canary-srv   4002 ssh  LOGIN    203.0.113.42:51822 → 10.0.20.250:22   root / password
+21:55:40 canary-lan   4002 ssh  LOGIN    203.0.113.42:51790 → 10.0.10.250:22   root / root
+21:55:39 canary-lan   4001 ssh  SESSION  203.0.113.42:51790 → 10.0.10.250:22   SSH-2.0-libssh2_1.9.0</div>
+        <div class="acts"><span class="pill">read only this address ▸</span><span class="pill">lookback in mikroview ▸</span><span class="pill warn">block at the router</span><span class="why">not yet — #5 · outside the never-block floor, so eligible</span><span class="pill quiet">close with a note</span></div>
+      </div>
+    </div>
+
+    <div class="entry">
+      <div class="when"><b>21:59:10</b>every ~20 min</div>
+      <div class="mark m-repeat">✱</div>
+      <div class="text"><span class="kind k-repeat">REPEAT</span><span class="ip">198.51.100.7</span> knocked on <span class="c iot">canary-iot</span> <span class="port">:445</span> again — the same IPC$ share, the 221st time in six days, on schedule. The router has been blocking it since Tuesday on a community list; it keeps knocking anyway. <span class="more">open ▸</span></div>
+    </div>
+    <div class="entry">
+      <div class="when"><b>19:11:22</b>3 h ago</div>
+      <div class="mark m-inside">✱</div>
+      <div class="text"><span class="kind k-inside">FROM INSIDE</span><span class="ip">10.0.40.23</span>, a device on the guest network, browsed the front page of <span class="c lan">canary-lan</span> <span class="port">:80</span> and eighteen seconds later tried <b>/admin</b>. Twice, then nothing. Inside addresses are never blocked automatically (#33). <span class="more">open ▸</span></div>
+    </div>
+  </div>
+
+  <div class="roll">
+    <div class="lab">the canaries</div>
+    <div class="bird"><div class="bar" style="background:var(--lan)"></div><div><div class="n">canary-lan</div><div class="e">the lan · 10.0.10.250</div><div class="s"><span class="beat">● beat 9 s ago</span> · <span class="swept">✱ swept 21:55</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--srv)"></div><div><div class="n">canary-srv</div><div class="e">the servers · 10.0.20.250</div><div class="s"><span class="beat">● beat 41 s ago</span> · <span class="swept">✱ swept 21:56</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--iot)"></div><div><div class="n">canary-iot</div><div class="e">the things · 10.0.30.250</div><div class="s"><span class="beat">● beat 22 s ago</span> · <span class="swept">✱ swept 22:01</span> · <span class="rep">repeat :445</span></div></div></div>
+    <div class="bird"><div class="bar" style="background:var(--guest)"></div><div><div class="n">canary-guest</div><div class="e">the guests · 10.0.40.250</div><div class="s"><span class="beat">● beat 3 s ago</span> · <span class="swept">✱ swept 22:04</span></div></div></div>
+    <div class="sum">All four are phoning home. <b>Birdcage watches; mikroview acts</b> — nothing here blocks anyone until #5 lands.</div>
+    <span class="pill mv">lookback in mikroview ▸</span>
+  </div>
+
+  <div class="ibtn">i</div>
+  <div class="tag">F · THE NIGHT BOOK · SCENE 3 · THE SWEEP ENTRY OPENED</div>
+</section>
+
+</body>
+</html>
