@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Birdcage · design round 1</title>
+<style>
+  body { margin: 0; padding: 40px; background: #06080e; color: #e9eefb; font: 15px/1.5 -apple-system, 'Segoe UI', system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 6px; } h1 span { color: #9db8e8; }
+  p { color: #97a4c4; max-width: 70ch; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 28px; }
+  .card { border: 1px solid rgba(160,185,230,.13); border-radius: 10px; padding: 16px 18px; background: #0f1422; }
+  .card h2 { font-size: 16px; margin: 0 0 4px; } .card h2 small { color: #55628a; font-weight: 400; font-family: ui-monospace, monospace; font-size: 12px; margin-left: 8px; }
+  .card p { font-size: 13.5px; margin: 0 0 12px; }
+  .card img { width: 100%; border-radius: 6px; border: 1px solid rgba(160,185,230,.13); display: block; margin-bottom: 12px; }
+  .card a { display: block; color: #9db8e8; text-decoration: none; font: 13px ui-monospace, monospace; padding: 3px 0; }
+  .card.dropped { opacity: .4; }
+</style>
+</head>
+<body>
+<h1>Birdcage <span>· design round 1</span></h1>
+<p>Three ways to lay out the same dashboard, in mikroview's visual language. Same fictional night in every one: four canaries, one sweep across all of them at 21:55–22:04 from 203.0.113.42, a six-day smb repeat visitor, one guest device poking from inside, one ftp touch yesterday. Each direction proves the same three scenes.</p>
+<div class="grid">
+  <div class="card">
+    <h2>Aviary<small>A · fleet first</small></h2>
+    <p>Your canaries are the headline: one card each with a 24-hour strip, then the stream of hits under them. A hit opens in a glass drawer.</p>
+    <img src="shots/a-start.png" alt="Aviary landing">
+    <a href="direction-a-aviary.html#a-start">landing ▸</a>
+    <a href="direction-a-aviary.html#a-filter">filtered to one source ▸</a>
+    <a href="direction-a-aviary.html#a-hit">a hit opened ▸</a>
+  </div>
+  <div class="card">
+    <h2>Ledger<small>B · feed first</small></h2>
+    <p>Closest to mikroview: left rail with groups, one big table of hits with day separators, sweep as a banner. A hit expands in place.</p>
+    <img src="shots/b-start.png" alt="Ledger landing">
+    <a href="direction-b-ledger.html#b-start">landing ▸</a>
+    <a href="direction-b-ledger.html#b-filter">filtered to one source ▸</a>
+    <a href="direction-b-ledger.html#b-hit">a hit opened ▸</a>
+  </div>
+  <div class="card">
+    <h2>Perch<small>C · visitor first</small></h2>
+    <p>Who is knocking, not what got knocked: one row per source address with a plain-English story, canaries touched, and a timeline. Fleet sits in the side column.</p>
+    <img src="shots/c-start.png" alt="Perch landing">
+    <a href="direction-c-perch.html#c-start">landing ▸</a>
+    <a href="direction-c-perch.html#c-filter">one visitor opened ▸</a>
+    <a href="direction-c-perch.html#c-hit">a hit opened ▸</a>
+  </div>
+</div>
+</body>
+</html>
