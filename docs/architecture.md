@@ -34,7 +34,7 @@ install time.
 | --- | --- | --- |
 | Ingestion bridge | Parse OpenCanary syslog output, normalize into `alerts` | Not yet implemented -- [#2](https://github.com/tomlawesome/birdcage/issues/2) |
 | Storage | Persist alerts and the audit log (SQLite for v1) | Not yet implemented -- schema design tracked with #2; see [ADR-0001](adr/0001-stack-and-storage.md) |
-| Dashboard | Multi-instance alert view, filtering | Not yet implemented -- [#3](https://github.com/tomlawesome/birdcage/issues/3) |
+| Dashboard | Multi-instance alert view, filtering | API landed (#3); UI pending |
 | Analysis | Turn raw alert volume into an actionable signal | Not yet defined -- [#6](https://github.com/tomlawesome/birdcage/issues/6) |
 | CrowdSec integration | Query/act on CrowdSec decisions via official Go SDKs | Not yet implemented -- [#4](https://github.com/tomlawesome/birdcage/issues/4) |
 | RouterOS mitigation | Apply firewall/address-list changes via a service account | Not yet implemented -- [#5](https://github.com/tomlawesome/birdcage/issues/5) |
