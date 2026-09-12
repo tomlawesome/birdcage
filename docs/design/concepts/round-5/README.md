@@ -83,4 +83,9 @@ scene); the brink line ran the full height on quiet days.
 
 ## Verdicts
 
-Pending.
+Owner, 2026-09-12, verbatim: **"I like the boxed. But I'd prefer the
+outline of each box was the colour signal."**
+
+J (the trace, bordered tiles) goes forward; K (unboxed) is dropped. The
+band, rises, drop and events are ratified as drawn. Round 6 redraws the
+tile with its outline in the canary's colour: `../round-6/README.md`.

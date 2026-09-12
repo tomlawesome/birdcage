@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Birdcage · design round 6</title>
+<style>
+  body { margin: 0; padding: 40px; background: #06080e; color: #e9eefb; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 6px; } h1 span { color: #9db8e8; }
+  p { color: #97a4c4; max-width: 80ch; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; margin-top: 28px; }
+  .dir h2 { font-size: 16px; margin: 0 0 4px; } .dir h2 small { color: #55628a; font-weight: 400; font-family: ui-monospace, monospace; font-size: 12px; margin-left: 8px; }
+  .dir p { font-size: 13.5px; margin: 0 0 12px; }
+  .dir img { width: 100%; display: block; margin-bottom: 12px; border-bottom: 1px solid rgba(160,185,230,.26); }
+  .dir a { display: block; color: #9db8e8; text-decoration: none; font: 13px ui-monospace, monospace; padding: 3px 0; }
+  .dir .one { font-weight: 600; margin-bottom: 4px; }
+  .dir.dropped { opacity: .4; }
+</style>
+</head>
+<body>
+<h1>Birdcage <span>· design round 6</span></h1>
+<p>The round-5 verdict kept <a href="../round-5/direction-j-trace.html" style="color:#9db8e8">the boxed tiles</a> (J) and asked for one change: <i>I'd prefer the outline of each box was the colour signal.</i> Round 6 is that: the bar down the left edge is gone and the box's outline is drawn in the canary's colour. Band and events are unchanged from round 5.</p>
+<p>The two directions differ only in what a silent canary's box does. Each page is one URL that scrolls through three scenes: <b>a quiet fortnight</b> (5 Sep), <b>a canary gone silent</b>, <b>the sweep night</b> (12 Sep).</p>
+<div class="grid">
+  <div class="dir">
+    <h2>The trace, outlined<small>L · the ask, exactly</small></h2>
+    <p>Every tile outlined in its canary's colour, in every state. The silent canary keeps its colour on the box; only its words and dot go to ink.</p>
+    <img src="shots/l-night.png" alt="The trace outlined, the sweep night">
+    <a class="one" href="direction-l-trace-outlined.html">direction-l-trace-outlined.html ▸</a>
+    <a href="direction-l-trace-outlined.html#l-quiet">scene 1 · a quiet fortnight</a>
+    <a href="direction-l-trace-outlined.html#l-silent">scene 2 · canary-iot gone silent</a>
+    <a href="direction-l-trace-outlined.html#l-night">scene 3 · the sweep night</a>
+  </div>
+  <div class="dir">
+    <h2>The trace, outlined · silence in ink<small>M · one addition</small></h2>
+    <p>Same, but a silent canary's box goes to a dashed grey outline with no fill — the same mark its dropped-out line makes in the band. Only the silent scene differs from L.</p>
+    <img src="shots/m-silent.png" alt="The trace outlined, silence in ink: canary-iot gone silent">
+    <a class="one" href="direction-m-trace-outlined-ink.html">direction-m-trace-outlined-ink.html ▸</a>
+    <a href="direction-m-trace-outlined-ink.html#m-quiet">scene 1 · a quiet fortnight</a>
+    <a href="direction-m-trace-outlined-ink.html#m-silent">scene 2 · canary-iot gone silent</a>
+    <a href="direction-m-trace-outlined-ink.html#m-night">scene 3 · the sweep night</a>
+  </div>
+</div>
+</body>
+</html>
