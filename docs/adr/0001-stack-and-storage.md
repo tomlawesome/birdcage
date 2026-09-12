@@ -1,6 +1,6 @@
 # ADR-0001: Stack, storage, and v1 auth stance
 
-**Status:** Accepted
+**Status:** Accepted; frontend and v1 auth stance superseded by [ADR-0003](0003-mikroview-sidecar.md) (2026-09-12)
 **Date:** 2026-08-04
 
 ## Context
@@ -20,7 +20,7 @@ implementation work starts.
   hand-rolling REST calls against CrowdSec's API. The same reasoning extends
   to RouterOS mitigation, where mikroview (`tomlawesome/mikroview`) already
   has Go/RouterOS familiarity to build on.
-- **Frontend: React + TypeScript.** Chosen for faster access to mature
+- **Superseded by ADR-0003 (Svelte + TypeScript).** **Frontend: React + TypeScript.** Chosen for faster access to mature
   "admin dashboard" component ecosystems (shadcn/ui, Tremor, visx/nivo for
   charts) that fit a multi-instance monitoring dashboard well. This trades
   away direct reuse of mikroview's existing Svelte components, though the
@@ -40,7 +40,8 @@ implementation work starts.
   timestamp -- before v1 is considered complete. An automated-mitigation tool
   is only trustworthy if what it did is reviewable and un-editable after the
   fact.
-- **No built-in authentication in v1.** Same stance as mikroview: birdcage is
+- **Superseded by ADR-0003 (authentication is in v1).** **No built-in
+  authentication in v1.** Same stance as mikroview: birdcage is
   expected to sit behind a reverse proxy or VPN, not to gate access itself.
   Given birdcage holds live service-account credentials and can take
   automated action, this is revisited once v1 ingestion/dashboard/mitigation

@@ -16,14 +16,13 @@ automated mitigating action against real infrastructure. Compromise of
 birdcage itself is not just an information leak -- it's a path to acting on
 your network and firewall.
 
-**v1 has no built-in authentication** (same stance as
-[mikroview](https://github.com/tomlawesome/mikroview)'s SECURITY.md):
-anyone who can reach birdcage's HTTP port can see all aggregated honeypot
-alert data and, once implemented, trigger or observe automated mitigation
-actions. **Birdcage must not be exposed to the internet or an untrusted
-network in v1** -- see "Recommended deployment hardening" below. OIDC
-authentication is tracked for after v1
-([issue #8](https://github.com/tomlawesome/birdcage/issues/8)), not before.
+**Authentication is part of v1** (changed 2026-09-12,
+[ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
+self-hosted-only OIDC, following
+[mikroview](https://github.com/tomlawesome/mikroview)'s model. Until
+[#8](https://github.com/tomlawesome/birdcage/issues/8) lands, nothing gates
+the dashboard, so the network-exposure guidance below is the only control.
+This section is rewritten route-by-route when #8 lands.
 
 ## Data handling
 
@@ -50,11 +49,12 @@ authentication is tracked for after v1
   `BIRDCAGE_SYSLOG_ADDR`). **No authentication, no TLS.** OpenCanary
   instances push their hits here as plain UDP syslog datagrams, so anyone
   who can reach the port can inject forged alerts claiming any
-  `instance_id`, at any volume. This is accepted under the v1 "no
-  built-in authentication" stance above: the listener must be bound to a
-  loopback or trusted-LAN-only interface (see "Recommended deployment
-  hardening") and must never be exposed to the internet or an untrusted
-  network. It binds the unprivileged port 5514 (not 514) so birdcage can
+  `instance_id`, at any volume. This listener stays unauthenticated
+  regardless of the dashboard auth described above -- plain UDP syslog has
+  no session to gate: it must be bound to a loopback or trusted-LAN-only
+  interface (see "Recommended deployment hardening") and must never be
+  exposed to the internet or an untrusted network. It binds the
+  unprivileged port 5514 (not 514) so birdcage can
   run as a non-root container; operators point each OpenCanary instance's
   syslog handler `address` at this port.
 - **Dashboard HTTP — not implemented yet**
