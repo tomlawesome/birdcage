@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Birdcage · design round 5</title>
+<style>
+  body { margin: 0; padding: 40px; background: #06080e; color: #e9eefb; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 6px; } h1 span { color: #9db8e8; }
+  p { color: #97a4c4; max-width: 80ch; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; margin-top: 28px; }
+  .dir h2 { font-size: 16px; margin: 0 0 4px; } .dir h2 small { color: #55628a; font-weight: 400; font-family: ui-monospace, monospace; font-size: 12px; margin-left: 8px; }
+  .dir p { font-size: 13.5px; margin: 0 0 12px; }
+  .dir img { width: 100%; display: block; margin-bottom: 12px; border-bottom: 1px solid rgba(160,185,230,.26); }
+  .dir a { display: block; color: #9db8e8; text-decoration: none; font: 13px ui-monospace, monospace; padding: 3px 0; }
+  .dir .one { font-weight: 600; margin-bottom: 4px; }
+  .dir.dropped { opacity: .4; }
+</style>
+</head>
+<body>
+<h1>Birdcage <span>· design round 5</span></h1>
+<p>One layout, built from the round-4 verdict: <i>run the four lines very close together, and blips raise up above, with nice curves and a label … full width, but only a small vertical … Beneath it, the canary tiles/cards, and beneath that the events.</i> The four heartbeats sit in one tight band across the whole width. A visitor is a smooth rise above its canary's line with its words at the top; silence is a drop below the band. Under the band, a tile per canary; under the tiles, the events.</p>
+<p>The two directions differ only in the tiles. Each page is one URL that scrolls through three scenes: <b>a quiet fortnight</b> (5 Sep), <b>a canary gone silent</b>, <b>the sweep night</b> (12 Sep).</p>
+<div class="grid">
+  <div class="dir">
+    <h2>The trace<small>J · bordered tiles</small></h2>
+    <p>The canary tiles are cards: a raised surface, a hairline border, the canary's colour as a bar down the left edge.</p>
+    <img src="shots/j-night.png" alt="The trace, the sweep night">
+    <a class="one" href="direction-j-trace.html">direction-j-trace.html ▸</a>
+    <a href="direction-j-trace.html#j-quiet">scene 1 · a quiet fortnight</a>
+    <a href="direction-j-trace.html#j-silent">scene 2 · canary-iot gone silent</a>
+    <a href="direction-j-trace.html#j-night">scene 3 · the sweep night</a>
+  </div>
+  <div class="dir">
+    <h2>The trace, unboxed<small>K · no boxes</small></h2>
+    <p>Same tiles without the card: text on the void, a single rule in the canary's colour along the top. Closer to mikroview's free chrome.</p>
+    <img src="shots/k-night.png" alt="The trace unboxed, the sweep night">
+    <a class="one" href="direction-k-trace-unboxed.html">direction-k-trace-unboxed.html ▸</a>
+    <a href="direction-k-trace-unboxed.html#k-quiet">scene 1 · a quiet fortnight</a>
+    <a href="direction-k-trace-unboxed.html#k-silent">scene 2 · canary-iot gone silent</a>
+    <a href="direction-k-trace-unboxed.html#k-night">scene 3 · the sweep night</a>
+  </div>
+</div>
+</body>
+</html>

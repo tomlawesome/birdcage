@@ -68,4 +68,16 @@ above the paragraph.
 
 ## Verdicts
 
-Pending.
+Owner, 2026-09-12, verbatim: **"I think it would be better if we ran the
+four lines very close together, and blips raise up above, with nice
+curves and a label. That way, they can takethe full width of the screen.
+but only a small vertical, which is right for something that's quiet
+most of the time."** and, in the same reply: **"Beneath it, we can have
+the canary tiles/cards, and beneath that the events."**
+
+Neither H nor I goes forward as drawn. What carries into round 5: the
+pulse's (I) full-width heartbeat lines, drawn as one tight band instead
+of four spaced staves; the score's words beside the mark, now at the top
+of a rise; the quiet-state principle from both (a flat trace is the
+product working; a silent canary is drawn in ink). Round 5:
+`../round-5/README.md`.
