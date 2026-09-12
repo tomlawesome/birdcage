@@ -1,4 +1,9 @@
-name: Dependency change and licence review
+name: Dependency vulnerability review
+
+# Licence review moved to the `licence` workflow (go-licenses over
+# supply-chain/licence-policy.yml) -- see that workflow's header and the
+# commit that split this out. This workflow keeps only the vulnerability
+# half of the old dependency-review-action check.
 
 on:
   pull_request:
@@ -12,7 +17,7 @@ concurrency:
 
 jobs:
   dependency_review:
-    name: Dependency change and licence policy
+    name: Dependency vulnerability review
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -27,5 +32,10 @@ jobs:
       - name: Review dependency changes
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
-          config-file: ./.github/dependency-review-config.yml
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          license-check: false
+          vulnerability-check: true
+          warn-only: false
+          show-openssf-scorecard: false
           comment-summary-in-pr: never
