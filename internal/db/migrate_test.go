@@ -13,7 +13,11 @@ func openTempDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 	return database
 }
 
@@ -32,16 +36,36 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("schema_migrations has %d rows, want 1 (exactly one applied migration)", count)
+	if count != 2 {
+		t.Fatalf("schema_migrations has %d rows, want 2 (exactly the two applied migrations)", count)
 	}
 
-	var version string
-	if err := database.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil {
-		t.Fatalf("read version: %v", err)
+	var versions string
+	if err := database.QueryRow(`SELECT GROUP_CONCAT(version, ',') FROM schema_migrations ORDER BY version`).Scan(&versions); err != nil {
+		t.Fatalf("read versions: %v", err)
 	}
-	if version != "0001_init.sql" {
-		t.Fatalf("version = %q, want %q", version, "0001_init.sql")
+	if want := "0001_init.sql,0002_audit_log.sql"; versions != want {
+		t.Fatalf("versions = %q, want %q", versions, want)
+	}
+
+	for _, name := range []string{"alerts", "audit_log"} {
+		var n int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n); err != nil {
+			t.Fatalf("check table %s: %v", name, err)
+		}
+		if n != 1 {
+			t.Errorf("table %s present %d times, want 1", name, n)
+		}
+	}
+
+	for _, name := range []string{"audit_log_no_update", "audit_log_no_delete"} {
+		var n int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?`, name).Scan(&n); err != nil {
+			t.Fatalf("check trigger %s: %v", name, err)
+		}
+		if n != 1 {
+			t.Errorf("trigger %s present %d times, want 1", name, n)
+		}
 	}
 
 	for _, name := range []string{"idx_alerts_instance_id", "idx_alerts_source_ip", "idx_alerts_service", "idx_alerts_received_at"} {
