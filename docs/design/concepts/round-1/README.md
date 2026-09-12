@@ -46,4 +46,17 @@ drawer buttons (A), detail row overflowing the table (B), IP column wrap (C).
 
 ## Verdicts
 
-_Pending owner review._
+Owner, 2026-09-12, on all three (verbatim): **"You've really failed to
+bring across the visual identity and style of mikroview. Horrible side
+bar, lack of proper use of colour. Generic tables, cards, forms."**
+
+All three dropped. What the round got wrong: it copied mikroview's
+colour tokens into generic layouts. Mikroview's identity (source of
+truth: `mikroview/docs/design/concepts/round-30/the-whole.html`) has no
+sidebar, no cards and no boxed tables — free-floating chrome on the
+void, the deck as sideways names on the right edge, the fall as the
+hero, flat hairline tables with inline filters, docket rows with a
+colour stripe and prose evidence. Round 2 starts from that.
+
+Survives as a feature idea: Perch's one-row-per-visitor reading with a
+plain-English story (becomes the docket in round 2).
