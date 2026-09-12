@@ -57,10 +57,12 @@ authentication is tracked for after v1
   network. It binds the unprivileged port 5514 (not 514) so birdcage can
   run as a non-root container; operators point each OpenCanary instance's
   syslog handler `address` at this port.
-- **Dashboard HTTP — not implemented yet**
-  ([issue #3](https://github.com/tomlawesome/birdcage/issues/3)). It will
-  be listed here with its auth/TLS status once it lands, in the same
-  format as mikroview's SECURITY.md.
+- **Dashboard HTTP — TCP, default `:8080`** (override with
+  `BIRDCAGE_HTTP_ADDR`). Read-only JSON API; no authentication yet --
+  [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
+  (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
+  Three routes, all `GET`: `/api/alerts`, `/api/instances`,
+  `/api/stats`.
 
 ## Recommended deployment hardening
 

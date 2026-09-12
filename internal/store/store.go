@@ -1,0 +1,247 @@
+// Package store is a read-only query layer over birdcage's alerts table,
+// backing the dashboard API (#3). It never writes: all inserts stay in
+// internal/ingest, which is the only writer the alerts table has.
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// receivedAtLayout is the exact layout internal/ingest/server.go writes
+// to the received_at column (time.RFC3339Nano, always UTC via
+// time.Now().UTC()). Every read and every filter bound in this package
+// uses the same layout, so a value round-trips through SQLite unchanged.
+const receivedAtLayout = time.RFC3339Nano
+
+// Alert is one OpenCanary hit as read back from the alerts table.
+type Alert struct {
+	ID         int64     `json:"id"`
+	InstanceID string    `json:"instance_id"`
+	SourceIP   string    `json:"source_ip"`
+	DestPort   int       `json:"dest_port"`
+	Service    string    `json:"service"`
+	Raw        string    `json:"raw"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
+// AlertFilter narrows ListAlerts. Every field is optional: an empty
+// string, a zero time.Time, or a zero Before applies no constraint on
+// that field.
+type AlertFilter struct {
+	InstanceID string
+	SourceIP   string
+	Service    string
+	// Since and Until bound received_at, both inclusive.
+	Since time.Time
+	Until time.Time
+	// Before is a paging cursor: only alerts with id < Before are
+	// returned. Zero means "no cursor" -- start from the newest row.
+	Before int64
+	// Limit caps the number of rows returned. See NormalizeLimit for the
+	// default/cap rule.
+	Limit int
+}
+
+const (
+	defaultLimit = 100
+	maxLimit     = 1000
+)
+
+// NormalizeLimit applies AlertFilter.Limit's defaulting/capping rule: a
+// limit <= 0 becomes defaultLimit, and anything above maxLimit is capped
+// to it. Exported so the API handler can compute the exact same
+// effective page size ListAlerts used (to decide whether a page was
+// short, i.e. whether next_before should be null) without duplicating
+// the two numbers above.
+func NormalizeLimit(limit int) int {
+	if limit <= 0 {
+		return defaultLimit
+	}
+	if limit > maxLimit {
+		return maxLimit
+	}
+	return limit
+}
+
+// ListAlerts returns alerts matching filter, newest first. Ordering is
+// "ORDER BY id DESC" rather than by received_at: db.Open forces every
+// access through a single connection (SetMaxOpenConns(1)), so the ingest
+// server's inserts are fully serialized and id order already agrees
+// with receipt order -- there is no case where a later id has an earlier
+// received_at.
+//
+// Since/Until compare with SQLite's julianday(), not a raw TEXT >=/<=.
+// received_at's RFC3339Nano encoding trims trailing zeros from the
+// fractional seconds (time.Time.Format's documented behavior: 0.5s
+// formats as ".5", 0s formats with no fractional part at all), so two
+// timestamps that differ only in how many digits got trimmed can compare
+// backwards under SQLite's default BINARY text collation -- e.g.
+// "...:00Z" sorts *after* "...:00.5Z" as plain text, even though the
+// first instant is earlier. julianday() parses the same text into a
+// real number, so the comparison is numeric and correct regardless of
+// trimming. See TestListAlertsSinceHandlesTrimmedFractionalSeconds.
+func ListAlerts(ctx context.Context, db *sql.DB, filter AlertFilter) ([]Alert, error) {
+	limit := NormalizeLimit(filter.Limit)
+
+	var (
+		where []string
+		args  []any
+	)
+	if filter.InstanceID != "" {
+		where = append(where, "instance_id = ?")
+		args = append(args, filter.InstanceID)
+	}
+	if filter.SourceIP != "" {
+		where = append(where, "source_ip = ?")
+		args = append(args, filter.SourceIP)
+	}
+	if filter.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, filter.Service)
+	}
+	if !filter.Since.IsZero() {
+		where = append(where, "julianday(received_at) >= julianday(?)")
+		args = append(args, filter.Since.UTC().Format(receivedAtLayout))
+	}
+	if !filter.Until.IsZero() {
+		where = append(where, "julianday(received_at) <= julianday(?)")
+		args = append(args, filter.Until.UTC().Format(receivedAtLayout))
+	}
+	if filter.Before > 0 {
+		where = append(where, "id < ?")
+		args = append(args, filter.Before)
+	}
+
+	query := "SELECT id, instance_id, source_ip, dest_port, service, raw, received_at FROM alerts"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query alerts: %w", err)
+	}
+	defer rows.Close()
+
+	alerts := make([]Alert, 0, limit)
+	for rows.Next() {
+		var (
+			a          Alert
+			receivedAt string
+		)
+		if err := rows.Scan(&a.ID, &a.InstanceID, &a.SourceIP, &a.DestPort, &a.Service, &a.Raw, &receivedAt); err != nil {
+			return nil, fmt.Errorf("scan alert: %w", err)
+		}
+		t, err := time.Parse(receivedAtLayout, receivedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse received_at %q: %w", receivedAt, err)
+		}
+		a.ReceivedAt = t
+		alerts = append(alerts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate alerts: %w", err)
+	}
+	return alerts, nil
+}
+
+// Instance summarizes one instance_id's alert history.
+type Instance struct {
+	InstanceID string    `json:"instance_id"`
+	Count      int64     `json:"count"`
+	LastSeen   time.Time `json:"last_seen"`
+}
+
+// ListInstances returns one row per distinct instance_id, ordered by
+// instance_id, with its total alert count and most recent received_at.
+//
+// last_seen is read from the highest-id row per instance_id via a
+// correlated subquery, not MAX(received_at): MAX on the TEXT column
+// would hit the same trailing-zero comparison hazard ListAlerts' julianday
+// comparisons avoid (see there). Comparing id directly is safe for the
+// reason given in ListAlerts' doc comment: id order already agrees with
+// receipt order.
+func ListInstances(ctx context.Context, db *sql.DB) ([]Instance, error) {
+	const query = `
+SELECT instance_id, COUNT(*),
+    (SELECT received_at FROM alerts newest
+        WHERE newest.instance_id = alerts.instance_id
+        ORDER BY newest.id DESC LIMIT 1)
+FROM alerts
+GROUP BY instance_id
+ORDER BY instance_id`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query instances: %w", err)
+	}
+	defer rows.Close()
+
+	instances := []Instance{}
+	for rows.Next() {
+		var (
+			inst     Instance
+			lastSeen string
+		)
+		if err := rows.Scan(&inst.InstanceID, &inst.Count, &lastSeen); err != nil {
+			return nil, fmt.Errorf("scan instance: %w", err)
+		}
+		t, err := time.Parse(receivedAtLayout, lastSeen)
+		if err != nil {
+			return nil, fmt.Errorf("parse received_at %q: %w", lastSeen, err)
+		}
+		inst.LastSeen = t
+		instances = append(instances, inst)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate instances: %w", err)
+	}
+	return instances, nil
+}
+
+// Stats is the dashboard's top-line summary.
+type Stats struct {
+	Total           int64 `json:"total"`
+	Last24h         int64 `json:"last_24h"`
+	DistinctSources int64 `json:"distinct_sources"`
+	Instances       int64 `json:"instances"`
+}
+
+// GetStats summarizes the whole alerts table as of now, which the caller
+// supplies rather than this function reading time.Now() itself, so tests
+// can pin it.
+func GetStats(ctx context.Context, db *sql.DB, now time.Time) (Stats, error) {
+	var s Stats
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`).Scan(&s.Total); err != nil {
+		return Stats{}, fmt.Errorf("count total: %w", err)
+	}
+
+	// Bounded above by now as well as below by now-24h: a received_at in
+	// the future can only be forged (a real receipt time is always
+	// birdcage's own time.Now(), per internal/ingest/server.go), and a
+	// forged one should not inflate "in the last 24h".
+	now = now.UTC()
+	cutoff := now.Add(-24 * time.Hour).Format(receivedAtLayout)
+	nowStr := now.Format(receivedAtLayout)
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alerts WHERE julianday(received_at) >= julianday(?) AND julianday(received_at) <= julianday(?)`,
+		cutoff, nowStr,
+	).Scan(&s.Last24h); err != nil {
+		return Stats{}, fmt.Errorf("count last 24h: %w", err)
+	}
+
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_ip) FROM alerts`).Scan(&s.DistinctSources); err != nil {
+		return Stats{}, fmt.Errorf("count distinct sources: %w", err)
+	}
+
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT instance_id) FROM alerts`).Scan(&s.Instances); err != nil {
+		return Stats{}, fmt.Errorf("count instances: %w", err)
+	}
+	return s, nil
+}
