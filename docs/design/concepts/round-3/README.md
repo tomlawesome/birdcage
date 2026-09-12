@@ -49,4 +49,15 @@ bar (now 221, nightly).
 
 ## Verdicts
 
-Pending.
+Owner, 2026-09-12 (verbatim): **"I saw both. I prefer the score. But it
+needs more work - we should bear in mind that the successful result here
+is ZERO activity on every canary."**
+
+The night book (F) dropped. The score (G) carries forward to round 4,
+re-centred on the quiet state: an empty score is the product working, so
+silence has to be the designed default and proof of life (the heartbeat)
+has to be legible in it. Feature idea kept from F: gaps written as words.
+
+Handing note: the three links per direction were one page scrolled to
+three scenes, which read as "all the same"; round 4 hands over one URL per
+direction with the scene names.
