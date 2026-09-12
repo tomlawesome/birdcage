@@ -48,11 +48,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.mu.Lock()
 	s.laddr = conn.LocalAddr()
 	s.mu.Unlock()
-	defer conn.Close()
-
+	// The goroutine is the single owner of the socket's close: the read
+	// loop has no exit other than ctx cancellation, so closing here too
+	// would double-close on the normal shutdown path.
 	go func() {
 		<-ctx.Done()
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Error("ingest: closing UDP socket failed", "err", err)
+		}
 	}()
 
 	buf := make([]byte, MaxDatagramSize)

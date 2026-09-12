@@ -42,7 +42,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("open database %s: %v", dbPath, err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			log.Fatalf("close database %s: %v", dbPath, err)
+		}
+	}()
 
 	if err := db.Migrate(ctx, database); err != nil {
 		log.Fatalf("migrate database %s: %v", dbPath, err)
