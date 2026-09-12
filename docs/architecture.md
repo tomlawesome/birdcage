@@ -12,6 +12,8 @@ flowchart LR
     browser["Browser dashboard"]
     crowdsec["CrowdSec LAPI"]
     routeros["RouterOS (service account)"]
+    mikroview["mikroview (sidecar)"]
+    idp["OIDC provider (Authentik)"]
 
     canary1 -->|"syslog"| birdcage
     canary2 -->|"syslog"| birdcage
@@ -20,6 +22,9 @@ flowchart LR
     browser <-->|"HTTPS"| birdcage
     birdcage <-->|"REST, Go client SDKs"| crowdsec
     birdcage -->|"REST API"| routeros
+    birdcage -->|"read-only API token, lookback query"| mikroview
+    browser <-->|"OIDC"| idp
+    birdcage <-->|"OIDC"| idp
 ```
 
 Each OpenCanary instance pushes its own hits via syslog (its native
@@ -39,6 +44,7 @@ install time.
 | CrowdSec integration | Query/act on CrowdSec decisions via official Go SDKs | Not yet implemented -- [#4](https://github.com/tomlawesome/birdcage/issues/4) |
 | RouterOS mitigation | Apply firewall/address-list changes via a service account | Not yet implemented -- [#5](https://github.com/tomlawesome/birdcage/issues/5) |
 | Audit log | Append-only record of every automated action taken | Required for v1; write path lands alongside #4/#5 |
+| Auth | Local accounts, OIDC, sessions, API/ingest tokens -- copied model from mikroview | Not yet implemented -- [#8](https://github.com/tomlawesome/birdcage/issues/8); see [ADR-0003](adr/0003-mikroview-sidecar.md) |
 
 ## Data model (planned)
 
@@ -52,10 +58,14 @@ than fixed in advance of it:
   convention -- the application layer must never issue `UPDATE`/`DELETE`
   against it.
 
+Accounts, sessions and tokens follow mikroview's shapes (ADR-0003); their
+storage is designed with #8.
+
 ## Deployment and branching
 
 See [ADR-0002](adr/0002-gitflow-branching.md) for the `dev` -> `preview` ->
 `main` branch/promotion model, and mikroview's `Dockerfile`
 (`tomlawesome/mikroview`) for the distroless multi-stage container pattern
 birdcage's own `Dockerfile` is expected to follow once implementation
-starts.
+starts. Birdcage is deployed in the same compose stack as mikroview --
+see [ADR-0003](adr/0003-mikroview-sidecar.md).
