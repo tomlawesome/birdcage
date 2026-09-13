@@ -1,0 +1,208 @@
+# GitLab is where birdcage is developed: branches, merge requests and the
+# dev -> preview -> main promotions all happen here, and this file is the
+# CI that gates them. GitHub is a read-only mirror of those three branches
+# (the `sync` stage pushes each one after a merge) and keeps CodeQL and
+# dependency review. The general model is in the gitlab-first-migration
+# skill; the jobs below port .github/workflows/ci.yml, licence.yml and
+# branch-policy.yml one for one.
+#
+# The `sync` stage is inert until the owner sets MIRROR_TO_GITHUB=true and
+# GITHUB_MIRROR_SSH_KEY as project CI/CD variables. Nothing here sets them.
+#
+# Runner lanes (ai/agent-infra#3): `big` is 8 CPU / 18 GB, `light` is
+# 4 CPU / 6 GB. A job with no matching tag does not run at all.
+
+stages:
+  - lint
+  - test
+  - sync
+
+default:
+  tags: [light]
+  interruptible: true
+
+variables:
+  GOFLAGS: "-mod=readonly"
+
+.dev_or_mr: &dev_or_mr
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+
+.git_safe: &git_safe
+  before_script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
+# POLICY -- the promotion order, ported from branch-policy.yml. Bites only
+# if the project requires a passing pipeline to merge; otherwise a warning.
+# ---------------------------------------------------------------------------
+policy:promotion-hop:
+  stage: lint
+  image: alpine:3.24
+  needs: []
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+  script:
+    - 'echo "MR !$CI_MERGE_REQUEST_IID: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME -> $CI_MERGE_REQUEST_TARGET_BRANCH_NAME"'
+    - |
+      case "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" in
+        main)
+          [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "preview" ] || { echo "main only accepts merge requests from preview"; exit 1; }
+          ;;
+        preview)
+          [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "dev" ] || { echo "preview only accepts merge requests from dev"; exit 1; }
+          ;;
+      esac
+
+# ---------------------------------------------------------------------------
+# LINT
+# ---------------------------------------------------------------------------
+lint:go:
+  stage: lint
+  image: golang:1.27
+  <<: [*dev_or_mr, *git_safe]
+  script:
+    - go build ./...
+    - go vet ./...
+    - |
+      files=$(git ls-files '*.go')
+      [ -n "$files" ] || { echo "git ls-files returned no Go files"; exit 1; }
+      unformatted=$(gofmt -l $files)
+      [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
+    # Built from source with the image's Go: the prebuilt binary is built
+    # with an older Go and refuses go.mod's `go 1.27.0` directive.
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+    - golangci-lint run ./...
+
+# Ported from licence.yml; the script is host independent by design.
+lint:licences:
+  stage: lint
+  image: golang:1.27
+  <<: [*dev_or_mr, *git_safe]
+  script:
+    - scripts/licence-check.sh
+
+# ---------------------------------------------------------------------------
+# TEST
+# ---------------------------------------------------------------------------
+
+# Frontend: type-check, unit tests, the two pixel gates against the
+# round-6 concept shots, then the production build the Go binary embeds.
+# The fonts.conf makes the generic font families resolve to what the
+# reference shots were rendered with (frontend/scripts/compare-fonts.conf
+# explains; GitHub run 34747740616 is what happens without it).
+test:frontend:
+  stage: test
+  image: node:22-trixie
+  <<: *dev_or_mr
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/node_modules/
+  script:
+    - cd frontend
+    - npm ci
+    - npm run check
+    - npm test
+    - npx playwright install --with-deps chromium
+    - mkdir -p ~/.config/fontconfig && cp scripts/compare-fonts.conf ~/.config/fontconfig/fonts.conf && fc-cache -f
+    - fc-match sans-serif && fc-match monospace
+    - npm run compare:band
+    - npm run compare:below-band
+    - npm run build
+  artifacts:
+    paths:
+      - frontend/dist/
+    expire_in: 1 day
+    when: always
+
+# Go tests against SQLite and a real Postgres (issue #7, ADR-0001):
+# BIRDCAGE_TEST_DATABASE_URL is what tells internal/db/dbtest the
+# Postgres is there; unset, those tests silently run SQLite-only.
+test:go:
+  stage: test
+  image: golang:1.27
+  <<: [*dev_or_mr, *git_safe]
+  needs: []
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+  variables:
+    POSTGRES_PASSWORD: birdcage-ci
+    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable
+  script:
+    # The runner only waits for the port, and Postgres listens briefly
+    # during its own init before restarting; ask the server itself.
+    - apt-get -qq update && apt-get -qq install -y postgresql-client >/dev/null
+    - |
+      ready=0
+      for attempt in $(seq 1 40); do
+        pg_isready -h postgres -U postgres >/dev/null 2>&1 && { ready=1; break; }
+        sleep 1
+      done
+      [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    - go test ./... -race
+
+# The real binary, with the frontend build embedded, seeded from the
+# night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
+# image plus the Go tarball pinned to go.mod's version, since both are
+# needed in one job. SQLite only -- Postgres at the preview bar is #7's.
+test:smoke:
+  stage: test
+  image: node:22-trixie
+  <<: [*dev_or_mr, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps chromium
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# ---------------------------------------------------------------------------
+# SYNC -- mirror the three delivery branches to GitHub after a merge.
+# `needs: []`: the mirror reflects the branch, not the pipeline. Never
+# --force: a non-fast-forward refusal means something wrote to GitHub's
+# copy and the branch has forked; reconcile by merge.
+# ---------------------------------------------------------------------------
+sync:mirror-to-github:
+  stage: sync
+  image: alpine:3.24
+  needs: []
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $MIRROR_TO_GITHUB == "true" && ($CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "preview" || $CI_COMMIT_BRANCH == "main")'
+      variables:
+        MIRROR_REF: refs/heads/$CI_COMMIT_BRANCH
+    - if: '$CI_PIPELINE_SOURCE == "push" && $MIRROR_TO_GITHUB == "true" && $CI_COMMIT_TAG =~ /^v[0-9]/'
+      variables:
+        MIRROR_REF: refs/tags/$CI_COMMIT_TAG
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - apk add --no-cache git openssh-client curl jq >/dev/null
+    - test -n "$GITHUB_MIRROR_SSH_KEY" || { echo "GITHUB_MIRROR_SSH_KEY is not set -- is ${CI_COMMIT_TAG:-$CI_COMMIT_BRANCH} protected?"; exit 1; }
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    # GitLab's variable editor trims the key's final newline and OpenSSH
+    # refuses a key without one; put it back, and prove the key loads
+    # before trying GitHub -- without printing any of it.
+    - tr -d '\r' < "$GITHUB_MIRROR_SSH_KEY" > ~/.ssh/mirror_key && chmod 600 ~/.ssh/mirror_key
+    - '[ -n "$(tail -c1 ~/.ssh/mirror_key)" ] && echo >> ~/.ssh/mirror_key || true'
+    - 'head -1 ~/.ssh/mirror_key | grep -q "PRIVATE KEY" || { echo "GITHUB_MIRROR_SSH_KEY does not begin with a PRIVATE KEY header"; exit 1; }'
+    - 'ssh-keygen -y -f ~/.ssh/mirror_key > /dev/null || { echo "GITHUB_MIRROR_SSH_KEY is not a readable private key"; exit 1; }'
+    - curl -fsS https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com \(.)"' > ~/.ssh/known_hosts
+    - test -s ~/.ssh/known_hosts
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+    - git remote add github git@github.com:tomlawesome/birdcage.git 2>/dev/null || git remote set-url github git@github.com:tomlawesome/birdcage.git
+    - git push github "HEAD:$MIRROR_REF"
