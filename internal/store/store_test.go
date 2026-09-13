@@ -2,30 +2,27 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/db/dbtest"
 )
 
-// openTempDB mirrors internal/db's own openTempDB helper (migrate_test.go),
-// extended with the Migrate call every package that queries the alerts
-// table (e.g. internal/ingest/server_test.go) also makes: this package
-// only reads, so its fixtures need the schema in place first.
-func openTempDB(t *testing.T) *sql.DB {
+// forEachEngine runs fn once per database engine dbtest.Targets returns
+// for this test run (always SQLite, plus Postgres when
+// BIRDCAGE_TEST_DATABASE_URL is set -- see issue #7), each as its own
+// subtest so a Postgres-only failure is reported distinctly from
+// SQLite's result.
+func forEachEngine(t *testing.T, fn func(t *testing.T, database *db.DB)) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "birdcage-test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	for _, tgt := range dbtest.Targets(t) {
+		tgt := tgt
+		t.Run(tgt.Name, func(t *testing.T) {
+			fn(t, tgt.DB)
+		})
 	}
-	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(context.Background(), database); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return database
 }
 
 // fixtureAlert is one row of the fixture set insertFixtures loads.
@@ -42,8 +39,8 @@ type fixtureAlert struct {
 // over five days (2026-01-01 through 2026-01-05), inserted in id order
 // (lowest id = earliest). A few receivedAt values are chosen with
 // trimmed fractional seconds (".5", ".25", ".999999999", no fraction at
-// all) specifically to exercise the julianday comparison ListAlerts'
-// doc comment explains -- see
+// all) specifically to exercise the timestamp comparison
+// receivedAtCompare's doc comment explains -- see
 // TestListAlertsSinceHandlesTrimmedFractionalSeconds.
 var fixtures = []fixtureAlert{
 	{1, "node-1", "203.0.113.9", 22, "ssh", "2026-01-01T00:00:00Z"},
@@ -58,7 +55,7 @@ var fixtures = []fixtureAlert{
 	{10, "node-2", "198.51.100.8", 8080, "http", "2026-01-05T00:00:00.5Z"},
 }
 
-func insertFixtures(t *testing.T, database *sql.DB) {
+func insertFixtures(t *testing.T, database *db.DB) {
 	t.Helper()
 	for _, f := range fixtures {
 		_, err := database.Exec(
@@ -109,116 +106,124 @@ func assertIDs(t *testing.T, got []Alert, want []int64) {
 }
 
 func TestListAlertsNoFilterOrdering(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1})
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1})
 
-	// The full row, not just the id, must round-trip correctly.
-	first := alerts[0]
-	if first.InstanceID != "node-2" || first.SourceIP != "198.51.100.8" || first.DestPort != 8080 ||
-		first.Service != "http" || first.Raw != rawFor(10) {
-		t.Errorf("alerts[0] = %+v, want the fixture row for id 10", first)
-	}
-	if !first.ReceivedAt.Equal(mustParse(t, "2026-01-05T00:00:00.5Z")) {
-		t.Errorf("alerts[0].ReceivedAt = %v, want 2026-01-05T00:00:00.5Z", first.ReceivedAt)
-	}
+		// The full row, not just the id, must round-trip correctly.
+		first := alerts[0]
+		if first.InstanceID != "node-2" || first.SourceIP != "198.51.100.8" || first.DestPort != 8080 ||
+			first.Service != "http" || first.Raw != rawFor(10) {
+			t.Errorf("alerts[0] = %+v, want the fixture row for id 10", first)
+		}
+		if !first.ReceivedAt.Equal(mustParse(t, "2026-01-05T00:00:00.5Z")) {
+			t.Errorf("alerts[0].ReceivedAt = %v, want 2026-01-05T00:00:00.5Z", first.ReceivedAt)
+		}
+	})
 }
 
 func TestListAlertsFilterInstanceID(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{InstanceID: "node-2"})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{10, 7, 4, 3})
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{InstanceID: "node-2"})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{10, 7, 4, 3})
+	})
 }
 
 func TestListAlertsFilterSourceIP(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	// 203.0.113.9 spans two different instances (node-1 and node-2), so
-	// this filter must not collapse to the instance filter's result.
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{SourceIP: "203.0.113.9"})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{6, 3, 1})
+		// 203.0.113.9 spans two different instances (node-1 and node-2), so
+		// this filter must not collapse to the instance filter's result.
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{SourceIP: "203.0.113.9"})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{6, 3, 1})
+	})
 }
 
 func TestListAlertsFilterService(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{Service: "telnet"})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{7, 2})
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{Service: "telnet"})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{7, 2})
+	})
 }
 
 func TestListAlertsCombinedFilters(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{InstanceID: "node-2", Service: "http"})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{10, 4, 3})
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{InstanceID: "node-2", Service: "http"})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{10, 4, 3})
+	})
 }
 
 // TestListAlertsSinceHandlesTrimmedFractionalSeconds proves the
-// julianday-based comparison ListAlerts' doc comment describes: a naive
-// `received_at >= ?` TEXT comparison would incorrectly include fixture
-// row 5 (received "2026-01-03T00:00:00Z", no fractional seconds) when
-// filtering Since "2026-01-03T00:00:00.5Z", because "...:00Z" sorts
-// after "...:00.5Z" as plain text even though the instant it names is
-// earlier. Row 5 must be excluded; row 6 (00:00:00.999999999, genuinely
+// timestamp-aware comparison receivedAtCompare's doc comment describes:
+// a naive `received_at >= ?` TEXT comparison would incorrectly include
+// fixture row 5 (received "2026-01-03T00:00:00Z", no fractional
+// seconds) when filtering Since "2026-01-03T00:00:00.5Z", because
+// "...:00Z" sorts after "...:00.5Z" as plain text even though the
+// instant it names is earlier. Row 5 must be excluded; row 6 (genuinely
 // later) must still be included.
 func TestListAlertsSinceHandlesTrimmedFractionalSeconds(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	since := mustParse(t, "2026-01-03T00:00:00.5Z")
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{Since: since})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{10, 9, 8, 7, 6})
+		since := mustParse(t, "2026-01-03T00:00:00.5Z")
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{Since: since})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{10, 9, 8, 7, 6})
+	})
 }
 
 func TestListAlertsUntilInclusive(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	until := mustParse(t, "2026-01-02T06:00:00.25Z") // exactly fixture row 4's received_at
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{Until: until})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{4, 3, 2, 1})
+		until := mustParse(t, "2026-01-02T06:00:00.25Z") // exactly fixture row 4's received_at
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{Until: until})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{4, 3, 2, 1})
+	})
 }
 
 func TestListAlertsSinceAndUntilRange(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{
-		Since: mustParse(t, "2026-01-02T00:00:00Z"),
-		Until: mustParse(t, "2026-01-04T00:00:00Z"),
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{
+			Since: mustParse(t, "2026-01-02T00:00:00Z"),
+			Until: mustParse(t, "2026-01-04T00:00:00Z"),
+		})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		assertIDs(t, alerts, []int64{7, 6, 5, 4, 3})
 	})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	assertIDs(t, alerts, []int64{7, 6, 5, 4, 3})
 }
 
 func TestListAlertsLimitDefaultAndCap(t *testing.T) {
@@ -235,52 +240,54 @@ func TestListAlertsLimitDefaultAndCap(t *testing.T) {
 		t.Errorf("NormalizeLimit(50) = %d, want 50", got)
 	}
 
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	alerts, err := ListAlerts(context.Background(), database, AlertFilter{Limit: 0})
-	if err != nil {
-		t.Fatalf("ListAlerts: %v", err)
-	}
-	if len(alerts) != len(fixtures) {
-		t.Fatalf("default limit returned %d alerts, want all %d fixtures", len(alerts), len(fixtures))
-	}
+		alerts, err := ListAlerts(context.Background(), database, AlertFilter{Limit: 0})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		if len(alerts) != len(fixtures) {
+			t.Fatalf("default limit returned %d alerts, want all %d fixtures", len(alerts), len(fixtures))
+		}
+	})
 }
 
 func TestListAlertsCursorPaging(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	var seen []int64
-	before := int64(0)
-	for page := 0; page < 10; page++ {
-		alerts, err := ListAlerts(context.Background(), database, AlertFilter{Limit: 3, Before: before})
-		if err != nil {
-			t.Fatalf("ListAlerts page %d: %v", page, err)
+		var seen []int64
+		before := int64(0)
+		for page := 0; page < 10; page++ {
+			alerts, err := ListAlerts(context.Background(), database, AlertFilter{Limit: 3, Before: before})
+			if err != nil {
+				t.Fatalf("ListAlerts page %d: %v", page, err)
+			}
+			if len(alerts) == 0 {
+				break
+			}
+			if len(alerts) > 3 {
+				t.Fatalf("page %d returned %d alerts, want at most 3", page, len(alerts))
+			}
+			seen = append(seen, idsOf(alerts)...)
+			before = alerts[len(alerts)-1].ID
+			if len(alerts) < 3 {
+				break // short page: no more after this
+			}
 		}
-		if len(alerts) == 0 {
-			break
-		}
-		if len(alerts) > 3 {
-			t.Fatalf("page %d returned %d alerts, want at most 3", page, len(alerts))
-		}
-		seen = append(seen, idsOf(alerts)...)
-		before = alerts[len(alerts)-1].ID
-		if len(alerts) < 3 {
-			break // short page: no more after this
-		}
-	}
 
-	assertNoDuplicates(t, seen)
-	want := []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
-	if len(seen) != len(want) {
-		t.Fatalf("cursor paging visited %v, want every id %v exactly once", seen, want)
-	}
-	for i := range want {
-		if seen[i] != want[i] {
-			t.Fatalf("cursor paging order = %v, want %v", seen, want)
+		assertNoDuplicates(t, seen)
+		want := []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+		if len(seen) != len(want) {
+			t.Fatalf("cursor paging visited %v, want every id %v exactly once", seen, want)
 		}
-	}
+		for i := range want {
+			if seen[i] != want[i] {
+				t.Fatalf("cursor paging order = %v, want %v", seen, want)
+			}
+		}
+	})
 }
 
 func assertNoDuplicates(t *testing.T, ids []int64) {
@@ -295,42 +302,44 @@ func assertNoDuplicates(t *testing.T, ids []int64) {
 }
 
 func TestListInstances(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	instances, err := ListInstances(context.Background(), database)
-	if err != nil {
-		t.Fatalf("ListInstances: %v", err)
-	}
-
-	want := []Instance{
-		{InstanceID: "node-1", Count: 4, LastSeen: mustParse(t, "2026-01-05T00:00:00Z")},
-		{InstanceID: "node-2", Count: 4, LastSeen: mustParse(t, "2026-01-05T00:00:00.5Z")},
-		{InstanceID: "node-3", Count: 2, LastSeen: mustParse(t, "2026-01-04T00:00:00.1Z")},
-	}
-	if len(instances) != len(want) {
-		t.Fatalf("got %d instances, want %d: %+v", len(instances), len(want), instances)
-	}
-	for i, w := range want {
-		got := instances[i]
-		if got.InstanceID != w.InstanceID || got.Count != w.Count || !got.LastSeen.Equal(w.LastSeen) {
-			t.Errorf("instance %d = %+v, want %+v", i, got, w)
+		instances, err := ListInstances(context.Background(), database)
+		if err != nil {
+			t.Fatalf("ListInstances: %v", err)
 		}
-	}
+
+		want := []Instance{
+			{InstanceID: "node-1", Count: 4, LastSeen: mustParse(t, "2026-01-05T00:00:00Z")},
+			{InstanceID: "node-2", Count: 4, LastSeen: mustParse(t, "2026-01-05T00:00:00.5Z")},
+			{InstanceID: "node-3", Count: 2, LastSeen: mustParse(t, "2026-01-04T00:00:00.1Z")},
+		}
+		if len(instances) != len(want) {
+			t.Fatalf("got %d instances, want %d: %+v", len(instances), len(want), instances)
+		}
+		for i, w := range want {
+			got := instances[i]
+			if got.InstanceID != w.InstanceID || got.Count != w.Count || !got.LastSeen.Equal(w.LastSeen) {
+				t.Errorf("instance %d = %+v, want %+v", i, got, w)
+			}
+		}
+	})
 }
 
 func TestGetStats(t *testing.T) {
-	database := openTempDB(t)
-	insertFixtures(t, database)
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertFixtures(t, database)
 
-	now := mustParse(t, "2026-01-05T12:00:00Z")
-	stats, err := GetStats(context.Background(), database, now)
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+		now := mustParse(t, "2026-01-05T12:00:00Z")
+		stats, err := GetStats(context.Background(), database, now)
+		if err != nil {
+			t.Fatalf("GetStats: %v", err)
+		}
 
-	want := Stats{Total: 10, Last24h: 2, DistinctSources: 4, Instances: 3}
-	if stats != want {
-		t.Errorf("GetStats = %+v, want %+v", stats, want)
-	}
+		want := Stats{Total: 10, Last24h: 2, DistinctSources: 4, Instances: 3}
+		if stats != want {
+			t.Errorf("GetStats = %+v, want %+v", stats, want)
+		}
+	})
 }

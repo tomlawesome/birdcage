@@ -5,10 +5,11 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // receivedAtLayout is the exact layout internal/ingest/server.go writes
@@ -67,24 +68,37 @@ func NormalizeLimit(limit int) int {
 	return limit
 }
 
-// ListAlerts returns alerts matching filter, newest first. Ordering is
-// "ORDER BY id DESC" rather than by received_at: db.Open forces every
-// access through a single connection (SetMaxOpenConns(1)), so the ingest
-// server's inserts are fully serialized and id order already agrees
-// with receipt order -- there is no case where a later id has an earlier
-// received_at.
+// receivedAtCompare returns the SQL fragment that compares the
+// received_at column against a bound parameter with op (">=" or "<="),
+// using whichever mechanism the engine needs to compare it as an
+// instant rather than as text:
 //
-// Since/Until compare with SQLite's julianday(), not a raw TEXT >=/<=.
 // received_at's RFC3339Nano encoding trims trailing zeros from the
 // fractional seconds (time.Time.Format's documented behavior: 0.5s
 // formats as ".5", 0s formats with no fractional part at all), so two
 // timestamps that differ only in how many digits got trimmed can compare
-// backwards under SQLite's default BINARY text collation -- e.g.
-// "...:00Z" sorts *after* "...:00.5Z" as plain text, even though the
-// first instant is earlier. julianday() parses the same text into a
-// real number, so the comparison is numeric and correct regardless of
-// trimming. See TestListAlertsSinceHandlesTrimmedFractionalSeconds.
-func ListAlerts(ctx context.Context, db *sql.DB, filter AlertFilter) ([]Alert, error) {
+// backwards under a raw TEXT >=/<= -- e.g. "...:00Z" sorts *after*
+// "...:00.5Z" as plain text, even though the first instant is earlier.
+// SQLite's julianday() and Postgres' ::timestamptz cast both parse the
+// text into a real, comparable value first, so the comparison is
+// numeric and correct regardless of trimming. See
+// TestListAlertsSinceHandlesTrimmedFractionalSeconds.
+func receivedAtCompare(engine db.Engine, op string) string {
+	if engine == db.Postgres {
+		return "received_at::timestamptz " + op + " ?::timestamptz"
+	}
+	return "julianday(received_at) " + op + " julianday(?)"
+}
+
+// ListAlerts returns alerts matching filter, newest first. Ordering is
+// "ORDER BY id DESC" rather than by received_at: db.Open forces every
+// SQLite access through a single connection (SetMaxOpenConns(1)), so the
+// ingest server's inserts are fully serialized and id order already
+// agrees with receipt order -- there is no case where a later id has an
+// earlier received_at. (Postgres does not share this constraint, but
+// nothing here writes concurrently to alerts on either engine, so the
+// same ordering argument holds regardless.)
+func ListAlerts(ctx context.Context, database *db.DB, filter AlertFilter) ([]Alert, error) {
 	limit := NormalizeLimit(filter.Limit)
 
 	var (
@@ -104,11 +118,11 @@ func ListAlerts(ctx context.Context, db *sql.DB, filter AlertFilter) ([]Alert, e
 		args = append(args, filter.Service)
 	}
 	if !filter.Since.IsZero() {
-		where = append(where, "julianday(received_at) >= julianday(?)")
+		where = append(where, receivedAtCompare(database.Engine, ">="))
 		args = append(args, filter.Since.UTC().Format(receivedAtLayout))
 	}
 	if !filter.Until.IsZero() {
-		where = append(where, "julianday(received_at) <= julianday(?)")
+		where = append(where, receivedAtCompare(database.Engine, "<="))
 		args = append(args, filter.Until.UTC().Format(receivedAtLayout))
 	}
 	if filter.Before > 0 {
@@ -123,7 +137,7 @@ func ListAlerts(ctx context.Context, db *sql.DB, filter AlertFilter) ([]Alert, e
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
 
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query alerts: %w", err)
 	}
@@ -167,7 +181,7 @@ type Instance struct {
 // comparisons avoid (see there). Comparing id directly is safe for the
 // reason given in ListAlerts' doc comment: id order already agrees with
 // receipt order.
-func ListInstances(ctx context.Context, db *sql.DB) ([]Instance, error) {
+func ListInstances(ctx context.Context, database *db.DB) ([]Instance, error) {
 	const query = `
 SELECT instance_id, COUNT(*),
     (SELECT received_at FROM alerts newest
@@ -177,7 +191,7 @@ FROM alerts
 GROUP BY instance_id
 ORDER BY instance_id`
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := database.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query instances: %w", err)
 	}
@@ -216,9 +230,9 @@ type Stats struct {
 // GetStats summarizes the whole alerts table as of now, which the caller
 // supplies rather than this function reading time.Now() itself, so tests
 // can pin it.
-func GetStats(ctx context.Context, db *sql.DB, now time.Time) (Stats, error) {
+func GetStats(ctx context.Context, database *db.DB, now time.Time) (Stats, error) {
 	var s Stats
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`).Scan(&s.Total); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`).Scan(&s.Total); err != nil {
 		return Stats{}, fmt.Errorf("count total: %w", err)
 	}
 
@@ -229,18 +243,17 @@ func GetStats(ctx context.Context, db *sql.DB, now time.Time) (Stats, error) {
 	now = now.UTC()
 	cutoff := now.Add(-24 * time.Hour).Format(receivedAtLayout)
 	nowStr := now.Format(receivedAtLayout)
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM alerts WHERE julianday(received_at) >= julianday(?) AND julianday(received_at) <= julianday(?)`,
-		cutoff, nowStr,
-	).Scan(&s.Last24h); err != nil {
+	last24hQuery := fmt.Sprintf("SELECT COUNT(*) FROM alerts WHERE %s AND %s",
+		receivedAtCompare(database.Engine, ">="), receivedAtCompare(database.Engine, "<="))
+	if err := database.QueryRowContext(ctx, last24hQuery, cutoff, nowStr).Scan(&s.Last24h); err != nil {
 		return Stats{}, fmt.Errorf("count last 24h: %w", err)
 	}
 
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_ip) FROM alerts`).Scan(&s.DistinctSources); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_ip) FROM alerts`).Scan(&s.DistinctSources); err != nil {
 		return Stats{}, fmt.Errorf("count distinct sources: %w", err)
 	}
 
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT instance_id) FROM alerts`).Scan(&s.Instances); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT instance_id) FROM alerts`).Scan(&s.Instances); err != nil {
 		return Stats{}, fmt.Errorf("count instances: %w", err)
 	}
 	return s, nil
