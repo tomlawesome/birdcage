@@ -9,6 +9,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -159,7 +160,19 @@ func ListAlerts(ctx context.Context, database *db.DB, filter AlertFilter) ([]Ale
 	}
 	defer rows.Close()
 
-	alerts := make([]Alert, 0, limit)
+	return scanAlerts(rows, make([]Alert, 0, limit))
+}
+
+// scanAlerts drains rows (already SELECTed as id, instance_id, source_ip,
+// dest_port, service, raw, received_at, in that order) into initial and
+// returns it. Shared by ListAlerts and alertsInRange so the
+// received_at-parsing and error-wrapping live in one place rather than
+// two copies drifting apart. initial carries the caller's own choice of
+// starting capacity and nil-ness -- ListAlerts passes a non-nil,
+// zero-length slice so a page with no rows still encodes as JSON `[]`,
+// not `null`.
+func scanAlerts(rows *sql.Rows, initial []Alert) ([]Alert, error) {
+	alerts := initial
 	for rows.Next() {
 		var (
 			a          Alert
@@ -179,6 +192,31 @@ func ListAlerts(ctx context.Context, database *db.DB, filter AlertFilter) ([]Ale
 		return nil, fmt.Errorf("iterate alerts: %w", err)
 	}
 	return alerts, nil
+}
+
+// alertsInRange returns every alert with received_at in [since, until]
+// (inclusive both ends, the same bound GetStats' Last24h uses), newest
+// first. Unlike ListAlerts, there is no row cap: GET /api/visitors and GET
+// /api/trace (issue #35) both classify and aggregate over the *whole*
+// range in Go rather than in SQL (per this package's kind-classification
+// rule -- see internal/store/visitor.go), so a paginated fetch here would
+// silently truncate the very data those computations depend on. Both
+// callers apply their own bound afterward instead (visitor cursor paging,
+// trace's per-canary maxHitsPerCanary cap).
+func alertsInRange(ctx context.Context, database *db.DB, since, until time.Time) ([]Alert, error) {
+	query := fmt.Sprintf(`
+		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at
+		FROM alerts WHERE %s AND %s ORDER BY id DESC`,
+		receivedAtCompare(database.Engine, ">="), receivedAtCompare(database.Engine, "<="))
+
+	rows, err := database.QueryContext(ctx, query,
+		since.UTC().Format(receivedAtLayout), until.UTC().Format(receivedAtLayout))
+	if err != nil {
+		return nil, fmt.Errorf("query alerts in range: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAlerts(rows, []Alert{})
 }
 
 // Instance summarizes one instance_id's alert history.
