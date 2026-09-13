@@ -3,11 +3,13 @@
 # CI that gates them. GitHub is a read-only mirror of those three branches
 # (the `sync` stage pushes each one after a merge) and keeps CodeQL and
 # dependency review. The general model is in the gitlab-first-migration
-# skill; the jobs below port .github/workflows/ci.yml, licence.yml and
-# branch-policy.yml one for one.
+# skill; the jobs below carry what GitHub's ci.yml, licence.yml and
+# branch-policy.yml used to (all three retired once this file was green).
 #
-# The `sync` stage is inert until the owner sets MIRROR_TO_GITHUB=true and
-# GITHUB_MIRROR_SSH_KEY as project CI/CD variables. Nothing here sets them.
+# The `sync` stage reads MIRROR_TO_GITHUB and GITHUB_MIRROR_SSH_KEY, both
+# protected project CI/CD variables the owner set on 2026-09-13. Nothing
+# here sets them, and it fires only on a push pipeline for one of the three
+# branches -- in practice, the push a merge makes.
 #
 # Runner lanes (ai/agent-infra#3): `big` is 8 CPU / 18 GB, `light` is
 # 4 CPU / 6 GB. A job with no matching tag does not run at all.
@@ -36,8 +38,9 @@ variables:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
 
 # ---------------------------------------------------------------------------
-# POLICY -- the promotion order, ported from branch-policy.yml. Bites only
-# if the project requires a passing pipeline to merge; otherwise a warning.
+# POLICY -- the promotion order. This is the gate GitHub's branch-policy.yml
+# used to be. Bites only if the project requires a passing pipeline to
+# merge; otherwise a warning.
 # ---------------------------------------------------------------------------
 policy:promotion-hop:
   stage: lint
