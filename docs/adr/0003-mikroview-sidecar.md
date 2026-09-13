@@ -1,6 +1,8 @@
 # ADR-0003: Birdcage is a sidecar to mikroview
 
-**Status:** Accepted
+**Status:** Accepted; amended by ADR-0005 (2026-09-13): the auth and token
+models below are delivered by the shared module `gauntlet`, not by code
+copied into birdcage.
 **Date:** 2026-09-12
 
 ## Context
@@ -77,6 +79,7 @@ separate mux; per-device ingest tokens). See mikroview `SECURITY.md`,
   their own; each security-relevant change there is checked against
   birdcage's copy. A shared Go module is a later option once the copy has
   proven to be genuinely identical -- deliberately not done up front.
+  *Reversed by ADR-0005: the shared module is built first.*
 - Mikroview is unchanged by this decision. Anything birdcage needs from it
   beyond mikroview#29 is a proposal on mikroview, not an assumption here.
 
@@ -89,4 +92,4 @@ separate mux; per-device ingest tokens). See mikroview `SECURITY.md`,
   and same-site cookies; reworking mikroview's auth was ruled out by the
   owner.
 - **Extract mikroview's auth into a shared module now**: premature; see
-  Consequences.
+  Consequences. *Reversed by the owner on 2026-09-13 -- ADR-0005.*
