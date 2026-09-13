@@ -1,8 +1,12 @@
-// Package api serves birdcage's dashboard HTTP API (#3): a read-only
-// JSON view over the alerts table. It has no write path -- there is no
-// handler anywhere in this package that can mutate the alerts table --
-// which matches SECURITY.md's "no authentication yet" stance: reaching
-// this handler unauthenticated only ever grants read access.
+// Package api serves birdcage's dashboard HTTP API (#3): mostly a
+// read-only JSON view over the alerts table (no handler here can mutate
+// it), plus one write path added by issue #34 -- POST /api/heartbeat,
+// which records a canary's phone-home into the separate
+// canaries/heartbeats registry and never touches alerts. Until #8 lands,
+// SECURITY.md's "no authentication yet" stance means reaching that
+// handler unauthenticated lets a caller record heartbeats for any known
+// canary id, not arbitrary writes -- the per-canary ingest token (#32)
+// narrows that once it exists.
 package api
 
 import (
@@ -29,37 +33,42 @@ func NewHandler(database *db.DB) http.Handler {
 }
 
 func newHandler(database *db.DB, now func() time.Time) http.Handler {
-	protected := requireAuth(readOnlyRoutes(database, now))
+	protected := requireAuth(dashboardRoutes(database, now))
 
 	// Each known route is registered individually (rather than mounting
-	// readOnlyRoutes at the "/api/" prefix) so anything readOnlyRoutes
+	// dashboardRoutes at the "/api/" prefix) so anything dashboardRoutes
 	// does *not* register -- any other path under /api/ -- falls through
-	// to notFoundJSON below instead of readOnlyRoutes' own mux producing
+	// to notFoundJSON below instead of dashboardRoutes' own mux producing
 	// a plain-text 404. A wrong method on a known path is still handled
-	// correctly: the request reaches readOnlyRoutes' mux either way, and
+	// correctly: the request reaches dashboardRoutes' mux either way, and
 	// that mux's own method-specific patterns (net/http's Go 1.22+ "GET
 	// /path" syntax) are what produce the 405, not this outer dispatch.
 	mux := http.NewServeMux()
 	mux.Handle("/api/alerts", protected)
 	mux.Handle("/api/instances", protected)
 	mux.Handle("/api/stats", protected)
+	mux.Handle("/api/canaries", protected)
+	mux.Handle("/api/heartbeat", protected)
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
 
-// readOnlyRoutes registers birdcage's entire dashboard API -- these
-// three GET endpoints -- and nothing else. Mirrors mikroview's
-// readOnlyRoutes (internal/api/auth.go there): a caller dispatched to
-// this mux is structurally unable to reach anything but these routes,
-// because nothing else is ever registered on it. That property is what
-// requireAuth (issue #8, ADR-0003) will rely on once it exists: a
-// lesser-privileged credential can be routed here and nowhere else.
-func readOnlyRoutes(database *db.DB, now func() time.Time) *http.ServeMux {
+// dashboardRoutes registers birdcage's entire dashboard API -- these
+// endpoints, all GET except POST /api/heartbeat -- and nothing else.
+// Mirrors mikroview's readOnlyRoutes (internal/api/auth.go there): a
+// caller dispatched to this mux is structurally unable to reach anything
+// but these routes, because nothing else is ever registered on it. That
+// property is what requireAuth (issue #8, ADR-0003) will rely on once it
+// exists: a lesser-privileged credential can be routed here and nowhere
+// else.
+func dashboardRoutes(database *db.DB, now func() time.Time) *http.ServeMux {
 	h := &handler{db: database, now: now}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/alerts", h.handleAlerts)
 	mux.HandleFunc("GET /api/instances", h.handleInstances)
 	mux.HandleFunc("GET /api/stats", h.handleStats)
+	mux.HandleFunc("GET /api/canaries", h.handleCanaries)
+	mux.HandleFunc("POST /api/heartbeat", h.handleHeartbeat)
 	return mux
 }
 
