@@ -33,11 +33,15 @@ This section is rewritten route-by-route when #8 lands.
   a bearer token or API key as a real leak, not a hypothetical one.
 - **Alert and audit data is persisted**, unlike mikroview's in-memory-only
   model -- birdcage's whole purpose is centralized history across
-  instances. SQLite for v1 (see [ADR-0001](docs/adr/0001-stack-and-storage.md)).
-  Alert data (source IPs, timestamps, targeted services) is not highly
-  sensitive on its own, but the database file should still be kept off any
-  shared/multi-tenant filesystem, same guidance as mikroview's
-  `config.yaml`.
+  instances. SQLite and Postgres, both mandatory in v1, selected by
+  `DATABASE_URL` (see [ADR-0001](docs/adr/0001-stack-and-storage.md) and
+  [docs/configuration.md](docs/configuration.md)). Alert data (source IPs,
+  timestamps, targeted services) is not highly sensitive on its own, but a
+  SQLite database file should still be kept off any shared/multi-tenant
+  filesystem, same guidance as mikroview's `config.yaml`, and a Postgres
+  `DATABASE_URL` is itself a credential -- it carries a plaintext password --
+  and must be handled with the same care as the CrowdSec/RouterOS secrets
+  above (env var or secret, never committed, never logged).
 - **The audit log is append-only by convention.** No application code path
   may issue `UPDATE`/`DELETE` against it. This is what makes "birdcage took
   automated action" reviewable and reversible rather than a black box --

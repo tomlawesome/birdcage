@@ -32,13 +32,17 @@ belong to it:
 - Authentication: local accounts plus self-hosted-only OIDC, modelled on
   mikroview's ([#8](https://github.com/tomlawesome/birdcage/issues/8)). The
   dashboard does not ship without it.
+- Postgres support alongside SQLite, both mandatory in v1, selected by
+  `DATABASE_URL` ([#7](https://github.com/tomlawesome/birdcage/issues/7);
+  owner decision 2026-09-13, superseding the original "deferred until
+  multi-node/HA" plan -- see [ADR-0001](adr/0001-stack-and-storage.md) and
+  [docs/configuration.md](configuration.md)).
 
 ## Explicitly deferred (wave 3)
 
 Tracked so these aren't lost, not because they're unimportant:
 
 - Ansible-based rollout for new OpenCanary nodes ([#1](https://github.com/tomlawesome/birdcage/issues/1)).
-- Postgres support, once multi-node/HA deployment is a real requirement ([#7](https://github.com/tomlawesome/birdcage/issues/7)).
 
 ## Explicitly out of scope for birdcage itself
 
