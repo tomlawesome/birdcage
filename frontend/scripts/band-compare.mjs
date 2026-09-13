@@ -1,7 +1,7 @@
 // Issue #37 acceptance: render the band from each of the three fixtures
 // and pixel-compare it against the matching round-6 concept shot
-// (docs/design/concepts/round-6/shots/m-<scene>.png). Starts its own vite
-// dev server (fixture mode is dev-only, see src/lib/api.ts), screenshots
+// (docs/design/concepts/round-6/shots/m-<scene>.png). Starts an in-process
+// vite dev server (fixture mode is dev-only, see src/lib/api.ts), screenshots
 // the live <svg class="band-svg"> at 1600x1000 @2x -- the same viewport
 // and scale docs/design/concepts/round-6/capture.mjs used for the shots
 // -- and crops the reference PNG to the same region using the svg's own
@@ -9,10 +9,10 @@
 // content (gen.py's `top`/BAND[-1]+40, ported in src/lib/band/placement.ts
 // and model.ts). Exits non-zero if any scene's differing-pixel percentage
 // is above 2%.
+import { createServer } from 'vite'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
 import pixelmatch from 'pixelmatch'
-import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,43 +25,20 @@ mkdirSync(outDir, { recursive: true })
 
 const SCENES = ['quiet', 'silent', 'night']
 const THRESHOLD_PCT = 2
-const PORT = 58213
 const DPR = 2
 const PAGE_WIDTH = 1600
 const PAGE_HEIGHT = 1000
 
-function waitForServer(url, timeoutMs = 15000) {
-  const start = Date.now()
-  return new Promise((resolve, reject) => {
-    const tryOnce = () => {
-      fetch(url)
-        .then((res) => (res.ok || res.status === 404 ? resolve() : retry()))
-        .catch(retry)
-    }
-    const retry = () => {
-      if (Date.now() - start > timeoutMs) reject(new Error(`vite dev server did not come up at ${url}`))
-      else setTimeout(tryOnce, 200)
-    }
-    tryOnce()
-  })
-}
-
 async function main() {
-  // Spawn the vite binary directly (not via npx/npm run) so vite.kill()
-  // below actually stops the server instead of an intermediate wrapper.
-  const viteBin = join(frontendDir, 'node_modules', '.bin', 'vite')
-  const vite = spawn(viteBin, ['--port', String(PORT), '--strictPort'], {
-    cwd: frontendDir,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  let viteLog = ''
-  vite.stdout.on('data', (d) => (viteLog += d))
-  vite.stderr.on('data', (d) => (viteLog += d))
+  // Same in-process server below-band-compare.mjs uses: a spawned vite
+  // binary polled over http proved flaky in containers (port reuse and
+  // localhost resolving to ::1 while vite listened on 127.0.0.1).
+  const server = await createServer({ root: frontendDir, server: { port: 0 } })
+  await server.listen()
+  const baseUrl = `http://localhost:${server.httpServer.address().port}`
 
   const results = []
   try {
-    await waitForServer(`http://localhost:${PORT}/`)
-
     const browser = await chromium.launch()
     try {
       const page = await browser.newPage({ viewport: { width: PAGE_WIDTH, height: PAGE_HEIGHT }, deviceScaleFactor: DPR })
@@ -72,7 +49,7 @@ async function main() {
       page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
       for (const scene of SCENES) {
-        await page.goto(`http://localhost:${PORT}/?scene=${scene}`)
+        await page.goto(`${baseUrl}/?scene=${scene}`)
         await page.waitForSelector('svg.band-svg', { timeout: 5000 })
         // Let the two effects (ResizeObserver's first callback, the trace
         // fetch) settle before measuring.
@@ -158,7 +135,7 @@ async function main() {
       await browser.close()
     }
   } finally {
-    vite.kill()
+    await server.close()
   }
 
   console.log('')
@@ -175,10 +152,6 @@ async function main() {
     if (r.pct > THRESHOLD_PCT) failed = true
   }
   console.log(`\nDiff images written to ${outDir}`)
-
-  if (viteLog.toLowerCase().includes('error')) {
-    console.log('\nvite log contained "error":\n' + viteLog)
-  }
 
   process.exit(failed ? 1 : 0)
 }

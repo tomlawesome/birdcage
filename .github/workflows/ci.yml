@@ -46,13 +46,22 @@ jobs:
       - name: Test
         run: npm test
 
-      # --with-deps installs the same fonts (fonts-wqy-zenhei,
-      # fonts-liberation, ...) the round-6 reference shots under
-      # docs/design/concepts/round-6/shots/ were rendered with, which is
-      # what keeps compare:band/compare:below-band's pixel diff under
-      # their 2% gate in CI.
+      # --with-deps installs the fonts (fonts-wqy-zenhei, ...) the round-6
+      # reference shots under docs/design/concepts/round-6/shots/ were
+      # rendered with; the fonts.conf then makes the generic families
+      # resolve to them, as they did on the host that rendered the shots
+      # (Ubuntu's default order picks DejaVu and the night band lands
+      # ~2.5% off, over the 2% gate -- run 34747740616).
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
+      - name: Pin the pixel-gate fonts
+        run: |
+          mkdir -p ~/.config/fontconfig
+          cp scripts/compare-fonts.conf ~/.config/fontconfig/fonts.conf
+          fc-cache -f
+          fc-match sans-serif
+          fc-match monospace
 
       - name: Pixel-compare the band (issue #37 acceptance)
         run: npm run compare:band
