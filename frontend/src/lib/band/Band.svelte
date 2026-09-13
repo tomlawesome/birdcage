@@ -51,9 +51,9 @@
   {#if model}
     <svg
       class="band-svg"
-      viewBox={`0 ${model.top} ${width} ${model.bottom - model.top}`}
+      viewBox={`0 0 ${width} ${model.bottom}`}
       width={width}
-      height={model.bottom - model.top}
+      height={model.bottom}
       role="img"
       aria-label="The trace: one heartbeat line per canary"
     >
@@ -111,8 +111,15 @@
 </div>
 
 <style>
+  /* Page coordinates, like gen.py's .score: the band lines sit at
+     BAND_TOP from the top of the scene whatever the labels above them
+     climb to, so a quiet band does not float up into the sentence. */
   .band {
-    width: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    pointer-events: none;
   }
   .band-svg {
     display: block;
