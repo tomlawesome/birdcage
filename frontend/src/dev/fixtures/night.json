@@ -1,0 +1,1868 @@
+{
+  "canaries": {
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "name": "canary-lan",
+        "lane": "lan",
+        "ports": "ssh 22 · http 80 · smb 445",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:22Z",
+        "hits": 4
+      },
+      {
+        "id": "canary-srv",
+        "name": "canary-srv",
+        "lane": "srv",
+        "ports": "ssh 22 · mysql 3306 · ftp 21",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:03:50Z",
+        "hits": 3
+      },
+      {
+        "id": "canary-iot",
+        "name": "canary-iot",
+        "lane": "iot",
+        "ports": "telnet 23 · ssh 22 · smb 445",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:09Z",
+        "hits": 222
+      },
+      {
+        "id": "canary-guest",
+        "name": "canary-guest",
+        "lane": "guest",
+        "ports": "telnet 23 · ssh 22 · http 80",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:28Z",
+        "hits": 2
+      }
+    ]
+  },
+  "visitors": {
+    "visitors": [
+      {
+        "source_ip": "203.0.113.42",
+        "kind": "sweep",
+        "first_at": "2026-09-12T21:55:39Z",
+        "last_at": "2026-09-12T22:04:31Z",
+        "hits": 7,
+        "canaries": [
+          {
+            "id": "canary-lan",
+            "hits": 2
+          },
+          {
+            "id": "canary-srv",
+            "hits": 2
+          },
+          {
+            "id": "canary-iot",
+            "hits": 1
+          },
+          {
+            "id": "canary-guest",
+            "hits": 2
+          }
+        ],
+        "services": [
+          "ssh",
+          "mysql",
+          "telnet"
+        ],
+        "tried": [
+          "root / root",
+          "mysql root / (empty)",
+          "root / toor",
+          "root / 123456"
+        ],
+        "still_arriving": true
+      },
+      {
+        "source_ip": "198.51.100.7",
+        "kind": "repeat",
+        "first_at": "2026-09-07T10:19:10Z",
+        "last_at": "2026-09-12T21:59:10Z",
+        "hits": 221,
+        "canaries": [
+          {
+            "id": "canary-iot",
+            "hits": 221
+          }
+        ],
+        "services": [
+          "smb"
+        ],
+        "tried": [
+          "smb"
+        ],
+        "still_arriving": false
+      },
+      {
+        "source_ip": "10.0.40.23",
+        "kind": "inside",
+        "first_at": "2026-09-12T19:11:04Z",
+        "last_at": "2026-09-12T19:11:22Z",
+        "hits": 2,
+        "canaries": [
+          {
+            "id": "canary-lan",
+            "hits": 2
+          }
+        ],
+        "services": [
+          "http"
+        ],
+        "tried": [
+          "/",
+          "/admin"
+        ],
+        "still_arriving": false
+      },
+      {
+        "source_ip": "192.0.2.88",
+        "kind": "touch",
+        "first_at": "2026-09-11T03:18:40Z",
+        "last_at": "2026-09-11T03:18:40Z",
+        "hits": 1,
+        "canaries": [
+          {
+            "id": "canary-srv",
+            "hits": 1
+          }
+        ],
+        "services": [
+          "ftp"
+        ],
+        "tried": [
+          "anonymous / (empty)"
+        ],
+        "still_arriving": false
+      }
+    ],
+    "next_before": null
+  },
+  "trace": {
+    "now": "2026-09-12T22:04:31Z",
+    "range": "14d",
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "lane": "lan",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:22Z",
+        "beats": [
+          "2026-09-12T22:04:22Z",
+          "2026-09-12T22:03:22Z",
+          "2026-09-12T22:02:22Z",
+          "2026-09-12T22:01:22Z",
+          "2026-09-12T22:00:22Z",
+          "2026-09-12T21:59:22Z",
+          "2026-09-12T21:58:22Z",
+          "2026-09-12T21:57:22Z",
+          "2026-09-12T21:56:22Z",
+          "2026-09-12T21:55:22Z",
+          "2026-09-12T21:54:22Z",
+          "2026-09-12T21:53:22Z",
+          "2026-09-12T21:52:22Z",
+          "2026-09-12T21:51:22Z",
+          "2026-09-12T21:50:22Z"
+        ],
+        "hits": [
+          {
+            "at": "2026-09-12T21:55:40Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "ssh",
+            "tried": "root / root"
+          },
+          {
+            "at": "2026-09-12T21:55:39Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "ssh",
+            "tried": "session · libssh2"
+          },
+          {
+            "at": "2026-09-12T19:11:22Z",
+            "visitor": "10.0.40.23",
+            "kind": "inside",
+            "service": "http",
+            "tried": "/admin"
+          },
+          {
+            "at": "2026-09-12T19:11:04Z",
+            "visitor": "10.0.40.23",
+            "kind": "inside",
+            "service": "http",
+            "tried": "/"
+          }
+        ]
+      },
+      {
+        "id": "canary-srv",
+        "lane": "srv",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:03:50Z",
+        "beats": [
+          "2026-09-12T22:03:50Z",
+          "2026-09-12T22:02:50Z",
+          "2026-09-12T22:01:50Z",
+          "2026-09-12T22:00:50Z",
+          "2026-09-12T21:59:50Z",
+          "2026-09-12T21:58:50Z",
+          "2026-09-12T21:57:50Z",
+          "2026-09-12T21:56:50Z",
+          "2026-09-12T21:55:50Z",
+          "2026-09-12T21:54:50Z",
+          "2026-09-12T21:53:50Z",
+          "2026-09-12T21:52:50Z",
+          "2026-09-12T21:51:50Z",
+          "2026-09-12T21:50:50Z",
+          "2026-09-12T21:49:50Z"
+        ],
+        "hits": [
+          {
+            "at": "2026-09-12T21:57:22Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "mysql",
+            "tried": "mysql root / (empty)"
+          },
+          {
+            "at": "2026-09-12T21:56:58Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "mysql",
+            "tried": "root / password"
+          },
+          {
+            "at": "2026-09-11T03:18:40Z",
+            "visitor": "192.0.2.88",
+            "kind": "touch",
+            "service": "ftp",
+            "tried": "anonymous / (empty)"
+          }
+        ]
+      },
+      {
+        "id": "canary-iot",
+        "lane": "iot",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:09Z",
+        "beats": [
+          "2026-09-12T22:04:09Z",
+          "2026-09-12T22:03:09Z",
+          "2026-09-12T22:02:09Z",
+          "2026-09-12T22:01:09Z",
+          "2026-09-12T22:00:09Z",
+          "2026-09-12T21:59:09Z",
+          "2026-09-12T21:58:09Z",
+          "2026-09-12T21:57:09Z",
+          "2026-09-12T21:56:09Z",
+          "2026-09-12T21:55:09Z",
+          "2026-09-12T21:54:09Z",
+          "2026-09-12T21:53:09Z",
+          "2026-09-12T21:52:09Z",
+          "2026-09-12T21:51:09Z",
+          "2026-09-12T21:50:09Z"
+        ],
+        "hits": [
+          {
+            "at": "2026-09-12T22:01:47Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "telnet",
+            "tried": "root / toor"
+          },
+          {
+            "at": "2026-09-12T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-12T09:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-11T09:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-10T09:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-09T09:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-08T09:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T21:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T21:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T21:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T20:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T20:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T20:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T19:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T19:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T19:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T18:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T18:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T18:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T17:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T17:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T17:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T16:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T16:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T16:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T15:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T15:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T15:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T14:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T14:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T14:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T13:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T13:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T13:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T12:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T12:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T12:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T11:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T11:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T11:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T10:59:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T10:39:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          },
+          {
+            "at": "2026-09-07T10:19:10Z",
+            "visitor": "198.51.100.7",
+            "kind": "repeat",
+            "service": "smb",
+            "tried": "smb"
+          }
+        ]
+      },
+      {
+        "id": "canary-guest",
+        "lane": "guest",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-12T22:04:28Z",
+        "beats": [
+          "2026-09-12T22:04:28Z",
+          "2026-09-12T22:03:28Z",
+          "2026-09-12T22:02:28Z",
+          "2026-09-12T22:01:28Z",
+          "2026-09-12T22:00:28Z",
+          "2026-09-12T21:59:28Z",
+          "2026-09-12T21:58:28Z",
+          "2026-09-12T21:57:28Z",
+          "2026-09-12T21:56:28Z",
+          "2026-09-12T21:55:28Z",
+          "2026-09-12T21:54:28Z",
+          "2026-09-12T21:53:28Z",
+          "2026-09-12T21:52:28Z",
+          "2026-09-12T21:51:28Z",
+          "2026-09-12T21:50:28Z"
+        ],
+        "hits": [
+          {
+            "at": "2026-09-12T22:04:31Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "telnet",
+            "tried": "root / 123456"
+          },
+          {
+            "at": "2026-09-12T22:04:02Z",
+            "visitor": "203.0.113.42",
+            "kind": "sweep",
+            "service": "telnet",
+            "tried": "admin / admin"
+          }
+        ]
+      }
+    ]
+  }
+}
