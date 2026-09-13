@@ -6,3 +6,6 @@ birdcage.db
 # compile against an unbuilt checkout.
 /web/dist/*
 !/web/dist/.gitkeep
+
+# Agent worktrees the harness creates under the checkout; never part of the project.
+/.claude/worktrees/
