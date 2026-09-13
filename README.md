@@ -19,6 +19,8 @@ OpenCanary UDP syslog ingestion bridge (`cmd/birdcage`). See:
   deferred, and the tracking epics.
 - [docs/architecture.md](docs/architecture.md) — system context and
   component boundaries.
+- [docs/configuration.md](docs/configuration.md) — `DATABASE_URL`
+  (SQLite/Postgres) and backup/restore for both.
 - [docs/adr/](docs/adr/) — the decisions behind the stack, storage, and
   branching model.
 - [SECURITY.md](SECURITY.md) — threat model and deployment hardening.

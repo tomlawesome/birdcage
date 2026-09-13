@@ -23,6 +23,25 @@ jobs:
     permissions:
       contents: read
 
+    # Postgres is mandatory in v1 alongside SQLite (issue #7, ADR-0001):
+    # every internal/db and internal/store test that touches a database
+    # runs against both engines, so CI needs a real Postgres to test
+    # against and not just the SQLite temp-file path. BIRDCAGE_TEST_DATABASE_URL
+    # below is what tells those tests it's there (see
+    # internal/db/dbtest); unset, they'd silently run SQLite-only.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: birdcage-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +60,8 @@ jobs:
         run: go vet ./...
 
       - name: Test
+        env:
+          BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@localhost:5432/postgres?sslmode=disable
         run: go test ./... -race
 
       - name: Lint
