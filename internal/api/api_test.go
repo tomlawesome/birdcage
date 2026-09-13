@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,7 @@ import (
 // openTempDB mirrors internal/db's openTempDB helper (migrate_test.go),
 // migrated so the alerts table exists -- the same extension
 // internal/store's own openTempDB makes, for the same reason.
-func openTempDB(t *testing.T) *sql.DB {
+func openTempDB(t *testing.T) *db.DB {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "birdcage-test.db"))
 	if err != nil {
@@ -30,7 +29,7 @@ func openTempDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func insertAlert(t *testing.T, database *sql.DB, instanceID, sourceIP string, destPort int, service, receivedAt string) {
+func insertAlert(t *testing.T, database *db.DB, instanceID, sourceIP string, destPort int, service, receivedAt string) {
 	t.Helper()
 	_, err := database.Exec(
 		`INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at)

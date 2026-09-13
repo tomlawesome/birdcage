@@ -11,11 +11,12 @@ package audit
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // Entry is a single audit log entry.
@@ -43,7 +44,7 @@ var ErrZeroCreatedAt = errors.New("audit: CreatedAt is zero; callers must set it
 // trimming whitespace, and CreatedAt must be non-zero; otherwise Append
 // returns an error and inserts nothing (fail-closed: an incomplete audit
 // row is never stored). CreatedAt is stored as RFC 3339 UTC text.
-func Append(ctx context.Context, db *sql.DB, e Entry) (id int64, err error) {
+func Append(ctx context.Context, database *db.DB, e Entry) (id int64, err error) {
 	var blank []string
 	if strings.TrimSpace(e.Action) == "" {
 		blank = append(blank, "Action")
@@ -64,16 +65,18 @@ func Append(ctx context.Context, db *sql.DB, e Entry) (id int64, err error) {
 		return 0, ErrZeroCreatedAt
 	}
 
-	result, err := db.ExecContext(ctx,
+	// RETURNING id rather than Result.LastInsertId(): Postgres has no
+	// concept of a driver-reported last-insert id for a plain INSERT
+	// (that's a SQLite/MySQL-ism), so RETURNING is the one mechanism
+	// that gets the new row's id back on both engines. Verified against
+	// both modernc.org/sqlite and pgx/v5 (internal/db package tests).
+	err = database.QueryRowContext(ctx,
 		`INSERT INTO audit_log (action, target, reason, triggered_by, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-		e.Action, e.Target, e.Reason, e.TriggeredBy, e.CreatedAt.UTC().Format(time.RFC3339))
+         VALUES (?, ?, ?, ?, ?) RETURNING id`,
+		e.Action, e.Target, e.Reason, e.TriggeredBy, e.CreatedAt.UTC().Format(time.RFC3339),
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("audit: insert: %w", err)
-	}
-	id, err = result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("audit: last insert id: %w", err)
 	}
 	return id, nil
 }

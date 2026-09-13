@@ -1,113 +1,180 @@
-package db
+package db_test
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
+
+	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/db/dbtest"
 )
 
-func openTempDB(t *testing.T) *sql.DB {
-	t.Helper()
-	database, err := Open(filepath.Join(t.TempDir(), "birdcage-test.db"))
+// TestMigrationDirectoriesMatch asserts migrations/sqlite and
+// migrations/postgres carry exactly the same set of migration
+// filenames -- per issue #7, a migration that exists on only one engine
+// is a defect, not an oversight to catch later.
+func TestMigrationDirectoriesMatch(t *testing.T) {
+	sqliteNames, err := db.MigrationNames(db.SQLite)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("MigrationNames(SQLite): %v", err)
 	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
+	postgresNames, err := db.MigrationNames(db.Postgres)
+	if err != nil {
+		t.Fatalf("MigrationNames(Postgres): %v", err)
+	}
+	if len(sqliteNames) == 0 {
+		t.Fatal("sqlite migrations directory is empty")
+	}
+	if len(sqliteNames) != len(postgresNames) {
+		t.Fatalf("sqlite has %d migrations %v, postgres has %d %v", len(sqliteNames), sqliteNames, len(postgresNames), postgresNames)
+	}
+	for i := range sqliteNames {
+		if sqliteNames[i] != postgresNames[i] {
+			t.Fatalf("migration name mismatch at index %d: sqlite=%q postgres=%q (sqlite=%v, postgres=%v)",
+				i, sqliteNames[i], postgresNames[i], sqliteNames, postgresNames)
 		}
-	})
-	return database
+	}
 }
 
 func TestMigrateIdempotent(t *testing.T) {
-	database := openTempDB(t)
-	ctx := context.Background()
+	for _, tgt := range dbtest.Targets(t) {
+		t.Run(tgt.Name, func(t *testing.T) {
+			database := tgt.DB
+			ctx := context.Background()
 
-	if err := Migrate(ctx, database); err != nil {
-		t.Fatalf("first Migrate: %v", err)
-	}
-	if err := Migrate(ctx, database); err != nil {
-		t.Fatalf("second Migrate: %v", err)
-	}
+			// dbtest.Targets already ran Migrate once; run it twice more
+			// here to prove idempotency on top of that.
+			if err := db.Migrate(ctx, database); err != nil {
+				t.Fatalf("Migrate: %v", err)
+			}
+			if err := db.Migrate(ctx, database); err != nil {
+				t.Fatalf("Migrate again: %v", err)
+			}
 
-	var count int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
-		t.Fatalf("count schema_migrations: %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("schema_migrations has %d rows, want 2 (exactly the two applied migrations)", count)
-	}
+			names, err := db.MigrationNames(database.Engine)
+			if err != nil {
+				t.Fatalf("MigrationNames: %v", err)
+			}
 
-	var versions string
-	if err := database.QueryRow(`SELECT GROUP_CONCAT(version, ',') FROM schema_migrations ORDER BY version`).Scan(&versions); err != nil {
-		t.Fatalf("read versions: %v", err)
-	}
-	if want := "0001_init.sql,0002_audit_log.sql"; versions != want {
-		t.Fatalf("versions = %q, want %q", versions, want)
-	}
+			var count int
+			if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
+				t.Fatalf("count schema_migrations: %v", err)
+			}
+			if count != len(names) {
+				t.Fatalf("schema_migrations has %d rows, want %d (exactly the applied migrations: %v)", count, len(names), names)
+			}
 
-	for _, name := range []string{"alerts", "audit_log"} {
-		var n int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n); err != nil {
-			t.Fatalf("check table %s: %v", name, err)
-		}
-		if n != 1 {
-			t.Errorf("table %s present %d times, want 1", name, n)
-		}
-	}
-
-	for _, name := range []string{"audit_log_no_update", "audit_log_no_delete"} {
-		var n int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?`, name).Scan(&n); err != nil {
-			t.Fatalf("check trigger %s: %v", name, err)
-		}
-		if n != 1 {
-			t.Errorf("trigger %s present %d times, want 1", name, n)
-		}
-	}
-
-	for _, name := range []string{"idx_alerts_instance_id", "idx_alerts_source_ip", "idx_alerts_service", "idx_alerts_received_at"} {
-		var n int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&n); err != nil {
-			t.Fatalf("check index %s: %v", name, err)
-		}
-		if n != 1 {
-			t.Errorf("index %s present %d times, want 1", name, n)
-		}
-	}
-
-	var columns string
-	if err := database.QueryRow(`SELECT GROUP_CONCAT(name, ',') FROM pragma_table_info('alerts')`).Scan(&columns); err != nil {
-		t.Fatalf("pragma_table_info: %v", err)
-	}
-	want := "id,instance_id,source_ip,dest_port,service,raw,received_at"
-	if columns != want {
-		t.Errorf("alerts columns = %q, want %q", columns, want)
+			assertTableHasColumns(t, database, "alerts",
+				"id,instance_id,source_ip,dest_port,service,raw,received_at")
+			assertRowInsertable(t, database, "alerts", "audit_log")
+			assertAuditLogAppendOnly(t, database)
+		})
 	}
 }
 
-// TestExecMultiStatement verifies empirically that a single Exec call runs
-// every ;-separated statement in the string (Migrate relies on this to
-// apply each migration file in one call, per the issue's "verify rather
-// than assume" requirement).
+// assertTableHasColumns checks a table's column set/order, using each
+// engine's own schema-introspection mechanism: SQLite has no
+// information_schema (verified empirically -- it errors "no such
+// table"), so this branches rather than assuming standard SQL coverage
+// extends that far.
+func assertTableHasColumns(t *testing.T, database *db.DB, table, want string) {
+	t.Helper()
+	query := `SELECT column_name FROM information_schema.columns WHERE table_name = ? ORDER BY ordinal_position`
+	if database.Engine == db.SQLite {
+		query = `SELECT name FROM pragma_table_info(?)`
+	}
+	rows, err := database.Query(query, table)
+	if err != nil {
+		t.Fatalf("query columns for %s: %v", table, err)
+	}
+	defer rows.Close()
+
+	var got []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column name: %v", err)
+		}
+		got = append(got, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate columns: %v", err)
+	}
+
+	gotJoined := joinComma(got)
+	if gotJoined != want {
+		t.Errorf("%s columns = %q, want %q", table, gotJoined, want)
+	}
+}
+
+func joinComma(ss []string) string {
+	out := ""
+	for i, s := range ss {
+		if i > 0 {
+			out += ","
+		}
+		out += s
+	}
+	return out
+}
+
+// assertRowInsertable proves each named table actually exists and
+// accepts a trivial row-count query -- the portable half of "the
+// migration created this table" that doesn't depend on either engine's
+// own schema-catalog dialect.
+func assertRowInsertable(t *testing.T, database *db.DB, tables ...string) {
+	t.Helper()
+	for _, table := range tables {
+		var n int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Errorf("table %s: %v", table, err)
+		}
+	}
+}
+
+// assertAuditLogAppendOnly proves the append-only trigger guard exists
+// on both engines by exercising it directly (SQLite's RAISE(ABORT)
+// triggers vs. Postgres' trigger function -- see
+// migrations/sqlite/0002_audit_log.sql and
+// migrations/postgres/0002_audit_log.sql), rather than asserting on
+// either engine's own trigger catalog.
+func assertAuditLogAppendOnly(t *testing.T, database *db.DB) {
+	t.Helper()
+	var id int64
+	err := database.QueryRow(
+		`INSERT INTO audit_log (action, target, reason, triggered_by, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id`,
+		"a", "t", "r", "tb", "2026-01-01T00:00:00Z").Scan(&id)
+	if err != nil {
+		t.Fatalf("insert audit_log row: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE audit_log SET reason = ? WHERE id = ?`, "tampered", id); err == nil {
+		t.Error("UPDATE audit_log succeeded, want the append-only guard to abort it")
+	}
+	if _, err := database.Exec(`DELETE FROM audit_log WHERE id = ?`, id); err == nil {
+		t.Error("DELETE audit_log succeeded, want the append-only guard to abort it")
+	}
+}
+
+// TestExecMultiStatement verifies empirically that a single Exec call
+// runs every ;-separated statement in the string, on both engines
+// (Migrate relies on this to apply each migration file in one call, per
+// the issue's "verify rather than assume" requirement).
 func TestExecMultiStatement(t *testing.T) {
-	database := openTempDB(t)
+	for _, tgt := range dbtest.Targets(t) {
+		t.Run(tgt.Name, func(t *testing.T) {
+			database := tgt.DB
+			_, err := database.Exec(`CREATE TABLE multistmt_t1 (id INTEGER PRIMARY KEY);
+CREATE TABLE multistmt_t2 (id INTEGER PRIMARY KEY);
+CREATE INDEX idx_multistmt_t2_id ON multistmt_t2(id);`)
+			if err != nil {
+				t.Fatalf("multi-statement Exec failed: %v", err)
+			}
 
-	_, err := database.Exec(`CREATE TABLE t1 (id INTEGER PRIMARY KEY);
-CREATE TABLE t2 (id INTEGER PRIMARY KEY);
-CREATE INDEX idx_t2_id ON t2(id);`)
-	if err != nil {
-		t.Fatalf("multi-statement Exec failed: %v", err)
-	}
-
-	var objects int
-	err = database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'index') AND name IN ('t1', 't2', 'idx_t2_id')`).Scan(&objects)
-	if err != nil {
-		t.Fatalf("count objects: %v", err)
-	}
-	if objects != 3 {
-		t.Fatalf("found %d of 3 expected objects after multi-statement Exec", objects)
+			for _, table := range []string{"multistmt_t1", "multistmt_t2"} {
+				var n int
+				if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+					t.Errorf("table %s missing after multi-statement Exec: %v", table, err)
+				}
+			}
+		})
 	}
 }

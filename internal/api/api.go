@@ -6,29 +6,30 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // handler carries the dependencies every route needs: db for queries,
 // and now so handleStats' "current time" is pinnable in tests instead
 // of always reading time.Now().
 type handler struct {
-	db  *sql.DB
+	db  *db.DB
 	now func() time.Time
 }
 
 // NewHandler wires the dashboard API behind the requireAuth seam #8
 // will fill in (ADR-0003).
-func NewHandler(db *sql.DB) http.Handler {
-	return newHandler(db, time.Now)
+func NewHandler(database *db.DB) http.Handler {
+	return newHandler(database, time.Now)
 }
 
-func newHandler(db *sql.DB, now func() time.Time) http.Handler {
-	protected := requireAuth(readOnlyRoutes(db, now))
+func newHandler(database *db.DB, now func() time.Time) http.Handler {
+	protected := requireAuth(readOnlyRoutes(database, now))
 
 	// Each known route is registered individually (rather than mounting
 	// readOnlyRoutes at the "/api/" prefix) so anything readOnlyRoutes
@@ -53,8 +54,8 @@ func newHandler(db *sql.DB, now func() time.Time) http.Handler {
 // because nothing else is ever registered on it. That property is what
 // requireAuth (issue #8, ADR-0003) will rely on once it exists: a
 // lesser-privileged credential can be routed here and nowhere else.
-func readOnlyRoutes(db *sql.DB, now func() time.Time) *http.ServeMux {
-	h := &handler{db: db, now: now}
+func readOnlyRoutes(database *db.DB, now func() time.Time) *http.ServeMux {
+	h := &handler{db: database, now: now}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/alerts", h.handleAlerts)
 	mux.HandleFunc("GET /api/instances", h.handleInstances)
