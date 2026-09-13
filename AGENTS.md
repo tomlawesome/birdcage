@@ -16,8 +16,8 @@ that keeps CodeQL and dependency review only — no issues, no pull
 requests there. Local remote `gitlab` for the primary, `origin` for the
 mirror; push and fetch with the `glab auth git-credential` helper form
 from the github-credentials skill. Issue numbers match across the two
-hosts up to #41 (recreated by hand on 2026-09-13); GitHub #29, #30 and
-#40 were pull requests.
+hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
+#40 are closed placeholders holding the numbers of GitHub pull requests.
 
 ## Security by design
 
