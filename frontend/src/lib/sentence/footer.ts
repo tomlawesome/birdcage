@@ -2,10 +2,10 @@
 // strings). Its day count always spells the number out in full, even
 // past nine (the issue's own example: "twenty-three quiet days" here vs.
 // "23 days" in the hero).
-import type { Canary, Range, Visitor } from '../types'
+import type { Canary, LastHit, Range, Visitor } from '../types'
 import { formatClockShort } from './time'
 import { rangeNoun } from './narrative'
-import { DEFAULT_QUIET_STORY, computeQuietDays, type QuietStory } from './quietStory'
+import { buildQuietStory, computeQuietDays } from './quietStory'
 import { numberToWords, wordOrNumber } from './words'
 import type { Segment } from './types'
 
@@ -14,7 +14,7 @@ export function computeFooter(
   visitors: Visitor[],
   range: Range,
   now: string,
-  story: QuietStory = DEFAULT_QUIET_STORY,
+  lastHit: LastHit | null = null,
 ): Segment[] {
   const arriving = visitors.find((v) => v.kind === 'sweep' && v.still_arriving)
   if (arriving) {
@@ -26,7 +26,7 @@ export function computeFooter(
     ]
   }
 
-  const days = computeQuietDays(now, story)
+  const days = computeQuietDays(now, buildQuietStory(lastHit))
   const silent = canaries.find((c) => c.status === 'silent')
   if (silent) {
     const silentCount = canaries.filter((c) => c.status === 'silent').length

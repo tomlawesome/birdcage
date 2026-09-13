@@ -72,8 +72,23 @@ export interface TraceCanary {
   hits: TraceHit[]
 }
 
+/** The single newest alert ever recorded, independent of range -- null
+ * when the alerts table has never held a row (issue #39). Drives the
+ * quiet-day story (lib/sentence/quietStory.ts) once a real API sits
+ * behind /api/trace, since a range-scoped trace can't answer "quiet
+ * since when" once that touch falls outside every range. */
+export interface LastHit {
+  at: string
+  visitor: string
+  canary: string
+  port: number
+  service: string
+  kind: VisitorKind
+}
+
 export interface TraceResponse {
   now: string
   range: Range
   canaries: TraceCanary[]
+  last_hit: LastHit | null
 }
