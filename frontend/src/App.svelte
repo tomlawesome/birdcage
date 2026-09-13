@@ -3,10 +3,16 @@
   // sideways deck, the footer sentence slot, the "i" button. Issue #38
   // fills the status pill, the footer sentence and the hero/sub sentence
   // with the real rules (frontend/src/lib/sentence), and adds the tiles
-  // and events that render below the chrome.
+  // and events that render below the chrome. Issue #39: this is the one
+  // place that fetches -- the three reads together (Promise.all),
+  // whenever activeRange changes and every 30 s -- and lib/loader.ts's
+  // pure state machine decides loading/error/ready/stale from the
+  // outcome; Band, Tiles and Events take their data as props and fetch
+  // nothing themselves.
   import { fetchCanaries, fetchTrace, fetchVisitors } from './lib/api'
-  import type { Canary, Visitor } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
+  import { isSameUTCDate } from './lib/sentence/time'
+  import { initialLoaderState, onFetchError, onFetchSuccess, type LoaderState } from './lib/loader'
   import Band from './lib/band/Band.svelte'
   import Tiles from './Tiles.svelte'
   import Events from './Events.svelte'
@@ -28,52 +34,68 @@
   const DECK = ['THE TRACE', 'VISITORS', 'AUDIT LOG', 'SETTINGS']
   let activeDeck = $state(0)
 
-  let canaries: Canary[] = $state([])
-  let visitors: Visitor[] = $state([])
-  let traceNow: string | null = $state(null)
-  let loaded = $state(false)
+  const REFRESH_MS = 30_000
 
-  // Reloads whenever activeRange changes -- the status pill, the
-  // sentence, the footer and (each independently) Tiles and Events all
-  // depend on the selected range. A failure here (no backend yet, or a
-  // ?scene= that doesn't match a fixture) leaves loaded false and the
-  // status slot renders its neutral state.
+  let loaderState: LoaderState = $state(initialLoaderState)
+
+  // Refetches whenever activeRange changes and every REFRESH_MS after
+  // that; `inFlight` is local to this effect run (a fresh false every
+  // time activeRange changes) so switching ranges never waits on a
+  // slow fetch for the *previous* range, while a tick that lands on top
+  // of a still-pending fetch for the *current* range is simply skipped
+  // rather than doubled. A response that arrives after activeRange has
+  // since moved on is dropped, not applied.
   $effect(() => {
     const range = activeRange
-    ;(async () => {
+    let inFlight = false
+    const load = async () => {
+      if (inFlight) return
+      inFlight = true
       try {
         const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
-        canaries = c.canaries
-        visitors = v.visitors
-        traceNow = t.now
-        loaded = true
+        if (range === activeRange) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
       } catch {
-        loaded = false
+        if (range === activeRange) loaderState = onFetchError(loaderState)
+      } finally {
+        inFlight = false
       }
-    })()
+    }
+    load()
+    const interval = setInterval(load, REFRESH_MS)
+    return () => clearInterval(interval)
   })
 
-  let status = $derived(loaded ? computeStatus(canaries, visitors, activeRange) : null)
-  let sentence = $derived(loaded && traceNow ? computeSentence(canaries, visitors, activeRange, traceNow) : null)
-  let footer = $derived(loaded && traceNow ? computeFooter(canaries, visitors, activeRange, traceNow) : null)
+  let data = $derived(loaderState.data)
+  let canaries = $derived(data?.canaries ?? [])
+  let visitors = $derived(data?.visitors ?? [])
+  let trace = $derived(data?.trace ?? null)
+
+  let status = $derived(data ? computeStatus(canaries, visitors, activeRange) : null)
+  let sentence = $derived(
+    data && trace ? computeSentence(canaries, visitors, activeRange, trace.now, trace.last_hit) : null,
+  )
+  let footer = $derived(data && trace ? computeFooter(canaries, visitors, activeRange, trace.now, trace.last_hit) : null)
 
   const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
   const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
   /** "the cage · sat 5 sep · 22:04:31" (quiet/silent) or "the cage · fri
-   * 12 sep · 1 flagged · N hits" (live) -- gen.py's `.grp` line above the
-   * hero. Not itself named in issue #38's acceptance list; approximated
-   * from what fetchCanaries/fetchTrace carry (total hits in range, not
-   * "today" specifically, since no field distinguishes the two). */
+   * 12 sep · 1 flagged · N hits today" (live) -- gen.py's `.grp` line
+   * above the hero. N counts trace.canaries[].hits whose `at` falls on
+   * the same UTC calendar day as trace.now (issue #39) -- Canary.hits
+   * is a range total, not "today". */
   let grpLine = $derived.by(() => {
-    if (!traceNow) return { lead: '', flagged: '', tail: '' }
-    const d = new Date(traceNow)
+    if (!trace) return { lead: '', flagged: '', tail: '' }
+    const d = new Date(trace.now)
     const day = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
     if (status?.kind === 'live') {
-      const hits = canaries.reduce((sum, c) => sum + c.hits, 0)
-      return { lead: `the cage · ${day} · `, flagged: `${status.flagCount} flagged`, tail: ` · ${hits} hits` }
+      const hitsToday = trace.canaries.reduce(
+        (sum, c) => sum + c.hits.filter((h) => isSameUTCDate(h.at, trace.now)).length,
+        0,
+      )
+      return { lead: `the cage · ${day} · `, flagged: `${status.flagCount} flagged`, tail: ` · ${hitsToday} hits today` }
     }
-    return { lead: `the cage · ${day} · ${formatClock(traceNow)}`, flagged: '', tail: '' }
+    return { lead: `the cage · ${day} · ${formatClock(trace.now)}`, flagged: '', tail: '' }
   })
 </script>
 
@@ -129,8 +151,13 @@
   </nav>
 
   <main aria-label={TABS[activeTab]}>
-    <!-- The sentence (#38), the band (#37), the tiles and the events (#38). -->
-    {#if sentence}
+    <!-- The sentence (#38), the band (#37), the tiles and the events
+         (#38) -- but only once the first fetch has landed (issue #39):
+         no data yet draws only this state line, in the concept's voice,
+         at the hero sentence's position. -->
+    {#if !data}
+      <div class="state-line">{#if loaderState.phase === 'error'}the cage is not answering &middot; retrying in 30 s{:else}listening for the cage&hellip;{/if}</div>
+    {:else if sentence && trace}
       <div class="grp">{grpLine.lead}{#if grpLine.flagged}<span class="r">{grpLine.flagged}</span>{grpLine.tail}{/if}</div>
       <div class="hero">
         {#each sentence.hero as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
@@ -140,14 +167,16 @@
         {#each sentence.sub as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
           >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
       </div>
+      <Band {trace} />
+      <Tiles {canaries} {trace} range={activeRange} />
+      <Events {canaries} {visitors} {trace} range={activeRange} />
     {/if}
-    <Band range={activeRange} />
-    <Tiles range={activeRange} />
-    <Events range={activeRange} />
   </main>
 
   <footer class="foot" aria-label="Summary">
-    {#if footer}
+    {#if data && loaderState.phase === 'stale'}
+      <span>the cage is not answering</span>
+    {:else if footer}
       <!-- One span, like gen.py: .foot is a flex row, and flex items drop
            the spaces between the segments. -->
       <span
@@ -369,6 +398,17 @@
   .foot :global(.ip) {
     font: 12.5px var(--mono);
     color: var(--ink);
+  }
+
+  /* Loading/error, issue #39: the hero sentence's own position, but the
+     .sub font/colour -- one line, never a spinner, and nothing else on
+     the page (no band/tiles/events/footer) until the first fetch lands. */
+  .state-line {
+    position: absolute;
+    left: 54px;
+    top: 94px;
+    font: 13px/1.55 var(--sans);
+    color: var(--ink-2);
   }
 
   .foot {

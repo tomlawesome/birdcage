@@ -3,9 +3,13 @@ import quietFixture from '../../dev/fixtures/quiet.json'
 import silentFixture from '../../dev/fixtures/silent.json'
 import nightFixture from '../../dev/fixtures/night.json'
 import { computeSentence, plainText } from './index'
-import type { Canary, Visitor } from '../types'
+import type { Canary, LastHit, Visitor } from '../types'
 
-const quiet = quietFixture as { canaries: { canaries: Canary[] }; visitors: { visitors: Visitor[] }; trace: { now: string } }
+const quiet = quietFixture as {
+  canaries: { canaries: Canary[] }
+  visitors: { visitors: Visitor[] }
+  trace: { now: string; last_hit: LastHit | null }
+}
 const silent = silentFixture as typeof quiet
 const night = nightFixture as typeof quiet
 
@@ -33,13 +37,13 @@ describe('rule 1 -- a sweep with still_arriving (night fixture)', () => {
 
 describe('rule 2 -- any silent canary (silent fixture)', () => {
   it('hero: Quiet for 23 days — but canary-iot is silent.', () => {
-    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now)
+    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, silent.trace.last_hit)
     expect(s.rule).toBe(2)
     expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-iot is silent.')
   })
 
   it('sub matches SILENT_SUB from gen.py', () => {
-    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now)
+    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, silent.trace.last_hit)
     expect(plainText(s.sub)).toBe(
       'Its last heartbeat was 21:58:19, six minutes ago; it phones home every minute. A silent canary is not the ' +
         'quiet we want — the host may be down, or its firewall rule on the router may have moved. The other three are fine.',
@@ -47,7 +51,7 @@ describe('rule 2 -- any silent canary (silent fixture)', () => {
   })
 
   it('the day count is bold and --ok', () => {
-    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now)
+    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, silent.trace.last_hit)
     const days = s.hero.find((seg) => seg.text === '23 days')
     expect(days?.bold).toBe(true)
     expect(days?.cls).toBe('ok')
@@ -108,16 +112,25 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
 
 describe('rule 4 -- nothing (quiet fixture)', () => {
   it('hero: Quiet for 23 days.', () => {
-    const s = computeSentence(quiet.canaries.canaries, quiet.visitors.visitors, '14d', quiet.trace.now)
+    const s = computeSentence(quiet.canaries.canaries, quiet.visitors.visitors, '14d', quiet.trace.now, quiet.trace.last_hit)
     expect(s.rule).toBe(4)
     expect(plainText(s.hero)).toBe('Quiet for 23 days.')
   })
 
-  it('sub matches QUIET_SUB from gen.py', () => {
-    const s = computeSentence(quiet.canaries.canaries, quiet.visitors.visitors, '14d', quiet.trace.now)
+  it('sub built from last_hit, no "cleared with a note" clause', () => {
+    const s = computeSentence(quiet.canaries.canaries, quiet.visitors.visitors, '14d', quiet.trace.now, quiet.trace.last_hit)
     expect(plainText(s.sub)).toBe(
-      'Nothing has touched a canary since Thu 13 Aug — one touch on canary-guest :23 from 198.51.100.200, cleared ' +
-        'with a note. The four canaries have phoned home every minute since; the newest heartbeat was three seconds ago.',
+      'Nothing has touched a canary since Thu 13 Aug — one touch on canary-guest :23 from 198.51.100.200. ' +
+        'The four canaries have phoned home every minute since; the newest heartbeat was three seconds ago.',
+    )
+  })
+
+  it('last_hit null: shortest wording, no date to build a day count or a since-clause from', () => {
+    const s = computeSentence(quiet.canaries.canaries, quiet.visitors.visitors, '14d', quiet.trace.now, null)
+    expect(s.rule).toBe(4)
+    expect(plainText(s.hero)).toBe('Nothing has ever touched a canary.')
+    expect(plainText(s.sub)).toBe(
+      'The four canaries have phoned home every minute since; the newest heartbeat was three seconds ago.',
     )
   })
 })

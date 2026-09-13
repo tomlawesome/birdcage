@@ -2,11 +2,11 @@
 // Every value that Canary/Visitor actually carries is computed from the
 // fixture data; the one clause with no field to compute it from (rule
 // 4's "last touch before this window") is documented in quietStory.ts.
-import type { Canary, Range, Visitor } from '../types'
+import type { Canary, LastHit, Range, Visitor } from '../types'
 import { agoWords } from './duration'
 import { formatClock } from './time'
 import { canariesPhrase, minutesPhrase, rangeNoun, servicesNarrative, triedNarrative } from './narrative'
-import { DEFAULT_QUIET_STORY, computeQuietDays, type QuietStory } from './quietStory'
+import { buildQuietStory, computeQuietDays } from './quietStory'
 import { wordOrNumber } from './words'
 import type { Segment } from './types'
 
@@ -49,8 +49,8 @@ function rule1(visitor: Visitor, canaries: Canary[], visitors: Visitor[], range:
   }
 }
 
-function rule2(silent: Canary, canaries: Canary[], now: string, story: QuietStory): SentenceResult {
-  const days = computeQuietDays(now, story)
+function rule2(silent: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const days = computeQuietDays(now, buildQuietStory(lastHit))
   const otherCount = canaries.length - 1
   return {
     rule: 2,
@@ -110,8 +110,7 @@ function rule3(visitors: Visitor[], canaries: Canary[], range: Range): SentenceR
   }
 }
 
-function rule4(canaries: Canary[], now: string, story: QuietStory): SentenceResult {
-  const days = computeQuietDays(now, story)
+function rule4(canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
   const newest = canaries.reduce((a, b) =>
     new Date(b.last_heartbeat_at ?? 0) > new Date(a.last_heartbeat_at ?? 0) ? b : a,
   )
@@ -119,6 +118,21 @@ function rule4(canaries: Canary[], now: string, story: QuietStory): SentenceResu
     0,
     Math.round((new Date(now).getTime() - new Date(newest.last_heartbeat_at ?? now).getTime()) / 1000),
   )
+  const phonedHome = `The ${wordOrNumber(canaries.length)} canaries have phoned home every minute since; the newest heartbeat was ${agoWords(newestAgoS)}.`
+
+  const story = buildQuietStory(lastHit)
+  if (!story) {
+    // No alert has ever been recorded -- shortest wording consistent
+    // with rule4's voice, since there is no date to build "quiet for N
+    // days" or "since {date}" from (issue #39).
+    return {
+      rule: 4,
+      hero: [{ text: 'Nothing has ever touched a canary.' }],
+      sub: [{ text: phonedHome }],
+    }
+  }
+
+  const days = computeQuietDays(now, story)
   return {
     rule: 4,
     hero: [{ text: 'Quiet for ' }, { text: `${days} days`, bold: true, cls: 'ok' }, { text: '.' }],
@@ -128,9 +142,7 @@ function rule4(canaries: Canary[], now: string, story: QuietStory): SentenceResu
       { text: ` — ${story.lastTouchPrefix}` },
       { text: story.lastTouchIp, cls: 'ip' },
       { text: `${story.lastTouchSuffix} ` },
-      {
-        text: `The ${wordOrNumber(canaries.length)} canaries have phoned home every minute since; the newest heartbeat was ${agoWords(newestAgoS)}.`,
-      },
+      { text: phonedHome },
     ],
   }
 }
@@ -140,15 +152,15 @@ export function computeSentence(
   visitors: Visitor[],
   range: Range,
   now: string,
-  story: QuietStory = DEFAULT_QUIET_STORY,
+  lastHit: LastHit | null = null,
 ): SentenceResult {
   const arriving = visitors.find((v) => v.kind === 'sweep' && v.still_arriving)
   if (arriving) return rule1(arriving, canaries, visitors, range, now)
 
   const silent = canaries.find((c) => c.status === 'silent')
-  if (silent) return rule2(silent, canaries, now, story)
+  if (silent) return rule2(silent, canaries, now, lastHit)
 
   if (visitors.length > 0) return rule3(visitors, canaries, range)
 
-  return rule4(canaries, now, story)
+  return rule4(canaries, now, lastHit)
 }

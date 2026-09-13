@@ -1,18 +1,17 @@
 <script lang="ts">
-  // Issue #37: the trace itself. Loads /api/trace (fixture-aware via
-  // fetchTrace, same as every other read), measures its own container
-  // width with a ResizeObserver so X0/X1 stay responsive, and renders one
-  // SVG built by buildBandModel -- the geometry and label placement are
-  // ported from docs/design/concepts/round-6/gen.py, not redesigned.
-  import { fetchTrace } from '../api'
-  import type { Range, TraceResponse } from '../types'
+  // Issue #37: the trace itself, drawn from the trace prop App.svelte's
+  // one loader fetches (issue #39 -- Band does no fetching of its own).
+  // Measures its own container width with a ResizeObserver so X0/X1 stay
+  // responsive, and renders one SVG built by buildBandModel -- the
+  // geometry and label placement are ported from
+  // docs/design/concepts/round-6/gen.py, not redesigned.
+  import type { TraceResponse } from '../types'
   import { buildBandModel, kindColor, type BandModel } from './model'
 
-  let { range }: { range: Range } = $props()
+  let { trace }: { trace: TraceResponse } = $props()
 
   let container: HTMLDivElement | undefined = $state()
   let width: number = $state(1600)
-  let trace: TraceResponse | null = $state(null)
 
   $effect(() => {
     // jsdom (App.svelte.test.ts renders this indirectly) has no
@@ -26,25 +25,7 @@
     return () => observer.disconnect()
   })
 
-  // Re-loads whenever range changes; a stale in-flight response (the
-  // range changed again before it returned) is dropped rather than
-  // clobbering newer data.
-  $effect(() => {
-    const r = range
-    let cancelled = false
-    fetchTrace(r)
-      .then((data) => {
-        if (!cancelled) trace = data
-      })
-      .catch(() => {
-        if (!cancelled) trace = null
-      })
-    return () => {
-      cancelled = true
-    }
-  })
-
-  let model: BandModel | null = $derived(trace ? buildBandModel(trace, width) : null)
+  let model: BandModel | null = $derived(buildBandModel(trace, width))
 </script>
 
 <div class="band" bind:this={container}>
