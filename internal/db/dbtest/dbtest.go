@@ -108,7 +108,7 @@ func openPostgres(t *testing.T, adminURL string) *db.DB {
 	closeAdmin := true
 	defer func() {
 		if closeAdmin {
-			admin.Close()
+			_ = admin.Close() // t.Fatalf already fired; nothing left to report
 		}
 	}()
 
@@ -120,7 +120,11 @@ func openPostgres(t *testing.T, adminURL string) *db.DB {
 	}
 	closeAdmin = false // ownership moves to the Cleanup below
 	t.Cleanup(func() {
-		defer admin.Close()
+		defer func() {
+			if err := admin.Close(); err != nil {
+				t.Errorf("dbtest: close admin connection: %v", err)
+			}
+		}()
 		// -- FORCE (Postgres 13+) drops even if something is still
 		// connected, so a test's own leftover connections (closed by an
 		// earlier t.Cleanup, but the server can lag) never leave the

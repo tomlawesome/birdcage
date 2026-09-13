@@ -107,7 +107,7 @@ func Migrate(ctx context.Context, database *DB) error {
 // share the one *sql.Conn pinned here rather than going through the
 // normal pooled Exec path.
 func lockPostgresMigrations(ctx context.Context, database *DB) (unlock func(), err error) {
-	conn, err := database.DB.Conn(ctx)
+	conn, err := database.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire connection for migration lock: %w", err)
 	}
@@ -141,7 +141,7 @@ func applyMigration(ctx context.Context, database *DB, name string) error {
 		return fmt.Errorf("read migration %s: %w", name, err)
 	}
 
-	tx, err := database.DB.BeginTx(ctx, nil)
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin migration %s: %w", name, err)
 	}

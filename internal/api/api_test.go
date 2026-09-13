@@ -22,7 +22,11 @@ func openTempDB(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	if err := db.Migrate(context.Background(), database); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}

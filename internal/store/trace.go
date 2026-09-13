@@ -200,7 +200,7 @@ func newestAlert(ctx context.Context, database *db.DB) (Alert, bool, error) {
 	if err != nil {
 		return Alert{}, false, fmt.Errorf("query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	alerts, err := scanAlerts(rows, []Alert{})
 	if err != nil {
@@ -222,7 +222,7 @@ func alertsForSource(ctx context.Context, database *db.DB, sourceIP string) ([]A
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanAlerts(rows, []Alert{})
 }
@@ -242,7 +242,7 @@ func beatsByCanary(ctx context.Context, database *db.DB, now time.Time, window t
 	if err != nil {
 		return nil, fmt.Errorf("query heartbeats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	beats := make(map[string][]time.Time)
 	for rows.Next() {

@@ -209,7 +209,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	canaries := []Canary{}
 	for rows.Next() {
@@ -299,7 +299,7 @@ func hitsSinceByInstance(ctx context.Context, database *db.DB, now time.Time, ra
 	if err != nil {
 		return nil, fmt.Errorf("query hits per instance: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	hits := make(map[string]int64)
 	for rows.Next() {
