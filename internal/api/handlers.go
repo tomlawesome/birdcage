@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -111,4 +114,61 @@ func (h *handler) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// canariesResponse is GET /api/canaries' body.
+type canariesResponse struct {
+	Canaries []store.Canary `json:"canaries"`
+}
+
+// handleCanaries serves GET /api/canaries?range=<Range>, defaulting to
+// store.DefaultRange when range is omitted and rejecting any other
+// unrecognized value with 400 (issue #34).
+func (h *handler) handleCanaries(w http.ResponseWriter, r *http.Request) {
+	window, err := store.ParseRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "range must be one of 15m, 1h, 24h, 14d, 90d")
+		return
+	}
+
+	canaries, err := store.ListCanaries(r.Context(), h.db, h.now(), window)
+	if err != nil {
+		log.Printf("api: list canaries: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, canariesResponse{Canaries: canaries})
+}
+
+// heartbeatRequest is POST /api/heartbeat's body.
+type heartbeatRequest struct {
+	Canary string `json:"canary"`
+}
+
+// handleHeartbeat serves POST /api/heartbeat, recording that the named
+// canary phoned home at h.now(). A canary id that isn't registered
+// (store.ErrCanaryNotFound) is reported as 404 rather than silently
+// accepted, since enrollment (#1) is what's supposed to create the row.
+func (h *handler) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var req heartbeatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `body must be JSON: {"canary": "<id>"}`)
+		return
+	}
+	if strings.TrimSpace(req.Canary) == "" {
+		writeError(w, http.StatusBadRequest, "canary must not be empty")
+		return
+	}
+
+	err := store.RecordHeartbeat(r.Context(), h.db, req.Canary, h.now())
+	switch {
+	case errors.Is(err, store.ErrCanaryNotFound):
+		writeError(w, http.StatusNotFound, "unknown canary")
+		return
+	case err != nil:
+		log.Printf("api: record heartbeat: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
