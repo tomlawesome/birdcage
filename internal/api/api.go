@@ -12,28 +12,35 @@ package api
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
-// handler carries the dependencies every route needs: db for queries,
-// and now so handleStats' "current time" is pinnable in tests instead
-// of always reading time.Now().
+// handler carries the dependencies every route needs: db for queries, now
+// so handleStats' "current time" is pinnable in tests instead of always
+// reading time.Now(), and internalRanges (issue #35's
+// BIRDCAGE_INTERNAL_RANGES, parsed once by cmd/birdcage/main.go) so
+// handleVisitors/handleTrace can classify a source as "from inside" an
+// operator's own address space beyond the always-internal defaults.
 type handler struct {
-	db  *db.DB
-	now func() time.Time
+	db             *db.DB
+	now            func() time.Time
+	internalRanges []*net.IPNet
 }
 
 // NewHandler wires the dashboard API behind the requireAuth seam #8
-// will fill in (ADR-0003).
-func NewHandler(database *db.DB) http.Handler {
-	return newHandler(database, time.Now)
+// will fill in (ADR-0003). internalRanges is BIRDCAGE_INTERNAL_RANGES,
+// already parsed by the caller (store.ParseInternalRanges) -- nil is
+// fine and means no ranges beyond the always-internal defaults.
+func NewHandler(database *db.DB, internalRanges []*net.IPNet) http.Handler {
+	return newHandler(database, time.Now, internalRanges)
 }
 
-func newHandler(database *db.DB, now func() time.Time) http.Handler {
-	protected := requireAuth(dashboardRoutes(database, now))
+func newHandler(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) http.Handler {
+	protected := requireAuth(dashboardRoutes(database, now, internalRanges))
 
 	// Each known route is registered individually (rather than mounting
 	// dashboardRoutes at the "/api/" prefix) so anything dashboardRoutes
@@ -49,26 +56,30 @@ func newHandler(database *db.DB, now func() time.Time) http.Handler {
 	mux.Handle("/api/stats", protected)
 	mux.Handle("/api/canaries", protected)
 	mux.Handle("/api/heartbeat", protected)
+	mux.Handle("/api/visitors", protected)
+	mux.Handle("/api/trace", protected)
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
 
-// dashboardRoutes registers birdcage's entire dashboard API -- these
-// endpoints, all GET except POST /api/heartbeat -- and nothing else.
-// Mirrors mikroview's readOnlyRoutes (internal/api/auth.go there): a
-// caller dispatched to this mux is structurally unable to reach anything
-// but these routes, because nothing else is ever registered on it. That
+// dashboardRoutes registers birdcage's entire dashboard API -- six GET
+// routes and one POST (/api/heartbeat) -- and nothing else. Mirrors
+// mikroview's readOnlyRoutes (internal/api/auth.go there): a caller
+// dispatched to this mux is structurally unable to reach anything but
+// these routes, because nothing else is ever registered on it. That
 // property is what requireAuth (issue #8, ADR-0003) will rely on once it
 // exists: a lesser-privileged credential can be routed here and nowhere
 // else.
-func dashboardRoutes(database *db.DB, now func() time.Time) *http.ServeMux {
-	h := &handler{db: database, now: now}
+func dashboardRoutes(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) *http.ServeMux {
+	h := &handler{db: database, now: now, internalRanges: internalRanges}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/alerts", h.handleAlerts)
 	mux.HandleFunc("GET /api/instances", h.handleInstances)
 	mux.HandleFunc("GET /api/stats", h.handleStats)
 	mux.HandleFunc("GET /api/canaries", h.handleCanaries)
 	mux.HandleFunc("POST /api/heartbeat", h.handleHeartbeat)
+	mux.HandleFunc("GET /api/visitors", h.handleVisitors)
+	mux.HandleFunc("GET /api/trace", h.handleTrace)
 	return mux
 }
 

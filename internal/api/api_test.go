@@ -50,7 +50,7 @@ func TestHandleAlertsFilters(t *testing.T) {
 	insertAlert(t, database, "node-1", "203.0.113.9", 22, "ssh", "2026-01-01T00:00:00Z")
 	insertAlert(t, database, "node-2", "198.51.100.8", 80, "http", "2026-01-02T00:00:00Z")
 
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/alerts?instance=node-2", nil)
 	h.ServeHTTP(rec, req)
@@ -79,7 +79,7 @@ func TestHandleAlertsNextBeforeSetOnFullPage(t *testing.T) {
 		insertAlert(t, database, "node-1", "203.0.113.9", 22, "ssh", "2026-01-01T00:00:00Z")
 	}
 
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/alerts?limit=2", nil)
 	h.ServeHTTP(rec, req)
@@ -101,7 +101,7 @@ func TestHandleAlertsNextBeforeSetOnFullPage(t *testing.T) {
 
 func TestHandleAlertsBadQueryParams(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	cases := []string{
 		"/api/alerts?since=not-a-time",
@@ -134,7 +134,7 @@ func TestHandleInstances(t *testing.T) {
 	insertAlert(t, database, "node-1", "203.0.113.9", 22, "ssh", "2026-01-01T00:00:00Z")
 	insertAlert(t, database, "node-1", "203.0.113.9", 22, "ssh", "2026-01-02T00:00:00Z")
 
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/instances", nil)
 	h.ServeHTTP(rec, req)
@@ -156,7 +156,7 @@ func TestHandleStatsUsesInjectedNow(t *testing.T) {
 	insertAlert(t, database, "node-1", "203.0.113.9", 22, "ssh", "2026-01-01T00:00:00Z")
 
 	pinned := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	h := newHandler(database, fixedNow(pinned))
+	h := newHandler(database, fixedNow(pinned), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	h.ServeHTTP(rec, req)
@@ -176,9 +176,9 @@ func TestHandleStatsUsesInjectedNow(t *testing.T) {
 
 func TestReadOnlyRoutesRejectMutatingMethods(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
-	for _, path := range []string{"/api/alerts", "/api/instances", "/api/stats"} {
+	for _, path := range []string{"/api/alerts", "/api/instances", "/api/stats", "/api/canaries", "/api/visitors", "/api/trace"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(method, path, nil)
@@ -192,7 +192,7 @@ func TestReadOnlyRoutesRejectMutatingMethods(t *testing.T) {
 
 func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/nope", nil)
@@ -215,7 +215,7 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 
 func TestNewHandlerServesThroughPublicConstructor(t *testing.T) {
 	database := openTempDB(t)
-	h := NewHandler(database)
+	h := NewHandler(database, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
