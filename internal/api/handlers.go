@@ -172,3 +172,84 @@ func (h *handler) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+// visitorsResponse is GET /api/visitors' body. NextBefore mirrors
+// alertsResponse.NextBefore's short-page signal (see handleAlerts), just
+// keyed on a visitor's last_at instead of an alert id, since visitors
+// are a grouping over alerts rather than alert rows themselves.
+type visitorsResponse struct {
+	Visitors   []store.Visitor `json:"visitors"`
+	NextBefore *string         `json:"next_before"`
+}
+
+// handleVisitors serves GET /api/visitors?range=<Range>, defaulting and
+// rejecting an unrecognized range exactly like handleCanaries.
+func (h *handler) handleVisitors(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	window, err := store.ParseRange(q.Get("range"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "range must be one of 15m, 1h, 24h, 14d, 90d")
+		return
+	}
+
+	now := h.now().UTC()
+	filter := store.VisitorFilter{Since: now.Add(-window), Until: now}
+
+	if v := q.Get("before"); v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "before must be an RFC3339 timestamp, e.g. 2026-01-02T15:04:05Z")
+			return
+		}
+		filter.Before = t
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "limit must be an integer")
+			return
+		}
+		filter.Limit = n
+	}
+
+	visitors, err := store.ListVisitors(r.Context(), h.db, now, filter, h.internalRanges)
+	if err != nil {
+		log.Printf("api: list visitors: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := visitorsResponse{Visitors: visitors}
+	// Same "short page" signal as handleAlerts: a page shorter than the
+	// effective limit is the only reliable "nothing more" indicator
+	// available without a second query.
+	if len(visitors) == store.NormalizeVisitorLimit(filter.Limit) {
+		next := visitors[len(visitors)-1].LastAt.Format(time.RFC3339Nano)
+		resp.NextBefore = &next
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleTrace serves GET /api/trace?range=<Range>. store.Trace already
+// carries exactly TraceResponse's shape (frontend/src/lib/types.ts), so
+// there is no wrapper struct to build here, unlike handleVisitors'
+// pagination envelope.
+func (h *handler) handleTrace(w http.ResponseWriter, r *http.Request) {
+	rangeParam := r.URL.Query().Get("range")
+	window, err := store.ParseRange(rangeParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "range must be one of 15m, 1h, 24h, 14d, 90d")
+		return
+	}
+	if rangeParam == "" {
+		rangeParam = store.DefaultRange
+	}
+
+	trace, err := store.ListTrace(r.Context(), h.db, h.now(), rangeParam, window, h.internalRanges)
+	if err != nil {
+		log.Printf("api: list trace: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, trace)
+}

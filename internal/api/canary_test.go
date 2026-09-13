@@ -34,7 +34,7 @@ func TestHandleCanariesFields(t *testing.T) {
 	insertAlert(t, database, "canary-lan", "203.0.113.9", 22, "ssh", beatAt.Format(time.RFC3339))
 
 	// now just past the beat: still "ok".
-	h := newHandler(database, fixedNow(beatAt.Add(30*time.Second)))
+	h := newHandler(database, fixedNow(beatAt.Add(30*time.Second)), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/canaries", nil)
 	h.ServeHTTP(rec, req)
@@ -78,7 +78,7 @@ func TestHandleCanariesFields(t *testing.T) {
 
 func TestHandleCanariesRejectsUnknownRange(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/canaries?range=7d", nil)
@@ -98,7 +98,7 @@ func TestHandleHeartbeatRecordsAndUpdatesCanary(t *testing.T) {
 	})
 
 	beatAt := enrolledAt.Add(5 * time.Minute)
-	h := newHandler(database, fixedNow(beatAt))
+	h := newHandler(database, fixedNow(beatAt), nil)
 	rec := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]string{"canary": "canary-lan"})
 	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", bytes.NewReader(body))
@@ -119,7 +119,7 @@ func TestHandleHeartbeatRecordsAndUpdatesCanary(t *testing.T) {
 
 func TestHandleHeartbeatUnknownCanaryReturns404(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	rec := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]string{"canary": "no-such-canary"})
@@ -133,7 +133,7 @@ func TestHandleHeartbeatUnknownCanaryReturns404(t *testing.T) {
 
 func TestHandleHeartbeatBadRequests(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	cases := []string{`not json`, `{}`, `{"canary": ""}`, `{"canary": "  "}`}
 	for _, body := range cases {
@@ -148,7 +148,7 @@ func TestHandleHeartbeatBadRequests(t *testing.T) {
 
 func TestHandleHeartbeatRejectsGet(t *testing.T) {
 	database := openTempDB(t)
-	h := newHandler(database, time.Now)
+	h := newHandler(database, time.Now, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/heartbeat", nil)
