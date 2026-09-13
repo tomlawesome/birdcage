@@ -2,7 +2,6 @@ package audit
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,7 +9,7 @@ import (
 	bdb "github.com/tomlawesome/birdcage/internal/db"
 )
 
-func openMigratedDB(t *testing.T) *sql.DB {
+func openMigratedDB(t *testing.T) *bdb.DB {
 	t.Helper()
 	database, err := bdb.Open(filepath.Join(t.TempDir(), "birdcage-test.db"))
 	if err != nil {
@@ -37,7 +36,7 @@ func validEntry() Entry {
 	}
 }
 
-func scanRow(t *testing.T, database *sql.DB, id int64) (action, target, reason, triggeredBy, createdAt string) {
+func scanRow(t *testing.T, database *bdb.DB, id int64) (action, target, reason, triggeredBy, createdAt string) {
 	t.Helper()
 	err := database.QueryRow(
 		`SELECT action, target, reason, triggered_by, created_at FROM audit_log WHERE id = ?`, id,
@@ -48,7 +47,7 @@ func scanRow(t *testing.T, database *sql.DB, id int64) (action, target, reason, 
 	return action, target, reason, triggeredBy, createdAt
 }
 
-func rowCount(t *testing.T, database *sql.DB) int {
+func rowCount(t *testing.T, database *bdb.DB) int {
 	t.Helper()
 	var n int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&n); err != nil {
