@@ -1,0 +1,16 @@
+node_modules
+dist
+*.local
+
+# band-compare.mjs's live/ref/diff screenshots (issue #37) -- generated,
+# regenerate with `npm run compare:band`.
+scripts/.out
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# below-band-compare.mjs's screenshots (issue #38) -- same, regenerate with
+# `npm run compare:below-band`.
+.below-band-compare

@@ -16,14 +16,13 @@ automated mitigating action against real infrastructure. Compromise of
 birdcage itself is not just an information leak -- it's a path to acting on
 your network and firewall.
 
-**v1 has no built-in authentication** (same stance as
-[mikroview](https://github.com/tomlawesome/mikroview)'s SECURITY.md):
-anyone who can reach birdcage's HTTP port can see all aggregated honeypot
-alert data and, once implemented, trigger or observe automated mitigation
-actions. **Birdcage must not be exposed to the internet or an untrusted
-network in v1** -- see "Recommended deployment hardening" below. OIDC
-authentication is tracked for after v1
-([issue #8](https://github.com/tomlawesome/birdcage/issues/8)), not before.
+**Authentication is part of v1** (changed 2026-09-12,
+[ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
+self-hosted-only OIDC, following
+[mikroview](https://github.com/tomlawesome/mikroview)'s model. Until
+[#8](https://github.com/tomlawesome/birdcage/issues/8) lands, nothing gates
+the dashboard, so the network-exposure guidance below is the only control.
+This section is rewritten route-by-route when #8 lands.
 
 ## Data handling
 
@@ -34,11 +33,15 @@ authentication is tracked for after v1
   a bearer token or API key as a real leak, not a hypothetical one.
 - **Alert and audit data is persisted**, unlike mikroview's in-memory-only
   model -- birdcage's whole purpose is centralized history across
-  instances. SQLite for v1 (see [ADR-0001](docs/adr/0001-stack-and-storage.md)).
-  Alert data (source IPs, timestamps, targeted services) is not highly
-  sensitive on its own, but the database file should still be kept off any
-  shared/multi-tenant filesystem, same guidance as mikroview's
-  `config.yaml`.
+  instances. SQLite and Postgres, both mandatory in v1, selected by
+  `DATABASE_URL` (see [ADR-0001](docs/adr/0001-stack-and-storage.md) and
+  [docs/configuration.md](docs/configuration.md)). Alert data (source IPs,
+  timestamps, targeted services) is not highly sensitive on its own, but a
+  SQLite database file should still be kept off any shared/multi-tenant
+  filesystem, same guidance as mikroview's `config.yaml`, and a Postgres
+  `DATABASE_URL` is itself a credential -- it carries a plaintext password --
+  and must be handled with the same care as the CrowdSec/RouterOS secrets
+  above (env var or secret, never committed, never logged).
 - **The audit log is append-only by convention.** No application code path
   may issue `UPDATE`/`DELETE` against it. This is what makes "birdcage took
   automated action" reviewable and reversible rather than a black box --
@@ -50,17 +53,30 @@ authentication is tracked for after v1
   `BIRDCAGE_SYSLOG_ADDR`). **No authentication, no TLS.** OpenCanary
   instances push their hits here as plain UDP syslog datagrams, so anyone
   who can reach the port can inject forged alerts claiming any
-  `instance_id`, at any volume. This is accepted under the v1 "no
-  built-in authentication" stance above: the listener must be bound to a
-  loopback or trusted-LAN-only interface (see "Recommended deployment
-  hardening") and must never be exposed to the internet or an untrusted
-  network. It binds the unprivileged port 5514 (not 514) so birdcage can
+  `instance_id`, at any volume. This listener stays unauthenticated
+  regardless of the dashboard auth described above -- plain UDP syslog has
+  no session to gate: it must be bound to a loopback or trusted-LAN-only
+  interface (see "Recommended deployment hardening") and must never be
+  exposed to the internet or an untrusted network. It binds the
+  unprivileged port 5514 (not 514) so birdcage can
   run as a non-root container; operators point each OpenCanary instance's
   syslog handler `address` at this port.
-- **Dashboard HTTP — not implemented yet**
-  ([issue #3](https://github.com/tomlawesome/birdcage/issues/3)). It will
-  be listed here with its auth/TLS status once it lands, in the same
-  format as mikroview's SECURITY.md.
+- **Dashboard HTTP — TCP, default `:8080`** (override with
+  `BIRDCAGE_HTTP_ADDR`). No authentication yet --
+  [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
+  (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
+  Every route below has the same gap:
+
+  | Route            | Method | Auth                          |
+  | ---------------- | ------ | ------------------------------ |
+  | `/`              | GET    | requireAuth seam, pending #8  |
+  | `/api/alerts`    | GET    | requireAuth seam, pending #8  |
+  | `/api/instances` | GET    | requireAuth seam, pending #8  |
+  | `/api/stats`     | GET    | requireAuth seam, pending #8  |
+  | `/api/canaries`  | GET    | requireAuth seam, pending #8  |
+  | `/api/visitors`  | GET    | requireAuth seam, pending #8  |
+  | `/api/trace`     | GET    | requireAuth seam, pending #8  |
+  | `/api/heartbeat` | POST   | requireAuth seam, pending #8  |
 
 ## Recommended deployment hardening
 

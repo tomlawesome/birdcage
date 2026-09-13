@@ -2,7 +2,7 @@ package ingest
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"net"
 	"path/filepath"
 	"testing"
@@ -25,7 +25,11 @@ func TestServerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -55,7 +59,11 @@ func TestServerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial listener: %v", err)
 	}
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close client: %v", err)
+		}
+	})
 
 	send := func(b []byte) {
 		t.Helper()
@@ -136,7 +144,7 @@ func TestServerEndToEnd(t *testing.T) {
 	}
 }
 
-func waitForAlerts(ctx context.Context, database *sql.DB, n int, timeout time.Duration) ([]storedAlert, error) {
+func waitForAlerts(ctx context.Context, database *db.DB, n int, timeout time.Duration) ([]storedAlert, error) {
 	query := `SELECT instance_id, source_ip, dest_port, service, raw, received_at
 		FROM alerts ORDER BY id`
 	deadline := time.Now().Add(timeout)
@@ -149,15 +157,17 @@ func waitForAlerts(ctx context.Context, database *sql.DB, n int, timeout time.Du
 		for rows.Next() {
 			var a storedAlert
 			if err := rows.Scan(&a.InstanceID, &a.SourceIP, &a.DestPort, &a.Service, &a.Raw, &a.ReceivedAt); err != nil {
-				rows.Close()
-				return nil, err
+				return nil, errors.Join(err, rows.Close())
 			}
 			alerts = append(alerts, a)
 		}
 		scanErr := rows.Err()
-		rows.Close()
+		closeErr := rows.Close()
 		if scanErr != nil {
 			return nil, scanErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		if len(alerts) >= n {
 			return alerts, nil
