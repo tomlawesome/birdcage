@@ -40,7 +40,11 @@ func runCanaryAdd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close database: %v\n", err)
+		}
+	}()
 
 	ctx := context.Background()
 	if err := db.Migrate(ctx, database); err != nil {

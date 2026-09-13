@@ -158,7 +158,7 @@ func ListAlerts(ctx context.Context, database *db.DB, filter AlertFilter) ([]Ale
 	if err != nil {
 		return nil, fmt.Errorf("query alerts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanAlerts(rows, make([]Alert, 0, limit))
 }
@@ -214,7 +214,7 @@ func alertsInRange(ctx context.Context, database *db.DB, since, until time.Time)
 	if err != nil {
 		return nil, fmt.Errorf("query alerts in range: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanAlerts(rows, []Alert{})
 }
@@ -249,7 +249,7 @@ ORDER BY instance_id`
 	if err != nil {
 		return nil, fmt.Errorf("query instances: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	instances := []Instance{}
 	for rows.Next() {

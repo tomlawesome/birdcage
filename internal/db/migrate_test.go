@@ -86,7 +86,7 @@ func assertTableHasColumns(t *testing.T, database *db.DB, table, want string) {
 	if err != nil {
 		t.Fatalf("query columns for %s: %v", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var got []string
 	for rows.Next() {
