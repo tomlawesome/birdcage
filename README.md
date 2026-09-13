@@ -56,3 +56,11 @@ without a running backend or seeded data.
 
 Other frontend commands: `npm run check` (types), `npm test` (vitest),
 `npm run preview` (serve a production build locally).
+
+To check the built binary actually serves the dashboard end to end:
+seed a fresh SQLite database with the round-6 night story
+(`go run ./cmd/seed-story ./seed.db`), build the binary with a real
+frontend embedded as above, then run `BIRDCAGE_BIN=../birdcage npm run
+smoke` from `frontend/` -- it starts that binary against the seeded
+database on a free port and checks a real browser sees the sweep
+sentence and four tiles.
