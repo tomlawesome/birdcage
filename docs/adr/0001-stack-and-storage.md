@@ -26,11 +26,11 @@ implementation work starts.
   away direct reuse of mikroview's existing Svelte components, though the
   underlying design language (CSS custom properties, dark-dashboard layout)
   ports over framework-agnostically if wanted.
-- **Storage: SQLite for v1**, via a pure-Go driver (no cgo, so it still
+- **Storage: SQLite and Postgres, both in v1** (owner, 2026-09-13; originally
+  SQLite only, Postgres deferred). SQLite is the default, via a pure-Go driver (no cgo, so it still
   builds into a `CGO_ENABLED=0` distroless image the same way mikroview
   does). Right for a single-node, self-hosted deployment: no separate DB
-  server, trivial to back up (one file). Postgres support is a mandatory later requirement (owner,
-  2026-09-13; see
+  server, trivial to back up (one file). Postgres is mandatory in v1 (see
   [issue #7](https://github.com/tomlawesome/birdcage/issues/7)), informed by
   `tomlawesome/orbit`'s existing Postgres + Drizzle + migration/test setup
   as prior art for the pattern once multi-node/HA deployment is a real
@@ -56,8 +56,8 @@ implementation work starts.
   secrets from day one (env vars / Docker secrets, never logged, never
   committed) even though nothing gates access to the dashboard itself yet --
   see SECURITY.md.
-- SQLite's single-file model means backup/restore is simple, but also means
-  birdcage is single-node only until the deferred Postgres work lands.
+- SQLite's single-file model means backup/restore is simple; Postgres is the
+  choice for multi-node or heavier deployments. Every query must run on both.
 - No auth in v1 means SECURITY.md's network-exposure guidance is load-bearing
   in a way it wasn't for mikroview (a read-only viewer); a misconfigured
   reverse proxy here exposes a tool that can act on your network, not just
