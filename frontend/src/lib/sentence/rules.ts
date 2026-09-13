@@ -50,14 +50,21 @@ function rule1(visitor: Visitor, canaries: Canary[], visitors: Visitor[], range:
 }
 
 function rule2(silent: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
-  const days = computeQuietDays(now, buildQuietStory(lastHit))
+  const story = buildQuietStory(lastHit)
   const otherCount = canaries.length - 1
+  // No alert ever recorded: there is no "quiet for N days" to count from,
+  // so the hero is just the silence (never "Quiet for 0 days").
+  const quiet = story
+    ? [
+        { text: 'Quiet for ' },
+        { text: `${computeQuietDays(now, story)} days`, bold: true, cls: 'ok' },
+        { text: ' — but ' },
+      ]
+    : [{ text: 'Nothing has touched a canary — but ' }]
   return {
     rule: 2,
     hero: [
-      { text: 'Quiet for ' },
-      { text: `${days} days`, bold: true, cls: 'ok' },
-      { text: ' — but ' },
+      ...quiet,
       { text: `${silent.name} is silent.`, bold: true },
     ],
     sub: [
