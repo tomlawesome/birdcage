@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net"
 	"path/filepath"
@@ -145,7 +144,7 @@ func TestServerEndToEnd(t *testing.T) {
 	}
 }
 
-func waitForAlerts(ctx context.Context, database *sql.DB, n int, timeout time.Duration) ([]storedAlert, error) {
+func waitForAlerts(ctx context.Context, database *db.DB, n int, timeout time.Duration) ([]storedAlert, error) {
 	query := `SELECT instance_id, source_ip, dest_port, service, raw, received_at
 		FROM alerts ORDER BY id`
 	deadline := time.Now().Add(timeout)
