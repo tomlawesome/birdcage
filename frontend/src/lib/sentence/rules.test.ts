@@ -56,6 +56,12 @@ describe('rule 2 -- any silent canary (silent fixture)', () => {
     expect(days?.bold).toBe(true)
     expect(days?.cls).toBe('ok')
   })
+
+  it('with no last_hit the hero is only the silence, never "Quiet for 0 days"', () => {
+    const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, null)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Nothing has touched a canary — but canary-iot is silent.')
+  })
 })
 
 describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
