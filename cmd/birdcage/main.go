@@ -59,6 +59,17 @@ func main() {
 	log.SetFlags(log.LstdFlags)
 	log.SetPrefix("birdcage: ")
 
+	// `birdcage canary add ...` (cmd/birdcage/canary.go) is a standalone
+	// dev/testing subcommand -- issue #34's "Not in this slice" -- that
+	// exits immediately rather than starting the syslog/HTTP services
+	// below.
+	if len(os.Args) > 2 && os.Args[1] == "canary" && os.Args[2] == "add" {
+		if err := runCanaryAdd(os.Args[3:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
