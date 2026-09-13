@@ -17,6 +17,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
+	"github.com/tomlawesome/birdcage/web"
 )
 
 const (
@@ -85,9 +86,27 @@ func main() {
 	// <birdcage-host>:5514 rather than the conventional :514.
 	syslogServer := ingest.NewServer(syslogAddr, database)
 
+	// /api/* keeps its exact routing (internal/api.NewHandler is
+	// untouched); everything else is the dashboard frontend (#36),
+	// embedded into this binary by web/embed.go with an SPA fallback to
+	// index.html so a client-side route survives a refresh.
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/api/", api.NewHandler(database))
+	if uiHandler, err := web.Handler(); err != nil {
+		log.Printf("frontend: %v (serving API only)", err)
+	} else {
+		if !web.HasUI() {
+			log.Print("no frontend was built into this binary (run `npm run build` in frontend/, see README) -- serving API only")
+			uiHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "no frontend was built into this binary -- the API is available under /api/", http.StatusServiceUnavailable)
+			})
+		}
+		rootMux.Handle("/", uiHandler)
+	}
+
 	httpServer := &http.Server{
 		Addr:              httpAddr,
-		Handler:           api.NewHandler(database),
+		Handler:           rootMux,
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 	}
 

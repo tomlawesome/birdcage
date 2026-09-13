@@ -1,1 +1,8 @@
 birdcage.db
+
+# The frontend build (frontend/npm run build) is copied here for
+# web/embed.go's //go:embed all:dist to pick up -- nothing built is
+# committed, only the placeholder .gitkeep the embed pattern needs to
+# compile against an unbuilt checkout.
+/web/dist/*
+!/web/dist/.gitkeep
