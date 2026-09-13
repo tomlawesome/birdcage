@@ -65,8 +65,9 @@ This section is rewritten route-by-route when #8 lands.
   `BIRDCAGE_HTTP_ADDR`). Read-only JSON API; no authentication yet --
   [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
   (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
-  Three routes, all `GET`: `/api/alerts`, `/api/instances`,
-  `/api/stats`.
+  Six routes are `GET`: `/api/alerts`, `/api/instances`, `/api/stats`,
+  `/api/canaries`, `/api/visitors`, `/api/trace`. One is `POST`:
+  `/api/heartbeat`.
 
 ## Recommended deployment hardening
 
