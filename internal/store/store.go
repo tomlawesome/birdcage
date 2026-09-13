@@ -1,6 +1,10 @@
-// Package store is a read-only query layer over birdcage's alerts table,
-// backing the dashboard API (#3). It never writes: all inserts stay in
-// internal/ingest, which is the only writer the alerts table has.
+// Package store is birdcage's query layer backing the dashboard API
+// (#3). It is read-only over the alerts table: all inserts there stay in
+// internal/ingest, which is the only writer the alerts table has. It
+// does own the write path for the separate canaries/heartbeats registry
+// (issue #34, canary.go) -- POST /api/heartbeat and canary enrollment --
+// since that data belongs to this layer's own tables, not to ingested
+// honeypot data.
 package store
 
 import (
@@ -68,26 +72,38 @@ func NormalizeLimit(limit int) int {
 	return limit
 }
 
-// receivedAtCompare returns the SQL fragment that compares the
-// received_at column against a bound parameter with op (">=" or "<="),
-// using whichever mechanism the engine needs to compare it as an
-// instant rather than as text:
+// timeCompare returns the SQL fragment that compares column against a
+// bound parameter with op (">=", "<=", or "<"), using whichever
+// mechanism the engine needs to compare it as an instant rather than as
+// text:
 //
-// received_at's RFC3339Nano encoding trims trailing zeros from the
-// fractional seconds (time.Time.Format's documented behavior: 0.5s
-// formats as ".5", 0s formats with no fractional part at all), so two
-// timestamps that differ only in how many digits got trimmed can compare
-// backwards under a raw TEXT >=/<= -- e.g. "...:00Z" sorts *after*
-// "...:00.5Z" as plain text, even though the first instant is earlier.
-// SQLite's julianday() and Postgres' ::timestamptz cast both parse the
-// text into a real, comparable value first, so the comparison is
-// numeric and correct regardless of trimming. See
+// RFC3339Nano encoding trims trailing zeros from the fractional seconds
+// (time.Time.Format's documented behavior: 0.5s formats as ".5", 0s
+// formats with no fractional part at all), so two timestamps that differ
+// only in how many digits got trimmed can compare backwards under a raw
+// TEXT >=/<= -- e.g. "...:00Z" sorts *after* "...:00.5Z" as plain text,
+// even though the first instant is earlier. SQLite's julianday() and
+// Postgres' ::timestamptz cast both parse the text into a real,
+// comparable value first, so the comparison is numeric and correct
+// regardless of trimming. See
 // TestListAlertsSinceHandlesTrimmedFractionalSeconds.
-func receivedAtCompare(engine db.Engine, op string) string {
+//
+// Every TEXT timestamp column in this package (alerts.received_at,
+// canaries.enrolled_at/last_heartbeat_at, heartbeats.at) goes through
+// this one function rather than each growing its own comparison, per
+// AGENTS.md's "reuse the mechanism, don't invent a second one".
+func timeCompare(engine db.Engine, column, op string) string {
 	if engine == db.Postgres {
-		return "received_at::timestamptz " + op + " ?::timestamptz"
+		return column + "::timestamptz " + op + " ?::timestamptz"
 	}
-	return "julianday(received_at) " + op + " julianday(?)"
+	return "julianday(" + column + ") " + op + " julianday(?)"
+}
+
+// receivedAtCompare is timeCompare pinned to alerts.received_at, kept as
+// its own name since every call site in this file already reads that
+// way.
+func receivedAtCompare(engine db.Engine, op string) string {
+	return timeCompare(engine, "received_at", op)
 }
 
 // ListAlerts returns alerts matching filter, newest first. Ordering is
