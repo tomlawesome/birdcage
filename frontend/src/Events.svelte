@@ -5,32 +5,19 @@
   // (no visitors, nothing silent) shows one italic line instead. The
   // legend line lives here too -- static copy, ported from gen.py's
   // LEGEND constant, not derived from any response.
-  import { fetchCanaries, fetchVisitors } from './lib/api'
-  import type { Canary, Range, Visitor } from './lib/types'
-  import { computeDroppedOutRow, computeEventRow, computeEventsHeading, deriveNow, QUIET_LINE, type EventRow } from './lib/sentence'
+  //
+  // Takes canaries, visitors and trace as props from App.svelte's one
+  // loader (issue #39); no fetching here. "now" comes from trace.now,
+  // never the browser clock or a visitor's own last_at.
+  import type { Canary, Range, TraceResponse, Visitor } from './lib/types'
+  import { computeDroppedOutRow, computeEventRow, computeEventsHeading, QUIET_LINE, type EventRow } from './lib/sentence'
 
-  let { range }: { range: Range } = $props()
-
-  let canaries: Canary[] = $state([])
-  let visitors: Visitor[] = $state([])
-
-  $effect(() => {
-    const r = range
-    ;(async () => {
-      try {
-        const [c, v] = await Promise.all([fetchCanaries(r), fetchVisitors(r)])
-        canaries = c.canaries
-        visitors = v.visitors
-      } catch {
-        canaries = []
-        visitors = []
-      }
-    })()
-  })
+  let { canaries, visitors, trace, range }: { canaries: Canary[]; visitors: Visitor[]; trace: TraceResponse; range: Range } =
+    $props()
 
   let heading = $derived(computeEventsHeading(canaries, visitors, range))
   let silentCanaries = $derived(canaries.filter((c) => c.status === 'silent'))
-  let now = $derived(deriveNow(visitors) ?? new Date().toISOString())
+  let now = $derived(trace.now)
   let rows: EventRow[] = $derived(
     [
       ...silentCanaries.map((c) => ({ row: computeDroppedOutRow(c), sortKey: c.last_heartbeat_at ?? '' })),
