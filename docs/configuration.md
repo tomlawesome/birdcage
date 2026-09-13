@@ -75,3 +75,20 @@ Stop birdcage before restoring so it isn't writing to the database mid-restore.
 See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_SYSLOG_ADDR`
 and `BIRDCAGE_HTTP_ADDR`, which set the ingestion and dashboard listen
 addresses and carry their own network-exposure guidance.
+
+### `BIRDCAGE_INTERNAL_RANGES`
+
+`GET /api/visitors` and `GET /api/trace` (issue #35) classify a source as
+"from inside" your own network without being told, using RFC 1918
+addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), IPv6 ULA
+(`fc00::/7`), and link-local addresses. If part of your LAN uses address
+space outside those defaults, list it here as a comma-separated list of
+CIDR blocks, e.g.:
+
+```
+BIRDCAGE_INTERNAL_RANGES=100.64.0.0/10,203.0.113.0/24
+```
+
+Unset (the common case) adds nothing beyond the built-in defaults. An
+invalid entry stops birdcage at startup with an error naming the bad CIDR,
+rather than silently ignoring it.

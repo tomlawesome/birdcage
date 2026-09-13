@@ -19,6 +19,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
+	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/web"
 )
 
@@ -33,6 +34,12 @@ const (
 	envDBPath      = "BIRDCAGE_DB_PATH"
 	envSyslogAddr  = "BIRDCAGE_SYSLOG_ADDR"
 	envHTTPAddr    = "BIRDCAGE_HTTP_ADDR"
+	// envInternalRanges names extra CIDR blocks GET /api/visitors and GET
+	// /api/trace's "inside" kind rule (issue #35) treats as internal,
+	// beyond the always-internal defaults (RFC 1918, IPv6 ULA,
+	// link-local) -- for an operator whose LAN uses address space
+	// outside those. See docs/configuration.md.
+	envInternalRanges = "BIRDCAGE_INTERNAL_RANGES"
 
 	defaultDBPath     = "birdcage.db"
 	defaultSyslogAddr = ":5514"
@@ -109,6 +116,11 @@ func main() {
 		log.Fatalf("migrate database: %v", err)
 	}
 
+	internalRanges, err := store.ParseInternalRanges(os.Getenv(envInternalRanges))
+	if err != nil {
+		log.Fatalf("%s: %v", envInternalRanges, err)
+	}
+
 	// The default listen address is deliberately :5514, an unprivileged
 	// port, so birdcage can run as a non-root container. Operators should
 	// point each OpenCanary instance's syslog handler "address" at
@@ -120,7 +132,7 @@ func main() {
 	// embedded into this binary by web/embed.go with an SPA fallback to
 	// index.html so a client-side route survives a refresh.
 	rootMux := http.NewServeMux()
-	rootMux.Handle("/api/", api.NewHandler(database))
+	rootMux.Handle("/api/", api.NewHandler(database, internalRanges))
 	if uiHandler, err := web.Handler(); err != nil {
 		log.Printf("frontend: %v (serving API only)", err)
 	} else {
