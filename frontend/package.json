@@ -11,7 +11,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "compare:band": "node scripts/band-compare.mjs",
-    "compare:below-band": "node scripts/below-band-compare.mjs"
+    "compare:below-band": "node scripts/below-band-compare.mjs",
+    "smoke": "node e2e/smoke.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

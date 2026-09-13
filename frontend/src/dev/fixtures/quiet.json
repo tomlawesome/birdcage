@@ -143,6 +143,14 @@
         ],
         "hits": []
       }
-    ]
+    ],
+    "last_hit": {
+      "at": "2026-08-13T00:00:00Z",
+      "visitor": "198.51.100.200",
+      "canary": "canary-guest",
+      "port": 23,
+      "service": "telnet",
+      "kind": "touch"
+    }
   }
 }

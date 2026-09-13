@@ -3,43 +3,30 @@
   // tile per canary, in lane order, box outline in the lane colour,
   // dashed --ink-3 with no fill when silent.
   //
-  // Reads both fetchCanaries (name, ports, status, the hits count) and
-  // fetchTrace (the per-hit detail a status sentence like "swept 21:55"
-  // needs, plus the server's "now" -- Canary alone carries neither).
-  import { fetchCanaries, fetchTrace } from './lib/api'
-  import type { Canary, Range } from './lib/types'
+  // Takes canaries (name, ports, status, the hits count) and trace (the
+  // per-hit detail a status sentence like "swept 21:55" needs, plus the
+  // server's "now" and last_hit -- Canary alone carries neither) as
+  // props from App.svelte's one loader (issue #39); no fetching here.
+  import type { Canary, Range, TraceResponse } from './lib/types'
   import { computeTileStatus, type TileHit } from './lib/sentence'
 
-  let { range }: { range: Range } = $props()
+  let { canaries, trace, range }: { canaries: Canary[]; trace: TraceResponse; range: Range } = $props()
 
   const LANE_ORDER = ['lan', 'srv', 'iot', 'guest'] as const
   const RANGE_LABELS: Record<Range, string> = { '15m': '15 m', '1h': '1 h', '24h': '24 h', '14d': '14 d', '90d': '90 d' }
 
-  let canaries: Canary[] = $state([])
-  let hitsById: Map<string, TileHit[]> = $state(new Map())
-  let now: string = $state(new Date().toISOString())
-
-  $effect(() => {
-    const r = range
-    ;(async () => {
-      try {
-        const [c, t] = await Promise.all([fetchCanaries(r), fetchTrace(r)])
-        canaries = [...c.canaries].sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane))
-        hitsById = new Map(t.canaries.map((tc) => [tc.id, tc.hits]))
-        now = t.now
-      } catch {
-        canaries = []
-        hitsById = new Map()
-      }
-    })()
-  })
+  let sortedCanaries: Canary[] = $derived(
+    [...canaries].sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane)),
+  )
+  let hitsById: Map<string, TileHit[]> = $derived(new Map(trace.canaries.map((tc) => [tc.id, tc.hits])))
 </script>
 
 <div class="tiles">
-  {#each canaries as c (c.id)}
+  {#each sortedCanaries as c (c.id)}
     {@const status = computeTileStatus(
       { status: c.status, last_heartbeat_at: c.last_heartbeat_at, silent_for_s: c.silent_for_s, ports: c.ports, hits: hitsById.get(c.id) ?? [] },
-      now,
+      trace.now,
+      trace.last_hit,
     )}
     <div class="tile k-{c.lane}" class:silent={c.status === 'silent'}>
       <div class="n">{c.name}<small>on {c.lane}</small></div>

@@ -1863,6 +1863,14 @@
           }
         ]
       }
-    ]
+    ],
+    "last_hit": {
+      "at": "2026-09-12T22:04:31Z",
+      "visitor": "203.0.113.42",
+      "canary": "canary-guest",
+      "port": 23,
+      "service": "telnet",
+      "kind": "sweep"
+    }
   }
 }

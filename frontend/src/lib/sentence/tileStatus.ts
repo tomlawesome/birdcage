@@ -10,11 +10,11 @@
 //   silent:           "○ silent 6 m 12 s · last heard 21:58:19"
 // Reads TraceCanary (fetchTrace), not Canary (fetchCanaries) -- the hit
 // times and kinds this needs only exist at that granularity.
-import type { VisitorKind } from '../types'
+import type { LastHit, VisitorKind } from '../types'
 import { durationExact } from './duration'
 import { formatClock, formatClockShort, relativeDayLabel } from './time'
 import { portForService } from './ports'
-import { DEFAULT_QUIET_STORY, computeQuietDays, type QuietStory } from './quietStory'
+import { buildQuietStory, computeQuietDays } from './quietStory'
 import type { Segment } from './types'
 
 export interface TileHit {
@@ -44,7 +44,7 @@ function beatAgoSeconds(lastHeartbeatAt: string | null, now: string): number {
 export function computeTileStatus(
   canary: TileCanaryInput,
   now: string,
-  story: QuietStory = DEFAULT_QUIET_STORY,
+  lastHit: LastHit | null = null,
 ): TileStatusResult {
   if (canary.status === 'silent') {
     return {
@@ -63,7 +63,7 @@ export function computeTileStatus(
   const hits = canary.hits ?? []
 
   if (hits.length === 0) {
-    const days = computeQuietDays(now, story)
+    const days = computeQuietDays(now, buildQuietStory(lastHit))
     return {
       lines: [[{ text: `● ${beat} s`, cls: 'ok' }, { text: ` · every minute · quiet ${days} d` }]],
     }
