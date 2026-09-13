@@ -23,3 +23,34 @@ OpenCanary UDP syslog ingestion bridge (`cmd/birdcage`). See:
   branching model.
 - [SECURITY.md](SECURITY.md) — threat model and deployment hardening.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — branching and testing expectations.
+
+## Run the frontend
+
+The dashboard (`frontend/`, a Svelte 5 + TypeScript app) is embedded into
+the `birdcage` binary at build time — `go build ./...` works with no
+frontend built at all (it just serves the API), but a real UI needs one
+build step first:
+
+```
+cd frontend && npm ci && npm run build
+cp -r frontend/dist/. web/dist/
+go build ./...
+```
+
+`web/dist/` is gitignored except for the placeholder `.gitkeep` `go:embed`
+needs to compile against a fresh clone — never commit a real build there.
+
+For day-to-day frontend work, run the dev server against a real backend on
+`:8080` (`go run ./cmd/birdcage`):
+
+```
+cd frontend && npm run dev
+```
+
+`npm run dev` also understands `?scene=quiet|silent|night` in the URL: it
+loads one of the fixtures under `frontend/src/dev/fixtures/` instead of
+calling the API, so the chrome and later slices can be built and reviewed
+without a running backend or seeded data.
+
+Other frontend commands: `npm run check` (types), `npm test` (vitest),
+`npm run preview` (serve a production build locally).
