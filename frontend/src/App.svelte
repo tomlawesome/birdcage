@@ -5,6 +5,7 @@
   // later slices; this component leaves that area empty on purpose.
   import { fetchCanaries, fetchVisitors } from './lib/api'
   import type { Canary, Visitor } from './lib/types'
+  import Band from './lib/band/Band.svelte'
 
   const RANGES = ['15m', '1h', '24h', '14d', '90d'] as const
   type RangeKey = (typeof RANGES)[number]
@@ -143,9 +144,7 @@
   </nav>
 
   <main aria-label={TABS[activeTab]}>
-    <!-- The band, the tiles and the events -- later slices (#34, #35
-         and the Svelte build's own step 3) render here. Deliberately
-         empty for #36. -->
+    <Band range={activeRange} />
   </main>
 
   <footer class="foot" aria-label="Summary">
