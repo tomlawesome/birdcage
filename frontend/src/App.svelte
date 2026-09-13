@@ -1,10 +1,14 @@
 <script lang="ts">
-  // Issue #36: the chrome only -- wordmark, tabs, range chips, status,
-  // the sideways deck, the footer sentence slot, the "i" button. The
-  // band, the tiles and the events (the void below the chrome) are
-  // later slices; this component leaves that area empty on purpose.
-  import { fetchCanaries, fetchVisitors } from './lib/api'
+  // Issue #36: the chrome -- wordmark, tabs, range chips, status, the
+  // sideways deck, the footer sentence slot, the "i" button. Issue #38
+  // fills the status pill, the footer sentence and the hero/sub sentence
+  // with the real rules (frontend/src/lib/sentence), and adds the tiles
+  // and events that render below the chrome.
+  import { fetchCanaries, fetchTrace, fetchVisitors } from './lib/api'
   import type { Canary, Visitor } from './lib/types'
+  import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
+  import Tiles from './Tiles.svelte'
+  import Events from './Events.svelte'
 
   const RANGES = ['15m', '1h', '24h', '14d', '90d'] as const
   type RangeKey = (typeof RANGES)[number]
@@ -15,9 +19,6 @@
     '14d': '14 d',
     '90d': '90 d',
   }
-  // Client state only (issue #36 scope): picking a range does not
-  // refetch anything yet -- there is nothing below the chrome to
-  // refresh until the band/tiles/events slices land.
   let activeRange: RangeKey = $state('14d')
 
   const TABS = ['the cage', 'visitors', 'audit log']
@@ -26,72 +27,53 @@
   const DECK = ['THE TRACE', 'VISITORS', 'AUDIT LOG', 'SETTINGS']
   let activeDeck = $state(0)
 
-  interface Summary {
-    kind: 'quiet' | 'silent' | 'live'
-    okCount: number
-    total: number
-    visitorCount: number
-    note: string | null
-    footSentence: string
-  }
+  let canaries: Canary[] = $state([])
+  let visitors: Visitor[] = $state([])
+  let traceNow: string | null = $state(null)
+  let loaded = $state(false)
 
-  let summary: Summary | null = $state(null)
-
-  function formatDuration(seconds: number): string {
-    const m = Math.floor(seconds / 60)
-    const s = seconds % 60
-    return m > 0 ? `${m} m ${s} s` : `${s} s`
-  }
-
-  function summarize(canaries: Canary[], visitors: Visitor[]): Summary {
-    const okCount = canaries.filter((c) => c.status === 'ok').length
-    const silent = canaries.find((c) => c.status === 'silent')
-    const total = canaries.length
-    const visitorCount = visitors.length
-
-    if (silent) {
-      return {
-        kind: 'silent',
-        okCount,
-        total,
-        visitorCount,
-        note: `${silent.name} silent ${formatDuration(silent.silent_for_s ?? 0)}`,
-        footSentence: 'silence is only good news while the heartbeat keeps coming',
+  // Reloads whenever activeRange changes -- the status pill, the
+  // sentence, the footer and (each independently) Tiles and Events all
+  // depend on the selected range. A failure here (no backend yet, or a
+  // ?scene= that doesn't match a fixture) leaves loaded false and the
+  // status slot renders its neutral state.
+  $effect(() => {
+    const range = activeRange
+    ;(async () => {
+      try {
+        const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
+        canaries = c.canaries
+        visitors = v.visitors
+        traceNow = t.now
+        loaded = true
+      } catch {
+        loaded = false
       }
-    }
-    if (visitorCount > 0) {
-      const flagged = visitors.filter((v) => v.kind === 'sweep').length
-      return {
-        kind: 'live',
-        okCount,
-        total,
-        visitorCount,
-        note: flagged > 0 ? `${flagged} flagged` : null,
-        footSentence: 'one or more addresses have touched a canary in this range',
-      }
-    }
-    return {
-      kind: 'quiet',
-      okCount,
-      total,
-      visitorCount,
-      note: null,
-      footSentence: 'a flat trace is the cage working -- nothing to act on',
-    }
-  }
+    })()
+  })
 
-  // Runs once when the component is created, deliberately not tied to
-  // activeRange -- see the comment on activeRange above. A failure here
-  // (no backend yet, or a scene param that doesn't match a fixture)
-  // leaves summary null and the status slot renders its neutral state.
-  ;(async () => {
-    try {
-      const [canaries, visitors] = await Promise.all([fetchCanaries('14d'), fetchVisitors('14d')])
-      summary = summarize(canaries.canaries, visitors.visitors)
-    } catch {
-      summary = null
+  let status = $derived(loaded ? computeStatus(canaries, visitors, activeRange) : null)
+  let sentence = $derived(loaded && traceNow ? computeSentence(canaries, visitors, activeRange, traceNow) : null)
+  let footer = $derived(loaded && traceNow ? computeFooter(canaries, visitors, activeRange, traceNow) : null)
+
+  const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+  /** "the cage · sat 5 sep · 22:04:31" (quiet/silent) or "the cage · fri
+   * 12 sep · 1 flagged · N hits" (live) -- gen.py's `.grp` line above the
+   * hero. Not itself named in issue #38's acceptance list; approximated
+   * from what fetchCanaries/fetchTrace carry (total hits in range, not
+   * "today" specifically, since no field distinguishes the two). */
+  let grpLine = $derived.by(() => {
+    if (!traceNow) return ''
+    const d = new Date(traceNow)
+    const day = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
+    if (status?.kind === 'live') {
+      const hits = canaries.reduce((sum, c) => sum + c.hits, 0)
+      return `the cage · ${day} · ${status.flagCount} flagged · ${hits} hits`
     }
-  })()
+    return `the cage · ${day} · ${formatClock(traceNow)}`
+  })
 </script>
 
 <div class="scene">
@@ -118,18 +100,22 @@
         </button>
       {/each}
     </div>
-    {#if summary === null}
+    {#if status === null}
       <span class="dim">no data yet</span>
-    {:else if summary.kind === 'silent'}
-      <span><span class="dot off" aria-hidden="true"></span>{summary.okCount} of {summary.total} phoning home<span class="mute"> · {summary.note}</span></span>
-      <span>&#9678; {summary.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
-    {:else if summary.kind === 'live'}
-      <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {summary.total} canaries</span>
-      {#if summary.note}<span class="flag">&#9873; {summary.note}</span>{/if}
-      <span>&#9678; {summary.visitorCount} visitors</span>
+    {:else if status.kind === 'silent'}
+      <span
+        ><span class="dot off" aria-hidden="true"></span>{status.okCount} of {status.total} phoning home<span class="mute"
+          > · {status.silentName} silent {status.silentFor}</span
+        ></span
+      >
+      <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
+    {:else if status.kind === 'live'}
+      <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {status.total} canaries</span>
+      {#if status.flagCount > 0}<span class="flag">&#9873; {status.flagCount}</span>{/if}
+      <span>&#9678; {status.visitorCount} visitors</span>
     {:else}
-      <span><span class="dot" aria-hidden="true"></span>QUIET &middot; {summary.okCount} of {summary.total} phoning home</span>
-      <span>&#9678; {summary.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
+      <span><span class="dot" aria-hidden="true"></span>QUIET &middot; {status.okCount} of {status.total} phoning home</span>
+      <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
     {/if}
     <span class="who">tom (admin)</span>
   </div>
@@ -146,11 +132,25 @@
     <!-- The band, the tiles and the events -- later slices (#34, #35
          and the Svelte build's own step 3) render here. Deliberately
          empty for #36. -->
+    {#if sentence}
+      <div class="grp">{grpLine}</div>
+      <div class="hero">
+        {#each sentence.hero as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
+          >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
+      </div>
+      <div class="sub">
+        {#each sentence.sub as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
+          >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
+      </div>
+    {/if}
+    <Tiles range={activeRange} />
+    <Events range={activeRange} />
   </main>
 
   <footer class="foot" aria-label="Summary">
-    {#if summary}
-      <span>{summary.footSentence}</span>
+    {#if footer}
+      {#each footer as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
+        >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
     {/if}
   </footer>
 
@@ -306,6 +306,57 @@
     min-height: calc(100vh - 60px - 40px);
   }
 
+  /* The sentence (issue #38): positioned like gen.py's .grp/.hero/.sub,
+     absolute within .scene -- same coordinate system as the wordmark and
+     status above, so source order here doesn't have to match the band's. */
+  .grp {
+    position: absolute;
+    left: 54px;
+    top: 70px;
+    font: 600 9.5px var(--mono);
+    letter-spacing: 0.16em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+  }
+  .hero {
+    position: absolute;
+    left: 54px;
+    top: 94px;
+    font: 500 26px/1.2 var(--sans);
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .hero :global(b) {
+    font-weight: 700;
+  }
+  .sub {
+    position: absolute;
+    left: 54px;
+    top: 134px;
+    width: 900px;
+    font: 13px/1.55 var(--sans);
+    color: var(--ink-2);
+  }
+  .sub :global(b) {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .hero :global(.ok),
+  .sub :global(.ok),
+  .foot :global(.ok) {
+    color: var(--ok);
+  }
+  .hero :global(.r),
+  .sub :global(.r),
+  .foot :global(.r) {
+    color: var(--alarm);
+  }
+  .sub :global(.ip),
+  .foot :global(.ip) {
+    font: 12.5px var(--mono);
+    color: var(--ink);
+  }
+
   .foot {
     position: absolute;
     left: 0;
@@ -315,6 +366,10 @@
     justify-content: center;
     font: 12.5px var(--sans);
     color: var(--ink-2);
+  }
+  .foot :global(b) {
+    color: var(--ink);
+    font-weight: 600;
   }
 
   .ibtn {
