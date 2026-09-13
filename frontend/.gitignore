@@ -10,3 +10,7 @@ scripts/.out
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# below-band-compare.mjs's screenshots (issue #38) -- same, regenerate with
+# `npm run compare:below-band`.
+.below-band-compare

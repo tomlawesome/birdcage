@@ -66,14 +66,14 @@
    * from what fetchCanaries/fetchTrace carry (total hits in range, not
    * "today" specifically, since no field distinguishes the two). */
   let grpLine = $derived.by(() => {
-    if (!traceNow) return ''
+    if (!traceNow) return { lead: '', flagged: '', tail: '' }
     const d = new Date(traceNow)
     const day = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
     if (status?.kind === 'live') {
       const hits = canaries.reduce((sum, c) => sum + c.hits, 0)
-      return `the cage · ${day} · ${status.flagCount} flagged · ${hits} hits`
+      return { lead: `the cage · ${day} · `, flagged: `${status.flagCount} flagged`, tail: ` · ${hits} hits` }
     }
-    return `the cage · ${day} · ${formatClock(traceNow)}`
+    return { lead: `the cage · ${day} · ${formatClock(traceNow)}`, flagged: '', tail: '' }
   })
 </script>
 
@@ -105,14 +105,13 @@
       <span class="dim">no data yet</span>
     {:else if status.kind === 'silent'}
       <span
-        ><span class="dot off" aria-hidden="true"></span>{status.okCount} of {status.total} phoning home<span class="mute"
-          > · {status.silentName} silent {status.silentFor}</span
-        ></span
+        ><span class="dot off" aria-hidden="true"></span>{status.okCount} of {status.total} phoning home &middot;
+        <span class="mute">{status.silentName} silent {status.silentFor}</span></span
       >
       <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
     {:else if status.kind === 'live'}
       <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {status.total} canaries</span>
-      {#if status.flagCount > 0}<span class="flag">&#9873; {status.flagCount}</span>{/if}
+      {#if status.flagCount > 0}<span class="flag">&#9873; <b>{status.flagCount}</b></span>{/if}
       <span>&#9678; {status.visitorCount} visitors</span>
     {:else}
       <span><span class="dot" aria-hidden="true"></span>QUIET &middot; {status.okCount} of {status.total} phoning home</span>
@@ -132,7 +131,7 @@
   <main aria-label={TABS[activeTab]}>
     <!-- The sentence (#38), the band (#37), the tiles and the events (#38). -->
     {#if sentence}
-      <div class="grp">{grpLine}</div>
+      <div class="grp">{grpLine.lead}{#if grpLine.flagged}<span class="r">{grpLine.flagged}</span>{grpLine.tail}{/if}</div>
       <div class="hero">
         {#each sentence.hero as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
           >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
@@ -149,8 +148,12 @@
 
   <footer class="foot" aria-label="Summary">
     {#if footer}
-      {#each footer as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
-        >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
+      <!-- One span, like gen.py: .foot is a flex row, and flex items drop
+           the spaces between the segments. -->
+      <span
+        >{#each footer as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b
+          >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}</span
+      >
     {/if}
   </footer>
 
@@ -247,6 +250,14 @@
   .status .flag {
     color: var(--alarm);
   }
+  .status .flag b {
+    color: var(--void);
+    background: var(--alarm);
+    border-radius: 9px;
+    padding: 0 7px;
+    font-weight: 700;
+    font-size: 10.5px;
+  }
   .status .mute {
     color: var(--ink);
     font-weight: 700;
@@ -317,6 +328,9 @@
     letter-spacing: 0.16em;
     color: var(--ink-3);
     text-transform: uppercase;
+  }
+  .grp .r {
+    color: var(--alarm);
   }
   .hero {
     position: absolute;
