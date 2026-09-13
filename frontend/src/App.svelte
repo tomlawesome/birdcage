@@ -7,6 +7,7 @@
   import { fetchCanaries, fetchTrace, fetchVisitors } from './lib/api'
   import type { Canary, Visitor } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
+  import Band from './lib/band/Band.svelte'
   import Tiles from './Tiles.svelte'
   import Events from './Events.svelte'
 
@@ -129,9 +130,7 @@
   </nav>
 
   <main aria-label={TABS[activeTab]}>
-    <!-- The band, the tiles and the events -- later slices (#34, #35
-         and the Svelte build's own step 3) render here. Deliberately
-         empty for #36. -->
+    <!-- The sentence (#38), the band (#37), the tiles and the events (#38). -->
     {#if sentence}
       <div class="grp">{grpLine}</div>
       <div class="hero">
@@ -143,6 +142,7 @@
           >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
       </div>
     {/if}
+    <Band range={activeRange} />
     <Tiles range={activeRange} />
     <Events range={activeRange} />
   </main>
