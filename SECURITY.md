@@ -62,12 +62,21 @@ This section is rewritten route-by-route when #8 lands.
   run as a non-root container; operators point each OpenCanary instance's
   syslog handler `address` at this port.
 - **Dashboard HTTP — TCP, default `:8080`** (override with
-  `BIRDCAGE_HTTP_ADDR`). Read-only JSON API; no authentication yet --
+  `BIRDCAGE_HTTP_ADDR`). No authentication yet --
   [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
   (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
-  Six routes are `GET`: `/api/alerts`, `/api/instances`, `/api/stats`,
-  `/api/canaries`, `/api/visitors`, `/api/trace`. One is `POST`:
-  `/api/heartbeat`.
+  Every route below has the same gap:
+
+  | Route            | Method | Auth                          |
+  | ---------------- | ------ | ------------------------------ |
+  | `/`              | GET    | requireAuth seam, pending #8  |
+  | `/api/alerts`    | GET    | requireAuth seam, pending #8  |
+  | `/api/instances` | GET    | requireAuth seam, pending #8  |
+  | `/api/stats`     | GET    | requireAuth seam, pending #8  |
+  | `/api/canaries`  | GET    | requireAuth seam, pending #8  |
+  | `/api/visitors`  | GET    | requireAuth seam, pending #8  |
+  | `/api/trace`     | GET    | requireAuth seam, pending #8  |
+  | `/api/heartbeat` | POST   | requireAuth seam, pending #8  |
 
 ## Recommended deployment hardening
 
