@@ -2,28 +2,29 @@ package ingest
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // Server listens for OpenCanary UDP syslog datagrams and persists each
 // one as an alert row.
 type Server struct {
 	addr string
-	db   *sql.DB
+	db   *db.DB
 
 	mu    sync.Mutex
 	laddr net.Addr
 }
 
 // NewServer returns a Server that will listen on addr (a UDP address such
-// as ":5514") and insert alerts into the alerts table of db.
-func NewServer(addr string, db *sql.DB) *Server {
-	return &Server{addr: addr, db: db}
+// as ":5514") and insert alerts into the alerts table of database.
+func NewServer(addr string, database *db.DB) *Server {
+	return &Server{addr: addr, db: database}
 }
 
 // Addr reports the local address the server is bound to. It is nil until
@@ -48,11 +49,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.mu.Lock()
 	s.laddr = conn.LocalAddr()
 	s.mu.Unlock()
-	defer conn.Close()
-
+	// The goroutine is the single owner of the socket's close: the read
+	// loop has no exit other than ctx cancellation, so closing here too
+	// would double-close on the normal shutdown path.
 	go func() {
 		<-ctx.Done()
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Error("ingest: closing UDP socket failed", "err", err)
+		}
 	}()
 
 	buf := make([]byte, MaxDatagramSize)

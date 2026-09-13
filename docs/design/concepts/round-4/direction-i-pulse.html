@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 4 · I · The pulse</title>
+<style>
+  :root {
+    --void: #06080e; --raised: #0f1422;
+    --hair: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --ink: #e9eefb; --ink-2: #97a4c4; --ink-3: #55628a; --accent: #9db8e8;
+    --lan: #3987e5; --srv: #199e70; --iot: #c98500; --guest: #d76a9e;
+    --ok: #37b364; --alarm: #ff5470; --now: #e8b05a;
+    --sweep: #ff5470; --repeat: #ff9e64; --inside: #f072c8; --touch: #b8c56a;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--void); color: var(--ink); font: 13.5px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .scene { position: relative; width: 1600px; height: 1000px; margin: 0 auto 40px; overflow: hidden;
+    background: radial-gradient(1100px 600px at 75% -15%, rgba(80,115,205,.07), transparent 60%), var(--void); border-bottom: 1px solid var(--hair-2); }
+  .tag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; font: 9.5px var(--mono); letter-spacing: .12em; color: var(--ink-3); z-index: 9; }
+  .wordmark { position: absolute; top: 18px; left: 24px; font-weight: 800; font-size: 15px; letter-spacing: .04em; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  .tabs { position: absolute; top: 21px; left: 150px; display: flex; gap: 20px; font: 12px var(--sans); color: var(--ink-3); }
+  .tabs .on { color: var(--ink); position: relative; }
+  .tabs .on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 1px; background: var(--accent); }
+  .status { position: absolute; top: 20px; right: 40px; display: flex; gap: 16px; align-items: center; font: 11px var(--mono); color: var(--ink-2); }
+  .status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: 1px; }
+  .status .dot.off { background: none; border: 1.5px solid var(--ink-2); animation: none; }
+  .status .flag { color: var(--alarm); } .status .flag b { color: var(--void); background: var(--alarm); border-radius: 9px; padding: 0 7px; font-weight: 700; font-size: 10.5px; }
+  .status .mute { color: var(--ink); font-weight: 700; }
+  .status .who { color: var(--ink-3); border: 1px solid var(--hair-2); border-radius: 999px; padding: 2px 10px; }
+  .ranges { display: flex; gap: 4px; margin-right: 8px; } .ranges span { font: 11px var(--mono); color: var(--ink-3); padding: 2px 9px; border-radius: 4px; }
+  .ranges .on { color: var(--ink); background: var(--raised); border: 1px solid var(--hair-2); }
+  .deck { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 30px; align-items: center; }
+  .deck span { writing-mode: sideways-lr; color: var(--ink-3); font: 500 9.5px var(--mono); letter-spacing: .22em; }
+  .deck .on { color: var(--ink); font-size: 12px; letter-spacing: .26em; }
+  .ibtn { position: absolute; left: 14px; bottom: 12px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hair-2); color: var(--ink-3); font: italic 600 11px Georgia, serif; text-align: center; line-height: 16px; }
+
+  .score { position: absolute; inset: 0; pointer-events: none; }
+  .stv { stroke: var(--hair-2); stroke-width: 1; }
+  .ax { font: 600 9.5px var(--mono); letter-spacing: .12em; fill: var(--ink-3); text-transform: uppercase; }
+  .ax.now { fill: var(--now); letter-spacing: .06em; }
+  .axs { font: 9px var(--sans); fill: var(--ink-3); text-anchor: middle; opacity: .8; }
+  .axt { stroke: var(--hair-2); }
+  .brink { stroke: var(--now); stroke-width: 1.6; }
+  .flagline { stroke: var(--alarm); stroke-width: .7; stroke-dasharray: 2 5; opacity: .7; }
+  .flag-t { font: 700 9.5px var(--mono); fill: var(--alarm); }
+  .lanelab { font: 600 10px var(--mono); }
+  .lanelab tspan { font-weight: 500; fill: var(--ink-3); } .lanelab .ok { fill: var(--ok); } .lanelab .al { fill: var(--alarm); font-weight: 700; } .lanelab .rp { fill: var(--repeat); font-weight: 700; }
+  .lyric { font: 10.5px var(--mono); fill: var(--ink-2); } .lyric.dim { fill: var(--ink-3); }
+
+  /* the sentence at the top of the cage */
+  .grp { position: absolute; left: 54px; font: 600 9.5px var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; }
+  .grp b { color: var(--ink-2); font-weight: 600; } .grp .r { color: var(--alarm); }
+  .hero { position: absolute; left: 54px; font: 500 26px/1.2 var(--sans); color: var(--ink); letter-spacing: -.01em; }
+  .hero b { font-weight: 700; } .hero .ok { color: var(--ok); } .hero .r { color: var(--alarm); }
+  .sub { position: absolute; left: 54px; font: 13px/1.55 var(--sans); color: var(--ink-2); }
+  .sub b { color: var(--ink); font-weight: 600; } .sub .ip { font: 12.5px var(--mono); color: var(--ink); }
+  .quiet-line { position: absolute; left: 54px; font: italic 13px/1.5 var(--sans); color: var(--ink-3); }
+  .quiet-line b { color: var(--ink-2); font-weight: 600; font-style: normal; }
+  .acts { position: absolute; left: 54px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pill { font: 600 11px var(--sans); color: var(--accent); border: 1px solid var(--hair-2); border-radius: 999px; padding: 4px 14px; white-space: nowrap; }
+  .pill.quiet { color: var(--ink-3); } .pill.warn { color: var(--now); border-color: rgba(232,176,90,.5); }
+  .acts .why { font: 10px var(--mono); color: var(--ink-3); }
+
+  /* birds, left of a canary's stave */
+  .bird { position: absolute; left: 54px; width: 566px; display: grid; grid-template-columns: 120px 1fr; column-gap: 14px; align-items: baseline; }
+  .bird .n { font: 650 11.5px var(--mono); } .bird .s { font: 11px var(--mono); color: var(--ink-3); }
+  .bird .s .beat { color: var(--ok); } .bird .s .swept { color: var(--alarm); font-weight: 700; } .bird .s .rep { color: var(--repeat); font-weight: 700; }
+  .bird .s .off { color: var(--ink); font-weight: 700; }
+
+  /* visitor rows, the docket, left of a visitor's stave */
+  .row { position: absolute; left: 40px; width: 580px; height: 84px; display: grid; grid-template-columns: 120px 1fr 44px; column-gap: 14px; align-items: center; padding-left: 14px; border-bottom: 1px solid var(--hair); }
+  .row::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--k); }
+  .row.k-sw { --k: var(--sweep); } .row.k-rp { --k: var(--repeat); } .row.k-in { --k: var(--inside); } .row.k-tc { --k: var(--touch); }
+  .row .kind { font: 700 11px var(--mono); letter-spacing: .06em; color: var(--k); white-space: nowrap; }
+  .row .kind small { display: block; font: 10px var(--mono); color: var(--ink-3); letter-spacing: 0; margin-top: 3px; font-weight: 500; }
+  .row .who { font: 12.5px var(--sans); color: var(--ink-2); line-height: 1.45; }
+  .row .who .ip { font: 12.5px var(--mono); color: var(--ink); } .row .who b { color: var(--ink); font-weight: 600; }
+  .row .n { text-align: right; font: 12px var(--mono); color: var(--ink); } .row .n small { display: block; font: 10px var(--mono); color: var(--ink-3); }
+
+  /* visitor chips, the pulse's whole docket */
+  .chips { position: absolute; left: 140px; right: 80px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font: 11px var(--mono); color: var(--ink-3); }
+  .chip { --k: var(--ink-3); border: 1px solid var(--hair-2); border-left: 3px solid var(--k); border-radius: 4px; padding: 5px 12px 5px 10px; font: 11px var(--mono); color: var(--ink-2); }
+  .chip b { color: var(--k); font-weight: 700; } .chip .ip { color: var(--ink); }
+  .chip.k-sw { --k: var(--sweep); } .chip.k-rp { --k: var(--repeat); } .chip.k-in { --k: var(--inside); } .chip.k-tc { --k: var(--touch); }
+
+  .legend { position: absolute; left: 54px; right: 80px; font: 11px var(--sans); color: var(--ink-3); display: flex; gap: 22px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; }
+  .legend .ln { display: inline-block; width: 22px; height: 0; border-top: 1.5px solid var(--lan); vertical-align: 3px; margin-right: 6px; opacity: .7; }
+  .legend .gap { display: inline-block; width: 22px; height: 0; border-top: 1.5px dashed var(--ink-3); vertical-align: 3px; margin-right: 6px; }
+  .legend .nw { color: var(--now); }
+  .foot { position: absolute; left: 0; right: 40px; bottom: 14px; display: flex; justify-content: center; gap: 60px; font: 12.5px var(--sans); color: var(--ink-2); }
+  .foot b { color: var(--ink); font-weight: 600; } .foot .r { color: var(--alarm); } .foot .ok { color: var(--ok); font-weight: 600; }
+  @media (prefers-reduced-motion: no-preference) { .status .dot { animation: pulse 1.8s ease-in-out infinite; } .status .dot.off { animation: none; } @keyframes pulse { 50% { opacity: .4; } } }
+  .hero, .sub, .grp, .quiet-line, .acts, .legend { left: 140px; }
+</style>
+</head>
+<body>
+
+<section class="scene" id="i-quiet" aria-label="The pulse: four canary heartbeats across a quiet fortnight, nothing else">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the pulse</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot"></span>QUIET · 4 of 4 phoning home</span><span>◎ 0 visitors · 14 d</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE PULSE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<text x="140.0" y="256" class="ax">14 d</text><line x1="140.0" y1="262" x2="140.0" y2="270" class="axt"/>
+<text x="453.6" y="256" class="ax">24 h</text><line x1="453.6" y1="262" x2="453.6" y2="270" class="axt"/>
+<text x="767.3" y="256" class="ax">1 h</text><line x1="767.3" y1="262" x2="767.3" y2="270" class="axt"/>
+<text x="1049.5" y="256" class="ax">15 m</text><line x1="1049.5" y1="262" x2="1049.5" y2="270" class="axt"/>
+<text x="1520" y="256" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="479.9" y1="265" x2="479.9" y2="270" class="axt" opacity=".6"/>
+<line x1="431.4" y1="265" x2="431.4" y2="270" class="axt" opacity=".6"/>
+<line x1="407.3" y1="265" x2="407.3" y2="270" class="axt" opacity=".6"/>
+<line x1="383.2" y1="265" x2="383.2" y2="270" class="axt" opacity=".6"/>
+<line x1="359.1" y1="265" x2="359.1" y2="270" class="axt" opacity=".6"/>
+<text x="359.1" y="282" class="axs">tue 1 sep</text>
+<line x1="334.9" y1="265" x2="334.9" y2="270" class="axt" opacity=".6"/>
+<line x1="310.8" y1="265" x2="310.8" y2="270" class="axt" opacity=".6"/>
+<line x1="286.7" y1="265" x2="286.7" y2="270" class="axt" opacity=".6"/>
+<line x1="262.6" y1="265" x2="262.6" y2="270" class="axt" opacity=".6"/>
+<text x="262.6" y="282" class="axs">fri 28 aug</text>
+<line x1="238.4" y1="265" x2="238.4" y2="270" class="axt" opacity=".6"/>
+<line x1="214.3" y1="265" x2="214.3" y2="270" class="axt" opacity=".6"/>
+<line x1="190.2" y1="265" x2="190.2" y2="270" class="axt" opacity=".6"/>
+<line x1="166.1" y1="265" x2="166.1" y2="270" class="axt" opacity=".6"/>
+<text x="166.1" y="282" class="axs">mon 24 aug</text>
+<line x1="141.9" y1="265" x2="141.9" y2="270" class="axt" opacity=".6"/>
+<text x="610.5" y="282" class="axs">23 hours, compressed</text>
+<text x="1284.8" y="282" class="axs">the last quarter hour, stretched</text>
+<line x1="1520" y1="268" x2="1520" y2="800" class="brink"/>
+<line x1="140" y1="340" x2="1520" y2="340" stroke="var(--lan)" stroke-width="1.2" opacity=".5"/>
+<rect x="1514.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1483.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1451.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1420.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1389.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1357.7" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1326.3" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1295.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1263.6" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1232.2" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1200.9" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1169.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1138.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1106.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="326" class="lanelab" fill="var(--lan)">canary-lan <tspan dx="10"><tspan class="ok">● 9 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+<line x1="140" y1="480" x2="1520" y2="480" stroke="var(--srv)" stroke-width="1.2" opacity=".5"/>
+<rect x="1497.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1466.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1435.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1403.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1372.3" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1341.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1309.6" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1278.2" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1246.9" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1184.1" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1090.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1058.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="466" class="lanelab" fill="var(--srv)">canary-srv <tspan dx="10"><tspan class="ok">● 41 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+<line x1="140" y1="620" x2="1520" y2="620" stroke="var(--iot)" stroke-width="1.2" opacity=".5"/>
+<rect x="1507.7" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1476.3" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1445.0" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1413.6" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1382.2" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1350.9" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1319.5" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1288.2" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1225.4" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1194.1" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1162.7" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1131.3" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1100.0" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1068.6" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="606" class="lanelab" fill="var(--iot)">canary-iot <tspan dx="10"><tspan class="ok">● 22 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+<line x1="140" y1="760" x2="1520" y2="760" stroke="var(--guest)" stroke-width="1.2" opacity=".5"/>
+<rect x="1517.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1486.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1423.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1392.2" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1360.8" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1329.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1298.1" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.7" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1235.4" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1204.0" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1172.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1141.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1109.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1078.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="746" class="lanelab" fill="var(--guest)">canary-guest <tspan dx="10"><tspan class="ok">● 3 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · sat 5 sep · 22:04:31</div>
+  <div class="hero" style="top:94px">Quiet for <b class="ok">23 days</b>.</div>
+  <div class="sub" style="top:134px;width:760px">Nothing has touched a canary since <b>Thu 13 Aug</b> — one touch on canary-guest :23 from <span class="ip">198.51.100.200</span>, cleared with a note. The four canaries have phoned home every minute since; the newest heartbeat was three seconds ago.</div>
+  <div class="chips" style="top:836px"><span>◎ visitors · 14 d ·</span><span class="chip">none — last <span class="ip">198.51.100.200</span> · one touch · 13 aug · cleared</span></div>
+  <div class="legend" style="top:892px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a break is silence</span><span>a tick is a visitor, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>its words sit beside it</span><span class="nw">— the brink · now</span></div>
+  <div class="foot"><span>twenty-three quiet days · <span class="ok">all four phoning home</span> · nothing to act on</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">I · THE PULSE · SCENE 1 · A QUIET FORTNIGHT</div>
+</section>
+
+<section class="scene" id="i-silent" aria-label="The pulse: one heartbeat has stopped">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the pulse</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot off"></span>3 of 4 phoning home · <span class="mute">canary-iot silent 6 m</span></span><span>◎ 0 visitors · 14 d</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE PULSE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<text x="140.0" y="256" class="ax">14 d</text><line x1="140.0" y1="262" x2="140.0" y2="270" class="axt"/>
+<text x="453.6" y="256" class="ax">24 h</text><line x1="453.6" y1="262" x2="453.6" y2="270" class="axt"/>
+<text x="767.3" y="256" class="ax">1 h</text><line x1="767.3" y1="262" x2="767.3" y2="270" class="axt"/>
+<text x="1049.5" y="256" class="ax">15 m</text><line x1="1049.5" y1="262" x2="1049.5" y2="270" class="axt"/>
+<text x="1520" y="256" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="479.9" y1="265" x2="479.9" y2="270" class="axt" opacity=".6"/>
+<line x1="431.4" y1="265" x2="431.4" y2="270" class="axt" opacity=".6"/>
+<line x1="407.3" y1="265" x2="407.3" y2="270" class="axt" opacity=".6"/>
+<line x1="383.2" y1="265" x2="383.2" y2="270" class="axt" opacity=".6"/>
+<line x1="359.1" y1="265" x2="359.1" y2="270" class="axt" opacity=".6"/>
+<text x="359.1" y="282" class="axs">tue 1 sep</text>
+<line x1="334.9" y1="265" x2="334.9" y2="270" class="axt" opacity=".6"/>
+<line x1="310.8" y1="265" x2="310.8" y2="270" class="axt" opacity=".6"/>
+<line x1="286.7" y1="265" x2="286.7" y2="270" class="axt" opacity=".6"/>
+<line x1="262.6" y1="265" x2="262.6" y2="270" class="axt" opacity=".6"/>
+<text x="262.6" y="282" class="axs">fri 28 aug</text>
+<line x1="238.4" y1="265" x2="238.4" y2="270" class="axt" opacity=".6"/>
+<line x1="214.3" y1="265" x2="214.3" y2="270" class="axt" opacity=".6"/>
+<line x1="190.2" y1="265" x2="190.2" y2="270" class="axt" opacity=".6"/>
+<line x1="166.1" y1="265" x2="166.1" y2="270" class="axt" opacity=".6"/>
+<text x="166.1" y="282" class="axs">mon 24 aug</text>
+<line x1="141.9" y1="265" x2="141.9" y2="270" class="axt" opacity=".6"/>
+<text x="610.5" y="282" class="axs">23 hours, compressed</text>
+<text x="1284.8" y="282" class="axs">the last quarter hour, stretched</text>
+<line x1="1520" y1="268" x2="1520" y2="800" class="brink"/>
+<line x1="140" y1="340" x2="1520" y2="340" stroke="var(--lan)" stroke-width="1.2" opacity=".5"/>
+<rect x="1514.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1483.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1451.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1420.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1389.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1357.7" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1326.3" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1295.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1263.6" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1232.2" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1200.9" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1169.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1138.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1106.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="326" class="lanelab" fill="var(--lan)">canary-lan <tspan dx="10"><tspan class="ok">● 9 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+<line x1="140" y1="480" x2="1520" y2="480" stroke="var(--srv)" stroke-width="1.2" opacity=".5"/>
+<rect x="1497.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1466.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1435.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1403.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1372.3" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1341.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1309.6" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1278.2" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1246.9" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1184.1" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1090.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1058.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="466" class="lanelab" fill="var(--srv)">canary-srv <tspan dx="10"><tspan class="ok">● 41 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+<line x1="140" y1="620" x2="1325.5" y2="620" stroke="var(--iot)" stroke-width="1.2" opacity=".5"/>
+<line x1="1325.5" y1="620" x2="1520" y2="620" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="2 5" opacity=".7"/>
+<rect x="1319.5" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1288.2" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1225.4" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1194.1" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1162.7" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1131.3" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1100.0" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1068.6" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<circle cx="1325.5" cy="620" r="4" fill="var(--void)" stroke="var(--iot)" stroke-width="1.4"/>
+<text x="1316.5" y="609" class="lyric" text-anchor="end">last heartbeat 21:58:19 · silent 6 m 12 s</text>
+<text x="140" y="606" class="lanelab" fill="var(--iot)">canary-iot <tspan dx="10"><tspan class="al" fill="var(--ink)">○ silent 6 m 12 s</tspan><tspan> · last heartbeat 21:58:19</tspan></tspan></text>
+<line x1="140" y1="760" x2="1520" y2="760" stroke="var(--guest)" stroke-width="1.2" opacity=".5"/>
+<rect x="1517.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1486.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1423.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1392.2" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1360.8" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1329.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1298.1" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.7" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1235.4" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1204.0" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1172.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1141.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1109.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1078.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<text x="140" y="746" class="lanelab" fill="var(--guest)">canary-guest <tspan dx="10"><tspan class="ok">● 3 s</tspan><tspan> · quiet 23 d</tspan></tspan></text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · sat 5 sep · 22:04:31</div>
+  <div class="hero" style="top:94px">Quiet for <b class="ok">23 days</b> — but <b>canary-iot is silent.</b></div>
+  <div class="sub" style="top:134px;width:760px">Its last heartbeat was <b>21:58:19</b>, six minutes ago; it phones home every minute. A silent canary is not the quiet we want — the host may be down, or its firewall rule on the router may have moved. The other three are fine.</div>
+  <div class="acts" style="top:196px"><span class="pill">open canary-iot ▸</span><span class="pill">lookback in mikroview ▸</span><span class="pill quiet">mark as maintenance</span></div>
+  <div class="chips" style="top:836px"><span>◎ visitors · 14 d ·</span><span class="chip">none — last <span class="ip">198.51.100.200</span> · one touch · 13 aug · cleared</span></div>
+  <div class="legend" style="top:892px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a break is silence</span><span>a tick is a visitor, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>its words sit beside it</span><span class="nw">— the brink · now</span></div>
+  <div class="foot"><span>twenty-three quiet days · <b>one canary has stopped talking</b> — silence is only good news while the heartbeat keeps coming</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">I · THE PULSE · SCENE 2 · A CANARY GONE SILENT</div>
+</section>
+
+<section class="scene" id="i-night" aria-label="The pulse on the sweep night: every visitor is a tick on a canary line, with its words beside it">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the pulse</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot"></span>LIVE · 4 canaries</span><span class="flag">⚑ <b>1</b></span><span>◎ 4 visitors</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE PULSE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<text x="140.0" y="256" class="ax">14 d</text><line x1="140.0" y1="262" x2="140.0" y2="270" class="axt"/>
+<text x="453.6" y="256" class="ax">24 h</text><line x1="453.6" y1="262" x2="453.6" y2="270" class="axt"/>
+<text x="767.3" y="256" class="ax">1 h</text><line x1="767.3" y1="262" x2="767.3" y2="270" class="axt"/>
+<text x="1049.5" y="256" class="ax">15 m</text><line x1="1049.5" y1="262" x2="1049.5" y2="270" class="axt"/>
+<text x="1520" y="256" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="479.9" y1="265" x2="479.9" y2="270" class="axt" opacity=".6"/>
+<line x1="431.4" y1="265" x2="431.4" y2="270" class="axt" opacity=".6"/>
+<line x1="407.3" y1="265" x2="407.3" y2="270" class="axt" opacity=".6"/>
+<line x1="383.2" y1="265" x2="383.2" y2="270" class="axt" opacity=".6"/>
+<line x1="359.1" y1="265" x2="359.1" y2="270" class="axt" opacity=".6"/>
+<text x="359.1" y="282" class="axs">tue 8 sep</text>
+<line x1="334.9" y1="265" x2="334.9" y2="270" class="axt" opacity=".6"/>
+<line x1="310.8" y1="265" x2="310.8" y2="270" class="axt" opacity=".6"/>
+<line x1="286.7" y1="265" x2="286.7" y2="270" class="axt" opacity=".6"/>
+<line x1="262.6" y1="265" x2="262.6" y2="270" class="axt" opacity=".6"/>
+<text x="262.6" y="282" class="axs">fri 4 sep</text>
+<line x1="238.4" y1="265" x2="238.4" y2="270" class="axt" opacity=".6"/>
+<line x1="214.3" y1="265" x2="214.3" y2="270" class="axt" opacity=".6"/>
+<line x1="190.2" y1="265" x2="190.2" y2="270" class="axt" opacity=".6"/>
+<line x1="166.1" y1="265" x2="166.1" y2="270" class="axt" opacity=".6"/>
+<text x="166.1" y="282" class="axs">mon 31 aug</text>
+<line x1="141.9" y1="265" x2="141.9" y2="270" class="axt" opacity=".6"/>
+<text x="610.5" y="282" class="axs">23 hours, compressed</text>
+<text x="1284.8" y="282" class="axs">the last quarter hour, stretched</text>
+<line x1="1520" y1="268" x2="1520" y2="800" class="brink"/>
+<line x1="1241.9" y1="268" x2="1241.9" y2="800" class="flagline"/><text x="1235.9" y="312" class="flag-t" text-anchor="end">✱ 21:55 · sweep born</text>
+<line x1="140" y1="340" x2="1520" y2="340" stroke="var(--lan)" stroke-width="1.2" opacity=".5"/>
+<rect x="1514.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1483.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1451.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1420.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1389.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1357.7" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1326.3" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1295.0" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1263.6" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1232.2" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1200.9" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1169.5" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1138.1" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1106.8" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.4" y="337.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<line x1="1242.4" y1="334.0" x2="1242.4" y2="346.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="1241.9" y1="334.0" x2="1241.9" y2="346.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="741.6" y1="334.0" x2="741.6" y2="346.0" stroke="var(--inside)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="741.5" y1="334.0" x2="741.5" y2="346.0" stroke="var(--inside)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<text x="140" y="326" class="lanelab" fill="var(--lan)">canary-lan <tspan dx="10"><tspan class="ok">● 9 s</tspan><tspan> · </tspan><tspan class="al">✱ swept 21:55</tspan><tspan> · from inside 19:11</tspan></tspan></text>
+<text x="1236.4" y="362" class="lyric" text-anchor="end">root / root</text>
+<text x="1235.9" y="330" class="lyric" text-anchor="end">session · libssh2</text>
+<text x="741.6" y="330" class="lyric dim" text-anchor="middle">10.0.40.23 · :80 then /admin · 19:11</text>
+<line x1="140" y1="480" x2="1520" y2="480" stroke="var(--srv)" stroke-width="1.2" opacity=".5"/>
+<rect x="1497.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1466.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1435.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1403.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1372.3" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1341.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1309.6" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1278.2" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1246.9" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1184.1" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.8" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.4" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1090.0" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1058.7" y="477.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<line x1="1295.8" y1="474.0" x2="1295.8" y2="486.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="1283.2" y1="474.0" x2="1283.2" y2="486.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="434.8" y1="474.0" x2="434.8" y2="486.0" stroke="var(--touch)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<text x="140" y="466" class="lanelab" fill="var(--srv)">canary-srv <tspan dx="10"><tspan class="ok">● 41 s</tspan><tspan> · </tspan><tspan class="al">✱ swept 21:56</tspan><tspan> · one touch yesterday</tspan></tspan></text>
+<text x="1289.8" y="502" class="lyric" text-anchor="end">mysql root / (empty)</text>
+<text x="1277.2" y="470" class="lyric" text-anchor="end">root / password</text>
+<text x="434.8" y="502" class="lyric dim" text-anchor="middle">192.0.2.88 · anonymous ftp · yesterday 03:18</text>
+<line x1="140" y1="620" x2="1520" y2="620" stroke="var(--iot)" stroke-width="1.2" opacity=".5"/>
+<rect x="1507.7" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1476.3" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1445.0" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1413.6" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1382.2" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1350.9" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1319.5" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1288.2" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1225.4" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1194.1" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1162.7" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1131.3" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1100.0" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1068.6" y="617.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<line x1="1434.3" y1="614.0" x2="1434.3" y2="626.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="1352.2" y1="614.0" x2="1352.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="984.6" y1="614.0" x2="984.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="859.2" y1="614.0" x2="859.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="766.1" y1="614.0" x2="766.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="761.5" y1="614.0" x2="761.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="757.0" y1="614.0" x2="757.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="752.4" y1="614.0" x2="752.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="747.9" y1="614.0" x2="747.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="743.3" y1="614.0" x2="743.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="738.8" y1="614.0" x2="738.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="734.2" y1="614.0" x2="734.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="729.7" y1="614.0" x2="729.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="725.1" y1="614.0" x2="725.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="720.6" y1="614.0" x2="720.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="716.1" y1="614.0" x2="716.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="711.5" y1="614.0" x2="711.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="707.0" y1="614.0" x2="707.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="702.4" y1="614.0" x2="702.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="697.9" y1="614.0" x2="697.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="693.3" y1="614.0" x2="693.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="688.8" y1="614.0" x2="688.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="684.2" y1="614.0" x2="684.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="679.7" y1="614.0" x2="679.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="675.1" y1="614.0" x2="675.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="670.6" y1="614.0" x2="670.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="666.1" y1="614.0" x2="666.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="661.5" y1="614.0" x2="661.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="657.0" y1="614.0" x2="657.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="652.4" y1="614.0" x2="652.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="647.9" y1="614.0" x2="647.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="643.3" y1="614.0" x2="643.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="638.8" y1="614.0" x2="638.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="634.2" y1="614.0" x2="634.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="629.7" y1="614.0" x2="629.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="625.1" y1="614.0" x2="625.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="620.6" y1="614.0" x2="620.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="616.1" y1="614.0" x2="616.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="453.5" y1="614.0" x2="453.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="453.2" y1="614.0" x2="453.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="452.9" y1="614.0" x2="452.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="452.5" y1="614.0" x2="452.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="452.2" y1="614.0" x2="452.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="451.9" y1="614.0" x2="451.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="451.5" y1="614.0" x2="451.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="451.2" y1="614.0" x2="451.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="450.9" y1="614.0" x2="450.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="450.5" y1="614.0" x2="450.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="450.2" y1="614.0" x2="450.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="449.9" y1="614.0" x2="449.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="449.5" y1="614.0" x2="449.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="449.2" y1="614.0" x2="449.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="448.9" y1="614.0" x2="448.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="448.5" y1="614.0" x2="448.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="448.2" y1="614.0" x2="448.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="447.9" y1="614.0" x2="447.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="447.5" y1="614.0" x2="447.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="447.2" y1="614.0" x2="447.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="446.8" y1="614.0" x2="446.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="446.5" y1="614.0" x2="446.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="446.2" y1="614.0" x2="446.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="445.8" y1="614.0" x2="445.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="445.5" y1="614.0" x2="445.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="445.2" y1="614.0" x2="445.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="444.8" y1="614.0" x2="444.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="444.5" y1="614.0" x2="444.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="444.2" y1="614.0" x2="444.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="443.8" y1="614.0" x2="443.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="443.5" y1="614.0" x2="443.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="443.2" y1="614.0" x2="443.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="442.8" y1="614.0" x2="442.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="442.5" y1="614.0" x2="442.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="442.2" y1="614.0" x2="442.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="441.8" y1="614.0" x2="441.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="441.5" y1="614.0" x2="441.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="429.4" y1="614.0" x2="429.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="429.1" y1="614.0" x2="429.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="428.8" y1="614.0" x2="428.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="428.4" y1="614.0" x2="428.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="428.1" y1="614.0" x2="428.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="427.7" y1="614.0" x2="427.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="427.4" y1="614.0" x2="427.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="427.1" y1="614.0" x2="427.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="426.7" y1="614.0" x2="426.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="426.4" y1="614.0" x2="426.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="426.1" y1="614.0" x2="426.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="425.7" y1="614.0" x2="425.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="425.4" y1="614.0" x2="425.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="425.1" y1="614.0" x2="425.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="424.7" y1="614.0" x2="424.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="424.4" y1="614.0" x2="424.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="424.1" y1="614.0" x2="424.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="423.7" y1="614.0" x2="423.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="423.4" y1="614.0" x2="423.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="423.1" y1="614.0" x2="423.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="422.7" y1="614.0" x2="422.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="422.4" y1="614.0" x2="422.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="422.0" y1="614.0" x2="422.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="421.7" y1="614.0" x2="421.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="421.4" y1="614.0" x2="421.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="421.0" y1="614.0" x2="421.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="420.7" y1="614.0" x2="420.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="420.4" y1="614.0" x2="420.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="420.0" y1="614.0" x2="420.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="419.7" y1="614.0" x2="419.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="419.4" y1="614.0" x2="419.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="419.0" y1="614.0" x2="419.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="418.7" y1="614.0" x2="418.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="418.4" y1="614.0" x2="418.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="418.0" y1="614.0" x2="418.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="417.7" y1="614.0" x2="417.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="417.4" y1="614.0" x2="417.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="405.3" y1="614.0" x2="405.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="405.0" y1="614.0" x2="405.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="404.6" y1="614.0" x2="404.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="404.3" y1="614.0" x2="404.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="404.0" y1="614.0" x2="404.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="403.6" y1="614.0" x2="403.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="403.3" y1="614.0" x2="403.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="402.9" y1="614.0" x2="402.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="402.6" y1="614.0" x2="402.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="402.3" y1="614.0" x2="402.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="401.9" y1="614.0" x2="401.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="401.6" y1="614.0" x2="401.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="401.3" y1="614.0" x2="401.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="400.9" y1="614.0" x2="400.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="400.6" y1="614.0" x2="400.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="400.3" y1="614.0" x2="400.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="399.9" y1="614.0" x2="399.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="399.6" y1="614.0" x2="399.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="399.3" y1="614.0" x2="399.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="398.9" y1="614.0" x2="398.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="398.6" y1="614.0" x2="398.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="398.3" y1="614.0" x2="398.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="397.9" y1="614.0" x2="397.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="397.6" y1="614.0" x2="397.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="397.3" y1="614.0" x2="397.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="396.9" y1="614.0" x2="396.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="396.6" y1="614.0" x2="396.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="396.2" y1="614.0" x2="396.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="395.9" y1="614.0" x2="395.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="395.6" y1="614.0" x2="395.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="395.2" y1="614.0" x2="395.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="394.9" y1="614.0" x2="394.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="394.6" y1="614.0" x2="394.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="394.2" y1="614.0" x2="394.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="393.9" y1="614.0" x2="393.9" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="393.6" y1="614.0" x2="393.6" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="393.2" y1="614.0" x2="393.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="381.2" y1="614.0" x2="381.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="380.8" y1="614.0" x2="380.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="380.5" y1="614.0" x2="380.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="380.2" y1="614.0" x2="380.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="379.8" y1="614.0" x2="379.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="379.5" y1="614.0" x2="379.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="379.2" y1="614.0" x2="379.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="378.8" y1="614.0" x2="378.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="378.5" y1="614.0" x2="378.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="378.2" y1="614.0" x2="378.2" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="377.8" y1="614.0" x2="377.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="377.5" y1="614.0" x2="377.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="377.1" y1="614.0" x2="377.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="376.8" y1="614.0" x2="376.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="376.5" y1="614.0" x2="376.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="376.1" y1="614.0" x2="376.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="375.8" y1="614.0" x2="375.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="375.5" y1="614.0" x2="375.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="375.1" y1="614.0" x2="375.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="374.8" y1="614.0" x2="374.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="374.5" y1="614.0" x2="374.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="374.1" y1="614.0" x2="374.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="373.8" y1="614.0" x2="373.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="373.5" y1="614.0" x2="373.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="373.1" y1="614.0" x2="373.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="372.8" y1="614.0" x2="372.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="372.5" y1="614.0" x2="372.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="372.1" y1="614.0" x2="372.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="371.8" y1="614.0" x2="371.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="371.5" y1="614.0" x2="371.5" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="371.1" y1="614.0" x2="371.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="370.8" y1="614.0" x2="370.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="370.4" y1="614.0" x2="370.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="370.1" y1="614.0" x2="370.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="369.8" y1="614.0" x2="369.8" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="369.4" y1="614.0" x2="369.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="369.1" y1="614.0" x2="369.1" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="357.0" y1="614.0" x2="357.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="356.7" y1="614.0" x2="356.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="356.4" y1="614.0" x2="356.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="356.0" y1="614.0" x2="356.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="355.7" y1="614.0" x2="355.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="355.4" y1="614.0" x2="355.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="355.0" y1="614.0" x2="355.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="354.7" y1="614.0" x2="354.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="354.4" y1="614.0" x2="354.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="354.0" y1="614.0" x2="354.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="353.7" y1="614.0" x2="353.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="353.4" y1="614.0" x2="353.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="353.0" y1="614.0" x2="353.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="352.7" y1="614.0" x2="352.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="352.4" y1="614.0" x2="352.4" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="352.0" y1="614.0" x2="352.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="351.7" y1="614.0" x2="351.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="351.3" y1="614.0" x2="351.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="351.0" y1="614.0" x2="351.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="350.7" y1="614.0" x2="350.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="350.3" y1="614.0" x2="350.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="350.0" y1="614.0" x2="350.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="349.7" y1="614.0" x2="349.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="349.3" y1="614.0" x2="349.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="349.0" y1="614.0" x2="349.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="348.7" y1="614.0" x2="348.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="348.3" y1="614.0" x2="348.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="348.0" y1="614.0" x2="348.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="347.7" y1="614.0" x2="347.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="347.3" y1="614.0" x2="347.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="347.0" y1="614.0" x2="347.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="346.7" y1="614.0" x2="346.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="346.3" y1="614.0" x2="346.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="346.0" y1="614.0" x2="346.0" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="345.7" y1="614.0" x2="345.7" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<line x1="345.3" y1="614.0" x2="345.3" y2="626.0" stroke="var(--repeat)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+<text x="140" y="606" class="lanelab" fill="var(--iot)">canary-iot <tspan dx="10"><tspan class="ok">● 22 s</tspan><tspan> · </tspan><tspan class="al">✱ swept 22:01</tspan><tspan> · </tspan><tspan class="rp">repeat :445 · 221×</tspan></tspan></text>
+<text x="1428.3" y="642" class="lyric" text-anchor="end">root / toor</text>
+<text x="1346.2" y="610" class="lyric dim" text-anchor="end">198.51.100.7 · :445 · the 221st knock, 21:59</text>
+<line x1="140" y1="760" x2="1520" y2="760" stroke="var(--guest)" stroke-width="1.2" opacity=".5"/>
+<rect x="1517.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1486.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1423.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1392.2" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1360.8" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1329.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1298.1" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.7" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1235.4" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1204.0" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1172.6" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1141.3" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1109.9" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1078.5" y="757.5" width="1.6" height="5" fill="var(--ink-3)" opacity=".55"/>
+<line x1="1520.0" y1="754.0" x2="1520.0" y2="766.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<line x1="1504.8" y1="754.0" x2="1504.8" y2="766.0" stroke="var(--sweep)" stroke-width="2.2" stroke-linecap="round" opacity="1"/>
+<text x="140" y="746" class="lanelab" fill="var(--guest)">canary-guest <tspan dx="10"><tspan class="ok">● 3 s</tspan><tspan> · </tspan><tspan class="al">✱ swept 22:04</tspan></tspan></text>
+<text x="1514.0" y="782" class="lyric" text-anchor="end">root / 123456</text>
+<text x="1498.8" y="750" class="lyric" text-anchor="end">admin / admin</text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · fri 12 sep · <span class="r">1 flagged</span> · 232 hits today</div>
+  <div class="hero" style="top:94px"><b class="r">One address is walking the cage.</b></div>
+  <div class="sub" style="top:134px;width:760px"><span class="ip">203.0.113.42</span> has reached <b>all four canaries in nine minutes</b> — ssh, then mysql, default passwords — and is still arriving. Three more visitors in the fortnight. Nothing here blocks: <b>lookback in mikroview ▸</b> to act.</div>
+  <div class="chips" style="top:836px"><span>◎ visitors · 14 d ·</span><span class="chip k-sw"><b>✱ sweep</b> <span class="ip">203.0.113.42</span> · 7× · 4 of 4</span><span class="chip k-rp"><b>✱ repeat</b> <span class="ip">198.51.100.7</span> · 221× · iot :445</span><span class="chip k-in"><b>✱ from inside</b> <span class="ip">10.0.40.23</span> · 2× · lan :80</span><span class="chip k-tc"><b>▲ one touch</b> <span class="ip">192.0.2.88</span> · 1× · srv :21</span></div>
+  <div class="legend" style="top:892px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a break is silence</span><span>a tick is a visitor, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>its words sit beside it</span><span class="nw">— the brink · now</span></div>
+  <div class="foot"><span>a quiet fortnight until <b>21:55</b> tonight — <span class="r">one address is walking the cage right now</span></span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">I · THE PULSE · SCENE 3 · THE SWEEP NIGHT</div>
+</section>
+
+</body>
+</html>

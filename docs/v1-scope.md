@@ -5,7 +5,9 @@
 Birdcage centralizes alerts from multiple OpenCanary honeypot instances into
 a single dashboard, and attempts automated mitigating action (via CrowdSec
 and RouterOS) against confirmed threats, with every automated action logged
-to an append-only audit trail.
+to an append-only audit trail. Birdcage runs as a sidecar to mikroview,
+sharing its design language and sign-in model but not its code -- see
+[ADR-0003](adr/0003-mikroview-sidecar.md).
 
 Work is tracked as three epics, each grouping the individual issues that
 belong to it:
@@ -27,14 +29,20 @@ belong to it:
   and RouterOS automated mitigation
   ([#5](https://github.com/tomlawesome/birdcage/issues/5)), both writing
   every action taken to the audit log.
+- Authentication: local accounts plus self-hosted-only OIDC, modelled on
+  mikroview's ([#8](https://github.com/tomlawesome/birdcage/issues/8)). The
+  dashboard does not ship without it.
+- Postgres support alongside SQLite, both mandatory in v1, selected by
+  `DATABASE_URL` ([#7](https://github.com/tomlawesome/birdcage/issues/7);
+  owner decision 2026-09-13, superseding the original "deferred until
+  multi-node/HA" plan -- see [ADR-0001](adr/0001-stack-and-storage.md) and
+  [docs/configuration.md](configuration.md)).
 
 ## Explicitly deferred (wave 3)
 
 Tracked so these aren't lost, not because they're unimportant:
 
 - Ansible-based rollout for new OpenCanary nodes ([#1](https://github.com/tomlawesome/birdcage/issues/1)).
-- Postgres support, once multi-node/HA deployment is a real requirement ([#7](https://github.com/tomlawesome/birdcage/issues/7)).
-- OIDC/Authentik authentication, given v1 has none ([#8](https://github.com/tomlawesome/birdcage/issues/8)).
 
 ## Explicitly out of scope for birdcage itself
 
@@ -48,9 +56,11 @@ Tracked so these aren't lost, not because they're unimportant:
   only planned coupling to it is consuming its bounded IP+time lookback
   query ([mikroview#29](https://github.com/tomlawesome/mikroview/issues/29))
   if useful for correlation -- birdcage does not absorb mikroview's
-  detectors or vice versa.
+  detectors or vice versa. How the two apps sit together -- same compose
+  stack, API keys only -- is [ADR-0003](adr/0003-mikroview-sidecar.md).
 
 ## Decisions this scope depends on
 
 See [ADR-0001](adr/0001-stack-and-storage.md) (stack, storage, v1 auth
-stance) and [ADR-0002](adr/0002-gitflow-branching.md) (branching model).
+stance), [ADR-0002](adr/0002-gitflow-branching.md) (branching model), and
+[ADR-0003](adr/0003-mikroview-sidecar.md) (sidecar, auth model, Svelte).
