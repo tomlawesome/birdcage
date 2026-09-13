@@ -29,7 +29,8 @@ implementation work starts.
 - **Storage: SQLite for v1**, via a pure-Go driver (no cgo, so it still
   builds into a `CGO_ENABLED=0` distroless image the same way mikroview
   does). Right for a single-node, self-hosted deployment: no separate DB
-  server, trivial to back up (one file). Postgres is deferred (see
+  server, trivial to back up (one file). Postgres support is a mandatory later requirement (owner,
+  2026-09-13; see
   [issue #7](https://github.com/tomlawesome/birdcage/issues/7)), informed by
   `tomlawesome/orbit`'s existing Postgres + Drizzle + migration/test setup
   as prior art for the pattern once multi-node/HA deployment is a real
