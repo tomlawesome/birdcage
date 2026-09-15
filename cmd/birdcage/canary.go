@@ -2,14 +2,61 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
+
+// openCanaryDB opens and migrates the database these `birdcage canary`
+// subcommands operate on, following the same DATABASE_URL/BIRDCAGE_DB_PATH
+// precedence as the main server (main.go) so the CLI always points at the
+// same database a running birdcage instance would.
+func openCanaryDB() (*db.DB, error) {
+	databaseURL := os.Getenv(envDatabaseURL)
+	if databaseURL == "" {
+		databaseURL = os.Getenv(envDBPath)
+	}
+	if databaseURL == "" {
+		databaseURL = defaultDBPath
+	}
+	database, err := db.Open(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := db.Migrate(context.Background(), database); err != nil {
+		if cerr := database.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "close database: %v\n", cerr)
+		}
+		return nil, fmt.Errorf("migrate database: %w", err)
+	}
+	return database, nil
+}
+
+func closeCanaryDB(database *db.DB) {
+	if err := database.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close database: %v\n", err)
+	}
+}
+
+// rollbackCanaryTx rolls back tx unless committed is true, logging
+// anything other than the expected "already closed" error -- the same
+// shape internal/ingest/rotate.go's handleRotate uses for its
+// mint-plus-audit transaction.
+func rollbackCanaryTx(tx *db.Tx, committed *bool) {
+	if *committed {
+		return
+	}
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		fmt.Fprintf(os.Stderr, "rollback transaction: %v\n", err)
+	}
+}
 
 // runCanaryAdd implements `birdcage canary add <id> <name> <lane> <ports> [interval_s]`,
 // a dev/testing convenience for registering a canary before #1's
@@ -29,28 +76,13 @@ func runCanaryAdd(args []string) error {
 		interval = n
 	}
 
-	databaseURL := os.Getenv(envDatabaseURL)
-	if databaseURL == "" {
-		databaseURL = os.Getenv(envDBPath)
-	}
-	if databaseURL == "" {
-		databaseURL = defaultDBPath
-	}
-	database, err := db.Open(databaseURL)
+	database, err := openCanaryDB()
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() {
-		if err := database.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "close database: %v\n", err)
-		}
-	}()
+	defer closeCanaryDB(database)
 
 	ctx := context.Background()
-	if err := db.Migrate(ctx, database); err != nil {
-		return fmt.Errorf("migrate database: %w", err)
-	}
-
 	c := store.Canary{
 		ID: args[0], Name: args[1], Lane: args[2], Ports: args[3],
 		HeartbeatIntervalS: interval, EnrolledAt: time.Now().UTC(),
@@ -59,5 +91,159 @@ func runCanaryAdd(args []string) error {
 		return fmt.Errorf("insert canary: %w", err)
 	}
 	fmt.Printf("canary %s enrolled\n", c.ID)
+	return nil
+}
+
+// runCanaryMint implements `birdcage canary mint <canary_id>` (issue #32
+// item 9). It mints a fresh bearer token for canary_id and records the
+// mint in the audit log in one transaction -- item 10's "a mint ... whose
+// audit write fails, fails with it", built the same way
+// internal/ingest/rotate.go's handleRotate does its mint-plus-audit: if
+// the audit append fails the whole transaction rolls back, so the newly
+// minted token was never actually persisted.
+//
+// The raw token is printed here, once -- store.MintCanaryToken never
+// returns it again, and no other command in this file (list, in
+// particular) ever sees it.
+func runCanaryMint(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: birdcage canary mint <canary_id>")
+	}
+	canaryID := args[0]
+
+	database, err := openCanaryDB()
+	if err != nil {
+		return err
+	}
+	defer closeCanaryDB(database)
+
+	ctx := context.Background()
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer rollbackCanaryTx(tx, &committed)
+
+	now := time.Now().UTC()
+	raw, tok, err := store.MintCanaryToken(ctx, tx, canaryID, now)
+	if err != nil {
+		return fmt.Errorf("mint canary token: %w", err)
+	}
+
+	if _, err := audit.Append(ctx, tx, audit.Entry{
+		Action:      "canary.token_minted",
+		Target:      canaryID,
+		Reason:      "minted via CLI",
+		TriggeredBy: "cli",
+		CreatedAt:   now,
+	}); err != nil {
+		return fmt.Errorf("record mint audit entry: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	committed = true
+
+	fmt.Printf("minted token %s for canary %s\n", tok.ID, canaryID)
+	fmt.Printf("token (shown once, record it now): %s\n", raw)
+	return nil
+}
+
+// runCanaryList implements `birdcage canary list` (issue #32 item 9:
+// "list ... never printing a token"). It prints only what
+// store.ListCanaryTokens returns, and that type carries neither the raw
+// token nor its hash, so there is no value here that could be printed by
+// mistake.
+func runCanaryList(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: birdcage canary list")
+	}
+
+	database, err := openCanaryDB()
+	if err != nil {
+		return err
+	}
+	defer closeCanaryDB(database)
+
+	tokens, err := store.ListCanaryTokens(context.Background(), database)
+	if err != nil {
+		return fmt.Errorf("list canary tokens: %w", err)
+	}
+	if len(tokens) == 0 {
+		fmt.Println("no canary tokens")
+		return nil
+	}
+	for _, tok := range tokens {
+		status := "active"
+		if tok.RevokedAt != nil {
+			status = "revoked " + tok.RevokedAt.Format(time.RFC3339)
+		}
+		lastUsed := "never"
+		if tok.LastUsedAt != nil {
+			lastUsed = tok.LastUsedAt.Format(time.RFC3339)
+		}
+		fmt.Printf("%s\tcanary=%s\tminted=%s\tlast_used=%s\t%s\n",
+			tok.ID, tok.CanaryID, tok.CreatedAt.Format(time.RFC3339), lastUsed, status)
+	}
+	return nil
+}
+
+// runCanaryRevoke implements `birdcage canary revoke <token_id>` (issue
+// #32 item 9). Revocation and its audit entry (item 10) run in one
+// transaction, the same mint-plus-audit shape runCanaryMint above and
+// internal/ingest/rotate.go both use. The next request authenticating
+// with this token is refused immediately: the ingest auth path
+// (internal/ingest/auth.go) looks it up fresh on every request via
+// store.LookupCanaryTokenByHash, which excludes a revoked row at the SQL
+// level, so there is no cache anywhere in between that could serve one
+// more authenticated request off a stale answer.
+func runCanaryRevoke(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: birdcage canary revoke <token_id>")
+	}
+	tokenID := args[0]
+
+	database, err := openCanaryDB()
+	if err != nil {
+		return err
+	}
+	defer closeCanaryDB(database)
+
+	ctx := context.Background()
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer rollbackCanaryTx(tx, &committed)
+
+	tok, err := store.LookupCanaryTokenByID(ctx, tx, tokenID)
+	if err != nil {
+		return fmt.Errorf("look up token %s: %w", tokenID, err)
+	}
+
+	now := time.Now().UTC()
+	if err := store.RevokeCanaryToken(ctx, tx, tokenID, now); err != nil {
+		return fmt.Errorf("revoke canary token: %w", err)
+	}
+
+	if _, err := audit.Append(ctx, tx, audit.Entry{
+		Action:      "canary.token_revoked",
+		Target:      tok.CanaryID,
+		Reason:      "revoked via CLI",
+		TriggeredBy: "cli",
+		CreatedAt:   now,
+	}); err != nil {
+		return fmt.Errorf("record revoke audit entry: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	committed = true
+
+	fmt.Printf("revoked token %s for canary %s\n", tokenID, tok.CanaryID)
 	return nil
 }
