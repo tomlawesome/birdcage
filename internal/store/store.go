@@ -64,7 +64,9 @@ type AlertInsert struct {
 // NULL rather than "": alerts.event_id's unique index treats every NULL
 // as distinct (see the migration's own comment), so rows with no event
 // id are deliberately never deduplicated against each other, matching
-// pre-agent syslog-era rows.
+// pre-agent syslog-era rows. Dedup is scoped to one canary: the unique
+// index is on (instance_id, event_id), so one canary's event id can
+// never suppress another canary's alert (#32 research, 2026-09-15).
 func InsertAlertIfNew(ctx context.Context, database *db.DB, a AlertInsert) (stored bool, err error) {
 	var eventID any
 	if a.EventID != "" {
@@ -73,7 +75,7 @@ func InsertAlertIfNew(ctx context.Context, database *db.DB, a AlertInsert) (stor
 	res, err := database.ExecContext(ctx, `
 		INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at, event_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (event_id) DO NOTHING`,
+		ON CONFLICT (instance_id, event_id) DO NOTHING`,
 		a.InstanceID, a.SourceIP, a.DestPort, a.Service, a.Raw, a.ReceivedAt.UTC().Format(receivedAtLayout), eventID)
 	if err != nil {
 		return false, fmt.Errorf("insert alert: %w", err)

@@ -242,6 +242,43 @@ func TestInsertAlertIfNewDuplicateEventIDIsNoOp(t *testing.T) {
 	})
 }
 
+// TestInsertAlertIfNewDedupIsPerCanary: dedup is scoped to one canary,
+// so a canary cannot suppress another canary's alert by storing its
+// event id first (#32 research, 2026-09-15).
+func TestInsertAlertIfNewDedupIsPerCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		at := mustParse(t, "2026-01-01T00:00:00Z")
+		shared := "a1b2c3"
+		first := AlertInsert{
+			InstanceID: "canary-a", SourceIP: "203.0.113.9", DestPort: 22,
+			Service: "ssh", Raw: "raw-a", ReceivedAt: at, EventID: shared,
+		}
+		stored, err := InsertAlertIfNew(context.Background(), database, first)
+		if err != nil || !stored {
+			t.Fatalf("InsertAlertIfNew(canary-a) = %v, %v; want true, nil", stored, err)
+		}
+
+		second := first
+		second.InstanceID = "canary-b"
+		second.Raw = "raw-b"
+		stored, err = InsertAlertIfNew(context.Background(), database, second)
+		if err != nil {
+			t.Fatalf("InsertAlertIfNew(canary-b): %v", err)
+		}
+		if !stored {
+			t.Fatal("canary-b's alert was suppressed by canary-a's event id; dedup must be per canary")
+		}
+
+		stored, err = InsertAlertIfNew(context.Background(), database, first)
+		if err != nil {
+			t.Fatalf("InsertAlertIfNew(canary-a, repeat): %v", err)
+		}
+		if stored {
+			t.Fatal("the same canary's duplicate event id stored a second row")
+		}
+	})
+}
+
 func TestInsertAlertIfNewEmptyEventIDNeverDeduplicates(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		a := AlertInsert{
