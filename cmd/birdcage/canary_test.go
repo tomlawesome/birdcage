@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -287,5 +288,109 @@ func TestCanaryRevokeFailsWithFailedAuditWriteAndTokenStaysLive(t *testing.T) {
 	h := ingest.NewHandler(database, nil)
 	if status := heartbeatStatus(h, raw); status == http.StatusUnauthorized {
 		t.Fatal("token stopped authenticating despite the revoke failing; the revoke must roll back with its audit write")
+	}
+}
+
+// TestCanaryOutputEscapesControlCharactersInID is issue #52's proof for
+// the CLI: a canary id containing a terminal control sequence -- here
+// ESC "[2J" (\x1b[2J), which clears the screen -- must reach mint,
+// list, and revoke's stdout as literal escaped text, never as the raw
+// ESC byte a terminal would act on. The stored value is untouched
+// throughout: SECURITY.md's rule is that birdcage never strips or
+// rewrites text it didn't generate at the point of storage, only at the
+// point it prints it, so the row is read back directly (bypassing every
+// command's own stdout) and compared against the original, unescaped
+// string.
+func TestCanaryOutputEscapesControlCharactersInID(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+
+	const canaryID = "canary-\x1b[2J-evil"
+
+	mintOut, err := captureStdout(t, func() error { return runCanaryMint([]string{canaryID}) })
+	if err != nil {
+		t.Fatalf("runCanaryMint: %v", err)
+	}
+	assertNoRawESC(t, "mint", mintOut)
+	if !strings.Contains(mintOut, `canary-\x1b[2J-evil`) {
+		t.Fatalf("mint output %q does not contain the escaped canary id", mintOut)
+	}
+	tokenID := extractMintedTokenID(t, mintOut)
+
+	listOut, err := captureStdout(t, func() error { return runCanaryList(nil) })
+	if err != nil {
+		t.Fatalf("runCanaryList: %v", err)
+	}
+	assertNoRawESC(t, "list", listOut)
+	if !strings.Contains(listOut, `canary-\x1b[2J-evil`) {
+		t.Fatalf("list output %q does not contain the escaped canary id", listOut)
+	}
+
+	revokeOut, err := captureStdout(t, func() error { return runCanaryRevoke([]string{tokenID}) })
+	if err != nil {
+		t.Fatalf("runCanaryRevoke: %v", err)
+	}
+	assertNoRawESC(t, "revoke", revokeOut)
+	if !strings.Contains(revokeOut, `canary-\x1b[2J-evil`) {
+		t.Fatalf("revoke output %q does not contain the escaped canary id", revokeOut)
+	}
+
+	// The stored row is read back directly, not through any command's
+	// stdout, and must still carry the original, unaltered byte -- proof
+	// that escaping happened only at the three print sites above, never
+	// on the way into the database.
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	tokens, err := store.ListCanaryTokens(context.Background(), database)
+	if err != nil {
+		t.Fatalf("store.ListCanaryTokens: %v", err)
+	}
+	found := false
+	for _, tok := range tokens {
+		if tok.ID != tokenID {
+			continue
+		}
+		found = true
+		if tok.CanaryID != canaryID {
+			t.Fatalf("stored canary_id = %q, want the original %q byte-for-byte", tok.CanaryID, canaryID)
+		}
+	}
+	if !found {
+		t.Fatalf("token %s not found via store.ListCanaryTokens", tokenID)
+	}
+}
+
+// assertNoRawESC fails t if out contains a raw ESC byte (0x1b) -- the
+// exact-bytes assertion issue #52 asks for, not just "the text looks
+// escaped".
+func assertNoRawESC(t *testing.T, label, out string) {
+	t.Helper()
+	for _, b := range []byte(out) {
+		if b == 0x1b {
+			t.Fatalf("%s output %q contains a raw ESC byte", label, out)
+		}
+	}
+}
+
+// TestCanaryOutputLeavesOrdinaryAndNonASCIINamesUnchanged proves the
+// other half of issue #52's rule: an operator naming a canary in
+// Japanese must still be able to read it back, unmangled, from list.
+func TestCanaryOutputLeavesOrdinaryAndNonASCIINamesUnchanged(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+
+	const canaryID = "canary-カナリア-東京"
+
+	if _, err := captureStdout(t, func() error { return runCanaryMint([]string{canaryID}) }); err != nil {
+		t.Fatalf("runCanaryMint: %v", err)
+	}
+
+	listOut, err := captureStdout(t, func() error { return runCanaryList(nil) })
+	if err != nil {
+		t.Fatalf("runCanaryList: %v", err)
+	}
+	if !strings.Contains(listOut, canaryID) {
+		t.Fatalf("list output %q does not contain the unaltered canary id %q", listOut, canaryID)
 	}
 }

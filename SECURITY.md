@@ -47,6 +47,27 @@ This section is rewritten route-by-route when #8 lands.
   automated action" reviewable and reversible rather than a black box --
   see [ADR-0001](docs/adr/0001-stack-and-storage.md).
 
+## Output escaping
+
+Text birdcage did not generate itself -- a canary id, a service name, a
+source address, an OpenCanary `raw` field -- comes from a machine we
+expect to be attacked, and the stored record of it is evidence: nothing
+upstream of output strips, rewrites, or otherwise sanitises it (the same
+rule the birdcage-agent follows for what it forwards). Escaping happens
+only at the point that text is displayed, per surface:
+
+- **Dashboard:** every value is rendered through Svelte's own text
+  interpolation, never `{@html}`, so HTML/script injection is escaped
+  the same way regardless of which field carries attacker-supplied text.
+- **CLI (`birdcage canary mint | list | revoke`, and any future
+  subcommand):** printed through `internal/term.Escape`, which renders
+  C0, DEL, and C1 control characters as literal, visible text (e.g. an
+  embedded escape sequence prints as `\x1b`, not as the raw byte) before
+  it reaches a terminal, leaving ordinary printable text -- including
+  non-ASCII -- untouched. Without this, a crafted canary id or service
+  name could hide output lines, overwrite what's already on screen, or
+  make a revoked token's status print as active.
+
 ## Network exposure
 
 - **OpenCanary syslog ingestion — UDP, default `:5514`** (override with
