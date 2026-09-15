@@ -3,7 +3,7 @@
 ## Storage: `DATABASE_URL`
 
 Birdcage supports two database engines, per
-[issue #7](https://github.com/tomlawesome/birdcage/issues/7) -- both are
+[issue #7](https://gitlab.tomlawson.io/ai/birdcage/-/issues/7) -- both are
 mandatory in v1, not SQLite-with-Postgres-as-an-option: every migration and
 every query in `internal/db` and `internal/store` runs on both, and CI tests
 both on every change.

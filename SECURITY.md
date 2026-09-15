@@ -20,7 +20,7 @@ your network and firewall.
 [ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
 self-hosted-only OIDC, following
 [mikroview](https://github.com/tomlawesome/mikroview)'s model. Until
-[#8](https://github.com/tomlawesome/birdcage/issues/8) lands, nothing gates
+[#8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8) lands, nothing gates
 the dashboard, so the network-exposure guidance below is the only control.
 This section is rewritten route-by-route when #8 lands.
 
@@ -63,7 +63,7 @@ This section is rewritten route-by-route when #8 lands.
   syslog handler `address` at this port.
 - **Dashboard HTTP — TCP, default `:8080`** (override with
   `BIRDCAGE_HTTP_ADDR`). No authentication yet --
-  [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
+  [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
   (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
   Every route below has the same gap:
 
