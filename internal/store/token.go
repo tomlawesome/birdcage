@@ -241,24 +241,68 @@ func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string)
 // re-enrolment (#47). Comparing on created_at removes that path: a
 // token can only ever be superseded by a later one.
 //
+// The comparison happens in Go, on parsed timestamps, rather than in SQL.
+// SQL would be the obvious home for it, but the two engines do not agree
+// on how finely they compare a stored timestamp: SQLite's julianday()
+// works to roughly 50 microseconds, Postgres to a microsecond. Two
+// tokens minted inside one of those quanta compare EQUAL on SQLite, so
+// the older one silently survives a sweep that supersedes it on
+// Postgres -- a rule that quietly means something different on each
+// engine. It showed up first as two rotation tests failing now and then,
+// which is the cheap version of the same bug. Parsing both sides and
+// comparing them here is exact everywhere.
+//
 // Uses the same COALESCE-on-revoked_at shape as RevokeCanaryToken, so a
 // row this call revokes keeps whatever revocation timestamp it already
 // had if it was somehow revoked a moment earlier.
 func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok CanaryToken, at time.Time) (int64, error) {
-	res, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?)
-		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL
-		   AND `+timeCompare(database.Engine, "created_at", "<"),
-		at.UTC().Format(receivedAtLayout), tok.CanaryID, tok.ID,
-		tok.CreatedAt.UTC().Format(receivedAtLayout))
+	rows, err := database.QueryContext(ctx,
+		`SELECT id, created_at FROM canary_tokens
+		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL`,
+		tok.CanaryID, tok.ID)
 	if err != nil {
-		return 0, fmt.Errorf("revoke superseded canary tokens: %w", err)
+		return 0, fmt.Errorf("list live canary tokens: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("rows affected: %w", err)
+	var older []string
+	for rows.Next() {
+		var id, createdAt string
+		if err := rows.Scan(&id, &createdAt); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan canary token: %w", err)
+		}
+		parsed, err := time.Parse(receivedAtLayout, createdAt)
+		if err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("parse created_at %q: %w", createdAt, err)
+		}
+		if parsed.Before(tok.CreatedAt) {
+			older = append(older, id)
+		}
 	}
-	return n, nil
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate canary tokens: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close canary tokens: %w", err)
+	}
+
+	var revoked int64
+	for _, id := range older {
+		res, err := database.ExecContext(ctx,
+			`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?)
+			 WHERE id = ? AND revoked_at IS NULL`,
+			at.UTC().Format(receivedAtLayout), id)
+		if err != nil {
+			return revoked, fmt.Errorf("revoke superseded canary token: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return revoked, fmt.Errorf("rows affected: %w", err)
+		}
+		revoked += n
+	}
+	return revoked, nil
 }
 
 // RevokeCanaryToken sets id's revoked_at to at, so every subsequent
