@@ -77,6 +77,17 @@ This section is rewritten route-by-route when #8 lands.
   | `/api/visitors`  | GET    | requireAuth seam, pending #8  |
   | `/api/trace`     | GET    | requireAuth seam, pending #8  |
   | `/api/heartbeat` | POST   | requireAuth seam, pending #8  |
+  | `/api/stream`    | GET    | requireAuth seam, pending #8  |
+
+  `/api/stream` (issue #44) is a server-sent-events connection birdcage
+  holds open rather than answering once, so until #8 lands it also caps
+  total concurrent connections (`internal/stream.Hub`, 256) and drops the
+  slowest subscriber's buffer rather than growing it without limit --
+  mitigating the connection-exhaustion risk a held-open, unauthenticated
+  route adds beyond the other routes above (see issue #44's Research
+  section for the threat model and CVE search this came from). A dropped
+  or refused stream falls back to the dashboard's existing 30s poll,
+  which every route above already relies on.
 
 ## Recommended deployment hardening
 

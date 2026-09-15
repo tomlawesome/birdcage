@@ -17,30 +17,54 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/stream"
 )
 
 // handler carries the dependencies every route needs: db for queries, now
 // so handleStats' "current time" is pinnable in tests instead of always
-// reading time.Now(), and internalRanges (issue #35's
+// reading time.Now(), internalRanges (issue #35's
 // BIRDCAGE_INTERNAL_RANGES, parsed once by cmd/birdcage/main.go) so
 // handleVisitors/handleTrace can classify a source as "from inside" an
-// operator's own address space beyond the always-internal defaults.
+// operator's own address space beyond the always-internal defaults, and
+// hub (issue #44) so handleStream can subscribe a dashboard connection
+// to it.
 type handler struct {
 	db             *db.DB
 	now            func() time.Time
 	internalRanges []*net.IPNet
+	hub            *stream.Hub
 }
 
 // NewHandler wires the dashboard API behind the requireAuth seam #8
 // will fill in (ADR-0003). internalRanges is BIRDCAGE_INTERNAL_RANGES,
 // already parsed by the caller (store.ParseInternalRanges) -- nil is
-// fine and means no ranges beyond the always-internal defaults.
+// fine and means no ranges beyond the always-internal defaults. The
+// returned handler owns its own stream.Hub, freshly created and not
+// reachable from outside this package -- nothing yet publishes to it in
+// production (issue #32's own ingest endpoint, once it lands, will).
+// Use NewHandlerWithHub instead when a caller needs to publish to the
+// same hub GET /api/stream serves from.
 func NewHandler(database *db.DB, internalRanges []*net.IPNet) http.Handler {
-	return newHandler(database, time.Now, internalRanges)
+	return NewHandlerWithHub(database, internalRanges, stream.NewHub())
 }
 
+// NewHandlerWithHub is NewHandler with an explicit stream.Hub, for a
+// caller (issue #32's future ingest endpoint, or a test) that needs to
+// publish alerts to the exact hub GET /api/stream is subscribed to.
+func NewHandlerWithHub(database *db.DB, internalRanges []*net.IPNet, hub *stream.Hub) http.Handler {
+	return newHandlerWithHub(database, time.Now, internalRanges, hub)
+}
+
+// newHandler is newHandlerWithHub with a hub of its own -- every
+// existing test in this package builds a handler with this, and none of
+// them care about streaming, so they're untouched by issue #44.
 func newHandler(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) http.Handler {
-	protected := requireAuth(dashboardRoutes(database, now, internalRanges))
+	return newHandlerWithHub(database, now, internalRanges, stream.NewHub())
+}
+
+func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub) http.Handler {
+	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub}
+	protected := requireAuth(dashboardRoutes(h))
 
 	// Each known route is registered individually (rather than mounting
 	// dashboardRoutes at the "/api/" prefix) so anything dashboardRoutes
@@ -58,20 +82,20 @@ func newHandler(database *db.DB, now func() time.Time, internalRanges []*net.IPN
 	mux.Handle("/api/heartbeat", protected)
 	mux.Handle("/api/visitors", protected)
 	mux.Handle("/api/trace", protected)
+	mux.Handle("/api/stream", protected)
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
 
-// dashboardRoutes registers birdcage's entire dashboard API -- six GET
-// routes and one POST (/api/heartbeat) -- and nothing else. Mirrors
-// mikroview's readOnlyRoutes (internal/api/auth.go there): a caller
-// dispatched to this mux is structurally unable to reach anything but
-// these routes, because nothing else is ever registered on it. That
-// property is what requireAuth (issue #8, ADR-0003) will rely on once it
-// exists: a lesser-privileged credential can be routed here and nowhere
-// else.
-func dashboardRoutes(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) *http.ServeMux {
-	h := &handler{db: database, now: now, internalRanges: internalRanges}
+// dashboardRoutes registers birdcage's entire dashboard API -- seven GET
+// routes (including /api/stream, issue #44) and one POST
+// (/api/heartbeat) -- and nothing else. Mirrors mikroview's
+// readOnlyRoutes (internal/api/auth.go there): a caller dispatched to
+// this mux is structurally unable to reach anything but these routes,
+// because nothing else is ever registered on it. That property is what
+// requireAuth (issue #8, ADR-0003) will rely on once it exists: a
+// lesser-privileged credential can be routed here and nowhere else.
+func dashboardRoutes(h *handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/alerts", h.handleAlerts)
 	mux.HandleFunc("GET /api/instances", h.handleInstances)
@@ -80,6 +104,7 @@ func dashboardRoutes(database *db.DB, now func() time.Time, internalRanges []*ne
 	mux.HandleFunc("POST /api/heartbeat", h.handleHeartbeat)
 	mux.HandleFunc("GET /api/visitors", h.handleVisitors)
 	mux.HandleFunc("GET /api/trace", h.handleTrace)
+	mux.HandleFunc("GET /api/stream", h.handleStream)
 	return mux
 }
 
