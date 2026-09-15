@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -76,12 +74,13 @@ type ackResponse struct {
 }
 
 // handleBatch serves POST /ingest/events, reached only through
-// requireBearerToken. Order of operations matters: the per-canary
-// request-rate limit is checked before the body is even read (bounding
-// the cost of a request this handler will reject anyway), the body cap
-// and envelope shape are enforced next, then the per-canary event-rate
-// limit (now that the batch's size is known), and only then does any
-// individual event reach validation or storage.
+// requireBearerToken, which has already charged this request against
+// the per-canary request-rate limit (issue #32 item 8) before dispatching
+// here -- charging it again in this handler would double-count a single
+// request against that cap, so this handler's own limit check is only
+// the per-canary event-rate limit, once the batch's size is known: the
+// body cap and envelope shape are enforced first, then events/min, and
+// only then does any individual event reach validation or storage.
 func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 	tok, ok := canaryTokenFromContext(r.Context())
 	if !ok {
@@ -89,12 +88,6 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 		// without it is a wiring bug, not a client error. Fail closed.
 		slog.Error("ingest: handleBatch reached without a canary token in context")
 		writeIngestError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	if !h.limiters.allowRequest(tok.CanaryID) {
-		h.recordLimitCrossed(r.Context(), tok.CanaryID, "requests/min")
-		writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 
@@ -133,7 +126,7 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.limiters.allowEvents(tok.CanaryID, len(batch.Events)) {
-		h.recordLimitCrossed(r.Context(), tok.CanaryID, "events/min")
+		recordRateLimitCrossed(r.Context(), h.db, h.now, tok.CanaryID, "events/min")
 		writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
@@ -200,23 +193,4 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 		return "service must not be empty", false
 	}
 	return "", true
-}
-
-// recordLimitCrossed writes an audit entry for a rate limit crossing
-// (issue #32: "crossing a limit is recorded and surfaced, never a silent
-// discard"). Surfacing it on the dashboard is #45's job; this is the
-// durable record #45 will read. A failure to write it is logged but
-// never turned into a different response to the client -- the 429 the
-// caller already got stands regardless.
-func (h *ingestHandler) recordLimitCrossed(ctx context.Context, canaryID, limit string) {
-	_, err := audit.Append(ctx, h.db, audit.Entry{
-		Action:      "ingest.rate_limited",
-		Target:      canaryID,
-		Reason:      limit + " limit exceeded",
-		TriggeredBy: canaryID,
-		CreatedAt:   h.now().UTC(),
-	})
-	if err != nil {
-		slog.Error("ingest: record rate limit crossing", "canary", canaryID, "limit", limit, "err", err)
-	}
 }

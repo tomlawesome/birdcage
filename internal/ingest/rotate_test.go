@@ -298,3 +298,32 @@ func TestRotateMintFailureReturns503NotARejection(t *testing.T) {
 		}
 	})
 }
+
+// TestRotateOverLimitReturns429AndIsRecorded proves #32's fix for this
+// route having no rate limit at all: previously only handleBatch charged
+// the per-canary requests/min cap (item 8), so an attacker holding a
+// compromised canary's token could loop POST /ingest/rotate freely, each
+// call inserting a new canary_tokens row nothing ever deleted -- an
+// unbounded write path under one identity. The charge now lives in the
+// shared requireBearerToken wrapper, so this route is covered too.
+func TestRotateOverLimitReturns429AndIsRecorded(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
+		h := newHandler(database, nil, time.Now, tiny)
+
+		var last *httptest.ResponseRecorder
+		for i := 0; i < 3; i++ {
+			last = httptest.NewRecorder()
+			h.ServeHTTP(last, ingestRequest(http.MethodPost, "/ingest/rotate", raw, ""))
+		}
+		if last.Code != http.StatusTooManyRequests {
+			t.Fatalf("3rd rotate status = %d, want %d (body %q)", last.Code, http.StatusTooManyRequests, last.Body.String())
+		}
+
+		if got := countAuditRows(t, database, "ingest.rate_limited", "canary-a"); got == 0 {
+			t.Fatal("no audit_log row recorded for the rate limit crossing on rotate")
+		}
+	})
+}
+

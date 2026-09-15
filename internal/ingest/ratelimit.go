@@ -1,10 +1,15 @@
 package ingest
 
 import (
+	"context"
+	"log/slog"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/tomlawesome/birdcage/internal/audit"
+	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // limiterLimits is the pair of per-canary caps issue #32 item 8 sets:
@@ -83,4 +88,26 @@ func (r *limiterRegistry) allowRequest(canaryID string) bool {
 // rejected by the rate limit exactly as a flood of small ones would be.
 func (r *limiterRegistry) allowEvents(canaryID string, n int) bool {
 	return r.get(canaryID).events.AllowN(time.Now(), n)
+}
+
+// recordRateLimitCrossed writes the audit entry issue #32 item 8
+// requires whenever a per-canary rate limit is crossed ("crossing a
+// limit is recorded and surfaced, never a silent discard"). Shared by
+// requireBearerToken (the requests/min cap, charged once per request on
+// every ingest route -- rotate and heartbeat included, not only
+// handleBatch) and handleBatch (the events/min cap, which stays exactly
+// where it was). A failure to write it is logged but never turned into
+// a different response to the client: the 429 the caller already got
+// stands regardless.
+func recordRateLimitCrossed(ctx context.Context, database *db.DB, now func() time.Time, canaryID, limit string) {
+	_, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "ingest.rate_limited",
+		Target:      canaryID,
+		Reason:      limit + " limit exceeded",
+		TriggeredBy: canaryID,
+		CreatedAt:   now().UTC(),
+	})
+	if err != nil {
+		slog.Error("ingest: record rate limit crossing", "canary", canaryID, "limit", limit, "err", err)
+	}
 }
