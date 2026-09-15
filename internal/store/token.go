@@ -171,24 +171,34 @@ func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string)
 	return n > 0, nil
 }
 
-// RevokeOtherCanaryTokens revokes every non-revoked token for canaryID
-// except keepID, and reports how many rows it changed. This is issue
-// #32 slice 5's central rotation rule (owner, 2026-09-14, replacing "the
-// old token is revoked the moment the new one is used" alone): "first
-// use of the new token revokes every older token for that canary, not
-// just the one presented" -- so an orphaned, issued-but-never-used token
-// (a lost rotation response) dies the next time any token for the same
-// canary is first used, not only at its own first use. Uses the same
-// COALESCE-on-revoked_at shape as RevokeCanaryToken, so a row this call
-// revokes keeps whatever revocation timestamp it already had if it was
-// somehow revoked a moment earlier.
-func RevokeOtherCanaryTokens(ctx context.Context, database *db.DB, canaryID, keepID string, at time.Time) (int64, error) {
+// RevokeCanaryTokensSupersededBy revokes every live token for
+// tok.CanaryID that was minted BEFORE tok, and reports how many rows it
+// changed. This is issue #32 slice 5's central rotation rule (owner,
+// 2026-09-14): "first use of the new token revokes every older token for
+// that canary, not just the one presented" -- so an orphaned,
+// issued-but-never-used token (a lost rotation response) dies when a
+// later token is first used.
+//
+// Older, not merely other. Revoking every other live token would mean an
+// agent that presents its OLD token once more -- a retry already in
+// flight when it rotated, say -- killing the newer token it had just
+// been issued and is about to switch to. The agent would then hold a
+// credential birdcage has revoked, and its only way back is
+// re-enrolment (#47). Comparing on created_at removes that path: a
+// token can only ever be superseded by a later one.
+//
+// Uses the same COALESCE-on-revoked_at shape as RevokeCanaryToken, so a
+// row this call revokes keeps whatever revocation timestamp it already
+// had if it was somehow revoked a moment earlier.
+func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok CanaryToken, at time.Time) (int64, error) {
 	res, err := database.ExecContext(ctx,
 		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?)
-		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL`,
-		at.UTC().Format(receivedAtLayout), canaryID, keepID)
+		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL
+		   AND `+timeCompare(database.Engine, "created_at", "<"),
+		at.UTC().Format(receivedAtLayout), tok.CanaryID, tok.ID,
+		tok.CreatedAt.UTC().Format(receivedAtLayout))
 	if err != nil {
-		return 0, fmt.Errorf("revoke other canary tokens: %w", err)
+		return 0, fmt.Errorf("revoke superseded canary tokens: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
