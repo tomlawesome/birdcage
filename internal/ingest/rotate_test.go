@@ -327,3 +327,71 @@ func TestRotateOverLimitReturns429AndIsRecorded(t *testing.T) {
 	})
 }
 
+// TestRotateAuditFailureReturns503LeavesPresentedTokenWorkingAndNoUsableNewToken
+// is #32 item 10's fail-closed rule for a rotation mint: "a mint or
+// revoke whose audit write fails, fails with it". audit_log is dropped
+// (not the whole database, which would fail auth itself before the mint
+// is ever reached -- see TestRotateMintFailureReturns503NotARejection)
+// so canary_tokens is still writable and only the audit append fails.
+// Proves three things at once: the request is refused (503, retryable),
+// the presented token is never touched (fail-closed: an agent can never
+// be stripped of its only working credential by birdcage's own failure),
+// and the mint itself did not persist -- the transaction rolled back
+// rather than leaving an orphaned, unrevoked, but perfectly usable new
+// token behind.
+func TestRotateAuditFailureReturns503LeavesPresentedTokenWorkingAndNoUsableNewToken(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw1 := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		if _, err := database.Exec(`DROP TABLE audit_log`); err != nil {
+			t.Fatalf("drop audit_log: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/rotate", raw1, ""))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+		}
+
+		// The presented (current) token must still work.
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw1, batchBody(rotateEventIDA)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("presented token after failed rotation: status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		// No usable new token was left behind: the mint must have rolled
+		// back with the failed audit write, not merely been abandoned
+		// unrevoked.
+		var n int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM canary_tokens WHERE canary_id = ?`, "canary-a").Scan(&n); err != nil {
+			t.Fatalf("count canary_tokens: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("canary_tokens rows for canary-a = %d, want 1 (only the presented token; the failed mint must not persist)", n)
+		}
+	})
+}
+
+// TestFirstEverUseOfATokenIsAudited is #32 item 10's other gap:
+// completeRotation used to return early (recording nothing) exactly when
+// it revoked no older tokens, which is the first-ever-use-of-a-first-token
+// case -- so a token's very first use was never audited. This proves the
+// new "ingest.token_first_use" entry is written on that path.
+func TestFirstEverUseOfATokenIsAudited(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw, batchBody(rotateEventIDA)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		if got := countAuditRows(t, database, "ingest.token_first_use", "canary-a"); got == 0 {
+			t.Fatal("no audit entry recorded for the token's first-ever use")
+		}
+	})
+}

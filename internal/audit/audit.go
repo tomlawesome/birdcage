@@ -44,7 +44,7 @@ var ErrZeroCreatedAt = errors.New("audit: CreatedAt is zero; callers must set it
 // trimming whitespace, and CreatedAt must be non-zero; otherwise Append
 // returns an error and inserts nothing (fail-closed: an incomplete audit
 // row is never stored). CreatedAt is stored as RFC 3339 UTC text.
-func Append(ctx context.Context, database *db.DB, e Entry) (id int64, err error) {
+func Append(ctx context.Context, database db.Conn, e Entry) (id int64, err error) {
 	var blank []string
 	if strings.TrimSpace(e.Action) == "" {
 		blank = append(blank, "Action")

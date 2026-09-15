@@ -178,10 +178,12 @@ func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, 
 // that canary, not just the one presented". It runs on every route this
 // package's requireBearerToken guards -- not only POST /ingest/rotate --
 // because the rule triggers on the token's first use, whichever route it
-// first authenticates. Revoking zero other tokens (tok is the canary's
-// only token, i.e. its first-ever mint, not a rotation) is not itself a
-// rotation and records nothing; #45 only wants to hear about a rotation
-// that actually happened.
+// first authenticates. Revoking zero other tokens means tok is the
+// canary's only token, i.e. this is its first-ever mint rather than a
+// rotation: not itself a rotation, so #45's rotation record stays silent
+// for it -- but item 10 ("every mint, first use and revocation" is
+// audited) still wants the first use itself recorded, which the
+// no-older-tokens branch below now does.
 func completeRotation(ctx context.Context, database *db.DB, now func() time.Time, tok store.CanaryToken) {
 	revoked, err := store.RevokeCanaryTokensSupersededBy(ctx, database, tok, now().UTC())
 	if err != nil {
@@ -189,6 +191,19 @@ func completeRotation(ctx context.Context, database *db.DB, now func() time.Time
 		return
 	}
 	if revoked == 0 {
+		// No older token existed to supersede: this is the first-ever
+		// use of a canary's first token, not a rotation completing.
+		// Item 10 wants first use audited regardless, so this is the one
+		// case the "ingest.token_rotated" entry below never covers.
+		if _, err := audit.Append(ctx, database, audit.Entry{
+			Action:      "ingest.token_first_use",
+			Target:      tok.CanaryID,
+			Reason:      "first use of a canary's first token",
+			TriggeredBy: tok.CanaryID,
+			CreatedAt:   now().UTC(),
+		}); err != nil {
+			slog.Error("ingest: record first token use", "canary", tok.CanaryID, "err", err)
+		}
 		return
 	}
 

@@ -1,9 +1,12 @@
 package ingest
 
 import (
+	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -25,6 +28,16 @@ type rotateResponse struct {
 // requireBearerToken's completeRotation, the moment the new token is
 // first used for anything on this mux (including a second call here) --
 // not at mint time, and not only on this route.
+//
+// The mint and its audit entry (item 10: "every mint ... written to the
+// audit log. A mint or revoke whose audit write fails, fails with it")
+// run in one transaction, not mint-then-undo: if the audit append fails,
+// the whole transaction rolls back, so the newly minted token was never
+// actually persisted and can never be looked up or used -- a stronger
+// guarantee than revoking it after the fact, and simpler, since there is
+// no revoke-then-fail-again window to reason about. Either way the
+// presented token (tok) is never touched by this handler, so a failure
+// here never costs the agent its only working credential.
 func (h *ingestHandler) handleRotate(w http.ResponseWriter, r *http.Request) {
 	tok, ok := canaryTokenFromContext(r.Context())
 	if !ok {
@@ -35,7 +48,23 @@ func (h *ingestHandler) handleRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _, err := store.MintCanaryToken(r.Context(), h.db, tok.CanaryID, h.now().UTC())
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		slog.Error("ingest: begin rotate transaction failed", "canary", tok.CanaryID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rerr := tx.Rollback(); rerr != nil && !errors.Is(rerr, sql.ErrTxDone) {
+			slog.Error("ingest: rollback rotate transaction failed", "canary", tok.CanaryID, "err", rerr)
+		}
+	}()
+
+	raw, newTok, err := store.MintCanaryToken(r.Context(), tx, tok.CanaryID, h.now().UTC())
 	if err != nil {
 		// A mint failure is birdcage's own storage trouble, not the
 		// credential's fault -- the presented token (tok) remains fully
@@ -46,6 +75,30 @@ func (h *ingestHandler) handleRotate(w http.ResponseWriter, r *http.Request) {
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
+
+	if _, err := audit.Append(r.Context(), tx, audit.Entry{
+		Action:      "ingest.token_minted",
+		Target:      tok.CanaryID,
+		Reason:      "rotation minted a new token",
+		TriggeredBy: tok.CanaryID,
+		CreatedAt:   h.now().UTC(),
+	}); err != nil {
+		// Fail-closed per item 10: the mint fails with its audit write.
+		// The deferred rollback above undoes the insert above, so newTok
+		// is never actually stored and can never be looked up -- the
+		// agent gets 503 and keeps using tok, exactly as a mint failure
+		// itself would be handled above.
+		slog.Error("ingest: record token mint failed; rotation aborted", "canary", tok.CanaryID, "new_token_id", newTok.ID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		slog.Error("ingest: commit rotate transaction failed", "canary", tok.CanaryID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+	committed = true
 
 	writeJSON(w, http.StatusOK, rotateResponse{Token: raw})
 }
