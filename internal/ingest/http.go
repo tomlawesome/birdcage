@@ -51,16 +51,18 @@ func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
 	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits)}
 
-	// Exactly one route is ever registered on this mux. Mirrors
-	// internal/api's dashboardRoutes doc comment: a request that doesn't
-	// match "POST /ingest/events" -- including every dashboard path --
-	// falls through to notFoundJSON, never to any dashboard handler,
-	// because no dashboard handler is ever registered here. This mux
-	// registered with a dashboard path never matches one either, for the
-	// same reason in reverse: see TestIngestMuxCannotReachDashboardRoutes
-	// and TestDashboardMuxCannotReachIngestRoute in http_test.go.
+	// Two routes are registered on this mux, both behind
+	// requireBearerToken. Mirrors internal/api's dashboardRoutes doc
+	// comment: a request that doesn't match one of them -- including
+	// every dashboard path -- falls through to notFoundJSON, never to
+	// any dashboard handler, because no dashboard handler is ever
+	// registered here. This mux registered with a dashboard path never
+	// matches one either, for the same reason in reverse: see
+	// TestIngestMuxCannotReachDashboardRoutes and
+	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
 	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.handleBatch))
+	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.handleRotate))
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }

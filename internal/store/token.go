@@ -137,6 +137,66 @@ func scanCanaryToken(row *sql.Row) (CanaryToken, error) {
 	return t, nil
 }
 
+// LookupCanaryTokenByHashAnyStatus resolves hash to its CanaryToken row
+// regardless of revocation -- unlike LookupCanaryTokenByHash, which the
+// ingest auth path uses and which deliberately cannot see revoked rows
+// (issue #32 slice 1). This exists only for the token-conflict check
+// (slice 5, fail-closed: "slice 1's lookup deliberately cannot see
+// revoked rows, so slice 5 adds a separate internal lookup for the
+// conflict check; the external 401 must not change"): telling a
+// revoked-but-once-valid token apart from a hash that was never minted
+// at all is exactly what the ingest auth path must not be able to do.
+func LookupCanaryTokenByHashAnyStatus(ctx context.Context, database *db.DB, hash string) (CanaryToken, error) {
+	row := database.QueryRowContext(ctx, `
+		SELECT id, canary_id, created_at, last_used_at, revoked_at
+		FROM canary_tokens
+		WHERE token_hash = ?`, hash)
+	return scanCanaryToken(row)
+}
+
+// CanaryHasActiveToken reports whether canaryID has at least one
+// non-revoked token. Paired with LookupCanaryTokenByHashAnyStatus to
+// tell a token conflict (a revoked token presented while a successor is
+// active -- issue #32 slice 5, "the one observable difference between a
+// stolen token, a cloned box and noise") apart from a canary whose every
+// token happens to be revoked, which is not a conflict.
+func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string) (bool, error) {
+	var n int
+	err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM canary_tokens WHERE canary_id = ? AND revoked_at IS NULL`,
+		canaryID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("count active canary tokens: %w", err)
+	}
+	return n > 0, nil
+}
+
+// RevokeOtherCanaryTokens revokes every non-revoked token for canaryID
+// except keepID, and reports how many rows it changed. This is issue
+// #32 slice 5's central rotation rule (owner, 2026-09-14, replacing "the
+// old token is revoked the moment the new one is used" alone): "first
+// use of the new token revokes every older token for that canary, not
+// just the one presented" -- so an orphaned, issued-but-never-used token
+// (a lost rotation response) dies the next time any token for the same
+// canary is first used, not only at its own first use. Uses the same
+// COALESCE-on-revoked_at shape as RevokeCanaryToken, so a row this call
+// revokes keeps whatever revocation timestamp it already had if it was
+// somehow revoked a moment earlier.
+func RevokeOtherCanaryTokens(ctx context.Context, database *db.DB, canaryID, keepID string, at time.Time) (int64, error) {
+	res, err := database.ExecContext(ctx,
+		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?)
+		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL`,
+		at.UTC().Format(receivedAtLayout), canaryID, keepID)
+	if err != nil {
+		return 0, fmt.Errorf("revoke other canary tokens: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // RevokeCanaryToken sets id's revoked_at to at, so every subsequent
 // LookupCanaryTokenByHash call for it returns ErrTokenNotFound. Returns
 // ErrTokenNotFound if id names no row. Revoking an already-revoked token
