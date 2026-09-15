@@ -151,6 +151,44 @@ func TestIssuedNeverUsedTokenDiesWhenLaterTokenFirstUsed(t *testing.T) {
 	})
 }
 
+// TestOldTokenInFlightDoesNotKillTheNewerOne: an agent that rotates and
+// then makes one more request on its OLD token -- a retry already in
+// flight when the rotation returned -- must not have the token it is
+// about to switch to revoked underneath it. Only OLDER tokens are
+// superseded, so the newly issued one survives and the agent is never
+// left holding a credential birdcage has revoked, whose only way back is
+// re-enrolment (#47).
+func TestOldTokenInFlightDoesNotKillTheNewerOne(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw1 := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		raw2 := mustRotate(t, h, raw1) // issued; the agent has not switched yet
+
+		// The in-flight retry lands on the old token.
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw1, batchBody(rotateEventIDA)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("old token still in use: status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		// The agent now switches to the token it was issued.
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw2, batchBody(rotateEventIDB)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("new token after the old one was used once more: status = %d, want %d -- the agent was locked out of its own rotation",
+				rec.Code, http.StatusOK)
+		}
+
+		// And that first use supersedes the old one, as it always does.
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw1, batchBody(rotateEventIDC)))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("old token after the new one's first use: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+}
+
 // TestRevokedTokenAfterSuccessorActiveRecordsTokenConflict is slice 5's
 // fourth required test: "a revoked token presented after a successor is
 // active records a token conflict".

@@ -169,7 +169,7 @@ func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, 
 // rotation and records nothing; #45 only wants to hear about a rotation
 // that actually happened.
 func completeRotation(ctx context.Context, database *db.DB, now func() time.Time, tok store.CanaryToken) {
-	revoked, err := store.RevokeOtherCanaryTokens(ctx, database, tok.CanaryID, tok.ID, now().UTC())
+	revoked, err := store.RevokeCanaryTokensSupersededBy(ctx, database, tok, now().UTC())
 	if err != nil {
 		slog.Error("ingest: revoke superseded tokens failed", "canary", tok.CanaryID, "err", err)
 		return

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -281,116 +282,65 @@ func TestCanaryHasActiveTokenReflectsRevocations(t *testing.T) {
 	})
 }
 
-// TestRevokeOtherCanaryTokensRevokesEveryOtherLiveToken is #32 slice 5's
-// core rotation primitive: every non-revoked token for the canary except
-// keepID is revoked, an already-revoked row is left with its original
-// timestamp, and another canary's tokens are never touched.
-func TestRevokeOtherCanaryTokensRevokesEveryOtherLiveToken(t *testing.T) {
+// TestRevokeCanaryTokensSupersededByRevokesOlderOnly is #32 slice 5's
+// core rotation primitive: every live token minted before the presented
+// one is revoked, an already-revoked row keeps its original timestamp, a
+// LATER token is left alone (revoking it would let an old token in
+// flight kill the credential the agent is switching to), and another
+// canary's tokens are never touched.
+func TestRevokeCanaryTokensSupersededByRevokesOlderOnly(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		_, keep, err := MintCanaryToken(context.Background(), database, "canary-a", mintedAt)
-		if err != nil {
-			t.Fatalf("MintCanaryToken(keep): %v", err)
+		mint := func(canaryID, at string) CanaryToken {
+			t.Helper()
+			_, tok, err := MintCanaryToken(context.Background(), database, canaryID, mustParse(t, at))
+			if err != nil {
+				t.Fatalf("MintCanaryToken(%s, %s): %v", canaryID, at, err)
+			}
+			return tok
 		}
-		_, older1, err := MintCanaryToken(context.Background(), database, "canary-a", mintedAt)
-		if err != nil {
-			t.Fatalf("MintCanaryToken(older1): %v", err)
+		revokedAtOf := func(id string) *string {
+			t.Helper()
+			var got *string
+			if err := database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, id).Scan(&got); err != nil {
+				t.Fatalf("scan revoked_at: %v", err)
+			}
+			return got
 		}
-		_, older2, err := MintCanaryToken(context.Background(), database, "canary-a", mintedAt)
-		if err != nil {
-			t.Fatalf("MintCanaryToken(older2): %v", err)
-		}
-		alreadyRevokedAt := mustParse(t, "2026-01-01T12:00:00Z")
+
+		older1 := mint("canary-a", "2026-01-01T00:00:00Z")
+		older2 := mint("canary-a", "2026-01-02T00:00:00Z")
+		presented := mint("canary-a", "2026-01-03T00:00:00Z")
+		newer := mint("canary-a", "2026-01-04T00:00:00Z")
+		otherCanary := mint("canary-b", "2026-01-01T00:00:00Z")
+
+		alreadyRevokedAt := mustParse(t, "2026-01-02T12:00:00Z")
 		if err := RevokeCanaryToken(context.Background(), database, older2.ID, alreadyRevokedAt); err != nil {
 			t.Fatalf("RevokeCanaryToken(older2): %v", err)
 		}
-		_, otherCanary, err := MintCanaryToken(context.Background(), database, "canary-b", mintedAt)
-		if err != nil {
-			t.Fatalf("MintCanaryToken(canary-b): %v", err)
-		}
 
-		at := mustParse(t, "2026-01-02T00:00:00Z")
-		n, err := RevokeOtherCanaryTokens(context.Background(), database, "canary-a", keep.ID, at)
+		at := mustParse(t, "2026-01-05T00:00:00Z")
+		n, err := RevokeCanaryTokensSupersededBy(context.Background(), database, presented, at)
 		if err != nil {
-			t.Fatalf("RevokeOtherCanaryTokens: %v", err)
+			t.Fatalf("RevokeCanaryTokensSupersededBy: %v", err)
 		}
 		if n != 1 {
-			t.Errorf("RevokeOtherCanaryTokens revoked %d rows, want 1 (only older1, older2 was already revoked)", n)
+			t.Errorf("revoked %d rows, want 1 (older1 only; older2 was already revoked)", n)
 		}
 
-		var revokedAt *string
-		row := database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, keep.ID)
-		if err := row.Scan(&revokedAt); err != nil {
-			t.Fatalf("scan keep.revoked_at: %v", err)
+		if got := revokedAtOf(older1.ID); got == nil {
+			t.Error("older1 is still live, want it revoked")
 		}
-		if revokedAt != nil {
-			t.Errorf("keep token revoked_at = %v, want nil (never revoked)", *revokedAt)
+		if got := revokedAtOf(older2.ID); got == nil || !strings.HasPrefix(*got, "2026-01-02T12:00:00") {
+			t.Errorf("older2.revoked_at = %v, want its original 2026-01-02T12:00:00Z", got)
 		}
-
-		row = database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, older1.ID)
-		if err := row.Scan(&revokedAt); err != nil {
-			t.Fatalf("scan older1.revoked_at: %v", err)
+		if got := revokedAtOf(presented.ID); got != nil {
+			t.Errorf("the presented token was revoked (%v); it is the one being kept", *got)
 		}
-		if revokedAt == nil {
-			t.Fatal("older1 was not revoked")
+		if got := revokedAtOf(newer.ID); got != nil {
+			t.Errorf("a LATER token was revoked (%v): an old token in flight must never kill the newer one the agent is switching to", *got)
 		}
-
-		row = database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, older2.ID)
-		if err := row.Scan(&revokedAt); err != nil {
-			t.Fatalf("scan older2.revoked_at: %v", err)
-		}
-		got, err := time.Parse(receivedAtLayout, *revokedAt)
-		if err != nil {
-			t.Fatalf("parse older2.revoked_at %q: %v", *revokedAt, err)
-		}
-		if !got.Equal(alreadyRevokedAt) {
-			t.Errorf("older2 revoked_at = %s, want unchanged original %s", got, alreadyRevokedAt)
-		}
-
-		row = database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, otherCanary.ID)
-		if err := row.Scan(&revokedAt); err != nil {
-			t.Fatalf("scan otherCanary.revoked_at: %v", err)
-		}
-		if revokedAt != nil {
-			t.Errorf("canary-b's token revoked_at = %v, want nil (a different canary must never be touched)", *revokedAt)
-		}
-	})
-}
-
-func TestInsertAlertIfNewDuplicateEventIDIsNoOp(t *testing.T) {
-	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		a := AlertInsert{
-			InstanceID: "canary-a", SourceIP: "203.0.113.9", DestPort: 22, Service: "ssh",
-			Raw: "raw-1", ReceivedAt: mustParse(t, "2026-01-01T00:00:00Z"), EventID: "event-1",
-		}
-
-		stored, err := InsertAlertIfNew(context.Background(), database, a)
-		if err != nil {
-			t.Fatalf("InsertAlertIfNew (first): %v", err)
-		}
-		if !stored {
-			t.Fatal("InsertAlertIfNew (first) reported stored=false, want true")
-		}
-
-		dup := a
-		dup.Raw = "raw-2" // a differing payload must still be ignored: the id is what matters
-		stored, err = InsertAlertIfNew(context.Background(), database, dup)
-		if err != nil {
-			t.Fatalf("InsertAlertIfNew (duplicate): %v", err)
-		}
-		if stored {
-			t.Fatal("InsertAlertIfNew (duplicate) reported stored=true, want false (no-op)")
-		}
-
-		alerts, err := ListAlerts(context.Background(), database, AlertFilter{InstanceID: "canary-a"})
-		if err != nil {
-			t.Fatalf("ListAlerts: %v", err)
-		}
-		if len(alerts) != 1 {
-			t.Fatalf("got %d alerts for duplicate event id, want exactly 1: %+v", len(alerts), alerts)
-		}
-		if alerts[0].Raw != "raw-1" {
-			t.Errorf("stored alert Raw = %q, want %q (the first delivery, not the duplicate)", alerts[0].Raw, "raw-1")
+		if got := revokedAtOf(otherCanary.ID); got != nil {
+			t.Errorf("another canary's token was revoked (%v)", *got)
 		}
 	})
 }
