@@ -67,6 +67,32 @@ func batchRequest(token, body string) *http.Request {
 	return req
 }
 
+// TestIngestAuthDatabaseFailureIsRetryableNot401: #32's fail-closed
+// rule says an infrastructure failure is never reported as a rejection.
+// A 401 is permanent to the agent, so a database problem answered with
+// one would look to every canary like a dead credential; it must be a
+// 503 the agent retries instead.
+func TestIngestAuthDatabaseFailureIsRetryableNot401(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		token := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		// Closing the handle is how this test reaches the lookup's
+		// error path; dbtest's own cleanup closing it again is a no-op.
+		if err := database.Close(); err != nil {
+			t.Fatalf("close database: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(token, `{"events":[]}`))
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want %d: a database failure is retryable, not a rejected credential",
+				rec.Code, http.StatusServiceUnavailable)
+		}
+	})
+}
+
 // TestIngestAuthRejectsMissingUnknownAndRevokedTokens is #32 slice 2's
 // first required test: "missing, unknown and revoked tokens all get
 // 401".

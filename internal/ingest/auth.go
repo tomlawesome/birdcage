@@ -70,13 +70,17 @@ func requireBearerToken(database *db.DB, now func() time.Time, next http.Handler
 		tok, err := store.LookupCanaryTokenByHash(r.Context(), database, store.HashToken(raw))
 		if err != nil {
 			if !errors.Is(err, store.ErrTokenNotFound) {
-				// A real infrastructure failure during the lookup itself
-				// -- still a uniform 401 to the caller (fail closed: never
-				// let an auth-path error accidentally grant access, and
-				// never reveal that this token would otherwise resolve),
-				// but worth an operator-visible log line since it isn't
-				// simply "bad credential".
+				// Birdcage's own storage is in trouble; this says
+				// nothing about the credential. Issue #32's fail-closed
+				// rule is explicit that an infrastructure failure is
+				// never reported as a rejection, and a 401 is permanent
+				// to the agent -- a database blip would otherwise look
+				// to every canary like a dead credential and send it to
+				// re-enrolment. 503 denies the request just as firmly
+				// and the agent retries, which dedup makes free.
 				slog.Error("ingest: token lookup failed", "err", err)
+				writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+				return
 			}
 			writeIngestError(w, http.StatusUnauthorized, "unauthorized")
 			return
