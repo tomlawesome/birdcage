@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 func validEventJSON(eventID string) string {
@@ -126,6 +128,118 @@ func TestHandleBatchOneBadEventRejectedRestStored(t *testing.T) {
 		}
 		if alertCount != 1 {
 			t.Errorf("alerts stored for canary-a = %d, want 1 (only the good event)", alertCount)
+		}
+	})
+}
+
+// TestHandleBatchPayloadNodeIDMismatchStoresUnderTokenCanary is #32
+// slice 4's first required test: "a payload naming another canary is
+// stored against the token's canary".
+func TestHandleBatchPayloadNodeIDMismatchStoresUnderTokenCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"node_id":"canary-b","events":[%s]}`, validEventJSON(validEventID1))
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		alerts, err := store.ListAlerts(context.Background(), database, store.AlertFilter{InstanceID: "canary-a"})
+		if err != nil {
+			t.Fatalf("ListAlerts(canary-a): %v", err)
+		}
+		if len(alerts) != 1 {
+			t.Fatalf("canary-a (the token's canary) alerts = %d, want 1", len(alerts))
+		}
+
+		spoofed, err := store.ListAlerts(context.Background(), database, store.AlertFilter{InstanceID: "canary-b"})
+		if err != nil {
+			t.Fatalf("ListAlerts(canary-b): %v", err)
+		}
+		if len(spoofed) != 0 {
+			t.Fatalf("canary-b (the payload's claimed, untrusted identity) alerts = %d, want 0", len(spoofed))
+		}
+	})
+}
+
+// TestHandleBatchAckListsExactlyStoredAndRejected is #32 slice 4's
+// second required test: "the response lists exactly the ids stored and
+// rejected" -- every event id sent appears in exactly one of the two
+// lists, with nothing missing and nothing extra.
+func TestHandleBatchAckListsExactlyStoredAndRejected(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		goodID := validEventID1
+		badID := "not-a-valid-event-id"
+		body := fmt.Sprintf(`{"events":[%s,{"event_id":%q,"source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":"hit"}]}`,
+			validEventJSON(goodID), badID)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+
+		named := map[string]bool{}
+		for _, id := range resp.Stored {
+			if named[id] {
+				t.Fatalf("event id %q named more than once in stored", id)
+			}
+			named[id] = true
+		}
+		for id := range resp.Rejected {
+			if named[id] {
+				t.Fatalf("event id %q present in both stored and rejected", id)
+			}
+			named[id] = true
+		}
+		want := map[string]bool{goodID: true, badID: true}
+		if len(named) != len(want) {
+			t.Fatalf("ack named %d distinct ids %v, want exactly %v", len(named), named, want)
+		}
+		for id := range want {
+			if !named[id] {
+				t.Errorf("ack response never named event id %q", id)
+			}
+		}
+	})
+}
+
+// TestHandleBatchSameMultiEventBatchTwiceStoresOneCopyEach is #32 slice
+// 4's third required test: "the same batch sent twice stores one copy" --
+// exercised here with a multi-event batch, distinct from
+// TestHandleBatchDuplicateEventIDAcksAsStored's single-event case.
+func TestHandleBatchSameMultiEventBatchTwiceStoresOneCopyEach(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"events":[%s,%s]}`, validEventJSON(validEventID1), validEventJSON(validEventID2))
+
+		for i := 0; i < 2; i++ {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, batchRequest(raw, body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("attempt %d: status = %d, want %d (body %q)", i, rec.Code, http.StatusOK, rec.Body.String())
+			}
+		}
+
+		alerts, err := store.ListAlerts(context.Background(), database, store.AlertFilter{InstanceID: "canary-a"})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		if len(alerts) != 2 {
+			t.Fatalf("alerts stored = %d, want 2 (the same two-event batch sent twice must store one copy each)", len(alerts))
 		}
 	})
 }
