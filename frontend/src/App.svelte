@@ -38,13 +38,23 @@
 
   let loaderState: LoaderState = $state(initialLoaderState)
 
+  // triggerRefresh always points at the current effect run's `load`
+  // below, so issue #44's stream subscription can ask for an immediate
+  // refetch without duplicating the range/in-flight logic that effect
+  // already owns. null only before the first effect run, which never
+  // overlaps with the stream effect actually receiving a message.
+  let triggerRefresh: (() => void) | null = null
+
   // Refetches whenever activeRange changes and every REFRESH_MS after
   // that; `inFlight` is local to this effect run (a fresh false every
   // time activeRange changes) so switching ranges never waits on a
   // slow fetch for the *previous* range, while a tick that lands on top
   // of a still-pending fetch for the *current* range is simply skipped
   // rather than doubled. A response that arrives after activeRange has
-  // since moved on is dropped, not applied.
+  // since moved on is dropped, not applied. This poll is issue #44's
+  // required fallback: it stays exactly as it was before that issue,
+  // so a stream that never connects, drops, or is disabled leaves the
+  // dashboard behaving exactly as it does today.
   $effect(() => {
     const range = activeRange
     let inFlight = false
@@ -60,9 +70,34 @@
         inFlight = false
       }
     }
+    triggerRefresh = load
     load()
     const interval = setInterval(load, REFRESH_MS)
     return () => clearInterval(interval)
+  })
+
+  // Issue #44: birdcage pushes a server-sent event whenever an alert is
+  // stored, so an already-open dashboard sees it within a second instead
+  // of waiting for the poll above. The event merely triggers the same
+  // refetch the poll already does (triggerRefresh, reusing its in-flight
+  // guard and its "drop a response for a range we've since left" check)
+  // rather than hand-parsing the pushed alert into loaderState itself --
+  // one loader, one source of truth for what the page shows, whether the
+  // fetch was requested by the clock or by a push.
+  //
+  // The connection is independent of activeRange -- a live hit should
+  // refresh whichever range is showing -- and is left to the browser's
+  // own EventSource reconnect logic (no custom retry code, per the
+  // ratified approach): if the stream drops, the poll above keeps the
+  // page correct until EventSource reconnects on its own. A browser
+  // without EventSource, or a stream that never connects at all, simply
+  // never calls triggerRefresh here -- the dashboard behaves exactly as
+  // it did before this effect existed.
+  $effect(() => {
+    if (typeof EventSource === 'undefined') return
+    const source = new EventSource('/api/stream')
+    source.onmessage = () => triggerRefresh?.()
+    return () => source.close()
   })
 
   let data = $derived(loaderState.data)

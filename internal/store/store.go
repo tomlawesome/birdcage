@@ -41,14 +41,18 @@ type Alert struct {
 // OpenCanary emitted (#48), or empty for a caller with no event id (the
 // UDP syslog path's own rows, which stay that way -- see
 // migrations/*/0004_canary_tokens.sql).
+//
+// JSON tags (issue #44) are for internal/stream's Hub, which marshals an
+// AlertInsert as-is onto GET /api/stream: nothing here decodes an
+// AlertInsert from JSON, so adding tags is purely additive.
 type AlertInsert struct {
-	InstanceID string
-	SourceIP   string
-	DestPort   int
-	Service    string
-	Raw        string
-	ReceivedAt time.Time
-	EventID    string
+	InstanceID string    `json:"instance_id"`
+	SourceIP   string    `json:"source_ip"`
+	DestPort   int       `json:"dest_port"`
+	Service    string    `json:"service"`
+	Raw        string    `json:"raw"`
+	ReceivedAt time.Time `json:"received_at"`
+	EventID    string    `json:"event_id,omitempty"`
 }
 
 // InsertAlertIfNew inserts a into alerts and reports whether it actually
