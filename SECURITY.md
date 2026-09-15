@@ -61,6 +61,19 @@ This section is rewritten route-by-route when #8 lands.
   unprivileged port 5514 (not 514) so birdcage can
   run as a non-root container; operators point each OpenCanary instance's
   syslog handler `address` at this port.
+- **Canary ingest — HTTPS, default `:8443`** (override with
+  `BIRDCAGE_INGEST_ADDR`; certificate/key via `BIRDCAGE_INGEST_TLS_CERT`
+  and `BIRDCAGE_INGEST_TLS_KEY`). **Bearer-token authenticated, TLS 1.3
+  minimum, HTTP/1.1 only.** A canary's agent (#48) posts batches of
+  events to `POST /ingest/events` with `Authorization: Bearer <token>`;
+  missing, unknown and revoked tokens all get an identical 401. This
+  listener is on its own `*http.Server`, structurally unreachable from
+  every dashboard route above and from the dashboard's own auth seam
+  (issue #32). It does not start at all until both TLS environment
+  variables are set (normal until #47's enrolment lands and can mint
+  them); setting only one of the two, or an unloadable certificate or
+  key, stops birdcage at startup rather than falling back to plaintext.
+  Full threat model, rotation, and rate limits: issue #32.
 - **Dashboard HTTP — TCP, default `:8080`** (override with
   `BIRDCAGE_HTTP_ADDR`). No authentication yet --
   [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
