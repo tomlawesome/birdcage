@@ -94,8 +94,11 @@ func TestStreamDeliversAlertWithinASecond(t *testing.T) {
 				continue // blank line separator, or a comment.
 			}
 			payload := strings.TrimPrefix(line, "data: ")
-			if !strings.Contains(payload, "203.0.113.9") {
-				t.Fatalf("data line = %q, want it to contain the alert's source IP", payload)
+			// Contentless by design: the page responds by re-running
+			// the fetch it already polls with, so the stream never
+			// carries the hit itself (#44 research, 2026-09-15).
+			if strings.Contains(payload, "203.0.113.9") {
+				t.Fatalf("data line = %q, want no alert content on the stream", payload)
 			}
 			return // Delivered within the second: done when met.
 		case <-deadline:

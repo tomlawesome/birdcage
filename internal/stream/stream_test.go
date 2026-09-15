@@ -1,7 +1,7 @@
 package stream
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,12 +31,15 @@ func TestSubscribeReceivesPublishedAlert(t *testing.T) {
 
 	select {
 	case payload := <-ch:
-		var got store.AlertInsert
-		if err := json.Unmarshal(payload, &got); err != nil {
-			t.Fatalf("unmarshal payload: %v; payload=%s", err, payload)
+		// The notification says an alert was stored and nothing more:
+		// no alert content travels over the stream, so a connection
+		// that outlives the session that opened it leaks nothing
+		// (#44 research, 2026-09-15).
+		if string(payload) != `{"type":"alert"}` {
+			t.Errorf("payload = %s, want the contentless notification", payload)
 		}
-		if got.SourceIP != "203.0.113.9" {
-			t.Errorf("SourceIP = %q, want 203.0.113.9", got.SourceIP)
+		if strings.Contains(string(payload), "203.0.113.9") {
+			t.Errorf("payload carries alert content: %s", payload)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for published alert")

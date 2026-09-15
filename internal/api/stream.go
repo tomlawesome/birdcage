@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // handleStream serves GET /api/stream (#44): a server-sent-events
@@ -24,7 +25,21 @@ import (
 //     dashboard's poll keeps working regardless.
 //   - The client disconnecting (request context canceled) unsubscribes
 //     and ends the handler; nothing is left running.
+//   - Every write carries a deadline. Without one, a client that stops
+//     reading blocks the handler inside the write once the kernel
+//     buffers fill: the hub evicts it and frees its cap slot, but the
+//     goroutine and its connection stay held forever, so the cap stops
+//     bounding anything an attacker can reach. The deadline turns that
+//     into an error the loop returns on (#44 research, 2026-09-15).
+//
+// writeTimeout bounds a single write to one stream connection. A
+// dashboard that is reading at all completes a write of a few dozen
+// bytes far inside this; one that does not is stuck, and this is how
+// long birdcage waits before saying so.
+const writeTimeout = 10 * time.Second
+
 func (h *handler) handleStream(w http.ResponseWriter, r *http.Request) {
+	rc := http.NewResponseController(w)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		// Every real net/http ResponseWriter implements Flusher; this
@@ -50,6 +65,10 @@ func (h *handler) handleStream(w http.ResponseWriter, r *http.Request) {
 	// on) to pass each write straight through instead of holding it
 	// until their buffer fills -- see docs/configuration.md.
 	header.Set("X-Accel-Buffering", "no")
+	if err := rc.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -62,6 +81,14 @@ func (h *handler) handleStream(w http.ResponseWriter, r *http.Request) {
 				// Evicted by the hub for being too slow to keep up
 				// (back-pressure, issue #44). Ending the response here
 				// makes the browser's EventSource reconnect on its own.
+				return
+			}
+			// A stalled reader must cost this connection, not the
+			// server: past the deadline the write fails and the
+			// handler returns, releasing the goroutine and the
+			// subscriber slot. The browser reconnects by itself and
+			// the 30s poll covers the gap.
+			if err := rc.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				return
 			}
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
