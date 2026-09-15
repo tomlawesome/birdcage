@@ -1,6 +1,9 @@
 package term
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestEscapeControlSequenceRenderedNotExecuted is this issue's proof: a
 // control sequence -- here ESC "[2J" (\x1b[2J), which clears the
@@ -39,7 +42,7 @@ func TestEscapeOrdinaryAndNonASCIIUnchanged(t *testing.T) {
 	cases := []string{
 		"canary-01",
 		"web-honeypot",
-		"カナリア-東京",       // Japanese: an operator must still be able to read this
+		"カナリア-東京",           // Japanese: an operator must still be able to read this
 		"düsseldorf-office", // Latin-1 supplement letters, still printable
 		"emoji-🐦-trap",
 		`already has "quotes" and a \backslash`,
@@ -91,5 +94,31 @@ func TestEscapeAllC0AndDEL(t *testing.T) {
 	got := Escape("\x7f")
 	if got == "\x7f" {
 		t.Fatalf("Escape(DEL) returned DEL unescaped")
+	}
+}
+
+// TestEscapeBidiOverrides: the Trojan Source class (CVE-2021-42574).
+// These characters move nothing on screen; they reverse how the text
+// around them reads, so a canary id can display as an id other than the
+// one stored. They must survive as visible text, not as formatting.
+func TestEscapeBidiOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"right-to-left override", "canary-\u202eresrever", `canary-\u202eresrever`},
+		{"left-to-right mark", "a\u200eb", `a\u200eb`},
+		{"first strong isolate", "a\u2068b\u2069c", `a\u2068b\u2069c`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Escape(tc.in)
+			if got != tc.want {
+				t.Errorf("Escape(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.ContainsRune(got, 0x202e) || strings.ContainsRune(got, 0x200e) || strings.ContainsRune(got, 0x2068) {
+				t.Errorf("Escape(%q) left a bidi character in the output", tc.in)
+			}
+		})
 	}
 }

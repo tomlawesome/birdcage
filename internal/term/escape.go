@@ -16,11 +16,20 @@ import (
 )
 
 // Escape returns s with every C0 control character (U+0000-U+001F), DEL
-// (U+007F), and C1 control character (U+0080-U+009F) rendered as a
-// visible, literal escape sequence instead of the byte a terminal would
-// act on. Left unescaped, these can hide lines, move the cursor to
+// (U+007F), C1 control character (U+0080-U+009F), and bidirectional
+// formatting character rendered as a visible, literal escape sequence
+// instead of the byte a terminal would act on. Left unescaped, these can hide lines, move the cursor to
 // overwrite what is already on screen, or recolour unrelated output --
 // e.g. making a revoked token's line read as active.
+//
+// The bidirectional characters (U+200E, U+200F, U+202A-U+202E,
+// U+2066-U+2069) are escaped for a different reason from the control
+// characters: they do not move the cursor, they reorder how the text
+// around them is DISPLAYED. That is the Trojan Source class
+// (CVE-2021-42574) -- a canary id can be made to read on screen as a
+// different id than the one stored, which is worth more to an attacker
+// here than hiding a line is. They are rare enough in ordinary names
+// that showing them literally costs nothing.
 //
 // Every other rune, including non-ASCII printable text such as a canary
 // named in Japanese, passes through unchanged: this only touches control
@@ -46,7 +55,7 @@ func Escape(s string) string {
 		switch {
 		case r < 0x20 || r == 0x7f:
 			writeControlEscape(&b, r)
-		case r >= 0x80 && r <= 0x9f:
+		case r >= 0x80 && r <= 0x9f, isBidi(r):
 			writeUnicodeEscape(&b, r)
 		default:
 			b.WriteRune(r)
@@ -66,12 +75,23 @@ func needsEscape(s string) bool {
 		if r == utf8.RuneError && size <= 1 {
 			return true
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || isBidi(r) {
 			return true
 		}
 		i += size
 	}
 	return false
+}
+
+// isBidi reports whether r reorders the display of the text around it:
+// the left-to-right and right-to-left marks, the embedding and override
+// characters, and the isolates.
+func isBidi(r rune) bool {
+	switch r {
+	case 0x200e, 0x200f:
+		return true
+	}
+	return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
 }
 
 const hexDigits = "0123456789abcdef"
@@ -100,10 +120,11 @@ func writeControlEscape(b *strings.Builder, r rune) {
 	}
 }
 
-// writeUnicodeEscape renders a C1 control character (U+0080-U+009F).
-// These are single Unicode code points, encoded as two UTF-8 bytes each,
-// so \xHH (a one-byte escape) would be ambiguous about which of the two
-// input bytes it names; \uHHHH names the code point itself instead.
+// writeUnicodeEscape renders a C1 control character (U+0080-U+009F) or a
+// bidirectional formatting character. These are single Unicode code
+// points encoded as several UTF-8 bytes, so \xHH (a one-byte escape)
+// would be ambiguous about which byte it names; \uHHHH names the code
+// point itself instead.
 func writeUnicodeEscape(b *strings.Builder, r rune) {
 	b.WriteString(`\u`)
 	b.WriteByte(hexDigits[(r>>12)&0xf])
