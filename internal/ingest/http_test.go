@@ -153,15 +153,15 @@ func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 
 // TestDashboardMuxCannotReachIngestRoute is the other half: "the ingest
 // token cannot reach a dashboard route" -- the dashboard mux never
-// registers POST /ingest/events (nor, as of slice 5, /ingest/rotate) at
-// all, so no token, valid or otherwise, reaches ingest logic through it;
-// presenting one changes nothing.
+// registers POST /ingest/events (nor, as of slices 5/5a, /ingest/rotate
+// or /ingest/heartbeat) at all, so no token, valid or otherwise, reaches
+// ingest logic through it; presenting one changes nothing.
 func TestDashboardMuxCannotReachIngestRoute(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		dashboard := api.NewHandler(database, nil)
 
-		for _, path := range []string{"/ingest/events", "/ingest/rotate"} {
+		for _, path := range []string{"/ingest/events", "/ingest/rotate", "/ingest/heartbeat"} {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
 			req.Header.Set("Authorization", "Bearer "+raw)
 			rec := httptest.NewRecorder()

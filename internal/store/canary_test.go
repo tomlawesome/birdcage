@@ -235,3 +235,58 @@ func TestParseRangeDefaultAndUnknown(t *testing.T) {
 		t.Error("ParseRange(\"7d\") = nil error, want an error (not a recognized range)")
 	}
 }
+
+// TestRecordCanaryAgentHeartbeatStoresReport is #32 slice 5a's storage
+// half: the agent's self-report fields land against the canary, and
+// last_heartbeat_at advances exactly as RecordHeartbeat's own does.
+func TestRecordCanaryAgentHeartbeatStoresReport(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		report := AgentHeartbeat{QueueDepth: 7, LogReadOK: true, LastEventID: "abc123", AgentVersion: "1.2.3"}
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt, report); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		canaries := listCanaries(t, database, beatAt, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(beatAt) {
+			t.Errorf("LastHeartbeatAt = %v, want %v", c.LastHeartbeatAt, beatAt)
+		}
+
+		var (
+			version    string
+			queueDepth int
+			logReadOK  int
+			lastEvent  string
+		)
+		row := database.QueryRow(
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
+			t.Fatalf("scan self-report columns: %v", err)
+		}
+		if version != "1.2.3" || queueDepth != 7 || logReadOK != 1 || lastEvent != "abc123" {
+			t.Errorf("stored self-report = (%q, %d, %d, %q), want (\"1.2.3\", 7, 1, \"abc123\")",
+				version, queueDepth, logReadOK, lastEvent)
+		}
+	})
+}
+
+// TestRecordCanaryAgentHeartbeatUnknownCanary mirrors RecordHeartbeat's
+// own contract: an unregistered canary id reports ErrCanaryNotFound and
+// touches nothing.
+func TestRecordCanaryAgentHeartbeatUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := RecordCanaryAgentHeartbeat(context.Background(), database, "no-such-canary",
+			mustParse(t, "2026-01-01T00:00:00Z"), AgentHeartbeat{AgentVersion: "1.0.0"})
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("RecordCanaryAgentHeartbeat(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
