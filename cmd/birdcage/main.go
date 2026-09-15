@@ -20,6 +20,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/store"
+	"github.com/tomlawesome/birdcage/internal/stream"
 	"github.com/tomlawesome/birdcage/web"
 )
 
@@ -40,10 +41,27 @@ const (
 	// link-local) -- for an operator whose LAN uses address space
 	// outside those. See docs/configuration.md.
 	envInternalRanges = "BIRDCAGE_INTERNAL_RANGES"
+	// envIngestAddr, envIngestTLSCert and envIngestTLSKey configure issue
+	// #32's HTTPS ingest listener -- a canary's agent (#48) posts event
+	// batches here, authenticated by its own bearer token, never the
+	// dashboard's requireAuth seam. Cert/key are PEM files on disk;
+	// #47 (enrolment) is what will eventually mint them automatically,
+	// so until it lands an operator supplies them by hand. Leaving both
+	// unset disables this listener entirely (see the switch in main
+	// below) rather than failing startup, since no project this size can
+	// assume #47's CA exists yet; setting only one of the two is treated
+	// as a configuration error and fails startup loudly, since a
+	// half-configured TLS listener is never an acceptable fallback
+	// (issue #32 fail-closed: "no plaintext fallback; no plaintext
+	// listener on any ingest port, ever").
+	envIngestAddr    = "BIRDCAGE_INGEST_ADDR"
+	envIngestTLSCert = "BIRDCAGE_INGEST_TLS_CERT"
+	envIngestTLSKey  = "BIRDCAGE_INGEST_TLS_KEY"
 
 	defaultDBPath     = "birdcage.db"
 	defaultSyslogAddr = ":5514"
 	defaultHTTPAddr   = ":8080"
+	defaultIngestAddr = ":8443"
 
 	// httpReadHeaderTimeout bounds how long the HTTP server waits for a
 	// client to finish sending request headers, so a slow or stalled
@@ -127,12 +145,20 @@ func main() {
 	// <birdcage-host>:5514 rather than the conventional :514.
 	syslogServer := ingest.NewServer(syslogAddr, database)
 
-	// /api/* keeps its exact routing (internal/api.NewHandler is
-	// untouched); everything else is the dashboard frontend (#36),
-	// embedded into this binary by web/embed.go with an SPA fallback to
-	// index.html so a client-side route survives a refresh.
+	// hub is shared between the dashboard's GET /api/stream (issue #44)
+	// and the ingest listener below (issue #32): an alert the ingest
+	// endpoint stores is published to it immediately, so an open
+	// dashboard sees it without waiting for its 30s poll. Built here
+	// (rather than letting api.NewHandler create its own, unreachable
+	// one) specifically so both sides share the same instance.
+	hub := stream.NewHub()
+
+	// /api/* keeps its exact routing (internal/api.NewHandlerWithHub is
+	// otherwise untouched); everything else is the dashboard frontend
+	// (#36), embedded into this binary by web/embed.go with an SPA
+	// fallback to index.html so a client-side route survives a refresh.
 	rootMux := http.NewServeMux()
-	rootMux.Handle("/api/", api.NewHandler(database, internalRanges))
+	rootMux.Handle("/api/", api.NewHandlerWithHub(database, internalRanges, hub))
 	if uiHandler, err := web.Handler(); err != nil {
 		log.Printf("frontend: %v (serving API only)", err)
 	} else {
@@ -151,15 +177,48 @@ func main() {
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 	}
 
-	// Both servers run concurrently, and both are watched to completion
-	// below -- a plain channel rather than a library dependency, since
-	// exactly two goroutines are ever in flight and both are collected
-	// the same way. Whichever finishes first (from a signal, or from a
-	// failure of its own, e.g. "address already in use") triggers stop()
-	// below, which cancels ctx and so brings the other one down too:
-	// without that, a lone failure in one service would leave main
-	// blocked forever waiting on the other's result.
-	results := make(chan serviceResult, 2)
+	// The ingest listener (issue #32) is only started once both TLS
+	// files are configured -- see envIngestTLSCert's doc comment above
+	// for why an operator who hasn't set them yet (normal, pending #47)
+	// gets a disabled listener rather than a startup failure, while a
+	// half-configured pair or an unloadable cert/key does fail startup:
+	// this listener has no plaintext fallback to degrade to.
+	ingestCert := os.Getenv(envIngestTLSCert)
+	ingestKey := os.Getenv(envIngestTLSKey)
+	var ingestServer *http.Server
+	switch {
+	case ingestCert == "" && ingestKey == "":
+		log.Printf("ingest: %s/%s not set; HTTPS ingest listener disabled (pending #47 enrolment)", envIngestTLSCert, envIngestTLSKey)
+	case ingestCert == "" || ingestKey == "":
+		log.Fatalf("ingest: both %s and %s must be set together", envIngestTLSCert, envIngestTLSKey)
+	default:
+		ingestAddr := os.Getenv(envIngestAddr)
+		if ingestAddr == "" {
+			ingestAddr = defaultIngestAddr
+		}
+		srv, err := ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), ingestCert, ingestKey)
+		if err != nil {
+			// Fail-closed, loudly, before any socket binds (issue #32:
+			// "TLS certificate or key unloadable -> the ingest listener
+			// refuses to start").
+			log.Fatalf("ingest: %v", err)
+		}
+		ingestServer = srv
+	}
+
+	// Every service below runs concurrently, and all are watched to
+	// completion below -- a plain channel rather than a library
+	// dependency, since a handful of goroutines are ever in flight and
+	// all are collected the same way. Whichever finishes first (from a
+	// signal, or from a failure of its own, e.g. "address already in
+	// use") triggers stop() below, which cancels ctx and so brings the
+	// others down too: without that, a lone failure in one service would
+	// leave main blocked forever waiting on the rest.
+	serviceCount := 2
+	if ingestServer != nil {
+		serviceCount++
+	}
+	results := make(chan serviceResult, serviceCount)
 
 	go func() {
 		log.Printf("listening for OpenCanary UDP syslog on %s, storing alerts via %s (%s)",
@@ -186,17 +245,46 @@ func main() {
 		}
 	}()
 
-	first := <-results
-	if first.err != nil {
-		log.Printf("%s: %v", first.name, first.err)
-	}
-	stop() // idempotent; ensures the other service is asked to stop too
-	second := <-results
-	if second.err != nil {
-		log.Printf("%s: %v", second.name, second.err)
+	if ingestServer != nil {
+		go func() {
+			log.Printf("serving HTTPS ingest listener on %s", ingestServer.Addr)
+			// Cert/key are already loaded into ingestServer.TLSConfig by
+			// ingest.NewTLSServer, so both arguments here are empty.
+			err := ingestServer.ListenAndServeTLS("", "")
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			results <- serviceResult{"ingest server", err}
+		}()
+
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+			defer cancel()
+			if err := ingestServer.Shutdown(shutdownCtx); err != nil {
+				log.Printf("ingest server shutdown: %v", err)
+			}
+		}()
 	}
 
-	if first.err != nil || second.err != nil {
+	// The first result to arrive (a signal, or any one service failing on
+	// its own, e.g. "address already in use") triggers stop() so every
+	// other service is asked to stop too; every remaining result is then
+	// drained so main doesn't exit while a service is still shutting
+	// down.
+	failed := false
+	for i := 0; i < serviceCount; i++ {
+		res := <-results
+		if res.err != nil {
+			log.Printf("%s: %v", res.name, res.err)
+			failed = true
+		}
+		if i == 0 {
+			stop() // idempotent; ensures every other service is asked to stop too
+		}
+	}
+
+	if failed {
 		os.Exit(1)
 	}
 	log.Print("shutdown complete")

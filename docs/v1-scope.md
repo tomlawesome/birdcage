@@ -12,28 +12,28 @@ sharing its design language and sign-in model but not its code -- see
 Work is tracked as three epics, each grouping the individual issues that
 belong to it:
 
-- [Epic: V1 foundation -- ingestion + dashboard (#9)](https://github.com/tomlawesome/birdcage/issues/9) -- wave 1
-- [Epic: V1 automated mitigation (#10)](https://github.com/tomlawesome/birdcage/issues/10) -- wave 2
-- [Epic: Deferred / future hardening (#11)](https://github.com/tomlawesome/birdcage/issues/11) -- wave 3
+- [Epic: V1 foundation -- ingestion + dashboard (#9)](https://gitlab.tomlawson.io/ai/birdcage/-/issues/9) -- wave 1
+- [Epic: V1 automated mitigation (#10)](https://gitlab.tomlawson.io/ai/birdcage/-/issues/10) -- wave 2
+- [Epic: Deferred / future hardening (#11)](https://gitlab.tomlawson.io/ai/birdcage/-/issues/11) -- wave 3
 
 ## In v1 (waves 1-2)
 
 - Receiving and normalizing OpenCanary syslog output from many instances
-  into a single store ([#2](https://github.com/tomlawesome/birdcage/issues/2)).
+  into a single store ([#2](https://gitlab.tomlawson.io/ai/birdcage/-/issues/2)).
 - A dashboard showing alerts across all registered instances, filterable by
-  instance/source IP/service/time ([#3](https://github.com/tomlawesome/birdcage/issues/3)).
+  instance/source IP/service/time ([#3](https://gitlab.tomlawson.io/ai/birdcage/-/issues/3)).
 - A defined, concrete meaning for "intelligent analysis" of that activity
-  ([#6](https://github.com/tomlawesome/birdcage/issues/6)) -- not shipped as
+  ([#6](https://gitlab.tomlawson.io/ai/birdcage/-/issues/6)) -- not shipped as
   an undefined aspiration.
-- CrowdSec integration ([#4](https://github.com/tomlawesome/birdcage/issues/4))
+- CrowdSec integration ([#4](https://gitlab.tomlawson.io/ai/birdcage/-/issues/4))
   and RouterOS automated mitigation
-  ([#5](https://github.com/tomlawesome/birdcage/issues/5)), both writing
+  ([#5](https://gitlab.tomlawson.io/ai/birdcage/-/issues/5)), both writing
   every action taken to the audit log.
 - Authentication: local accounts plus self-hosted-only OIDC, modelled on
-  mikroview's ([#8](https://github.com/tomlawesome/birdcage/issues/8)). The
+  mikroview's ([#8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)). The
   dashboard does not ship without it.
 - Postgres support alongside SQLite, both mandatory in v1, selected by
-  `DATABASE_URL` ([#7](https://github.com/tomlawesome/birdcage/issues/7);
+  `DATABASE_URL` ([#7](https://gitlab.tomlawson.io/ai/birdcage/-/issues/7);
   owner decision 2026-09-13, superseding the original "deferred until
   multi-node/HA" plan -- see [ADR-0001](adr/0001-stack-and-storage.md) and
   [docs/configuration.md](configuration.md)).
@@ -42,7 +42,7 @@ belong to it:
 
 Tracked so these aren't lost, not because they're unimportant:
 
-- Ansible-based rollout for new OpenCanary nodes ([#1](https://github.com/tomlawesome/birdcage/issues/1)).
+- Ansible-based rollout for new OpenCanary nodes ([#1](https://gitlab.tomlawson.io/ai/birdcage/-/issues/1)).
 
 ## Explicitly out of scope for birdcage itself
 

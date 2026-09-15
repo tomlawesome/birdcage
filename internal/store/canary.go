@@ -165,6 +165,46 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 	return nil
 }
 
+// AgentHeartbeat is the self-report a canary's agent (#48) sends with
+// every heartbeat over the ingest token (issue #32 slice 5a) -- queue
+// depth, whether its OpenCanary log read is healthy, the last event id
+// it has seen, and its own version. #45's "not delivering" state stands
+// on this, since birdcage never connects to the agent to check on it
+// directly; RecordCanaryAgentHeartbeat only stores it, showing it on the
+// dashboard is #45's job.
+type AgentHeartbeat struct {
+	QueueDepth   int
+	LogReadOK    bool
+	LastEventID  string
+	AgentVersion string
+}
+
+// RecordCanaryAgentHeartbeat records that canaryID's agent phoned home at
+// at -- exactly RecordHeartbeat's own contract, including
+// ErrCanaryNotFound for an unregistered canary -- and additionally
+// stores report against the canaries row. Like RecordHeartbeat itself,
+// this is two separate statements, not one transaction: matching that
+// function's own existing shape rather than introducing a second
+// convention for multi-statement writes in this file.
+func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID string, at time.Time, report AgentHeartbeat) error {
+	if err := RecordHeartbeat(ctx, database, canaryID, at); err != nil {
+		return err
+	}
+
+	logReadOK := 0
+	if report.LogReadOK {
+		logReadOK = 1
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE canaries
+		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?
+		WHERE id = ?`,
+		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID, canaryID); err != nil {
+		return fmt.Errorf("update agent self-report: %w", err)
+	}
+	return nil
+}
+
 // rangeDurations maps every Range GET /api/canaries (and #35's
 // GET /api/trace) accept to the window ListCanaries' hits count looks
 // back over. Kept as the one place both handlers and tests read it from.

@@ -31,7 +31,7 @@ implementation work starts.
   builds into a `CGO_ENABLED=0` distroless image the same way mikroview
   does). Right for a single-node, self-hosted deployment: no separate DB
   server, trivial to back up (one file). Postgres is mandatory in v1 (see
-  [issue #7](https://github.com/tomlawesome/birdcage/issues/7)), informed by
+  [issue #7](https://gitlab.tomlawson.io/ai/birdcage/-/issues/7)), informed by
   `tomlawesome/orbit`'s existing Postgres + Drizzle + migration/test setup
   as prior art for the pattern once multi-node/HA deployment is a real
   requirement.
@@ -46,7 +46,7 @@ implementation work starts.
   expected to sit behind a reverse proxy or VPN, not to gate access itself.
   Given birdcage holds live service-account credentials and can take
   automated action, this is revisited once v1 ingestion/dashboard/mitigation
-  works -- see [issue #8](https://github.com/tomlawesome/birdcage/issues/8)
+  works -- see [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
   (OIDC via Authentik, modeled on `tomlawesome/orbit`'s
   `docs/authentication.md`).
 
