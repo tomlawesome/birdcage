@@ -84,12 +84,29 @@ func main() {
 	log.SetFlags(log.LstdFlags)
 	log.SetPrefix("birdcage: ")
 
-	// `birdcage canary add ...` (cmd/birdcage/canary.go) is a standalone
-	// dev/testing subcommand -- issue #34's "Not in this slice" -- that
-	// exits immediately rather than starting the syslog/HTTP services
-	// below.
-	if len(os.Args) > 2 && os.Args[1] == "canary" && os.Args[2] == "add" {
-		if err := runCanaryAdd(os.Args[3:]); err != nil {
+	// `birdcage canary ...` (cmd/birdcage/canary.go) are standalone CLI
+	// subcommands -- `add` a dev/testing convenience predating enrollment
+	// (#34's "Not in this slice"), `mint`/`list`/`revoke` issue #32 item
+	// 9's canary token management -- that exit immediately rather than
+	// starting the syslog/HTTP services below.
+	if len(os.Args) > 1 && os.Args[1] == "canary" {
+		if len(os.Args) < 3 {
+			log.Fatal("usage: birdcage canary <add|mint|list|revoke> ...")
+		}
+		var err error
+		switch os.Args[2] {
+		case "add":
+			err = runCanaryAdd(os.Args[3:])
+		case "mint":
+			err = runCanaryMint(os.Args[3:])
+		case "list":
+			err = runCanaryList(os.Args[3:])
+		case "revoke":
+			err = runCanaryRevoke(os.Args[3:])
+		default:
+			log.Fatalf("unknown canary subcommand %q (want add, mint, list or revoke)", os.Args[2])
+		}
+		if err != nil {
 			log.Fatal(err)
 		}
 		return

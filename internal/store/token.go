@@ -102,7 +102,15 @@ func LookupCanaryTokenByHash(ctx context.Context, database *db.DB, hash string) 
 	return scanCanaryToken(row)
 }
 
-func scanCanaryToken(row *sql.Row) (CanaryToken, error) {
+// rowScanner is the common surface of *sql.Row and *sql.Rows that
+// scanCanaryToken needs, so the single-row lookups above and
+// ListCanaryTokens' multi-row scan below share one scan implementation
+// rather than duplicating the column list and its NULL/time handling.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCanaryToken(row rowScanner) (CanaryToken, error) {
 	var (
 		t          CanaryToken
 		createdAt  string
@@ -152,6 +160,52 @@ func LookupCanaryTokenByHashAnyStatus(ctx context.Context, database *db.DB, hash
 		FROM canary_tokens
 		WHERE token_hash = ?`, hash)
 	return scanCanaryToken(row)
+}
+
+// LookupCanaryTokenByID resolves id to its CanaryToken row, regardless of
+// revocation status -- unlike LookupCanaryTokenByHash. The CLI's `canary
+// revoke` (issue #32 item 9) uses this to find which canary owns a token
+// id before revoking it, so the audit entry (item 10) names the right
+// canary; RevokeCanaryToken treats revoking an already-revoked token as a
+// harmless no-op, so this lookup must be able to see a revoked row too,
+// not reject it as not-found the way LookupCanaryTokenByHash's ingest-auth
+// callers need. database is db.Conn so this can run inside the same
+// transaction as the revoke and its audit write.
+func LookupCanaryTokenByID(ctx context.Context, database db.Conn, id string) (CanaryToken, error) {
+	row := database.QueryRowContext(ctx, `
+		SELECT id, canary_id, created_at, last_used_at, revoked_at
+		FROM canary_tokens
+		WHERE id = ?`, id)
+	return scanCanaryToken(row)
+}
+
+// ListCanaryTokens returns every canary_tokens row, ordered by canary id
+// then mint time -- the read path for `birdcage canary list` (issue #32
+// item 9: "list never printing a token"). CanaryToken has no field for
+// the raw token or its hash, and this query doesn't select token_hash
+// either, so there is nothing here a caller could print by mistake.
+func ListCanaryTokens(ctx context.Context, database *db.DB) ([]CanaryToken, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT id, canary_id, created_at, last_used_at, revoked_at
+		FROM canary_tokens
+		ORDER BY canary_id, created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list canary tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var tokens []CanaryToken
+	for rows.Next() {
+		t, err := scanCanaryToken(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan canary token: %w", err)
+		}
+		tokens = append(tokens, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate canary tokens: %w", err)
+	}
+	return tokens, nil
 }
 
 // CanaryHasActiveToken reports whether canaryID has at least one
@@ -208,12 +262,17 @@ func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok Ca
 }
 
 // RevokeCanaryToken sets id's revoked_at to at, so every subsequent
-// LookupCanaryTokenByHash call for it returns ErrTokenNotFound. Returns
-// ErrTokenNotFound if id names no row. Revoking an already-revoked token
-// succeeds and changes nothing: COALESCE keeps the first revocation's
-// timestamp, which is the one the audit trail (#32 item 10) reports, so
-// a second call cannot move the moment the token stopped working.
-func RevokeCanaryToken(ctx context.Context, database *db.DB, id string, at time.Time) error {
+// LookupCanaryTokenByHash call for it returns ErrTokenNotFound -- the
+// next ingest request authenticating with it is refused, immediately,
+// since that lookup runs fresh per request with no cache to invalidate.
+// Returns ErrTokenNotFound if id names no row. Revoking an already-revoked
+// token succeeds and changes nothing: COALESCE keeps the first
+// revocation's timestamp, which is the one the audit trail (#32 item 10)
+// reports, so a second call cannot move the moment the token stopped
+// working. database is db.Conn so the CLI's `canary revoke` (item 9) can
+// run this and its audit write in one transaction, the same pattern
+// internal/ingest/rotate.go uses for mint-plus-audit.
+func RevokeCanaryToken(ctx context.Context, database db.Conn, id string, at time.Time) error {
 	res, err := database.ExecContext(ctx,
 		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
 		at.UTC().Format(receivedAtLayout), id)
