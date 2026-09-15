@@ -153,19 +153,22 @@ func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 
 // TestDashboardMuxCannotReachIngestRoute is the other half: "the ingest
 // token cannot reach a dashboard route" -- the dashboard mux never
-// registers POST /ingest/events at all, so no token, valid or otherwise,
-// reaches ingest logic through it; presenting one changes nothing.
+// registers POST /ingest/events (nor, as of slice 5, /ingest/rotate) at
+// all, so no token, valid or otherwise, reaches ingest logic through it;
+// presenting one changes nothing.
 func TestDashboardMuxCannotReachIngestRoute(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		dashboard := api.NewHandler(database, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/ingest/events", strings.NewReader(`{"events":[]}`))
-		req.Header.Set("Authorization", "Bearer "+raw)
-		rec := httptest.NewRecorder()
-		dashboard.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("dashboard mux POST /ingest/events (with a valid ingest token) = %d, want %d", rec.Code, http.StatusNotFound)
+		for _, path := range []string{"/ingest/events", "/ingest/rotate"} {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+			req.Header.Set("Authorization", "Bearer "+raw)
+			rec := httptest.NewRecorder()
+			dashboard.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("dashboard mux POST %s (with a valid ingest token) = %d, want %d", path, rec.Code, http.StatusNotFound)
+			}
 		}
 	})
 }
