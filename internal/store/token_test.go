@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
 )
@@ -148,6 +149,45 @@ func TestRecordCanaryTokenUseUpdatesLastUsedAt(t *testing.T) {
 		}
 		if found.LastUsedAt == nil || !found.LastUsedAt.Equal(usedAt) {
 			t.Errorf("LastUsedAt = %v, want %v", found.LastUsedAt, usedAt)
+		}
+	})
+}
+
+// TestRevokeCanaryTokenTwiceKeepsFirstTimestamp: revoking again must not
+// move the moment the token stopped working, which is what the audit
+// trail (#32 item 10) reports.
+func TestRevokeCanaryTokenTwiceKeepsFirstTimestamp(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		raw, token, err := MintCanaryToken(context.Background(), database, "canary-a", mintedAt)
+		if err != nil {
+			t.Fatalf("MintCanaryToken: %v", err)
+		}
+
+		first := mustParse(t, "2026-01-02T00:00:00Z")
+		if err := RevokeCanaryToken(context.Background(), database, token.ID, first); err != nil {
+			t.Fatalf("RevokeCanaryToken (first): %v", err)
+		}
+		later := mustParse(t, "2026-01-09T00:00:00Z")
+		if err := RevokeCanaryToken(context.Background(), database, token.ID, later); err != nil {
+			t.Fatalf("RevokeCanaryToken (second) = %v, want nil", err)
+		}
+
+		var revokedAt string
+		if err := database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`,
+			token.ID).Scan(&revokedAt); err != nil {
+			t.Fatalf("read revoked_at: %v", err)
+		}
+		got, err := time.Parse(receivedAtLayout, revokedAt)
+		if err != nil {
+			t.Fatalf("parse revoked_at %q: %v", revokedAt, err)
+		}
+		if !got.Equal(first) {
+			t.Fatalf("revoked_at = %s, want the first revocation %s", got, first)
+		}
+
+		if _, err := LookupCanaryTokenByHash(context.Background(), database, HashToken(raw)); !errors.Is(err, ErrTokenNotFound) {
+			t.Fatalf("LookupCanaryTokenByHash after two revokes = %v, want ErrTokenNotFound", err)
 		}
 	})
 }

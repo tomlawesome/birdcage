@@ -140,12 +140,12 @@ func scanCanaryToken(row *sql.Row) (CanaryToken, error) {
 // RevokeCanaryToken sets id's revoked_at to at, so every subsequent
 // LookupCanaryTokenByHash call for it returns ErrTokenNotFound. Returns
 // ErrTokenNotFound if id names no row. Revoking an already-revoked token
-// is a no-op that still succeeds (RowsAffected only reports 0 when id
-// itself doesn't exist -- the UPDATE's WHERE clause is on id alone, not
-// on revoked_at also being NULL).
+// succeeds and changes nothing: COALESCE keeps the first revocation's
+// timestamp, which is the one the audit trail (#32 item 10) reports, so
+// a second call cannot move the moment the token stopped working.
 func RevokeCanaryToken(ctx context.Context, database *db.DB, id string, at time.Time) error {
 	res, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET revoked_at = ? WHERE id = ?`,
+		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
 		at.UTC().Format(receivedAtLayout), id)
 	if err != nil {
 		return fmt.Errorf("revoke canary token: %w", err)
