@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -140,11 +140,19 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		service := ev.Service
+		if service == "" {
+			// Issue #53: an empty service is not genuine rubbish -- the
+			// parser (parse.go's serviceForLogType) has always stored
+			// "unknown" rather than reject, and the agent that computes
+			// this field itself (#48) may leave it unset the same way.
+			service = "unknown"
+		}
 		insert := store.AlertInsert{
 			InstanceID: tok.CanaryID, // identity from the token, never the payload
 			SourceIP:   ev.SourceIP,
 			DestPort:   ev.DestPort,
-			Service:    ev.Service,
+			Service:    service,
 			Raw:        ev.Raw,
 			ReceivedAt: receivedAt, // birdcage's own receipt time, never agent-supplied
 			EventID:    ev.EventID,
@@ -177,20 +185,36 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// validateEvent applies issue #32 item 8's per-field validation. reason
-// is empty and ok is true when ev passes every check.
+// validateEvent applies issue #32 item 8's per-field validation, as
+// corrected by issue #53 (amended 2026-09-15 after a review caught that
+// the first fix still rejected two real hits, port 0 and a zoned IPv6
+// source): this must accept exactly what parse.go has always accepted
+// from the syslog path, not a stricter shape of its own, or a permanent
+// rejection here silently discards real evidence (a permanent rejection
+// is never retried). reason is empty and ok is true when ev passes every
+// check.
 func validateEvent(ev ingestEvent) (reason string, ok bool) {
 	if !eventIDPattern.MatchString(ev.EventID) {
 		return "invalid event_id", false
 	}
-	if net.ParseIP(ev.SourceIP) == nil {
-		return "invalid source_ip", false
+	// source_ip: empty means "not reported" (parse.go:64 leaves it empty
+	// when OpenCanary's src_host is absent) or an address that parses --
+	// netip.ParseAddr, not net.ParseIP, because a zoned IPv6 link-local
+	// address (e.g. "fe80::1%eth0") is an ordinary hit on a LAN honeypot
+	// and net.ParseIP rejects the zone suffix outright. A non-empty value
+	// that parses as neither is still rejected.
+	if ev.SourceIP != "" {
+		if _, err := netip.ParseAddr(ev.SourceIP); err != nil {
+			return "invalid source_ip", false
+		}
 	}
-	if ev.DestPort < 1 || ev.DestPort > 65535 {
+	// dest_port: -1 means "OpenCanary reported none" (parse.go:67's
+	// convention, carried by the alerts table since 0001_init.sql) or
+	// 0-65535 -- port 0 included deliberately, since a scan of port 0 is
+	// a real event the syslog path has always stored. Anything outside
+	// that range is still rejected.
+	if ev.DestPort != -1 && (ev.DestPort < 0 || ev.DestPort > 65535) {
 		return "invalid dest_port", false
-	}
-	if ev.Service == "" {
-		return "service must not be empty", false
 	}
 	return "", true
 }

@@ -312,3 +312,177 @@ func TestHandleBatchDuplicateEventIDAcksAsStored(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleBatchPortlessEventStores is issue #53's fix, first required
+// test: a hit with no destination port -- the parser's own convention
+// (parse.go:67 stores -1 when OpenCanary reports no dst_port, a
+// convention the alerts table has carried since 0001_init.sql) -- must
+// store through the ingest endpoint exactly as it always has through the
+// syslog path, not be permanently rejected.
+func TestHandleBatchPortlessEventStores(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":-1,"service":"ssh","raw":"hit"}]}`,
+			validEventID1)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if len(resp.Stored) != 1 || resp.Stored[0] != validEventID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored (a portless event must not be permanently rejected)",
+				resp.Stored, resp.Rejected, validEventID1)
+		}
+	})
+}
+
+// TestHandleBatchAddresslessEventStores is issue #53's fix, mirrored for
+// source_ip: the parser leaves it empty when OpenCanary reports no
+// src_host, and that must store, not be permanently rejected.
+func TestHandleBatchAddresslessEventStores(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"","dest_port":22,"service":"ssh","raw":"hit"}]}`,
+			validEventID1)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if len(resp.Stored) != 1 || resp.Stored[0] != validEventID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored (an address-less event must not be permanently rejected)",
+				resp.Stored, resp.Rejected, validEventID1)
+		}
+	})
+}
+
+// TestHandleBatchPortZeroEventStores is issue #53's amendment (2026-09-15,
+// after a review caught the first fix still rejected two real hits): a
+// scan of port 0 is a real event and the syslog path has always stored
+// it, so 0 is a valid dest_port, not just -1 or 1-65535.
+func TestHandleBatchPortZeroEventStores(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":0,"service":"ssh","raw":"hit"}]}`,
+			validEventID1)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if len(resp.Stored) != 1 || resp.Stored[0] != validEventID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored (a port-0 event must not be rejected)",
+				resp.Stored, resp.Rejected, validEventID1)
+		}
+	})
+}
+
+// TestHandleBatchZonedIPv6SourceEventStores is issue #53's amendment: a
+// zoned IPv6 link-local address (e.g. "fe80::1%eth0") is an ordinary hit
+// on a LAN honeypot, and must store -- net.ParseIP rejects the zone
+// suffix, which is exactly why validateEvent uses netip.ParseAddr
+// instead.
+func TestHandleBatchZonedIPv6SourceEventStores(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"fe80::1%%eth0","dest_port":22,"service":"ssh","raw":"hit"}]}`,
+			validEventID1)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if len(resp.Stored) != 1 || resp.Stored[0] != validEventID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored (a zoned IPv6 source must not be rejected)",
+				resp.Stored, resp.Rejected, validEventID1)
+		}
+	})
+}
+
+// TestHandleBatchStillRejectsMalformedEventsByID is issue #53's other
+// half: fixing the false rejections above must not loosen genuine
+// validation. A bad event id, non-empty rubbish in source_ip, and ports
+// of -2 and 70000 are all still rejected, each named by its own id.
+func TestHandleBatchStillRejectsMalformedEventsByID(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		cases := []struct {
+			name    string
+			eventID string
+			event   string
+		}{
+			{
+				name:    "bad event id",
+				eventID: "not-a-valid-event-id",
+				event:   `{"event_id":"not-a-valid-event-id","source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":"hit"}`,
+			},
+			{
+				name:    "rubbish source_ip",
+				eventID: validEventID1,
+				event:   fmt.Sprintf(`{"event_id":%q,"source_ip":"not-an-ip","dest_port":22,"service":"ssh","raw":"hit"}`, validEventID1),
+			},
+			{
+				name:    "port negative two",
+				eventID: validEventID1,
+				event:   fmt.Sprintf(`{"event_id":%q,"source_ip":"203.0.113.9","dest_port":-2,"service":"ssh","raw":"hit"}`, validEventID1),
+			},
+			{
+				name:    "port 70000",
+				eventID: validEventID1,
+				event:   fmt.Sprintf(`{"event_id":%q,"source_ip":"203.0.113.9","dest_port":70000,"service":"ssh","raw":"hit"}`, validEventID1),
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				body := fmt.Sprintf(`{"events":[%s]}`, tc.event)
+
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, batchRequest(raw, body))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+				}
+				var resp ackResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("unmarshal response: %v", err)
+				}
+				if len(resp.Stored) != 0 {
+					t.Fatalf("stored = %v, want none (this event must be rejected)", resp.Stored)
+				}
+				if reason, rejected := resp.Rejected[tc.eventID]; !rejected || reason == "" {
+					t.Fatalf("rejected = %v, want a non-empty entry for %s", resp.Rejected, tc.eventID)
+				}
+			})
+		}
+	})
+}

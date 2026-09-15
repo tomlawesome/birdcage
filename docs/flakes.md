@@ -18,3 +18,27 @@ the whole account.
   that reader between publishes, so under `-race` its buffer sometimes filled
   and the hub correctly evicted it. The reader now acknowledges each event
   before the next is published. 70 consecutive `-race` runs clean.
+
+## TestOldTokenInFlightDoesNotKillTheNewerOne (internal/ingest)
+
+- 2026-09-15 · 2833431 · local `go test ./... -race` (full suite, no
+  `-run` filter) · failed: "old token after the new one's first use:
+  status = 200, want 401". Passed in 5/5 isolated re-runs
+  (`-run TestOldTokenInFlightDoesNotKillTheNewerOne -count=5`), so this
+  looks like the same class as the next heading below: back-to-back
+  mints inside one test can land the same stored `created_at`, and
+  RevokeCanaryTokensSupersededBy's ordering compares it with `<`.
+- 2026-09-15 · 2833431 · local `go test ./internal/ingest/...` (full
+  package, no `-run` filter) · same assertion failed again, same run in
+  which `TestRotateOldTokenStopsWorkingOnlyAfterNewTokenFirstUsed` below
+  passed -- so the two tests are not failing together, consistent with a
+  timestamp-resolution race rather than shared state between them.
+
+## TestRotateOldTokenStopsWorkingOnlyAfterNewTokenFirstUsed (internal/ingest)
+
+- 2026-09-15 · 2833431 · local `go test ./internal/ingest/...` (full
+  package, no `-run` filter) · failed: "old token after new one's first
+  use: status = 200, want 401". Same symptom and same likely cause as
+  `TestOldTokenInFlightDoesNotKillTheNewerOne` above: a rotation test
+  that mints twice in quick succession, racing against whatever
+  resolution `created_at` is actually stored and compared at.
