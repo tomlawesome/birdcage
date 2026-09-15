@@ -64,8 +64,8 @@ func TestMigrateIdempotent(t *testing.T) {
 			}
 
 			assertTableHasColumns(t, database, "alerts",
-				"id,instance_id,source_ip,dest_port,service,raw,received_at")
-			assertRowInsertable(t, database, "alerts", "audit_log")
+				"id,instance_id,source_ip,dest_port,service,raw,received_at,event_id")
+			assertRowInsertable(t, database, "alerts", "audit_log", "canary_tokens")
 			assertAuditLogAppendOnly(t, database)
 		})
 	}
@@ -174,6 +174,38 @@ CREATE INDEX idx_multistmt_t2_id ON multistmt_t2(id);`)
 				if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
 					t.Errorf("table %s missing after multi-statement Exec: %v", table, err)
 				}
+			}
+		})
+	}
+}
+
+// TestEventIDUniqueIndexAllowsMultipleNulls verifies empirically, on
+// both engines, the claim migrations/*/0004_canary_tokens.sql's comment
+// relies on: idx_alerts_event_id is a plain (not partial) unique index,
+// and a plain unique index's own SQL semantics -- every NULL distinct
+// from every other NULL -- already let any number of NULL event_id rows
+// coexist, with no WHERE clause needed. Two rows with event_id set to
+// the same value must still be rejected, so this also proves the index
+// is doing real dedup work, not merely absent.
+func TestEventIDUniqueIndexAllowsMultipleNulls(t *testing.T) {
+	for _, tgt := range dbtest.Targets(t) {
+		t.Run(tgt.Name, func(t *testing.T) {
+			database := tgt.DB
+			insert := `INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at, event_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+			if _, err := database.Exec(insert, "node-1", "203.0.113.9", 22, "ssh", "raw-1", "2026-01-01T00:00:00Z", nil); err != nil {
+				t.Fatalf("insert first NULL event_id row: %v", err)
+			}
+			if _, err := database.Exec(insert, "node-2", "203.0.113.10", 23, "telnet", "raw-2", "2026-01-01T00:00:01Z", nil); err != nil {
+				t.Fatalf("insert second NULL event_id row: %v", err)
+			}
+
+			if _, err := database.Exec(insert, "node-1", "203.0.113.9", 80, "http", "raw-3", "2026-01-01T00:00:02Z", "dup-event"); err != nil {
+				t.Fatalf("insert first non-NULL event_id row: %v", err)
+			}
+			if _, err := database.Exec(insert, "node-1", "203.0.113.9", 80, "http", "raw-4", "2026-01-01T00:00:03Z", "dup-event"); err == nil {
+				t.Error("second insert with duplicate non-NULL event_id succeeded, want a unique-index violation")
 			}
 		})
 	}

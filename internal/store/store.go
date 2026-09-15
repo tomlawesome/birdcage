@@ -1,10 +1,11 @@
 // Package store is birdcage's query layer backing the dashboard API
-// (#3). It is read-only over the alerts table: all inserts there stay in
-// internal/ingest, which is the only writer the alerts table has. It
-// does own the write path for the separate canaries/heartbeats registry
-// (issue #34, canary.go) -- POST /api/heartbeat and canary enrollment --
-// since that data belongs to this layer's own tables, not to ingested
-// honeypot data.
+// (#3). Reading the alerts table is its main job; internal/ingest's UDP
+// syslog listener remains its own, separate writer (and stays so until
+// #32 retires it). This package also owns two write paths of its own:
+// the canaries/heartbeats registry (issue #34, canary.go) -- POST
+// /api/heartbeat and canary enrollment -- and, as of issue #32,
+// InsertAlertIfNew (this file) and the canary_tokens table (token.go)
+// for the token-authenticated ingest path that will call them.
 package store
 
 import (
@@ -32,6 +33,52 @@ type Alert struct {
 	Service    string    `json:"service"`
 	Raw        string    `json:"raw"`
 	ReceivedAt time.Time `json:"received_at"`
+}
+
+// AlertInsert is the row InsertAlertIfNew writes. It mirrors the column
+// list internal/ingest/server.go's own insertAlertQuery uses, plus
+// EventID (issue #32): the SHA-256 hex digest of the JSON string
+// OpenCanary emitted (#48), or empty for a caller with no event id (the
+// UDP syslog path's own rows, which stay that way -- see
+// migrations/*/0004_canary_tokens.sql).
+type AlertInsert struct {
+	InstanceID string
+	SourceIP   string
+	DestPort   int
+	Service    string
+	Raw        string
+	ReceivedAt time.Time
+	EventID    string
+}
+
+// InsertAlertIfNew inserts a into alerts and reports whether it actually
+// wrote a new row. This is the insert-or-ignore half of issue #32's
+// dedup requirement: the same event delivered twice -- by both the
+// agent's loopback road and its log-tail road, or replayed after a
+// restart -- arrives with the same a.EventID, and the second call is a
+// no-op (stored=false, err=nil), not an error. a.EventID == "" stores
+// NULL rather than "": alerts.event_id's unique index treats every NULL
+// as distinct (see the migration's own comment), so rows with no event
+// id are deliberately never deduplicated against each other, matching
+// pre-agent syslog-era rows.
+func InsertAlertIfNew(ctx context.Context, database *db.DB, a AlertInsert) (stored bool, err error) {
+	var eventID any
+	if a.EventID != "" {
+		eventID = a.EventID
+	}
+	res, err := database.ExecContext(ctx, `
+		INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at, event_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (event_id) DO NOTHING`,
+		a.InstanceID, a.SourceIP, a.DestPort, a.Service, a.Raw, a.ReceivedAt.UTC().Format(receivedAtLayout), eventID)
+	if err != nil {
+		return false, fmt.Errorf("insert alert: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // AlertFilter narrows ListAlerts. Every field is optional: an empty
