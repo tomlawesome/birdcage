@@ -75,6 +75,53 @@ func (d *DB) rebind(query string) string {
 	return Rebind(query)
 }
 
+// Conn is the minimal query surface a store/audit function needs, so it
+// can be handed either a plain *DB or an in-flight *Tx from Begin and
+// behave identically either way -- the seam that lets a caller (e.g.
+// ingest's rotation handler, issue #32 item 10) run a mint and an audit
+// append as one all-or-nothing unit instead of mint-then-undo.
+type Conn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// Tx wraps *sql.Tx the same way DB wraps *sql.DB: every "?" placeholder
+// is rebound to Postgres' "$1, $2, ..." style when the underlying engine
+// is Postgres. Distinct from the *sql.Tx returned by the embedded
+// *sql.DB.BeginTx (which migrate.go uses directly, pre-dating this type,
+// with its own manual per-query rebind calls) -- that existing call is
+// untouched by this addition.
+type Tx struct {
+	*sql.Tx
+	engine Engine
+}
+
+func (t *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return t.Tx.ExecContext(ctx, t.rebind(query), args...)
+}
+
+func (t *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return t.Tx.QueryRowContext(ctx, t.rebind(query), args...)
+}
+
+func (t *Tx) rebind(query string) string {
+	if t.engine != Postgres {
+		return query
+	}
+	return Rebind(query)
+}
+
+// Begin starts a transaction on d, returning a *Tx whose ExecContext and
+// QueryRowContext rebind exactly as *DB's do, so a Conn-typed function
+// works unchanged whether it is handed d itself or a transaction on it.
+func (d *DB) Begin(ctx context.Context) (*Tx, error) {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Tx{Tx: tx, engine: d.Engine}, nil
+}
+
 // Rebind rewrites every "?" placeholder in query to Postgres' "$1, $2,
 // ..." positional style, in order of appearance, skipping "?" characters
 // inside single-quoted string literals (a doubled quote mark is the

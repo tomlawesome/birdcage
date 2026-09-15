@@ -65,7 +65,7 @@ func randomHex(n int) (string, error) {
 // can recover it afterwards. createdAt must be set by the caller (e.g.
 // time.Now().UTC()), matching InsertCanary's and audit.Append's stance
 // on their own created-at fields.
-func MintCanaryToken(ctx context.Context, database *db.DB, canaryID string, createdAt time.Time) (raw string, token CanaryToken, err error) {
+func MintCanaryToken(ctx context.Context, database db.Conn, canaryID string, createdAt time.Time) (raw string, token CanaryToken, err error) {
 	if createdAt.IsZero() {
 		return "", CanaryToken{}, fmt.Errorf("store: MintCanaryToken: createdAt is zero; callers must set it")
 	}
