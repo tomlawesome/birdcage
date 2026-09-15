@@ -171,3 +171,32 @@ func TestHandleHeartbeatUnknownCanaryReturns404(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleHeartbeatOverLimitReturns429AndIsRecorded proves #32's fix
+// for this route having no rate limit at all: previously only
+// handleBatch charged the per-canary requests/min cap (item 8), so a
+// compromised canary's token could flood POST /ingest/heartbeat freely.
+// The charge now lives in the shared requireBearerToken wrapper, so this
+// route is covered too.
+func TestHandleHeartbeatOverLimitReturns429AndIsRecorded(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
+		h := newHandler(database, nil, time.Now, tiny)
+		body := `{"agent_version":"1.0.0"}`
+
+		var last *httptest.ResponseRecorder
+		for i := 0; i < 3; i++ {
+			last = httptest.NewRecorder()
+			h.ServeHTTP(last, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+		}
+		if last.Code != http.StatusTooManyRequests {
+			t.Fatalf("3rd heartbeat status = %d, want %d (body %q)", last.Code, http.StatusTooManyRequests, last.Body.String())
+		}
+
+		if got := countAuditRows(t, database, "ingest.rate_limited", "canary-a"); got == 0 {
+			t.Fatal("no audit_log row recorded for the rate limit crossing on heartbeat")
+		}
+	})
+}

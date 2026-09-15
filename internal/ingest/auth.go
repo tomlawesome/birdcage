@@ -61,7 +61,15 @@ func bearerToken(header string) (string, bool) {
 // consulted with a hash lookup only, matching the threat model's "the
 // pre-auth cost of a junk request is deliberately tiny: one SHA-256 and
 // one indexed lookup".
-func requireBearerToken(database *db.DB, now func() time.Time, next http.HandlerFunc) http.HandlerFunc {
+//
+// This is also where issue #32 item 8's per-canary requests/min cap is
+// charged, once every request that authenticates on any of this mux's
+// three routes -- not only POST /ingest/events. Charged here rather than
+// in each handler because the limit is per canary and this is the one
+// place every route shares that already has the resolved identity;
+// handleBatch used to charge it itself and no longer does, so a batch is
+// still charged exactly once.
+func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -107,6 +115,12 @@ func requireBearerToken(database *db.DB, now func() time.Time, next http.Handler
 
 		if firstUse {
 			completeRotation(r.Context(), database, now, tok)
+		}
+
+		if !limiters.allowRequest(tok.CanaryID) {
+			recordRateLimitCrossed(r.Context(), database, now, tok.CanaryID, "requests/min")
+			writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
 		}
 
 		ctx := context.WithValue(r.Context(), canaryTokenCtxKey{}, tok)

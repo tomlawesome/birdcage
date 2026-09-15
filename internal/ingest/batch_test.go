@@ -92,6 +92,38 @@ func TestHandleBatchOverLimitReturns429AndIsRecorded(t *testing.T) {
 	})
 }
 
+// TestHandleBatchChargesRequestLimitExactlyOnce is part of #32's fix for
+// the two ingest routes (rotate, heartbeat) that had no rate limit at
+// all: the per-request charge moved from handleBatch into the shared
+// requireBearerToken wrapper so every route on the mux is covered, and
+// handleBatch's own duplicate charge was removed so a batch is not
+// charged twice. Proved precisely, not loosely: against a 2-request cap,
+// exactly 2 batch requests must succeed (not fewer, which double
+// charging would cause) and the 3rd must be refused.
+func TestHandleBatchChargesRequestLimitExactlyOnce(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
+		h := newHandler(database, nil, time.Now, tiny)
+		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID1))
+
+		for i := 1; i <= 2; i++ {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, batchRequest(raw, body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("request %d: status = %d, want %d (body %q) -- a batch must be charged exactly once per request against the 2-request cap",
+					i, rec.Code, http.StatusOK, rec.Body.String())
+			}
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("3rd request: status = %d, want %d (the cap is exactly 2, exhausted by exactly 2 requests)", rec.Code, http.StatusTooManyRequests)
+		}
+	})
+}
+
 // TestHandleBatchOneBadEventRejectedRestStored is slice 3's fourth
 // required test: "one bad event in a batch is rejected by id and the
 // rest stored".

@@ -61,9 +61,9 @@ func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits l
 	// TestIngestMuxCannotReachDashboardRoutes and
 	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
-	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.handleBatch))
-	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.handleRotate))
-	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.handleHeartbeat))
+	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.limiters, h.handleBatch))
+	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.limiters, h.handleRotate))
+	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.limiters, h.handleHeartbeat))
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
