@@ -15,8 +15,6 @@
 package stream
 
 import (
-	"encoding/json"
-	"log/slog"
 	"sync"
 
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -46,6 +44,11 @@ const (
 	// falls back to the 30s poll.
 	maxSubscribers = 256
 )
+
+// alertStoredPayload is the whole of what a subscriber receives: an
+// alert was stored, go and fetch. No alert fields travel over the
+// stream -- see PublishAlert.
+var alertStoredPayload = []byte(`{"type":"alert"}`)
 
 // subscriber is one open /api/stream connection's mailbox.
 type subscriber struct {
@@ -98,8 +101,14 @@ func (h *Hub) Subscribe() (ch <-chan []byte, cancel func(), ok bool) {
 	return sub.ch, cancel, true
 }
 
-// PublishAlert marshals a to JSON and fans it out to every current
-// subscriber without blocking. A subscriber whose buffer is already full
+// PublishAlert tells every current subscriber that an alert was stored,
+// without blocking. It deliberately carries NO alert content: the
+// dashboard responds by re-running the fetch it already polls with, so
+// the payload was never read, and a contentless notification cannot leak
+// a hit to a stream that outlives the session that opened it -- which is
+// exactly what a revoked session's still-open connection would be once
+// #8 lands (#44 research, 2026-09-15). The alert argument stays in the
+// signature so a caller cannot forget which event it is announcing. A subscriber whose buffer is already full
 // is evicted (its channel closed and removed from the hub) instead of
 // being allowed to block this call or grow memory without bound -- issue
 // #44's back-pressure requirement, and the exact failure mode a real
@@ -113,17 +122,8 @@ func (h *Hub) Subscribe() (ch <-chan []byte, cancel func(), ok bool) {
 // keeps it correct in the meantime, so eviction is a safe response to a
 // stuck reader, never a silent data loss the operator can't recover
 // from.
-//
-// A JSON marshal failure is logged and dropped rather than returned:
-// callers of PublishAlert reach it only after already committing a to
-// the database, and a stream-encoding problem must never make an
-// already-successful write look like it failed.
-func (h *Hub) PublishAlert(a store.AlertInsert) {
-	payload, err := json.Marshal(a)
-	if err != nil {
-		slog.Error("stream: marshal alert for publish", "err", err)
-		return
-	}
+func (h *Hub) PublishAlert(_ store.AlertInsert) {
+	payload := alertStoredPayload
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
