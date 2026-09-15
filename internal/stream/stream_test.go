@@ -50,6 +50,16 @@ func TestSubscribeReceivesPublishedAlert(t *testing.T) {
 // back-pressure requirement: a subscriber that never drains its channel
 // must be evicted once its buffer fills, not allowed to block Publish or
 // starve every other subscriber.
+//
+// The reader here acknowledges each event before the next is published.
+// An earlier version fired every publish back to back and assumed a
+// concurrently draining reader would keep up; nothing guaranteed the
+// reader goroutine was scheduled between them, so under -race it
+// sometimes wasn't, its buffer filled, and the hub correctly evicted it
+// -- the test failed roughly twice in ten runs (docs/flakes.md). The
+// hub's promise is to drop whoever is not keeping up at that moment, not
+// to know why; so the reader has to actually keep up for the assertion
+// to mean anything.
 func TestPublishDropsSlowestSubscriberRatherThanBlocking(t *testing.T) {
 	h := NewHub()
 
@@ -65,40 +75,56 @@ func TestPublishDropsSlowestSubscriberRatherThanBlocking(t *testing.T) {
 	}
 	defer fastCancel()
 
-	// fastCh is drained concurrently, exactly like a healthy dashboard
-	// connection reading as events arrive -- it must never be evicted.
 	// slowCh is never read, so its buffer fills and PublishAlert must
-	// evict it rather than block on it.
+	// evict it rather than block on it. fastCh is read to completion
+	// after every publish, so it is never behind when the next one
+	// lands.
 	fastClosedByHub := make(chan struct{})
+	published := make(chan struct{})
+	drained := make(chan struct{})
 	stopDrain := make(chan struct{})
 	go func() {
 		for {
 			select {
-			case _, open := <-fastCh:
-				if !open {
-					close(fastClosedByHub)
-					return
-				}
 			case <-stopDrain:
 				return
+			case <-published:
+				select {
+				case _, open := <-fastCh:
+					if !open {
+						close(fastClosedByHub)
+						return
+					}
+				case <-stopDrain:
+					return
+				}
+				drained <- struct{}{}
 			}
 		}
 	}()
 
 	// subscriberBuffer+1 publishes guarantees at least one publish finds
 	// slowCh's buffer already full.
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < subscriberBuffer+1; i++ {
+	for i := 0; i < subscriberBuffer+1; i++ {
+		done := make(chan struct{})
+		go func() {
 			h.PublishAlert(testAlert("203.0.113.9"))
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("PublishAlert blocked on a slow subscriber instead of dropping it")
 		}
-		close(done)
-	}()
 
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("PublishAlert blocked on a slow subscriber instead of dropping it")
+		published <- struct{}{}
+		select {
+		case <-drained:
+		case <-fastClosedByHub:
+			t.Fatal("fast subscriber was evicted while it was keeping up; only the slow one should be")
+		case <-time.After(time.Second):
+			t.Fatal("the reading subscriber never received the published event")
+		}
 	}
 
 	// The slow subscriber's channel must have been closed (evicted).
@@ -120,8 +146,7 @@ func TestPublishDropsSlowestSubscriberRatherThanBlocking(t *testing.T) {
 	select {
 	case <-fastClosedByHub:
 		t.Error("fast subscriber was evicted; only the slow one should be")
-	case <-time.After(100 * time.Millisecond):
-		// Remained open throughout the publish storm -- good.
+	default:
 	}
 	close(stopDrain)
 }
