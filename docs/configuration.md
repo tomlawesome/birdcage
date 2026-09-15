@@ -3,7 +3,7 @@
 ## Storage: `DATABASE_URL`
 
 Birdcage supports two database engines, per
-[issue #7](https://github.com/tomlawesome/birdcage/issues/7) -- both are
+[issue #7](https://gitlab.tomlawson.io/ai/birdcage/-/issues/7) -- both are
 mandatory in v1, not SQLite-with-Postgres-as-an-option: every migration and
 every query in `internal/db` and `internal/store` runs on both, and CI tests
 both on every change.
@@ -70,10 +70,38 @@ pg_restore --clean --if-exists --dbname="postgres://user:pass@host:5432/dbname" 
 
 Stop birdcage before restoring so it isn't writing to the database mid-restore.
 
+## Reverse proxy: `/api/stream` and buffering
+
+`GET /api/stream` (issue #44) is a server-sent-events connection birdcage
+holds open and writes to as alerts arrive, so the dashboard updates
+within a second instead of waiting for its 30s poll. birdcage already
+sends `Cache-Control: no-cache` and `X-Accel-Buffering: no` on this
+response, but if you put birdcage behind nginx (or another reverse
+proxy) with response buffering on -- nginx's default -- the proxy can
+still hold every event in its own buffer until it fills, which silently
+delays the stream by however long that takes to happen rather than
+failing anything you'd notice. Confirm your proxy honors
+`X-Accel-Buffering`, or disable buffering for this location explicitly:
+
+```
+location /api/stream {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_buffering off;
+    proxy_cache off;
+}
+```
+
+Nothing breaks if you skip this -- the dashboard's 30s poll (unaffected
+by proxy buffering) keeps the page correct either way -- but the "see a
+hit the moment it lands" feature this route exists for won't actually
+happen until the proxy stops buffering it.
+
 ## Other environment variables
 
-See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_SYSLOG_ADDR`
-and `BIRDCAGE_HTTP_ADDR`, which set the ingestion and dashboard listen
+See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_SYSLOG_ADDR`,
+`BIRDCAGE_HTTP_ADDR`, and `BIRDCAGE_INGEST_ADDR` /
+`BIRDCAGE_INGEST_TLS_CERT` / `BIRDCAGE_INGEST_TLS_KEY` (issue #32's HTTPS
+canary ingest listener), which set the ingestion and dashboard listen
 addresses and carry their own network-exposure guidance.
 
 ### `BIRDCAGE_INTERNAL_RANGES`

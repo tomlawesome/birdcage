@@ -9,3 +9,6 @@ birdcage.db
 
 # Agent worktrees the harness creates under the checkout; never part of the project.
 /.claude/worktrees/
+
+# Session handoffs the agents write under the checkout; never part of the project (owner, 2026-09-14).
+/.agents/
