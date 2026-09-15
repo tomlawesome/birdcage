@@ -19,12 +19,14 @@ import (
 
 // ingestHandler carries the dependencies POST /ingest/events needs: db
 // for the token lookup and alert insert, hub (issue #44) so a newly
-// stored alert reaches an open dashboard immediately, and now so tests
-// can pin "current time" instead of depending on the wall clock.
+// stored alert reaches an open dashboard immediately, now so tests can
+// pin "current time" instead of depending on the wall clock, and
+// limiters for the per-canary rate caps (issue #32 item 8).
 type ingestHandler struct {
-	db  *db.DB
-	hub *stream.Hub
-	now func() time.Time
+	db       *db.DB
+	hub      *stream.Hub
+	now      func() time.Time
+	limiters *limiterRegistry
 }
 
 // NewHandler returns the ingest submux: bearer-token auth in front of
@@ -36,17 +38,18 @@ type ingestHandler struct {
 // entirely, not merely a separate path prefix on the dashboard's.
 //
 // hub may be nil (a caller that doesn't care about live dashboard
-// updates, e.g. a test exercising only the auth behavior); a nil hub
-// simply means handleBatch skips the publish step.
+// updates, e.g. a test exercising only the batch/auth behavior); a nil
+// hub simply means handleBatch skips the publish step.
 func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
-	return newHandler(database, hub, time.Now)
+	return newHandler(database, hub, time.Now, defaultLimiterLimits)
 }
 
-// newHandler is NewHandler with now injectable, for tests that need a
-// pinned clock -- mirroring internal/api's own newHandler/NewHandler
-// split.
-func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time) http.Handler {
-	h := &ingestHandler{db: database, hub: hub, now: now}
+// newHandler is NewHandler with now and limits injectable, for tests
+// that need a pinned clock or (far more often) rate limits small enough
+// to cross in a handful of calls rather than thousands -- mirroring
+// internal/api's own newHandler/NewHandler split.
+func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
+	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits)}
 
 	// Exactly one route is ever registered on this mux. Mirrors
 	// internal/api's dashboardRoutes doc comment: a request that doesn't

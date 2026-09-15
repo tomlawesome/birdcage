@@ -72,7 +72,7 @@ func batchRequest(token, body string) *http.Request {
 // 401".
 func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
 		validBody := `{"events":[]}`
 
 		cases := []struct {
@@ -113,7 +113,7 @@ func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 // still a placeholder no-op).
 func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
 
 		for _, path := range []string{"/api/alerts", "/api/heartbeat", "/api/stream", "/"} {
 			rec := httptest.NewRecorder()
