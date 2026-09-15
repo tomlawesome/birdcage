@@ -64,7 +64,11 @@ only at the point that text is displayed, per surface:
   C0, DEL, and C1 control characters as literal, visible text (e.g. an
   embedded escape sequence prints as `\x1b`, not as the raw byte) before
   it reaches a terminal, leaving ordinary printable text -- including
-  non-ASCII -- untouched. Without this, a crafted canary id or service
+  non-ASCII -- untouched. It also escapes the bidirectional formatting
+  characters, which reorder how surrounding text *displays* rather than
+  moving the cursor: unescaped, they let a canary id read on screen as a
+  different id than the one stored (the Trojan Source class,
+  CVE-2021-42574). Without this, a crafted canary id or service
   name could hide output lines, overwrite what's already on screen, or
   make a revoked token's status print as active.
 
