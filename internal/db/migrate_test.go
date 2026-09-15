@@ -207,6 +207,14 @@ func TestEventIDUniqueIndexAllowsMultipleNulls(t *testing.T) {
 			if _, err := database.Exec(insert, "node-1", "203.0.113.9", 80, "http", "raw-4", "2026-01-01T00:00:03Z", "dup-event"); err == nil {
 				t.Error("second insert with duplicate non-NULL event_id succeeded, want a unique-index violation")
 			}
+
+			// The index is unique on (instance_id, event_id), not on
+			// event_id alone, so one canary's event id must never
+			// collide with -- and so suppress -- another canary's
+			// (#32 research, 2026-09-15).
+			if _, err := database.Exec(insert, "node-2", "203.0.113.9", 80, "http", "raw-5", "2026-01-01T00:00:04Z", "dup-event"); err != nil {
+				t.Errorf("same event_id under a different instance_id: %v, want it stored", err)
+			}
 		})
 	}
 }

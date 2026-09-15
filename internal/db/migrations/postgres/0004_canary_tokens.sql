@@ -26,6 +26,12 @@ CREATE INDEX IF NOT EXISTS        idx_canary_tokens_canary_id  ON canary_tokens(
 -- once: it is the SHA-256 (hex) of the JSON string OpenCanary itself
 -- emitted (#48), and internal/store's InsertAlertIfNew is the
 -- insert-or-ignore write path built on the unique index below. The
+-- index is unique on (instance_id, event_id), not on event_id alone:
+-- a global index would let any token holder who could predict another
+-- canary's next event id store a matching row first and silently
+-- suppress the real alert (#32 research, 2026-09-15). The cost is that
+-- a canary re-enrolled under a new identity replaying old log entries
+-- stores that history once per identity, which is accepted. The
 -- index is a plain (not partial/WHERE) unique index deliberately: SQL's
 -- own unique-constraint semantics treat every NULL as distinct from
 -- every other NULL, so a plain index already allows any number of NULL
@@ -35,4 +41,4 @@ CREATE INDEX IF NOT EXISTS        idx_canary_tokens_canary_id  ON canary_tokens(
 -- internal/db/migrate_test.go. Pre-agent syslog-era rows get NULL here
 -- and are never backfilled -- they were never deduplicated either.
 ALTER TABLE alerts ADD COLUMN event_id TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_event_id ON alerts(event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_event_id ON alerts(instance_id, event_id);
