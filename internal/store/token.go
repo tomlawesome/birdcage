@@ -208,6 +208,37 @@ func ListCanaryTokens(ctx context.Context, database *db.DB) ([]CanaryToken, erro
 	return tokens, nil
 }
 
+// ListCanaryTokensForCanary returns every canary_tokens row for canaryID,
+// in no particular order. Issue #45's rotation-stalled signal needs them
+// ordered by mint time to find the latest issuance and the latest
+// activated (first-used) token; that ordering happens in Go on parsed
+// CreatedAt values, the same rule RevokeCanaryTokensSupersededBy's own
+// doc comment explains (SQL ORDER BY on the raw TEXT column would
+// reintroduce the trimmed-fractional-second bug).
+func ListCanaryTokensForCanary(ctx context.Context, database *db.DB, canaryID string) ([]CanaryToken, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT id, canary_id, created_at, last_used_at, revoked_at
+		FROM canary_tokens
+		WHERE canary_id = ?`, canaryID)
+	if err != nil {
+		return nil, fmt.Errorf("list canary tokens for canary: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var tokens []CanaryToken
+	for rows.Next() {
+		t, err := scanCanaryToken(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan canary token: %w", err)
+		}
+		tokens = append(tokens, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate canary tokens: %w", err)
+	}
+	return tokens, nil
+}
+
 // CanaryHasActiveToken reports whether canaryID has at least one
 // non-revoked token. Paired with LookupCanaryTokenByHashAnyStatus to
 // tell a token conflict (a revoked token presented while a successor is
