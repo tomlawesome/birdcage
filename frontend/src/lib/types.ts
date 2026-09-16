@@ -5,11 +5,16 @@
 // each guessing the shape independently.
 
 export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
-export type CanaryStatus = 'ok' | 'silent'
+/** issue #45's ordered health state -- worst-first: token_conflict,
+ * silent, not_delivering, throttled, rotation_stalled, ok. The other
+ * three states the issue names (self_test_failed, pending,
+ * agent_out_of_date) don't appear here yet: #46/#47/#48 haven't shipped
+ * the data they'd read from. */
+export type CanaryStatus = 'token_conflict' | 'silent' | 'not_delivering' | 'throttled' | 'rotation_stalled' | 'ok'
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
 export type Range = '15m' | '1h' | '24h' | '14d' | '90d'
 
-/** GET /api/canaries' per-canary shape (issue #34). */
+/** GET /api/canaries' per-canary shape (issue #34, widened by #45). */
 export interface Canary {
   id: string
   name: string
@@ -20,6 +25,15 @@ export interface Canary {
   /** Present only when status is 'silent'. */
   silent_for_s?: number
   beats_missed?: number
+  /** issue #45: each of these can be set independently of which state
+   * `status` reports -- "one state on the tile, the worst; the rest in
+   * its detail." */
+  not_delivering?: boolean
+  throttled_for_s?: number
+  rotation_stalled?: boolean
+  rotation_stalled_for_s?: number
+  rotation_stalled_escalated?: boolean
+  token_conflict_for_s?: number
   hits: number
 }
 
