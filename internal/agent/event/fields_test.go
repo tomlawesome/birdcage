@@ -18,6 +18,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "198.51.100.5",
 				DestPort: 22,
 				LogType:  intPtr(4002),
+				Service:  "ssh",
 			},
 		},
 		{
@@ -27,6 +28,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "192.0.2.50",
 				DestPort: -1,
 				LogType:  intPtr(11001),
+				Service:  "ntp",
 			},
 		},
 		{
@@ -36,6 +38,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "",
 				DestPort: -1,
 				LogType:  intPtr(1004),
+				Service:  "base",
 			},
 		},
 		{
@@ -45,6 +48,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "203.0.113.1",
 				DestPort: 0,
 				LogType:  intPtr(5001),
+				Service:  "portscan",
 			},
 		},
 		{
@@ -64,6 +68,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "203.0.113.2",
 				DestPort: -1,
 				LogType:  intPtr(1000),
+				Service:  "base",
 			},
 		},
 		{
@@ -73,6 +78,7 @@ func TestExtractFields(t *testing.T) {
 				SourceIP: "bad-��-host",
 				DestPort: -1,
 				LogType:  intPtr(1000),
+				Service:  "base",
 			},
 		},
 		{
@@ -106,10 +112,8 @@ func TestExtractFields(t *testing.T) {
 			if got.LogType != nil && *got.LogType != *tt.wantFields.LogType {
 				t.Errorf("LogType = %d, want %d", *got.LogType, *tt.wantFields.LogType)
 			}
-			// Service is deliberately unset by ExtractFields today -- see
-			// the LogType doc comment on Fields for why.
-			if got.Service != "" {
-				t.Errorf("Service = %q, want empty (mapping not reachable from this package)", got.Service)
+			if got.Service != tt.wantFields.Service {
+				t.Errorf("Service = %q, want %q", got.Service, tt.wantFields.Service)
 			}
 		})
 	}
