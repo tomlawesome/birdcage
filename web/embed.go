@@ -1,6 +1,7 @@
 // Package web embeds the built frontend (frontend/, issue #36) into the
 // birdcage binary so the dashboard ships as part of the same
-// self-contained executable as the API and the syslog bridge.
+// self-contained executable as the dashboard API and the HTTPS ingest
+// listener.
 //
 // dist/ is gitignored except for an empty committed .gitkeep, which
 // exists only because go:embed requires its pattern to match at least
