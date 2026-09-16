@@ -63,11 +63,11 @@ type fixture struct {
 	} `json:"trace"`
 }
 
-// insertAlertQuery matches internal/ingest/server.go's own insert exactly
-// -- store is read-only over the alerts table (see internal/store/
-// store.go's package doc) and ingest's insert is unexported, so a seed
-// script that isn't the syslog listener writes the same statement
-// directly rather than adding a second write path to either package.
+// insertAlertQuery matches store.InsertAlertIfNew's column list, minus
+// event_id -- store is read-only over the alerts table for everything
+// else (see internal/store/store.go's package doc), so this seed script
+// writes the same statement directly rather than adding a second write
+// path to that package.
 const insertAlertQuery = `
 INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at)
 VALUES (?, ?, ?, ?, ?, ?)`
@@ -210,8 +210,8 @@ func rawPorts(display string) string {
 // extractLogData/logString parsing (internal/store/visitor.go) reads
 // back correctly for service -- a bare {"logdata": {...}} JSON object is
 // enough, since extractLogData looks for the first '{' byte and decodes
-// from there, the same as a real OpenCanary UDP datagram's payload but
-// without the syslog envelope this script has no need to fabricate.
+// from there, the same as a real OpenCanary log payload but without the
+// syslog envelope this script has no need to fabricate.
 func hitRaw(service, tried string) (string, error) {
 	logdata := map[string]string{}
 	switch service {

@@ -15,9 +15,9 @@ flowchart LR
     mikroview["mikroview (sidecar)"]
     idp["OIDC provider (Authentik)"]
 
-    canary1 -->|"syslog"| birdcage
-    canary2 -->|"syslog"| birdcage
-    canaryN -->|"syslog"| birdcage
+    canary1 -->|"HTTPS (agent, #48)"| birdcage
+    canary2 -->|"HTTPS (agent, #48)"| birdcage
+    canaryN -->|"HTTPS (agent, #48)"| birdcage
     birdcage <-->|"SQL"| db
     browser <-->|"HTTPS"| birdcage
     birdcage <-->|"REST, Go client SDKs"| crowdsec
@@ -27,9 +27,11 @@ flowchart LR
     birdcage <-->|"OIDC"| idp
 ```
 
-Each OpenCanary instance pushes its own hits via syslog (its native
-`SyslogLogger` output) -- birdcage never polls, since OpenCanary has no
-query API. See [issue #1](https://gitlab.tomlawson.io/ai/birdcage/-/issues/1)
+Each OpenCanary instance's own agent (#48, not yet landed) tails its
+node's syslog-formatted OpenCanary output locally and posts batches of
+events to birdcage's HTTPS ingest listener (issue #32, landed), bearer-
+token authenticated per canary -- birdcage never polls, since OpenCanary
+has no query API. See [issue #1](https://gitlab.tomlawson.io/ai/birdcage/-/issues/1)
 for how nodes get configured to point at their birdcage instance at
 install time.
 
@@ -37,7 +39,7 @@ install time.
 
 | Boundary | Responsibility | Status |
 | --- | --- | --- |
-| Ingestion bridge | Parse OpenCanary syslog output, normalize into `alerts` | Not yet implemented -- [#2](https://gitlab.tomlawson.io/ai/birdcage/-/issues/2) |
+| Ingestion bridge | HTTPS listener authenticating a canary's agent by bearer token, normalizing posted batches into `alerts` | Landed (#32); the canary-side agent that posts to it is [#48](https://gitlab.tomlawson.io/ai/birdcage/-/issues/48), not yet implemented |
 | Storage | Persist alerts and the audit log (SQLite and Postgres, both mandatory in v1, selected by `DATABASE_URL`) | Landed with #2/#7; see [ADR-0001](adr/0001-stack-and-storage.md) and [docs/configuration.md](configuration.md) |
 | Dashboard | Multi-instance alert view, filtering, canary registry/heartbeats, visitors grouped by source and the trace | API landed (#3, #34, #35); UI pending |
 | Analysis | Turn raw alert volume into an actionable signal | Not yet defined -- [#6](https://gitlab.tomlawson.io/ai/birdcage/-/issues/6) |
