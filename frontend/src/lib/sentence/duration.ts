@@ -15,8 +15,12 @@ export function durationMinutesOnly(totalSeconds: number): string {
 }
 
 /** "six minutes ago" / "three seconds ago" -- prose, so numbers under ten
- * are spelled out (issue #38). */
+ * are spelled out (issue #38). Hours ("19 hours ago") added for issue
+ * #45: the token-conflict and rotation windows reach a day, where
+ * "1140 minutes ago" would be the wrong voice; silent never got there. */
 export function agoWords(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600)
+  if (h > 0) return `${wordOrNumber(h)} ${plural(h, 'hour')} ago`
   const m = Math.floor(totalSeconds / 60)
   if (m > 0) return `${wordOrNumber(m)} ${plural(m, 'minute')} ago`
   const s = Math.floor(totalSeconds)
