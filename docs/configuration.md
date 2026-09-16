@@ -98,11 +98,11 @@ happen until the proxy stops buffering it.
 
 ## Other environment variables
 
-See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_SYSLOG_ADDR`,
-`BIRDCAGE_HTTP_ADDR`, and `BIRDCAGE_INGEST_ADDR` /
-`BIRDCAGE_INGEST_TLS_CERT` / `BIRDCAGE_INGEST_TLS_KEY` (issue #32's HTTPS
-canary ingest listener), which set the ingestion and dashboard listen
-addresses and carry their own network-exposure guidance.
+See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_HTTP_ADDR`
+and `BIRDCAGE_INGEST_ADDR` / `BIRDCAGE_INGEST_TLS_CERT` /
+`BIRDCAGE_INGEST_TLS_KEY` (issue #32's HTTPS canary ingest listener),
+which set the ingestion and dashboard listen addresses and carry their
+own network-exposure guidance.
 
 ### `BIRDCAGE_INTERNAL_RANGES`
 

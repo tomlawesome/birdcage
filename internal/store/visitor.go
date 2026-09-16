@@ -186,12 +186,13 @@ func classifyKind(sourceIP string, hits []hitPoint, internalRanges []*net.IPNet)
 // value (issue #35: "empty password shown as (empty)").
 const emptyMark = "(empty)"
 
-// extractLogData decodes raw (an alerts.raw value -- the *whole* OpenCanary
-// UDP datagram, syslog envelope and all, exactly as internal/ingest wrote
-// it) and returns its "logdata" object. raw is parsed the same way
-// internal/ingest.ParseOpenCanaryMessage does -- skip to the first '{'
-// byte, since OpenCanary lets operators change the syslog formatter
-// prefix -- but reimplemented here rather than imported: internal/ingest
+// extractLogData decodes raw (an alerts.raw value -- OpenCanary's whole
+// log payload exactly as the ingest path stored it, syslog envelope and
+// all where one is present) and returns its "logdata" object. raw is
+// parsed the same way internal/ingest.ParseOpenCanaryMessage does --
+// skip to the first '{' byte, since OpenCanary lets operators change the
+// syslog formatter prefix -- but reimplemented here rather than
+// imported: internal/ingest
 // never captures logdata at all (its Alert type has no field for it), so
 // there is nothing exported to reuse, and store deliberately stays a
 // read-only, ingest-independent consumer of the alerts table (see

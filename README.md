@@ -12,8 +12,9 @@ Birdcage is a sidecar to [mikroview](https://github.com/tomlawesome/mikroview):
 same look and sign-in model, separate app, talking to it only through API
 keys ([ADR-0003](docs/adr/0003-mikroview-sidecar.md)).
 
-Birdcage is in early implementation — the first component to land is the
-OpenCanary UDP syslog ingestion bridge (`cmd/birdcage`). See:
+Birdcage is in early implementation — the components landed so far are the
+HTTPS canary ingest listener (per-canary bearer tokens, TLS 1.3) and the
+dashboard HTTP API (`cmd/birdcage`). See:
 
 - [docs/v1-scope.md](docs/v1-scope.md) — what's in v1 vs. explicitly
   deferred, and the tracking epics.

@@ -18,8 +18,9 @@ belong to it:
 
 ## In v1 (waves 1-2)
 
-- Receiving and normalizing OpenCanary syslog output from many instances
-  into a single store ([#2](https://gitlab.tomlawson.io/ai/birdcage/-/issues/2)).
+- Receiving and normalizing OpenCanary alert output from many instances,
+  over the HTTPS ingest listener, into a single store
+  ([#2](https://gitlab.tomlawson.io/ai/birdcage/-/issues/2)).
 - A dashboard showing alerts across all registered instances, filterable by
   instance/source IP/service/time ([#3](https://gitlab.tomlawson.io/ai/birdcage/-/issues/3)).
 - A defined, concrete meaning for "intelligent analysis" of that activity

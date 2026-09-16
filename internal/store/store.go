@@ -1,11 +1,11 @@
 // Package store is birdcage's query layer backing the dashboard API
-// (#3). Reading the alerts table is its main job; internal/ingest's UDP
-// syslog listener remains its own, separate writer (and stays so until
-// #32 retires it). This package also owns two write paths of its own:
-// the canaries/heartbeats registry (issue #34, canary.go) -- POST
-// /api/heartbeat and canary enrollment -- and, as of issue #32,
-// InsertAlertIfNew (this file) and the canary_tokens table (token.go)
-// for the token-authenticated ingest path that will call them.
+// (#3). Reading the alerts table is its main job. This package also owns
+// two write paths of its own: the canaries/heartbeats registry (issue
+// #34, canary.go) -- POST /api/heartbeat and canary enrollment -- and,
+// as of issue #32, InsertAlertIfNew (this file), the sole writer of
+// alert rows since slice 7 retired the old UDP syslog listener's own
+// direct insert, and the canary_tokens table (token.go) for the
+// token-authenticated ingest path that calls it.
 package store
 
 import (
@@ -18,10 +18,10 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
-// receivedAtLayout is the exact layout internal/ingest/server.go writes
-// to the received_at column (time.RFC3339Nano, always UTC via
-// time.Now().UTC()). Every read and every filter bound in this package
-// uses the same layout, so a value round-trips through SQLite unchanged.
+// receivedAtLayout is the exact layout InsertAlertIfNew writes to the
+// received_at column (time.RFC3339Nano, always UTC). Every read and
+// every filter bound in this package uses the same layout, so a value
+// round-trips through SQLite unchanged.
 const receivedAtLayout = time.RFC3339Nano
 
 // Alert is one OpenCanary hit as read back from the alerts table.
@@ -35,11 +35,11 @@ type Alert struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
-// AlertInsert is the row InsertAlertIfNew writes. It mirrors the column
-// list internal/ingest/server.go's own insertAlertQuery uses, plus
-// EventID (issue #32): the SHA-256 hex digest of the JSON string
-// OpenCanary emitted (#48), or empty for a caller with no event id (the
-// UDP syslog path's own rows, which stay that way -- see
+// AlertInsert is the row InsertAlertIfNew writes: instance_id,
+// source_ip, dest_port, service, raw, received_at, plus EventID (issue
+// #32), the SHA-256 hex digest of the JSON string OpenCanary emitted
+// (#48), or empty for a caller with no event id -- the retired UDP
+// syslog listener's own rows stay that way permanently (see
 // migrations/*/0004_canary_tokens.sql).
 //
 // JSON tags (issue #44) are for internal/stream's Hub, which marshals an
