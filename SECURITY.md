@@ -17,6 +17,17 @@ automated mitigating action against real infrastructure. Compromise of
 birdcage itself is not just an information leak -- it's a path to acting on
 your network and firewall.
 
+**A canary that cannot report is a security event, not an availability
+one** (issue #45). A honeypot's entire value is a hit landing on the
+dashboard; a canary that goes throttled, stops delivering, can't complete
+its token rotation, or has a revoked token reused against it, is
+indistinguishable from a quiet network unless birdcage says so loudly and
+explicitly. Treating that as a mere uptime blip — logged, not surfaced —
+lets an attacker who can overwhelm, starve or clone a canary's identity
+buy the same silence a stopped agent would, with no operator ever told.
+The dashboard surfaces each of these states on the canary's tile and in
+the top-level status, ranked against — not below — an active attack.
+
 **Authentication is part of v1** (changed 2026-09-12,
 [ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
 self-hosted-only OIDC, following
