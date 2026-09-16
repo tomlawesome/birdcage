@@ -7,7 +7,7 @@
 // healthStateRank (duplicated here rather than shared: this is a display
 // ordering over an API response, not database logic).
 import type { Canary, CanaryStatus, Range, Visitor } from '../types'
-import { durationMinutesOnly } from './duration'
+import { durationCoarse } from './duration'
 
 export type StatusInfo =
   | { kind: 'quiet'; okCount: number; total: number; visitorCount: number; range: Range }
@@ -55,13 +55,13 @@ function worstOf(canaries: Canary[]): Canary | null {
 function label(c: Canary): string {
   switch (c.status) {
     case 'token_conflict':
-      return `${c.name} token conflict ${durationMinutesOnly(c.token_conflict_for_s ?? 0)} — look at the box now`
+      return `${c.name} token conflict ${durationCoarse(c.token_conflict_for_s ?? 0)} — look at the box now`
     case 'not_delivering':
       return `${c.name} not delivering`
     case 'throttled':
-      return `${c.name} throttled ${durationMinutesOnly(c.throttled_for_s ?? 0)}`
+      return `${c.name} throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
-      return `${c.name} rotation stalled ${durationMinutesOnly(c.rotation_stalled_for_s ?? 0)}`
+      return `${c.name} rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
     default:
       return c.name
   }
@@ -84,7 +84,7 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
       visitorCount,
       range,
       silentName: worst.name,
-      silentFor: durationMinutesOnly(worst.silent_for_s ?? 0),
+      silentFor: durationCoarse(worst.silent_for_s ?? 0),
     }
   }
   if (worst?.status === 'token_conflict' || worst?.status === 'not_delivering' || worst?.status === 'throttled') {
