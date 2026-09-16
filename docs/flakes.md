@@ -18,3 +18,41 @@ the whole account.
   that reader between publishes, so under `-race` its buffer sometimes filled
   and the hub correctly evicted it. The reader now acknowledges each event
   before the next is published. 70 consecutive `-race` runs clean.
+
+## TestOldTokenInFlightDoesNotKillTheNewerOne (internal/ingest) -- not a flake; defect fixed
+
+- 2026-09-15 · 2833431 · local `go test ./... -race` (full suite, no
+  `-run` filter) · failed: "old token after the new one's first use:
+  status = 200, want 401". Passed in 5/5 isolated re-runs
+  (`-run TestOldTokenInFlightDoesNotKillTheNewerOne -count=5`), so this
+  looks like the same class as the next heading below: back-to-back
+  mints inside one test can land the same stored `created_at`, and
+  RevokeCanaryTokensSupersededBy's ordering compares it with `<`.
+- 2026-09-15 · 2833431 · local `go test ./internal/ingest/...` (full
+  package, no `-run` filter) · same assertion failed again, same run in
+  which `TestRotateOldTokenStopsWorkingOnlyAfterNewTokenFirstUsed` below
+  passed -- so the two tests are not failing together, consistent with a
+  timestamp-resolution race rather than shared state between them.
+
+## TestRotateOldTokenStopsWorkingOnlyAfterNewTokenFirstUsed (internal/ingest) -- not a flake; defect fixed
+
+- 2026-09-15 · 2833431 · local `go test ./internal/ingest/...` (full
+  package, no `-run` filter) · failed: "old token after new one's first
+  use: status = 200, want 401". Same symptom and same likely cause as
+  `TestOldTokenInFlightDoesNotKillTheNewerOne` above: a rotation test
+  that mints twice in quick succession, racing against whatever
+  resolution `created_at` is actually stored and compared at.
+
+### Both of the above: diagnosed 2026-09-15, and they were not flakes
+
+The sighting notes above guessed right. `RevokeCanaryTokensSupersededBy`
+compared `created_at` in SQL, and the two engines do not compare a stored
+timestamp at the same resolution -- SQLite's `julianday()` works to roughly
+50 microseconds, Postgres to a microsecond. Two tokens minted inside one of
+those quanta compared EQUAL on SQLite, so the older one survived a sweep
+that would have superseded it on Postgres.
+
+That is a rule quietly meaning something different on each engine, not a
+test that needs relaxing. The comparison now happens in Go on parsed
+timestamps, which is exact on both. 8 consecutive `-race` runs of the full
+package clean afterwards.
