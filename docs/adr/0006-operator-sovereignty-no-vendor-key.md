@@ -62,10 +62,12 @@ controls.
   rotated, is proposed on #54 and is the owner's decision. (Amended
   2026-09-16 from "cannot ship agent upgrades as a product feature", which
   was too strong.)
-- **The `upgrade` command stays unmintable until #54 is accepted and the
-  agent's verify path exists.** `store.CommandKind` is a closed set
-  containing only `selftest` (slice 5b, 2026-09-16), pinned by
-  TestUpgradeCommandCannotBeMinted.
+- **The `upgrade` command stays unmintable until the agent's verify path
+  exists.** `store.CommandKind` is a closed set containing only
+  `selftest` (slice 5b, 2026-09-16), pinned by
+  TestUpgradeCommandCannotBeMinted. The approval design is ADR-0007
+  (accepted later the same day); it amends decision (3) above: published
+  checksums are required for install, not optional.
 - **Enrolment (#47) carries the weight.** A canary enrolled after a
   birdcage is compromised pins whatever it is told to pin. Whatever
   verification exists must reach a new canary by a path that is not the
