@@ -52,8 +52,17 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(plainText(fresh.lines[0])).toContain('rotation stalled')
     expect(plainText(fresh.lines[0])).not.toContain('over a day')
     expect(plainText(stale.lines[0])).toContain('over a day')
-    expect(fresh.lines[0][0].cls).toBe('wn')
-    expect(stale.lines[0][0].cls).toBe('wn')
+    // Each branch must be a whole clause. An earlier version interpolated
+    // only a tail and rendered "hasn't rotated in check the agent"; a
+    // contains() check on either half passed straight over it, so assert
+    // the clause entire. Asserted after the "· " so the duration's own
+    // formatting is not pinned here -- duration.test.ts owns that.
+    expect(plainText(fresh.lines[0]).split('· ')[1]).toBe(
+      "a fresh token hasn't been picked up — check the agent",
+    )
+    expect(plainText(stale.lines[0]).split('· ')[1]).toBe(
+      'no rotation completed in over a day — check the agent',
+    )
   })
 
   it('silent still takes the original branch, unchanged', () => {
