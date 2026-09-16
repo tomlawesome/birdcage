@@ -79,10 +79,18 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
         },
       ]
     case 'rotation_stalled': {
-      const tail = canary.rotation_stalled_escalated ? 'over a day — check the agent' : 'check the agent'
+      // Not escalated is signal A only (a freshly issued token unused for
+      // 15 min to 24 h). Escalated is either signal A past 24 h or signal
+      // B (no completed rotation in ~25 h), and in both of those no
+      // rotation has actually completed -- see rotationSignal in
+      // internal/store/health.go. Each branch is a whole clause: an
+      // interpolated tail read as "hasn't rotated in check the agent".
+      const what = canary.rotation_stalled_escalated
+        ? 'no rotation completed in over a day'
+        : "a fresh token hasn't been picked up"
       return [
         {
-          text: `⏳ rotation stalled ${durationExact(canary.rotation_stalled_for_s ?? 0)} · hasn't rotated in ${tail}`,
+          text: `⏳ rotation stalled ${durationExact(canary.rotation_stalled_for_s ?? 0)} · ${what} — check the agent`,
           cls: 'wn',
         },
       ]
