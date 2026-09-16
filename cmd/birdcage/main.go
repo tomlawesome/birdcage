@@ -1,8 +1,10 @@
-// Command birdcage runs two things side by side: the OpenCanary UDP
-// syslog ingestion bridge, which listens for OpenCanary honeypot alerts
-// and persists them to a database (SQLite by default, or Postgres --
-// see DATABASE_URL below, and docs/configuration.md), and a read-only
-// HTTP JSON API (#3) that serves that data to a dashboard.
+// Command birdcage runs two things side by side: the HTTPS canary ingest
+// listener (issue #32), which authenticates a canary's agent by bearer
+// token and persists the alert batches it posts to a database (SQLite by
+// default, or Postgres -- see DATABASE_URL below, and
+// docs/configuration.md), and a read-only HTTP JSON API (#3) that serves
+// that data to a dashboard. UDP syslog ingestion (the original bridge)
+// was retired in slice 7 of #32 -- pre-alpha, no compatibility to keep.
 package main
 
 import (
@@ -33,7 +35,6 @@ const (
 	// unset -- see docs/configuration.md.
 	envDatabaseURL = "DATABASE_URL"
 	envDBPath      = "BIRDCAGE_DB_PATH"
-	envSyslogAddr  = "BIRDCAGE_SYSLOG_ADDR"
 	envHTTPAddr    = "BIRDCAGE_HTTP_ADDR"
 	// envInternalRanges names extra CIDR blocks GET /api/visitors and GET
 	// /api/trace's "inside" kind rule (issue #35) treats as internal,
@@ -59,7 +60,6 @@ const (
 	envIngestTLSKey  = "BIRDCAGE_INGEST_TLS_KEY"
 
 	defaultDBPath     = "birdcage.db"
-	defaultSyslogAddr = ":5514"
 	defaultHTTPAddr   = ":8080"
 	defaultIngestAddr = ":8443"
 
@@ -88,7 +88,7 @@ func main() {
 	// subcommands -- `add` a dev/testing convenience predating enrollment
 	// (#34's "Not in this slice"), `mint`/`list`/`revoke` issue #32 item
 	// 9's canary token management -- that exit immediately rather than
-	// starting the syslog/HTTP services below.
+	// starting the HTTP/ingest services below.
 	if len(os.Args) > 1 && os.Args[1] == "canary" {
 		if len(os.Args) < 3 {
 			log.Fatal("usage: birdcage canary <add|mint|list|revoke> ...")
@@ -118,10 +118,6 @@ func main() {
 	dbPath := os.Getenv(envDBPath)
 	if dbPath == "" {
 		dbPath = defaultDBPath
-	}
-	syslogAddr := os.Getenv(envSyslogAddr)
-	if syslogAddr == "" {
-		syslogAddr = defaultSyslogAddr
 	}
 	httpAddr := os.Getenv(envHTTPAddr)
 	if httpAddr == "" {
@@ -155,12 +151,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("%s: %v", envInternalRanges, err)
 	}
-
-	// The default listen address is deliberately :5514, an unprivileged
-	// port, so birdcage can run as a non-root container. Operators should
-	// point each OpenCanary instance's syslog handler "address" at
-	// <birdcage-host>:5514 rather than the conventional :514.
-	syslogServer := ingest.NewServer(syslogAddr, database)
 
 	// hub is shared between the dashboard's GET /api/stream (issue #44)
 	// and the ingest listener below (issue #32): an alert the ingest
@@ -231,20 +221,15 @@ func main() {
 	// use") triggers stop() below, which cancels ctx and so brings the
 	// others down too: without that, a lone failure in one service would
 	// leave main blocked forever waiting on the rest.
-	serviceCount := 2
+	serviceCount := 1
 	if ingestServer != nil {
 		serviceCount++
 	}
 	results := make(chan serviceResult, serviceCount)
 
 	go func() {
-		log.Printf("listening for OpenCanary UDP syslog on %s, storing alerts via %s (%s)",
-			syslogAddr, database.Engine, redactDatabaseURL(databaseURL))
-		results <- serviceResult{"syslog listener", syslogServer.ListenAndServe(ctx)}
-	}()
-
-	go func() {
-		log.Printf("serving dashboard HTTP API on %s", httpAddr)
+		log.Printf("serving dashboard HTTP API on %s, storing alerts via %s (%s)",
+			httpAddr, database.Engine, redactDatabaseURL(databaseURL))
 		err := httpServer.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			// The expected return from Shutdown below, not a failure.

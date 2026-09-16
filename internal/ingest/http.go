@@ -51,7 +51,7 @@ func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
 	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits)}
 
-	// Three routes are registered on this mux, all behind
+	// Four routes are registered on this mux, all behind
 	// requireBearerToken. Mirrors internal/api's dashboardRoutes doc
 	// comment: a request that doesn't match one of them -- including
 	// every dashboard path -- falls through to notFoundJSON, never to
@@ -64,6 +64,7 @@ func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits l
 	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.limiters, h.handleBatch))
 	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.limiters, h.handleRotate))
 	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.limiters, h.handleHeartbeat))
+	mux.Handle("POST /ingest/commands", requireBearerToken(database, now, h.limiters, h.handleCommands))
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }

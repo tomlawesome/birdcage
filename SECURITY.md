@@ -1,8 +1,9 @@
 # Security policy
 
-Birdcage is in early implementation (only the OpenCanary UDP syslog
-ingestion bridge has landed; see [docs/v1-scope.md](docs/v1-scope.md)) --
-this document describes the threat model and hardening it is designed
+Birdcage is in early implementation (the HTTPS ingest submux -- per-canary
+bearer tokens, TLS 1.3 -- and the command endpoint have landed; the agent
+(#48) and enrolment (#47) have not; see [docs/v1-scope.md](docs/v1-scope.md))
+-- this document describes the threat model and hardening it is designed
 against, so that model is fixed before code lands rather than retrofitted
 around whatever got built first. Update it as implementation reveals
 details this can't predict yet.
@@ -74,18 +75,6 @@ only at the point that text is displayed, per surface:
 
 ## Network exposure
 
-- **OpenCanary syslog ingestion — UDP, default `:5514`** (override with
-  `BIRDCAGE_SYSLOG_ADDR`). **No authentication, no TLS.** OpenCanary
-  instances push their hits here as plain UDP syslog datagrams, so anyone
-  who can reach the port can inject forged alerts claiming any
-  `instance_id`, at any volume. This listener stays unauthenticated
-  regardless of the dashboard auth described above -- plain UDP syslog has
-  no session to gate: it must be bound to a loopback or trusted-LAN-only
-  interface (see "Recommended deployment hardening") and must never be
-  exposed to the internet or an untrusted network. It binds the
-  unprivileged port 5514 (not 514) so birdcage can
-  run as a non-root container; operators point each OpenCanary instance's
-  syslog handler `address` at this port.
 - **Canary ingest — HTTPS, default `:8443`** (override with
   `BIRDCAGE_INGEST_ADDR`; certificate/key via `BIRDCAGE_INGEST_TLS_CERT`
   and `BIRDCAGE_INGEST_TLS_KEY`). **Bearer-token authenticated, TLS 1.3
