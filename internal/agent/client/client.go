@@ -50,8 +50,22 @@ type Config struct {
 	// used with no custom callback (#32 research #8: "the ingest
 	// certificate carries correct SANs ... so the agent runs stock
 	// certificate verification with no custom callback" -- the carve-out
-	// failure Beats CVE-2023-31421 is the record of).
+	// failure Beats CVE-2023-31421 is the record of). This field governs
+	// only how the Client verifies birdcage's certificate; it is
+	// untouched by ClientCert/ClientKey below, which govern the
+	// opposite direction -- what this Client presents of its own.
 	CACert []byte
+	// ClientCert and ClientKey are the PEM-encoded mTLS client
+	// certificate and private key #47 issues at enrolment and installs
+	// on the canary (#47, ratified after !33 merged: mTLS for every
+	// agent connection, in addition to the per-canary bearer token --
+	// both, not either; #48 gap 1). Both empty is a valid Config: no
+	// client certificate is presented, for any caller that predates or
+	// does not need mTLS. Exactly one set is a configuration error --
+	// New refuses it immediately, rather than leaving a half-configured
+	// Client to fail confusingly at its first request.
+	ClientCert []byte
+	ClientKey  []byte
 }
 
 // Client is the HTTPS client a canary's agent uses to talk to birdcage.
@@ -76,18 +90,35 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("client: Config.CACert contains no usable certificate")
 	}
 
+	tlsConfig := &tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS13, // matches internal/ingest/tlsserver.go's own floor
+	}
+	// mTLS (#48 gap 1): present the agent's own certificate whenever
+	// either half is configured, so a caller that supplies only one of
+	// the pair fails loudly here -- X509KeyPair refuses to pair an empty
+	// half with a non-empty one -- rather than at the first request,
+	// which would read as a mysterious handshake failure far from the
+	// actual misconfiguration. Neither field touches RootCAs/TLSConfig's
+	// verification of birdcage's own certificate above; this only adds
+	// what the Client presents of itself.
+	if len(cfg.ClientCert) > 0 || len(cfg.ClientKey) > 0 {
+		cert, err := tls.X509KeyPair(cfg.ClientCert, cfg.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("client: Config.ClientCert/ClientKey: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	transport := &http.Transport{
 		// Proxy intentionally nil, not http.ProxyFromEnvironment (the
 		// net/http default): #48 "What the research changed" #1, "proxy
 		// environment variables ignored -- the dial goes where enrolment
 		// said and nowhere else."
-		Proxy:       nil,
-		DialContext: dialer.DialContext,
-		TLSClientConfig: &tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS13, // matches internal/ingest/tlsserver.go's own floor
-		},
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		TLSClientConfig:       tlsConfig,
 		TLSHandshakeTimeout:   tlsHandshakeTimeout,
 		ResponseHeaderTimeout: responseHeaderTimeout,
 		IdleConnTimeout:       idleConnTimeout,
