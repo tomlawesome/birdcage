@@ -17,6 +17,11 @@
 // go); HTTP/1.1 only, matching internal/ingest/tlsserver.go's own
 // Server.Protocols pin; every call has an explicit timeout, and every
 // response this package reads is bounded (#48: "no unbounded reads").
+// The Client also presents its own mTLS certificate when Config carries
+// one (#47, ratified after !33 merged: mTLS for every agent connection
+// alongside the per-canary bearer token -- #48 gap 1); a Config with
+// neither still works unchanged for any caller that predates that
+// ratification.
 //
 // Every wire type here mirrors internal/ingest's own field-for-field
 // (batch.go's ingestEvent/ingestBatch/ackResponse, rotate.go's
