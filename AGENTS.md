@@ -21,12 +21,17 @@ hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
 
 ## Closing issues from commits
 
-GitLab counts `Implements` as an issue-closing keyword, exactly like `Closes`
-and `Fixes`, and it does not care that the reference is possessive: the commit
-subject "Implements #48's canary-side agent HTTP client" closed #48 when !33
-merged on 2026-09-17, while only one of its parts had been built. Write
-`Refs #N` on a commit that does not finish the issue, and save the closing
-keywords for the commit that does.
+GitLab's issue-closing pattern counts `Implements` alongside `Closes` and
+`Fixes`, and it ignores that a reference is possessive: a subject of the form
+`Implements #N's HTTP client` shuts the whole of issue N while naming only a
+part of it. Issue 48 was shut this way twice on 2026-09-17 -- once by such a
+commit subject, and once by a merge-request body that quoted that subject in
+order to warn about it.
+
+So the rule is not only to write `Refs #N` on a commit that does not finish an
+issue. It is that a closing keyword must never sit next to a real issue number
+anywhere GitLab parses -- commit messages and merge-request descriptions alike,
+including prose explaining this trap. Use a placeholder such as `#N`.
 
 ## Security by design
 
