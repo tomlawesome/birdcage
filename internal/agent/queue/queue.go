@@ -27,33 +27,69 @@ type Event struct {
 // the point they're read -- webhook or log tail -- and the point the
 // sender goroutine ships them, dropping the oldest under memory pressure
 // rather than growing unbounded on the box built to attract floods (#48,
-// "Constraints that are not negotiable").
+// "Constraints that are not negotiable"). Eviction enforces two caps
+// together -- event count and total queued payload bytes -- rather than
+// count alone (#48 gap 4; see Config's doc comment for why).
 //
 // Safe for exactly one producer goroutine (Push) and one sender goroutine
 // (Peek, Ack, Reject) calling concurrently. Depth, Dropped and
 // RejectedCount may additionally be called from other goroutines, e.g. a
 // heartbeat builder.
 type MemQueue struct {
-	mu       sync.Mutex
-	capacity int
-	order    *list.List // *Event elements, oldest at Front -- drop-oldest eviction order
-	index    map[string]*list.Element
-	dropped  uint64 // evicted for capacity, not birdcage's decision
-	rejected uint64 // birdcage permanently rejected these
+	mu        sync.Mutex
+	maxEvents int
+	maxBytes  int64
+	bytes     int64      // sum of Payload lengths currently queued
+	order     *list.List // *Event elements, oldest at Front -- drop-oldest eviction order
+	index     map[string]*list.Element
+	dropped   uint64 // evicted for capacity (either cap), not birdcage's decision
+	rejected  uint64 // birdcage permanently rejected these
 }
 
-// NewMemQueue returns an empty queue that holds at most capacity events.
-// NewMemQueue panics if capacity is not positive: an unbounded or
+// Config bounds a MemQueue's memory use. Both caps apply together: Push
+// evicts oldest-first until the queue is under both MaxEvents and
+// MaxBytes.
+//
+// A count cap alone left a hostile flood of near-event.MaxLogLineBytes
+// (64 KiB) events as an out-of-memory path -- 10,000 events at that size
+// is roughly 640 MiB, on the one box this design exists to keep from
+// falling over (#48 gap 4). MaxBytes closes that: it bounds total queued
+// bytes regardless of how large any one event's Payload is.
+type Config struct {
+	// MaxEvents caps the number of queued events.
+	MaxEvents int
+	// MaxBytes caps the sum of queued events' Payload lengths, in bytes.
+	MaxBytes int64
+}
+
+// Default caps for a fresh agent process. Neither number is ratified;
+// both are marked [contested] in #48's process-composition design note:
+// "Cap sizing [contested]: ... Add a byte cap to MemQueue (sum of
+// payload lengths; evict oldest until under both caps). Proposed: 10,000
+// events / 32 MiB, whichever binds first -- roughly 15 minutes of
+// full-rate ordinary events, a few seconds of worst-case hostile ones,
+// on a box that must not be the OOM target." Written down here as
+// documented, tunable implementation choices per
+// docs/security-by-design.md, not as settled facts -- a caller with a
+// better number should pass it to NewMemQueue directly.
+const (
+	DefaultMaxEvents     = 10_000
+	DefaultMaxQueueBytes = 32 * 1024 * 1024
+)
+
+// NewMemQueue returns an empty queue bounded by cfg. It panics if either
+// cfg.MaxEvents or cfg.MaxBytes is not positive: an unbounded or
 // zero-sized queue is not a configuration this package supports, since
-// #48 requires a cap to exist at all times.
-func NewMemQueue(capacity int) *MemQueue {
-	if capacity <= 0 {
-		panic("queue: capacity must be positive")
+// #48 requires a cap -- of both kinds now -- to exist at all times.
+func NewMemQueue(cfg Config) *MemQueue {
+	if cfg.MaxEvents <= 0 || cfg.MaxBytes <= 0 {
+		panic("queue: Config.MaxEvents and Config.MaxBytes must both be positive")
 	}
 	return &MemQueue{
-		capacity: capacity,
-		order:    list.New(),
-		index:    make(map[string]*list.Element, capacity),
+		maxEvents: cfg.MaxEvents,
+		maxBytes:  cfg.MaxBytes,
+		order:     list.New(),
+		index:     make(map[string]*list.Element, cfg.MaxEvents),
 	}
 }
 
@@ -65,11 +101,20 @@ func NewMemQueue(capacity int) *MemQueue {
 // was newly queued; false means it was already present and Push was a
 // no-op.
 //
-// When the queue is already at capacity, the oldest still-queued event
-// is evicted to make room. The log still holds that event inside the
-// recovery window, so this is memory-pressure relief, not data loss
-// (#48: "The log holds what was dropped; the cap only stops the agent
-// being the OOM-kill target on the one box built to attract floods").
+// When adding e would leave the queue at or over either cap -- MaxEvents
+// or MaxBytes -- the oldest still-queued event is evicted, repeatedly,
+// until the queue (not counting e yet) is under both, or empty. The log
+// still holds every evicted event inside the recovery window, so this is
+// memory-pressure relief, not data loss (#48: "The log holds what was
+// dropped; the cap only stops the agent being the OOM-kill target on the
+// one box built to attract floods").
+//
+// A single event whose own Payload already exceeds MaxBytes is still
+// admitted, alone, once the queue has been evicted down to empty for it
+// -- this package never judges event content (a peer package's job), so
+// it does not refuse an oversize event outright. The very next Push
+// evicts it in turn like anything else, so it never grows the queue past
+// one such event's worth of memory.
 func (q *MemQueue) Push(e Event) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -78,15 +123,18 @@ func (q *MemQueue) Push(e Event) bool {
 		return false
 	}
 
-	if q.order.Len() >= q.capacity {
+	for q.order.Len() > 0 && (q.order.Len() >= q.maxEvents || q.bytes+int64(len(e.Payload)) > q.maxBytes) {
 		oldest := q.order.Front()
 		q.order.Remove(oldest)
-		delete(q.index, oldest.Value.(Event).ID)
+		oldestEvent := oldest.Value.(Event)
+		delete(q.index, oldestEvent.ID)
+		q.bytes -= int64(len(oldestEvent.Payload))
 		q.dropped++
 	}
 
 	elem := q.order.PushBack(e)
 	q.index[e.ID] = elem
+	q.bytes += int64(len(e.Payload))
 	return true
 }
 
@@ -140,6 +188,7 @@ func (q *MemQueue) removeLocked(id string) bool {
 	}
 	q.order.Remove(elem)
 	delete(q.index, id)
+	q.bytes -= int64(len(elem.Value.(Event).Payload))
 	return true
 }
 
@@ -154,7 +203,9 @@ func (q *MemQueue) Depth() int {
 }
 
 // Dropped is the number of events evicted for capacity (drop-oldest)
-// since the queue was created.
+// since the queue was created -- whichever cap triggered the eviction,
+// MaxEvents or MaxBytes (#48 gap 4): an eviction is an eviction, counted
+// the same way regardless of which cap it relieved.
 func (q *MemQueue) Dropped() uint64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
