@@ -44,6 +44,7 @@
       class="tile k-{c.lane}"
       class:silent={c.status === 'silent'}
       class:critical={c.status === 'token_conflict' || c.status === 'not_delivering' || c.status === 'throttled'}
+      class:conflict={c.status === 'token_conflict'}
       class:degraded={c.status === 'rotation_stalled'}
     >
       <div class="n">{c.name}<small>on {c.lane}</small></div>
@@ -92,6 +93,18 @@
      degraded reuses --repeat, matching the .wn status-line colour above. */
   .tile.critical {
     border-color: var(--alarm);
+  }
+  /* issue #45, owner 2026-09-17: token conflict does not clear on its
+     own -- "the whole tile should be outlined red with a red backdrop
+     until the problem is fixed", louder than the other critical states
+     above (border only), matching that it is the one state meaning
+     "look at the box now". The backdrop is --alarm mixed at 12% into
+     --raised rather than a flat alarm fill: a full-strength fill drops
+     the bold .al status text's contrast on itself well under the 4.5:1
+     floor. At 12%, body text (--ink) stays ~13.8:1 and the .al segment
+     ~5.2:1 on this backdrop -- both comfortably over AA. */
+  .tile.conflict {
+    background: color-mix(in srgb, var(--alarm) 12%, var(--raised));
   }
   .tile.degraded {
     border-color: var(--repeat);
