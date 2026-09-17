@@ -1,10 +1,14 @@
-// Issue #37 acceptance: render the band from each of the three fixtures
-// and pixel-compare it against the matching round-6 concept shot
-// (docs/design/concepts/round-6/shots/m-<scene>.png). Starts an in-process
-// vite dev server (fixture mode is dev-only, see src/lib/api.ts), screenshots
-// the live <svg class="band-svg"> at 1600x1000 @2x -- the same viewport
-// and scale docs/design/concepts/round-6/capture.mjs used for the shots
-// -- and crops the reference PNG to the same region using the svg's own
+// Issue #37 acceptance: render the band from each fixture and
+// pixel-compare it against the matching reference shot
+// (docs/design/concepts/round-6/shots/m-<scene>.png) -- quiet/silent/
+// night against the round-6 concept mockups; alerts (issue #45's token
+// conflict, throttled, rotation-stalled and not-delivering states)
+// against a reference generated from the build, since no concept mockup
+// covers it. Starts an in-process vite dev server (fixture mode is
+// dev-only, see src/lib/api.ts), screenshots the live <svg
+// class="band-svg"> at 1600x1000 @2x -- the same viewport and scale
+// docs/design/concepts/round-6/capture.mjs used for the shots -- and
+// crops the reference PNG to the same region using the svg's own
 // measured bounding box, which is exactly where the band placed its
 // content (gen.py's `top`/BAND[-1]+40, ported in src/lib/band/placement.ts
 // and model.ts). Exits non-zero if any scene's differing-pixel percentage
@@ -23,7 +27,7 @@ const shotsDir = join(frontendDir, '..', 'docs', 'design', 'concepts', 'round-6'
 const outDir = join(frontendDir, 'scripts', '.out')
 mkdirSync(outDir, { recursive: true })
 
-const SCENES = ['quiet', 'silent', 'night']
+const SCENES = ['quiet', 'silent', 'night', 'alerts']
 const THRESHOLD_PCT = 2
 const DPR = 2
 const PAGE_WIDTH = 1600

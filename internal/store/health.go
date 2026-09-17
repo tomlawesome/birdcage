@@ -71,12 +71,20 @@ const (
 	// mid-incident.
 	throttledWindow = 5 * time.Minute
 
-	// tokenConflictWindow is how long a token-conflict audit entry keeps
-	// a canary's tile reading "token conflict". This is the one state
-	// the issue says should make an operator "look at the box now", so
-	// the window favors not missing it (24h covers a conflict raised
-	// overnight) over aging it out quickly.
-	tokenConflictWindow = 24 * time.Hour
+	// tokenConflictQuietPeriod is not an expiry: latestAuditSince takes
+	// the most recent ingest.token_conflict entry, so the clock restarts
+	// on every new conflict and this is how long a canary's tile keeps
+	// reading "token conflict" after the last one. Resolution, per the
+	// owner (2026-09-17), is the token no longer conflicting -- either
+	// the admin fixed the cause or rotation started working, and both
+	// look identical from birdcage, as the conflicts simply stopping.
+	// There is deliberately no acknowledge action: a click would only
+	// record that somebody looked, not that the problem ended. So the
+	// state holds for as long as conflicts keep arriving and clears only
+	// after a quiet period with none. 24h is a conservative margin over
+	// the ~60s poll interval of a cloned box that is still live, chosen
+	// to favor not missing an overnight event over aging out quickly.
+	tokenConflictQuietPeriod = 24 * time.Hour
 
 	// rotationStalledThreshold is issue #45's own number: a newly issued
 	// token unused for 15 minutes.

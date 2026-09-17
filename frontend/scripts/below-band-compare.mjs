@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Issue #38's acceptance check: from the three fixtures, the page below
-// the band matches docs/design/concepts/round-6/shots/m-*.png by
-// pixelmatch. Starts a real Vite dev server (fixture mode via ?scene=
-// only works in dev -- see lib/api.ts's fixtureScene()), screenshots
-// each scene at 1600x1000 @2x (matching round-6/capture.mjs exactly),
-// crops out the band, and diffs against the reference shot cropped the
-// same way.
+// Issue #38's acceptance check: from each fixture, the page below the
+// band matches docs/design/concepts/round-6/shots/m-*.png by
+// pixelmatch -- quiet/silent/night against the round-6 concept mockups;
+// alerts (issue #45's token conflict, throttled, rotation-stalled and
+// not-delivering states) against a reference generated from the build,
+// since no concept mockup covers it. Starts a real Vite dev server
+// (fixture mode via ?scene= only works in dev -- see lib/api.ts's
+// fixtureScene()), screenshots each scene at 1600x1000 @2x (matching
+// round-6/capture.mjs exactly), crops out the band, and diffs against
+// the reference shot cropped the same way.
 //
 // Usage: node scripts/below-band-compare.mjs   (from frontend/)
 import { createServer } from 'vite'
@@ -22,7 +25,7 @@ const shotsDir = join(root, '..', 'docs', 'design', 'concepts', 'round-6', 'shot
 const outDir = join(root, '.below-band-compare')
 mkdirSync(outDir, { recursive: true })
 
-const SCENES = ['quiet', 'silent', 'night']
+const SCENES = ['quiet', 'silent', 'night', 'alerts']
 const VIEWPORT = { width: 1600, height: 1000 }
 const SCALE = 2
 const THRESHOLD_PCT = 2
