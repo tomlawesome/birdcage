@@ -337,10 +337,10 @@ func TestMaxConnections(t *testing.T) {
 
 func TestNewRejectsNonLoopbackAddr(t *testing.T) {
 	cases := []string{
-		"0.0.0.0:0",     // all interfaces
-		"8.8.8.8:0",     // a real, non-loopback IP
-		"localhost:0",   // hostname -- no DNS trust
-		":0",            // empty host, also all interfaces
+		"0.0.0.0:0",   // all interfaces
+		"8.8.8.8:0",   // a real, non-loopback IP
+		"localhost:0", // hostname -- no DNS trust
+		":0",          // empty host, also all interfaces
 	}
 	for _, addr := range cases {
 		t.Run(addr, func(t *testing.T) {
