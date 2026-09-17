@@ -89,8 +89,13 @@
     border-style: dashed;
     background: transparent;
   }
-  /* issue #45: critical states "carry the alarm colour on the tile";
-     degraded reuses --repeat, matching the .wn status-line colour above. */
+  /* issue #45's three visible tiers, loudest last (owner, 2026-09-17:
+     the conflict tile must be "unmistakably the loudest thing on the
+     page"). Critical states carry the alarm colour on the outline;
+     degraded sits below them in the warning colour, muted toward the
+     tile ground so its hairline cannot be mistaken for an alarm at a
+     glance -- the bold --repeat status line still names it up close;
+     conflict alone gets the backdrop and the glow below. */
   .tile.critical {
     border-color: var(--alarm);
   }
@@ -98,16 +103,20 @@
      own -- "the whole tile should be outlined red with a red backdrop
      until the problem is fixed", louder than the other critical states
      above (border only), matching that it is the one state meaning
-     "look at the box now". The backdrop is --alarm mixed at 12% into
-     --raised rather than a flat alarm fill: a full-strength fill drops
-     the bold .al status text's contrast on itself well under the 4.5:1
-     floor. At 12%, body text (--ink) stays ~13.8:1 and the .al segment
-     ~5.2:1 on this backdrop -- both comfortably over AA. */
+     "look at the box now". The backdrop is --alarm mixed at 18% into
+     --raised, the strongest mix that keeps the bold .al status text at
+     the 4.5:1 floor on it (4.73:1 measured; 22% drops it to 4.44). At
+     18%, body text (--ink) is 12.66:1, --ink-2 5.89:1 and the iot lane
+     name 4.78:1 -- all over AA. The 2px outline and the glow, not a
+     stronger fill, are what carry it across the room. */
   .tile.conflict {
-    background: color-mix(in srgb, var(--alarm) 12%, var(--raised));
+    border-width: 2px;
+    border-color: var(--alarm);
+    background: color-mix(in srgb, var(--alarm) 18%, var(--raised));
+    box-shadow: 0 0 26px color-mix(in srgb, var(--alarm) 35%, transparent);
   }
   .tile.degraded {
-    border-color: var(--repeat);
+    border-color: color-mix(in srgb, var(--repeat) 55%, var(--raised));
   }
   .tile.k-lan {
     --c: var(--lan);
