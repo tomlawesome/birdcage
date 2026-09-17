@@ -1,0 +1,162 @@
+{
+  "canaries": {
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "name": "canary-lan",
+        "lane": "lan",
+        "ports": "ssh 22 \u00b7 http 80 \u00b7 smb 445",
+        "status": "not_delivering",
+        "last_heartbeat_at": "2026-09-17T08:59:54Z",
+        "hits": 0,
+        "not_delivering": true
+      },
+      {
+        "id": "canary-srv",
+        "name": "canary-srv",
+        "lane": "srv",
+        "ports": "ssh 22 \u00b7 mysql 3306 \u00b7 ftp 21",
+        "status": "throttled",
+        "last_heartbeat_at": "2026-09-17T08:59:40Z",
+        "hits": 0,
+        "throttled_for_s": 172
+      },
+      {
+        "id": "canary-iot",
+        "name": "canary-iot",
+        "lane": "iot",
+        "ports": "telnet 23 \u00b7 ssh 22 \u00b7 smb 445",
+        "status": "token_conflict",
+        "last_heartbeat_at": "2026-09-17T08:59:47Z",
+        "hits": 0,
+        "token_conflict_for_s": 300
+      },
+      {
+        "id": "canary-guest",
+        "name": "canary-guest",
+        "lane": "guest",
+        "ports": "telnet 23 \u00b7 ssh 22 \u00b7 http 80",
+        "status": "rotation_stalled",
+        "last_heartbeat_at": "2026-09-17T08:59:19Z",
+        "hits": 0,
+        "rotation_stalled": true,
+        "rotation_stalled_for_s": 1215,
+        "rotation_stalled_escalated": false
+      }
+    ]
+  },
+  "visitors": {
+    "visitors": [],
+    "next_before": null
+  },
+  "trace": {
+    "now": "2026-09-17T09:00:00Z",
+    "range": "14d",
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "lane": "lan",
+        "status": "not_delivering",
+        "last_heartbeat_at": "2026-09-17T08:59:54Z",
+        "beats": [
+          "2026-09-17T08:59:54Z",
+          "2026-09-17T08:58:54Z",
+          "2026-09-17T08:57:54Z",
+          "2026-09-17T08:56:54Z",
+          "2026-09-17T08:55:54Z",
+          "2026-09-17T08:54:54Z",
+          "2026-09-17T08:53:54Z",
+          "2026-09-17T08:52:54Z",
+          "2026-09-17T08:51:54Z",
+          "2026-09-17T08:50:54Z",
+          "2026-09-17T08:49:54Z",
+          "2026-09-17T08:48:54Z",
+          "2026-09-17T08:47:54Z",
+          "2026-09-17T08:46:54Z",
+          "2026-09-17T08:45:54Z"
+        ],
+        "hits": []
+      },
+      {
+        "id": "canary-srv",
+        "lane": "srv",
+        "status": "throttled",
+        "last_heartbeat_at": "2026-09-17T08:59:40Z",
+        "beats": [
+          "2026-09-17T08:59:40Z",
+          "2026-09-17T08:58:40Z",
+          "2026-09-17T08:57:40Z",
+          "2026-09-17T08:56:40Z",
+          "2026-09-17T08:55:40Z",
+          "2026-09-17T08:54:40Z",
+          "2026-09-17T08:53:40Z",
+          "2026-09-17T08:52:40Z",
+          "2026-09-17T08:51:40Z",
+          "2026-09-17T08:50:40Z",
+          "2026-09-17T08:49:40Z",
+          "2026-09-17T08:48:40Z",
+          "2026-09-17T08:47:40Z",
+          "2026-09-17T08:46:40Z",
+          "2026-09-17T08:45:40Z"
+        ],
+        "hits": []
+      },
+      {
+        "id": "canary-iot",
+        "lane": "iot",
+        "status": "token_conflict",
+        "last_heartbeat_at": "2026-09-17T08:59:47Z",
+        "beats": [
+          "2026-09-17T08:59:47Z",
+          "2026-09-17T08:58:47Z",
+          "2026-09-17T08:57:47Z",
+          "2026-09-17T08:56:47Z",
+          "2026-09-17T08:55:47Z",
+          "2026-09-17T08:54:47Z",
+          "2026-09-17T08:53:47Z",
+          "2026-09-17T08:52:47Z",
+          "2026-09-17T08:51:47Z",
+          "2026-09-17T08:50:47Z",
+          "2026-09-17T08:49:47Z",
+          "2026-09-17T08:48:47Z",
+          "2026-09-17T08:47:47Z",
+          "2026-09-17T08:46:47Z",
+          "2026-09-17T08:45:47Z"
+        ],
+        "hits": []
+      },
+      {
+        "id": "canary-guest",
+        "lane": "guest",
+        "status": "rotation_stalled",
+        "last_heartbeat_at": "2026-09-17T08:59:19Z",
+        "beats": [
+          "2026-09-17T08:59:19Z",
+          "2026-09-17T08:58:19Z",
+          "2026-09-17T08:57:19Z",
+          "2026-09-17T08:56:19Z",
+          "2026-09-17T08:55:19Z",
+          "2026-09-17T08:54:19Z",
+          "2026-09-17T08:53:19Z",
+          "2026-09-17T08:52:19Z",
+          "2026-09-17T08:51:19Z",
+          "2026-09-17T08:50:19Z",
+          "2026-09-17T08:49:19Z",
+          "2026-09-17T08:48:19Z",
+          "2026-09-17T08:47:19Z",
+          "2026-09-17T08:46:19Z",
+          "2026-09-17T08:45:19Z"
+        ],
+        "hits": []
+      }
+    ],
+    "last_hit": {
+      "at": "2026-08-13T00:00:00Z",
+      "visitor": "198.51.100.200",
+      "canary": "canary-guest",
+      "port": 23,
+      "service": "telnet",
+      "kind": "touch"
+    }
+  }
+}

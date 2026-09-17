@@ -30,9 +30,9 @@ interface Fixture {
   trace: TraceResponse
 }
 
-type SceneName = 'quiet' | 'silent' | 'night'
+type SceneName = 'quiet' | 'silent' | 'night' | 'alerts'
 
-const SCENES: SceneName[] = ['quiet', 'silent', 'night']
+const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts']
 
 // Static imports (not a dynamic fetch of the JSON file) so a production
 // build's tree-shaking can drop them entirely once the import.meta.env.DEV
@@ -45,6 +45,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/silent.json')) as unknown as Fixture
     case 'night':
       return (await import('../dev/fixtures/night.json')) as unknown as Fixture
+    case 'alerts':
+      return (await import('../dev/fixtures/alerts.json')) as unknown as Fixture
   }
 }
 
