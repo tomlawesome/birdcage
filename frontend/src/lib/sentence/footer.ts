@@ -3,6 +3,7 @@
 // past nine (the issue's own example: "twenty-three quiet days" here vs.
 // "23 days" in the hero).
 import type { Canary, LastHit, Range, Visitor } from '../types'
+import { worstCanary } from './rules'
 import { formatClockShort } from './time'
 import { rangeNoun } from './narrative'
 import { buildQuietStory, computeQuietDays } from './quietStory'
@@ -27,8 +28,8 @@ export function computeFooter(
   }
 
   const days = computeQuietDays(now, buildQuietStory(lastHit))
-  const silent = canaries.find((c) => c.status === 'silent')
-  if (silent) {
+  const worst = worstCanary(canaries)
+  if (worst?.status === 'silent') {
     const silentCount = canaries.filter((c) => c.status === 'silent').length
     const silentPhrase =
       silentCount === 1 ? 'one canary has stopped talking' : `${wordOrNumber(silentCount)} canaries have stopped talking`
@@ -37,6 +38,23 @@ export function computeFooter(
       { text: silentPhrase, bold: true },
       { text: ' — silence is only good news while the heartbeat keeps coming' },
     ]
+  }
+
+  // issue #45: the footer may not call the page clean while a health
+  // state is live -- "nothing to act on" was false under a live token
+  // conflict. One short summary clause, not a second hero: the count
+  // (or the one name), then where to look first when the worst state
+  // is the look-now one, in the alarm colour the night footer already
+  // uses for its own act-now clause.
+  if (worst) {
+    const n = canaries.filter((c) => c.status !== 'ok').length
+    const attention =
+      n === 1 ? `${worst.name} needs attention` : `${wordOrNumber(n)} canaries need attention`
+    const tail: Segment[] =
+      worst.status === 'token_conflict'
+        ? [{ text: ' — ' }, { text: n === 1 ? 'look at the box now' : `look at ${worst.name} first`, cls: 'r' }]
+        : [{ text: ' — quiet is only good news while the cage is sound' }]
+    return [{ text: `${numberToWords(days)} quiet days · ` }, { text: attention, bold: true }, ...tail]
   }
 
   if (visitors.length > 0) {
