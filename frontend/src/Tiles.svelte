@@ -24,11 +24,28 @@
 <div class="tiles">
   {#each sortedCanaries as c (c.id)}
     {@const status = computeTileStatus(
-      { status: c.status, last_heartbeat_at: c.last_heartbeat_at, silent_for_s: c.silent_for_s, ports: c.ports, hits: hitsById.get(c.id) ?? [] },
+      {
+        status: c.status,
+        last_heartbeat_at: c.last_heartbeat_at,
+        silent_for_s: c.silent_for_s,
+        ports: c.ports,
+        hits: hitsById.get(c.id) ?? [],
+        not_delivering: c.not_delivering,
+        throttled_for_s: c.throttled_for_s,
+        rotation_stalled: c.rotation_stalled,
+        rotation_stalled_for_s: c.rotation_stalled_for_s,
+        rotation_stalled_escalated: c.rotation_stalled_escalated,
+        token_conflict_for_s: c.token_conflict_for_s,
+      },
       trace.now,
       trace.last_hit,
     )}
-    <div class="tile k-{c.lane}" class:silent={c.status === 'silent'}>
+    <div
+      class="tile k-{c.lane}"
+      class:silent={c.status === 'silent'}
+      class:critical={c.status === 'token_conflict' || c.status === 'not_delivering' || c.status === 'throttled'}
+      class:degraded={c.status === 'rotation_stalled'}
+    >
       <div class="n">{c.name}<small>on {c.lane}</small></div>
       <div class="st">
         {#each status.lines as line, i (i)}
@@ -71,6 +88,14 @@
     border-style: dashed;
     background: transparent;
   }
+  /* issue #45: critical states "carry the alarm colour on the tile";
+     degraded reuses --repeat, matching the .wn status-line colour above. */
+  .tile.critical {
+    border-color: var(--alarm);
+  }
+  .tile.degraded {
+    border-color: var(--repeat);
+  }
   .tile.k-lan {
     --c: var(--lan);
   }
@@ -106,6 +131,13 @@
     font-weight: 700;
   }
   .tile .st :global(.rp) {
+    color: var(--repeat);
+    font-weight: 700;
+  }
+  /* issue #45's degraded tier (rotation stalled): reuses --repeat, the
+     existing "attention but not critical" colour, rather than adding a
+     new one. */
+  .tile .st :global(.wn) {
     color: var(--repeat);
     font-weight: 700;
   }
