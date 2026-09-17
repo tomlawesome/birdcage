@@ -36,10 +36,39 @@ type Canary struct {
 	HeartbeatIntervalS int        `json:"-"`
 	EnrolledAt         time.Time  `json:"-"`
 	LastHeartbeatAt    *time.Time `json:"last_heartbeat_at"`
-	Status             string     `json:"status"` // "ok" or "silent"
-	SilentForS         *int64     `json:"silent_for_s,omitempty"`
-	BeatsMissed        *int64     `json:"beats_missed,omitempty"`
-	Hits               int64      `json:"hits"`
+
+	// AgentLogReadOK is the agent's own last self-reported log-read
+	// status (#32 slice 5a, canaries.agent_log_read_ok). nil means no
+	// self-report has ever arrived, distinct from an explicit false --
+	// see notDelivering's doc comment in health.go.
+	AgentLogReadOK *bool `json:"-"`
+
+	// Status is issue #45's ordered health state -- "token_conflict",
+	// "silent", "not_delivering", "throttled", "rotation_stalled" or
+	// "ok" -- the worst currently active state, computed by
+	// applyStatus/applyHealthState. The field keeps its original JSON
+	// name and shape (a plain string) for backward compatibility; only
+	// the set of values it carries has widened from the original
+	// ok/silent boolean.
+	Status string `json:"status"`
+
+	// SilentForS/BeatsMissed are set only when Status is "silent".
+	SilentForS  *int64 `json:"silent_for_s,omitempty"`
+	BeatsMissed *int64 `json:"beats_missed,omitempty"`
+
+	// NotDelivering, ThrottledForS, RotationStalled* and
+	// TokenConflictForS each report one state independently of which one
+	// "won" Status -- issue #45: "one state on the tile, the worst; the
+	// rest in its detail." Every field here is omitted (omitempty) when
+	// its signal isn't currently active.
+	NotDelivering            bool   `json:"not_delivering,omitempty"`
+	ThrottledForS            *int64 `json:"throttled_for_s,omitempty"`
+	RotationStalled          bool   `json:"rotation_stalled,omitempty"`
+	RotationStalledForS      *int64 `json:"rotation_stalled_for_s,omitempty"`
+	RotationStalledEscalated bool   `json:"rotation_stalled_escalated,omitempty"`
+	TokenConflictForS        *int64 `json:"token_conflict_for_s,omitempty"`
+
+	Hits int64 `json:"hits"`
 }
 
 // ErrCanaryNotFound is returned by RecordHeartbeat when canaryID names no
@@ -235,16 +264,17 @@ func ParseRange(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// ListCanaries returns every registered canary with its status ("ok"
-// when the newest beat is within silenceThresholdMultiple ×
-// heartbeat_interval_s of now, else "silent"), silence detail, and hits
-// (alerts rows for that canary's instance_id received within
+// ListCanaries returns every registered canary with its ordered health
+// state (issue #45: applyStatus's "ok"/"silent" as before, then
+// applyHealthState folds in throttled, not-delivering, rotation-stalled
+// and token-conflict, keeping whichever is worst), state detail, and
+// hits (alerts rows for that canary's instance_id received within
 // rangeWindow of now).
 func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration) ([]Canary, error) {
 	now = now.UTC()
 
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, name, lane, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at
+		SELECT id, name, lane, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -258,8 +288,9 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			portsRaw        string
 			enrolledAt      string
 			lastHeartbeatAt *string
+			agentLogReadOK  *int64
 		)
-		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.Ports = portsDisplay(portsRaw)
@@ -275,6 +306,10 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			}
 			c.LastHeartbeatAt = &t
 		}
+		if agentLogReadOK != nil {
+			ok := *agentLogReadOK != 0
+			c.AgentLogReadOK = &ok
+		}
 		applyStatus(&c, now)
 		canaries = append(canaries, c)
 	}
@@ -288,6 +323,20 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	}
 	for i := range canaries {
 		canaries[i].Hits = hits[canaries[i].ID]
+
+		throttledSince, err := latestAuditSince(ctx, database, "ingest.rate_limited", canaries[i].ID, now.Add(-throttledWindow))
+		if err != nil {
+			return nil, fmt.Errorf("throttled signal for %s: %w", canaries[i].ID, err)
+		}
+		tokenConflictSince, err := latestAuditSince(ctx, database, "ingest.token_conflict", canaries[i].ID, now.Add(-tokenConflictWindow))
+		if err != nil {
+			return nil, fmt.Errorf("token-conflict signal for %s: %w", canaries[i].ID, err)
+		}
+		rotationStalled, rotationEscalated, rotationSinceS, err := rotationSignal(ctx, database, canaries[i].ID, now)
+		if err != nil {
+			return nil, fmt.Errorf("rotation signal for %s: %w", canaries[i].ID, err)
+		}
+		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, now)
 	}
 	return canaries, nil
 }

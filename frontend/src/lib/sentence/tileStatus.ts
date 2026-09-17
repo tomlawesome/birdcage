@@ -10,7 +10,7 @@
 //   silent:           "○ silent 6 m 12 s · last heard 21:58:19"
 // Reads TraceCanary (fetchTrace), not Canary (fetchCanaries) -- the hit
 // times and kinds this needs only exist at that granularity.
-import type { LastHit, VisitorKind } from '../types'
+import type { CanaryStatus, LastHit, VisitorKind } from '../types'
 import { durationExact } from './duration'
 import { formatClock, formatClockShort, relativeDayLabel } from './time'
 import { portForService } from './ports'
@@ -24,11 +24,21 @@ export interface TileHit {
 }
 
 export interface TileCanaryInput {
-  status: 'ok' | 'silent'
+  status: CanaryStatus
   last_heartbeat_at: string | null
   silent_for_s?: number
   ports: string
   hits: TileHit[]
+  // issue #45: the states silent doesn't cover, each carried
+  // independently of which one `status` reports as the tile's headline
+  // (see health.go's applyHealthState: "one state on the tile, the
+  // worst; the rest in its detail").
+  not_delivering?: boolean
+  throttled_for_s?: number
+  rotation_stalled?: boolean
+  rotation_stalled_for_s?: number
+  rotation_stalled_escalated?: boolean
+  token_conflict_for_s?: number
 }
 
 export interface TileStatusResult {
@@ -41,11 +51,65 @@ function beatAgoSeconds(lastHeartbeatAt: string | null, now: string): number {
   return Math.max(0, Math.round((Date.parse(now) - Date.parse(lastHeartbeatAt)) / 1000))
 }
 
+/** issue #45's critical/degraded states other than silent, one line each
+ * in the "○ silent 6 m · last heard HH:MM:SS" pattern that state already
+ * established: icon, short label, duration where one applies, then the
+ * operator's next step -- reusing the issue's own wording rather than
+ * inventing new copy for a voice #38's hero sentence would otherwise
+ * need to set (see rules.ts, not touched by this slice).
+ * cls 'al' is the existing critical/alarm colour (Tiles.svelte); 'wn' is
+ * new here for the degraded tier, reusing the existing --repeat colour
+ * token rather than picking a new one. */
+function otherStateLine(canary: TileCanaryInput): Segment[] | null {
+  switch (canary.status as CanaryStatus) {
+    case 'token_conflict':
+      return [
+        {
+          text: `⚠ token conflict ${durationExact(canary.token_conflict_for_s ?? 0)} · a revoked token was reused — look at the box now`,
+          cls: 'al',
+        },
+      ]
+    case 'not_delivering':
+      return [{ text: `⚠ not delivering · the agent can't read its log`, cls: 'al' }]
+    case 'throttled':
+      return [
+        {
+          text: `⚠ throttled ${durationExact(canary.throttled_for_s ?? 0)} · rate limit crossed — check for a flood or a broken agent`,
+          cls: 'al',
+        },
+      ]
+    case 'rotation_stalled': {
+      // Not escalated is signal A only (a freshly issued token unused for
+      // 15 min to 24 h). Escalated is either signal A past 24 h or signal
+      // B (no completed rotation in ~25 h), and in both of those no
+      // rotation has actually completed -- see rotationSignal in
+      // internal/store/health.go. Each branch is a whole clause: an
+      // interpolated tail read as "hasn't rotated in check the agent".
+      const what = canary.rotation_stalled_escalated
+        ? 'no rotation completed in over a day'
+        : "a fresh token hasn't been picked up"
+      return [
+        {
+          text: `⏳ rotation stalled ${durationExact(canary.rotation_stalled_for_s ?? 0)} · ${what} — check the agent`,
+          cls: 'wn',
+        },
+      ]
+    }
+    default:
+      return null
+  }
+}
+
 export function computeTileStatus(
   canary: TileCanaryInput,
   now: string,
   lastHit: LastHit | null = null,
 ): TileStatusResult {
+  const other = otherStateLine(canary)
+  if (other) {
+    return { lines: [other] }
+  }
+
   if (canary.status === 'silent') {
     return {
       lines: [

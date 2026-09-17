@@ -166,6 +166,18 @@
         <span class="mute">{status.silentName} silent {status.silentFor}</span></span
       >
       <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
+    {:else if status.kind === 'critical'}
+      <span
+        ><span class="dot off" aria-hidden="true"></span>{status.okCount} of {status.total} phoning home &middot;
+        <span class="crit">{status.label}</span></span
+      >
+      <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
+    {:else if status.kind === 'degraded'}
+      <span
+        ><span class="dot off" aria-hidden="true"></span>{status.okCount} of {status.total} phoning home &middot;
+        <span class="degr">{status.label}</span></span
+      >
+      <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
     {:else if status.kind === 'live'}
       <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {status.total} canaries</span>
       {#if status.flagCount > 0}<span class="flag">&#9873; <b>{status.flagCount}</b></span>{/if}
@@ -324,6 +336,16 @@
   }
   .status .mute {
     color: var(--ink);
+    font-weight: 700;
+  }
+  /* issue #45's critical/degraded pill text, alongside .mute (silent)
+     and .flag (an active sweep). */
+  .status .crit {
+    color: var(--alarm);
+    font-weight: 700;
+  }
+  .status .degr {
+    color: var(--repeat);
     font-weight: 700;
   }
   .status .who {
