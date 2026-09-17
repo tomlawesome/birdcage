@@ -110,6 +110,90 @@ func TestHandleHeartbeatStoresSelfReportFields(t *testing.T) {
 	})
 }
 
+// TestHandleHeartbeatStoresExtendedSelfReportFields is #48's
+// process-composition note, gap 3: the dropped/rejected/event-id-collision
+// counters and the position-found flag round-trip into storage exactly
+// like TestHandleHeartbeatStoresSelfReportFields's own original four.
+func TestHandleHeartbeatStoresExtendedSelfReportFields(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3",` +
+			`"dropped":3,"rejected":2,"event_id_collisions":0,"position_found":true}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var dropped, rejected, collisions, positionFound *int64
+		row := database.QueryRow(
+			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM canaries WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound); err != nil {
+			t.Fatalf("scan extended self-report columns: %v", err)
+		}
+		if dropped == nil || *dropped != 3 {
+			t.Errorf("agent_dropped = %v, want 3", dropped)
+		}
+		if rejected == nil || *rejected != 2 {
+			t.Errorf("agent_rejected = %v, want 2", rejected)
+		}
+		if collisions == nil || *collisions != 0 {
+			t.Errorf("agent_event_id_collisions = %v, want 0 (explicitly reported, not absent)", collisions)
+		}
+		if positionFound == nil || *positionFound != 1 {
+			t.Errorf("agent_position_found = %v, want 1 (true)", positionFound)
+		}
+	})
+}
+
+// TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes is #48's
+// central compatibility rule: an agent built before this change (or
+// mid-rollout) sends only the original four fields. That body is a
+// subset, not an unknown field, so DisallowUnknownFields still accepts
+// it -- and the new columns must land as SQL NULL ("no news"), never as
+// an explicit zero/false, which would misreport "this agent has dropped
+// nothing" when the agent has in fact said nothing about drops at all.
+func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3"}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var dropped, rejected, collisions, positionFound *int64
+		row := database.QueryRow(
+			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM canaries WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound); err != nil {
+			t.Fatalf("scan extended self-report columns: %v", err)
+		}
+		if dropped != nil || rejected != nil || collisions != nil || positionFound != nil {
+			t.Errorf("extended self-report columns = (%v, %v, %v, %v), want all NULL for an old-shape heartbeat, not fabricated zeroes",
+				dropped, rejected, collisions, positionFound)
+		}
+
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanaryByID(t, canaries, "canary-a")
+		if c.AgentDropped != nil || c.AgentRejected != nil || c.AgentEventIDCollisions != nil || c.AgentPositionFound != nil {
+			t.Errorf("Canary extended self-report fields = (%v, %v, %v, %v), want all nil for an old-shape heartbeat",
+				c.AgentDropped, c.AgentRejected, c.AgentEventIDCollisions, c.AgentPositionFound)
+		}
+	})
+}
+
 // TestHandleHeartbeatInvalidBodyDoesNotAdvanceLastSeen is slice 5a's
 // fourth statement, drawn directly from issue #32's fail-closed section:
 // "invalid heartbeat body -> 4xx, and the canary's last-seen does NOT

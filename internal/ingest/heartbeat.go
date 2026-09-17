@@ -21,12 +21,26 @@ const heartbeatMaxBodyBytes = 4 * 1024
 // DisallowUnknownFields doesn't reject a caller that sends it) but never
 // trusted as identity -- see handleHeartbeat's comparison against the
 // token's own canary id, mirroring ingestBatch.NodeID in batch.go.
+//
+// Dropped, Rejected, EventIDCollisions and PositionFound (#48's
+// process-composition note, gap 3) are pointers, not plain values, on
+// purpose: an agent built before this change -- or mid-rollout -- sends
+// the original four fields only, and DisallowUnknownFields below still
+// accepts that body. A pointer left nil by json.Decode because the field
+// was absent must never be treated the same as one explicitly set to
+// zero/false -- zero dropped is good news, absent is no news. See
+// handleHeartbeat's construction of store.AgentHeartbeat, which carries
+// that same nil-vs-value distinction into storage.
 type ingestHeartbeat struct {
-	CanaryID     string `json:"canary_id,omitempty"`
-	QueueDepth   int    `json:"queue_depth"`
-	LogReadOK    bool   `json:"log_read_ok"`
-	LastEventID  string `json:"last_event_id,omitempty"`
-	AgentVersion string `json:"agent_version,omitempty"`
+	CanaryID          string `json:"canary_id,omitempty"`
+	QueueDepth        int    `json:"queue_depth"`
+	LogReadOK         bool   `json:"log_read_ok"`
+	LastEventID       string `json:"last_event_id,omitempty"`
+	AgentVersion      string `json:"agent_version,omitempty"`
+	Dropped           *int64 `json:"dropped,omitempty"`
+	Rejected          *int64 `json:"rejected,omitempty"`
+	EventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
+	PositionFound     *bool  `json:"position_found,omitempty"`
 }
 
 // handleHeartbeat serves POST /ingest/heartbeat, reached only through
@@ -72,10 +86,14 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	report := store.AgentHeartbeat{
-		QueueDepth:   body.QueueDepth,
-		LogReadOK:    body.LogReadOK,
-		LastEventID:  body.LastEventID,
-		AgentVersion: body.AgentVersion,
+		QueueDepth:        body.QueueDepth,
+		LogReadOK:         body.LogReadOK,
+		LastEventID:       body.LastEventID,
+		AgentVersion:      body.AgentVersion,
+		Dropped:           body.Dropped,
+		Rejected:          body.Rejected,
+		EventIDCollisions: body.EventIDCollisions,
+		PositionFound:     body.PositionFound,
 	}
 	if err := store.RecordCanaryAgentHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), report); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {
