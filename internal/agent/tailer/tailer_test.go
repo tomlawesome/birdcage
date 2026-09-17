@@ -392,6 +392,96 @@ func TestTailer_ConcurrentWriterRace(t *testing.T) {
 	c.waitFor(t, n)
 }
 
+// TestTailer_LogReadOK_DefaultsOKBeforeFirstAttempt is gap 2's documented
+// "before the first read attempt" case: a freshly built Tailer that has
+// never had Follow called on it must not read as failing, the same
+// direction internal/store/health.go's notDelivering resolves a nil
+// self-report -- "has nothing to say yet" is not "not delivering".
+func TestTailer_LogReadOK_DefaultsOKBeforeFirstAttempt(t *testing.T) {
+	tl := New(filepath.Join(t.TempDir(), "opencanary.log"), Config{})
+	if !tl.LogReadOK() {
+		t.Fatal("LogReadOK() = false before Follow's first read attempt, want true (untried must not read as failing)")
+	}
+}
+
+// TestTailer_LogReadOK_HealthyFollowReportsOK is gap 2's required
+// positive case: a Tailer successfully following a live, readable file
+// reports LogReadOK() true. Built the same manual way as
+// TestTailer_TruncationInPlace, rather than via startFollow, since this
+// test needs direct access to the *Tailer to call LogReadOK() on it.
+func TestTailer_LogReadOK_HealthyFollowReportsOK(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencanary.log")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	tl := New(path, Config{PollInterval: testPollInterval})
+	c := &collector{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = tl.Follow(ctx, queue.Position{}, false, c.emit)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	if err := appendToFile(path, "one\n"); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	c.waitFor(t, 1)
+
+	if !tl.LogReadOK() {
+		t.Fatal("LogReadOK() = false after a successful follow, want true")
+	}
+}
+
+// TestTailer_LogReadOK_UnopenableReportsNotOKThenRecovers is gap 2's
+// required negative and recovery cases together: a log that cannot be
+// opened at all reports LogReadOK() false, and once it appears and is
+// successfully read, LogReadOK() flips back to true.
+func TestTailer_LogReadOK_UnopenableReportsNotOKThenRecovers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencanary.log") // deliberately never created yet
+
+	tl := New(path, Config{PollInterval: testPollInterval})
+	c := &collector{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = tl.Follow(ctx, queue.Position{}, false, c.emit)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for tl.LogReadOK() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if tl.LogReadOK() {
+		t.Fatal("LogReadOK() = true for a log that has never existed, want false")
+	}
+
+	if err := os.WriteFile(path, []byte("one\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	c.waitFor(t, 1)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !tl.LogReadOK() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !tl.LogReadOK() {
+		t.Fatal("LogReadOK() = false after the log appeared and was read, want true (recovery)")
+	}
+}
+
 func appendToFile(path, s string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

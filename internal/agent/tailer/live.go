@@ -40,8 +40,12 @@ func (t *Tailer) followLive(ctx context.Context, r *lineReader, inode uint64, em
 			// cadence rather than treating this as fatal (#48 fail-closed:
 			// "the heartbeat's log-read status says so ... Never silent" --
 			// a caller concern, not a reason for this loop to give up).
+			// Each failure here is a concrete, current inability to read
+			// the log, so LogReadOK (gap 2) flips false; it flips back
+			// only once a read actually succeeds below.
 			nf, err := openNoFollow(t.path)
 			if err != nil {
+				t.logReadOK.Store(false)
 				if err := t.sleep(ctx); err != nil {
 					return err
 				}
@@ -49,6 +53,7 @@ func (t *Tailer) followLive(ctx context.Context, r *lineReader, inode uint64, em
 			}
 			ino, err := fileInode(nf)
 			if err != nil {
+				t.logReadOK.Store(false)
 				_ = nf.Close()
 				if err := t.sleep(ctx); err != nil {
 					return err
@@ -57,6 +62,7 @@ func (t *Tailer) followLive(ctx context.Context, r *lineReader, inode uint64, em
 			}
 			nr, err := newLineReader(nf, 0, t.cfg.MaxLineBytes, make([]byte, readChunkSize))
 			if err != nil {
+				t.logReadOK.Store(false)
 				_ = nf.Close()
 				if err := t.sleep(ctx); err != nil {
 					return err
@@ -75,6 +81,7 @@ func (t *Tailer) followLive(ctx context.Context, r *lineReader, inode uint64, em
 			// the documented recoverable cases specifically, but the
 			// same response applies: close, retry from scratch, never
 			// give up.
+			t.logReadOK.Store(false)
 			_ = r.f.Close()
 			r = nil
 			if err := t.sleep(ctx); err != nil {
@@ -82,6 +89,9 @@ func (t *Tailer) followLive(ctx context.Context, r *lineReader, inode uint64, em
 			}
 			continue
 		}
+		// A read attempt just succeeded -- whether or not it produced new
+		// lines, the log road is currently working (gap 2).
+		t.logReadOK.Store(true)
 
 		st, statErr := os.Lstat(t.path)
 		switch {

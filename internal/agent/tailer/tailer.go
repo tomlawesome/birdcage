@@ -81,6 +81,7 @@ type Tailer struct {
 
 	oversizeLines    atomic.Uint64
 	discardedPartial atomic.Uint64
+	logReadOK        atomic.Bool
 }
 
 // New returns a Tailer for the log at path. path's directory is where
@@ -112,7 +113,13 @@ func New(path string, cfg Config) *Tailer {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = defaultPollInterval
 	}
-	return &Tailer{path: path, cfg: cfg}
+	t := &Tailer{path: path, cfg: cfg}
+	// logReadOK starts true: see LogReadOK's doc comment for why "no
+	// attempt yet" must resolve the same direction as internal/store
+	// /health.go's notDelivering resolves a nil self-report -- never as
+	// failing.
+	t.logReadOK.Store(true)
+	return t
 }
 
 // OversizeLines is the number of lines rejected for exceeding
@@ -129,3 +136,26 @@ func (t *Tailer) OversizeLines() uint64 { return t.oversizeLines.Load() }
 // stored; this counts how often it happened, for the same future
 // heartbeat self-report.
 func (t *Tailer) DiscardedPartialLines() uint64 { return t.discardedPartial.Load() }
+
+// LogReadOK reports whether this Tailer is reading the log successfully
+// right now -- live status, not a cumulative count like OversizeLines and
+// DiscardedPartialLines above. This is what the agent's heartbeat needs
+// for its log_read_ok field (#48 gap 2), which #45's "not delivering"
+// dashboard state reads directly.
+//
+// Before Follow has made its first read attempt, LogReadOK reports true.
+// This is deliberate, not an oversight: internal/store/health.go's
+// notDelivering comment explains why a nil self-report must never read
+// as failing -- "a canary that has simply never sent a self-report yet
+// ... has nothing to say yet" -- and the same trap applies one level
+// down here. A heartbeat built in the brief window between process start
+// and the tailer's first open attempt must not report the log road
+// broken when nothing has actually failed yet.
+//
+// It flips to false the moment a concrete read attempt fails (the log
+// is absent, unreadable, or any other condition that sends Follow's
+// loop into its retry path instead of successfully reading), and back
+// to true the moment a read attempt succeeds again -- so a caller
+// polling this alongside the heartbeat cadence always sees the tailer's
+// current state, never a stale one.
+func (t *Tailer) LogReadOK() bool { return t.logReadOK.Load() }
