@@ -112,6 +112,34 @@ func main() {
 		return
 	}
 
+	// `birdcage settings ...` (cmd/birdcage/settings.go) is issue #46's
+	// CLI for the settings table (note 17934: "schedule settings are
+	// data, not configuration") -- `list`/`get` read a setting (or every
+	// setting), falling back to its documented default when unset; `set`
+	// writes one, validated against internal/store's closed key/value
+	// rules. Like `canary` above, these exit immediately rather than
+	// starting the HTTP/ingest services below.
+	if len(os.Args) > 1 && os.Args[1] == "settings" {
+		if len(os.Args) < 3 {
+			log.Fatal("usage: birdcage settings <list|get|set> ...")
+		}
+		var err error
+		switch os.Args[2] {
+		case "list":
+			err = runSettingsList(os.Args[3:])
+		case "get":
+			err = runSettingsGet(os.Args[3:])
+		case "set":
+			err = runSettingsSet(os.Args[3:])
+		default:
+			log.Fatalf("unknown settings subcommand %q (want list, get or set)", os.Args[2])
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
