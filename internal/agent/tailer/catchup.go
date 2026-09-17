@@ -30,6 +30,11 @@ import (
 // to the heartbeat's log-read status is a future caller's job.
 func (t *Tailer) Follow(ctx context.Context, resumeFrom queue.Position, hasResume bool, emit func(Line)) (ResumeResult, error) {
 	result, r, inode, err := t.catchUp(resumeFrom, hasResume, emit)
+	// Recorded as soon as it is known, not left for Follow's own return
+	// -- which does not happen until shutdown or a forced restart -- so
+	// ResumeFound (gap: see its doc comment on Tailer) is live for a
+	// heartbeat built at any point during a long-running Follow session.
+	t.resumeFound.Store(result.PositionFound)
 	if err != nil {
 		return result, err
 	}
