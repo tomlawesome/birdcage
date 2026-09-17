@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -243,5 +244,107 @@ func TestClientCertificateVerificationFails(t *testing.T) {
 	}
 	if !IsRetryable(pushErr) {
 		t.Fatalf("err = %v, want a *RetryableError (the call never completed)", pushErr)
+	}
+}
+
+// selfSignedKeyPair returns a fresh self-signed certificate -- also its
+// own CA, the same shape unrelatedCertPEM above uses for a server -- and
+// its PEM-encoded EC private key. Being its own CA lets a test use the
+// same PEM both as the leaf a Client presents and as the trust anchor a
+// test server's ClientCAs pool checks it against, without a separate CA
+// key to manage.
+func selfSignedKeyPair(t *testing.T, cn string) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
+
+// TestClientPresentsCertificate is gap 1's required positive case: a
+// Client built with Config.ClientCert/ClientKey set must actually
+// present that certificate on the handshake, not merely accept the
+// fields. The server requires and verifies a client certificate
+// (tls.RequireAndVerifyClientCert); a Client that failed to present one
+// would never complete the handshake at all, so a successful PushBatch
+// here is only possible if the certificate really rode the connection.
+func TestClientPresentsCertificate(t *testing.T) {
+	clientCert, clientKey := selfSignedKeyPair(t, "test-agent")
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(clientCert) {
+		t.Fatal("failed to add generated client cert to pool")
+	}
+
+	var sawPeerCert bool
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPeerCert = r.TLS != nil && len(r.TLS.PeerCertificates) > 0
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"stored":[],"rejected":{}}`)
+	}))
+	ts.TLS = &tls.Config{
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  clientCAs,
+	}
+	ts.StartTLS()
+	defer ts.Close()
+
+	c, err := New(Config{
+		BaseURL:    ts.URL,
+		CACert:     certPEM(t, ts),
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := c.PushBatch(ctx(), "tok", []Event{{ID: validID1, DestPort: -1, Raw: "{}"}}); err != nil {
+		t.Fatalf("PushBatch: %v (mTLS handshake likely failed to present the certificate)", err)
+	}
+	if !sawPeerCert {
+		t.Fatal("server saw no peer certificate; the client did not present one")
+	}
+}
+
+// TestNewRejectsIncompleteOrMismatchedClientCert is gap 1's required
+// negative case: New must fail closed, at construction, on every
+// half-configured or internally inconsistent ClientCert/ClientKey pair
+// -- never leave it to surface later as a confusing handshake failure.
+func TestNewRejectsIncompleteOrMismatchedClientCert(t *testing.T) {
+	certA, keyA := selfSignedKeyPair(t, "a")
+	_, keyB := selfSignedKeyPair(t, "b")
+
+	cases := map[string]Config{
+		"cert without key": {BaseURL: "https://example.invalid", CACert: certA, ClientCert: certA},
+		"key without cert": {BaseURL: "https://example.invalid", CACert: certA, ClientKey: keyA},
+		"mismatched pair":  {BaseURL: "https://example.invalid", CACert: certA, ClientCert: certA, ClientKey: keyB},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New(cfg); err == nil {
+				t.Fatalf("New succeeded with %s, want a construction-time error", name)
+			}
+		})
 	}
 }
