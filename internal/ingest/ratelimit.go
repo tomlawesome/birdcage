@@ -99,13 +99,25 @@ func (r *limiterRegistry) allowEvents(canaryID string, n int) bool {
 // where it was). A failure to write it is logged but never turned into
 // a different response to the client: the 429 the caller already got
 // stands regardless.
-func recordRateLimitCrossed(ctx context.Context, database *db.DB, now func() time.Time, canaryID, limit string) {
+//
+// The limiter is exactly what flood protection is supposed to stop, so
+// without coalescer, rejecting a flood would itself become an insert
+// flood against audit_log -- issue #57. Both callers write action
+// "ingest.rate_limited" regardless of which cap crossed, so they share
+// one coalescing bucket per canary; see auditCoalesceKey's doc comment.
+func recordRateLimitCrossed(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID, limit string) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, "ingest.rate_limited", at)
+	if !write {
+		return
+	}
+
 	_, err := audit.Append(ctx, database, audit.Entry{
 		Action:      "ingest.rate_limited",
 		Target:      canaryID,
-		Reason:      limit + " limit exceeded",
+		Reason:      coalescedReason(limit+" limit exceeded", occurrences, "crossings"),
 		TriggeredBy: canaryID,
-		CreatedAt:   now().UTC(),
+		CreatedAt:   at,
 	})
 	if err != nil {
 		slog.Error("ingest: record rate limit crossing", "canary", canaryID, "limit", limit, "err", err)
