@@ -126,7 +126,7 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.limiters.allowEvents(tok.CanaryID, len(batch.Events)) {
-		recordRateLimitCrossed(r.Context(), h.db, h.now, tok.CanaryID, "events/min")
+		recordRateLimitCrossed(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, "events/min")
 		writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
