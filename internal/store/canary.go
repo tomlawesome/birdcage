@@ -328,7 +328,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if err != nil {
 			return nil, fmt.Errorf("throttled signal for %s: %w", canaries[i].ID, err)
 		}
-		tokenConflictSince, err := latestAuditSince(ctx, database, "ingest.token_conflict", canaries[i].ID, now.Add(-tokenConflictWindow))
+		tokenConflictSince, err := latestAuditSince(ctx, database, "ingest.token_conflict", canaries[i].ID, now.Add(-tokenConflictQuietPeriod))
 		if err != nil {
 			return nil, fmt.Errorf("token-conflict signal for %s: %w", canaries[i].ID, err)
 		}
