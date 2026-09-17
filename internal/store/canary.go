@@ -43,6 +43,21 @@ type Canary struct {
 	// see notDelivering's doc comment in health.go.
 	AgentLogReadOK *bool `json:"-"`
 
+	// AgentDropped, AgentRejected, AgentEventIDCollisions and
+	// AgentPositionFound are the agent's last self-reported values for
+	// #48's process-composition note (gap 3): cumulative events dropped
+	// from the queue for capacity, cumulative permanently-rejected
+	// events, cumulative event-id collisions (expected zero forever),
+	// and whether the last tailer resume found the acknowledged position.
+	// Each is nil exactly when the agent's most recent heartbeat didn't
+	// carry that field -- an agent built before this change, or
+	// mid-rollout -- which must never be confused with an explicit zero
+	// or false. Same convention as AgentLogReadOK above.
+	AgentDropped           *int64 `json:"-"`
+	AgentRejected          *int64 `json:"-"`
+	AgentEventIDCollisions *int64 `json:"-"`
+	AgentPositionFound     *bool  `json:"-"`
+
 	// Status is issue #45's ordered health state -- "token_conflict",
 	// "silent", "not_delivering", "throttled", "rotation_stalled" or
 	// "ok" -- the worst currently active state, computed by
@@ -201,11 +216,21 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 // on this, since birdcage never connects to the agent to check on it
 // directly; RecordCanaryAgentHeartbeat only stores it, showing it on the
 // dashboard is #45's job.
+//
+// Dropped, Rejected, EventIDCollisions and PositionFound (#48's
+// process-composition note, gap 3) are pointers: nil means this
+// heartbeat didn't carry the field at all (an agent built before this
+// change, or mid-rollout), which RecordCanaryAgentHeartbeat must persist
+// as SQL NULL, not zero -- see this function's own comment.
 type AgentHeartbeat struct {
-	QueueDepth   int
-	LogReadOK    bool
-	LastEventID  string
-	AgentVersion string
+	QueueDepth        int
+	LogReadOK         bool
+	LastEventID       string
+	AgentVersion      string
+	Dropped           *int64
+	Rejected          *int64
+	EventIDCollisions *int64
+	PositionFound     *bool
 }
 
 // RecordCanaryAgentHeartbeat records that canaryID's agent phoned home at
@@ -215,6 +240,14 @@ type AgentHeartbeat struct {
 // this is two separate statements, not one transaction: matching that
 // function's own existing shape rather than introducing a second
 // convention for multi-statement writes in this file.
+//
+// report.Dropped, Rejected and EventIDCollisions are passed through to
+// the driver as *int64, and PositionFound is converted to a nullable
+// 0/1 *int64 below (matching agent_log_read_ok's own INTEGER
+// convention): a nil pointer binds to SQL NULL, a non-nil pointer binds
+// to its value including zero. That is what keeps "the agent didn't
+// report this field" (NULL) distinct from "the agent reported zero"
+// (see AgentHeartbeat's doc comment above).
 func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID string, at time.Time, report AgentHeartbeat) error {
 	if err := RecordHeartbeat(ctx, database, canaryID, at); err != nil {
 		return err
@@ -224,11 +257,21 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 	if report.LogReadOK {
 		logReadOK = 1
 	}
+	var positionFound *int64
+	if report.PositionFound != nil {
+		v := int64(0)
+		if *report.PositionFound {
+			v = 1
+		}
+		positionFound = &v
+	}
 	if _, err := database.ExecContext(ctx, `
 		UPDATE canaries
-		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?
+		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?,
+			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?
 		WHERE id = ?`,
-		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID, canaryID); err != nil {
+		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID,
+		report.Dropped, report.Rejected, report.EventIDCollisions, positionFound, canaryID); err != nil {
 		return fmt.Errorf("update agent self-report: %w", err)
 	}
 	return nil
@@ -274,7 +317,8 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	now = now.UTC()
 
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, name, lane, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok
+		SELECT id, name, lane, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
+			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -284,13 +328,15 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	canaries := []Canary{}
 	for rows.Next() {
 		var (
-			c               Canary
-			portsRaw        string
-			enrolledAt      string
-			lastHeartbeatAt *string
-			agentLogReadOK  *int64
+			c                  Canary
+			portsRaw           string
+			enrolledAt         string
+			lastHeartbeatAt    *string
+			agentLogReadOK     *int64
+			agentPositionFound *int64
 		)
-		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
+			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.Ports = portsDisplay(portsRaw)
@@ -309,6 +355,10 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if agentLogReadOK != nil {
 			ok := *agentLogReadOK != 0
 			c.AgentLogReadOK = &ok
+		}
+		if agentPositionFound != nil {
+			found := *agentPositionFound != 0
+			c.AgentPositionFound = &found
 		}
 		applyStatus(&c, now)
 		canaries = append(canaries, c)
