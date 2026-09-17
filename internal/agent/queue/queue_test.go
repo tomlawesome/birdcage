@@ -14,8 +14,15 @@ func fakeID(n int) string {
 	return fmt.Sprintf("%064x", n+1)
 }
 
+// testMaxBytes is a byte cap generous enough that none of the
+// count-cap-focused tests below (small or empty Payloads, at most a few
+// thousand events) ever trips it, so their behavior is unchanged by
+// gap 4's addition of a second cap. Tests that exercise the byte cap
+// itself set their own tight MaxBytes instead.
+const testMaxBytes = 1 << 30 // 1 GiB
+
 func TestPush_DedupByID(t *testing.T) {
-	q := NewMemQueue(10)
+	q := NewMemQueue(Config{MaxEvents: 10, MaxBytes: testMaxBytes})
 	id := fakeID(1)
 
 	if added := q.Push(Event{ID: id, Payload: []byte("first")}); !added {
@@ -35,7 +42,7 @@ func TestPush_DedupByID(t *testing.T) {
 
 func TestPush_CapDropsOldest(t *testing.T) {
 	const capacity = 3
-	q := NewMemQueue(capacity)
+	q := NewMemQueue(Config{MaxEvents: capacity, MaxBytes: testMaxBytes})
 
 	for i := 0; i < 5; i++ {
 		q.Push(Event{ID: fakeID(i)})
@@ -63,7 +70,7 @@ func TestPush_CapDropsOldest(t *testing.T) {
 }
 
 func TestAck_RemovesEvent(t *testing.T) {
-	q := NewMemQueue(10)
+	q := NewMemQueue(Config{MaxEvents: 10, MaxBytes: testMaxBytes})
 	id := fakeID(1)
 	q.Push(Event{ID: id})
 
@@ -80,7 +87,7 @@ func TestAck_RemovesEvent(t *testing.T) {
 }
 
 func TestReject_CountsAndRemoves(t *testing.T) {
-	q := NewMemQueue(10)
+	q := NewMemQueue(Config{MaxEvents: 10, MaxBytes: testMaxBytes})
 	id := fakeID(1)
 	q.Push(Event{ID: id})
 
@@ -102,7 +109,7 @@ func TestReject_CountsAndRemoves(t *testing.T) {
 }
 
 func TestPeek_DoesNotRemove(t *testing.T) {
-	q := NewMemQueue(10)
+	q := NewMemQueue(Config{MaxEvents: 10, MaxBytes: testMaxBytes})
 	q.Push(Event{ID: fakeID(1)})
 
 	q.Peek(10)
@@ -113,7 +120,7 @@ func TestPeek_DoesNotRemove(t *testing.T) {
 }
 
 func TestPeek_LimitsAndOrders(t *testing.T) {
-	q := NewMemQueue(10)
+	q := NewMemQueue(Config{MaxEvents: 10, MaxBytes: testMaxBytes})
 	for i := 0; i < 5; i++ {
 		q.Push(Event{ID: fakeID(i)})
 	}
@@ -136,7 +143,7 @@ func TestConcurrentPushAndAck(t *testing.T) {
 	const n = 5000
 	// Capacity >= n so no drop-oldest eviction competes with acking in
 	// this test; cap behaviour has its own dedicated test above.
-	q := NewMemQueue(n)
+	q := NewMemQueue(Config{MaxEvents: n, MaxBytes: testMaxBytes})
 
 	ids := make([]string, n)
 	for i := range ids {
@@ -195,7 +202,7 @@ func TestConcurrentPushAndAck(t *testing.T) {
 // retried, and that bookkeeping must hold under concurrent access too.
 func TestConcurrentPushAndReject(t *testing.T) {
 	const n = 3000
-	q := NewMemQueue(n)
+	q := NewMemQueue(Config{MaxEvents: n, MaxBytes: testMaxBytes})
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -229,5 +236,89 @@ func TestConcurrentPushAndReject(t *testing.T) {
 	}
 	if depth := q.Depth(); depth != 0 {
 		t.Fatalf("final depth = %d, want 0", depth)
+	}
+}
+
+// TestPush_ByteCapEvictsOldest is gap 4's required case: a byte cap
+// tight enough to bind before the (generous) count cap must still evict
+// oldest-first and count the eviction, the same as the count cap does.
+func TestPush_ByteCapEvictsOldest(t *testing.T) {
+	q := NewMemQueue(Config{MaxEvents: 100, MaxBytes: 30})
+
+	for i := 0; i < 4; i++ {
+		q.Push(Event{ID: fakeID(i), Payload: make([]byte, 10)}) // 10 bytes each
+	}
+
+	// 4 * 10 = 40 bytes > the 30-byte cap, so the byte cap -- not the
+	// count cap, which is nowhere near 100 -- must have evicted at least
+	// the oldest event.
+	if depth := q.Depth(); depth > 3 {
+		t.Fatalf("depth = %d, want <= 3 (byte cap must evict before the count cap would ever bind)", depth)
+	}
+	if dropped := q.Dropped(); dropped == 0 {
+		t.Fatal("dropped = 0, want at least 1 (byte-cap eviction must be counted)")
+	}
+	got := q.Peek(100)
+	if len(got) == 0 || got[len(got)-1].ID != fakeID(3) {
+		t.Fatalf("newest event missing after byte-cap eviction; peek = %v", got)
+	}
+	if got[0].ID == fakeID(0) {
+		t.Fatal("oldest event (fakeID(0)) still present, want it evicted first")
+	}
+}
+
+// TestPush_SingleEventLargerThanByteCapIsAdmittedAlone is gap 4's
+// required sanity case for an event whose own Payload already exceeds
+// MaxBytes: there is nothing left to evict once the queue is empty, so
+// this package -- which never judges event content -- admits it alone
+// rather than refusing it, panicking, or looping forever. The very next
+// Push must still evict it like any other oldest entry, so it never
+// grows the queue past one such event's worth of memory.
+func TestPush_SingleEventLargerThanByteCapIsAdmittedAlone(t *testing.T) {
+	q := NewMemQueue(Config{MaxEvents: 100, MaxBytes: 100})
+
+	big := Event{ID: fakeID(0), Payload: make([]byte, 1000)}
+	if added := q.Push(big); !added {
+		t.Fatal("Push of an oversized single event returned false, want true (admitted alone)")
+	}
+	if depth := q.Depth(); depth != 1 {
+		t.Fatalf("depth after oversized push = %d, want 1", depth)
+	}
+
+	// A normal-sized push afterward must evict the oversized one rather
+	// than being refused or leaving the queue over the byte cap forever.
+	if added := q.Push(Event{ID: fakeID(1), Payload: make([]byte, 10)}); !added {
+		t.Fatal("Push after an oversized event returned false")
+	}
+	got := q.Peek(100)
+	if len(got) != 1 || got[0].ID != fakeID(1) {
+		t.Fatalf("queue after second push = %v, want only fakeID(1) (the oversized event evicted)", got)
+	}
+	if dropped := q.Dropped(); dropped != 1 {
+		t.Fatalf("dropped = %d, want 1 (the evicted oversized event)", dropped)
+	}
+}
+
+// TestPush_AckAndRejectRestoreByteBudget proves the byte accounting
+// Ack/Reject maintain (via removeLocked) actually frees budget for later
+// pushes, not just that Depth drops -- a leak here would silently shrink
+// the effective byte cap over the agent's lifetime.
+func TestPush_AckAndRejectRestoreByteBudget(t *testing.T) {
+	q := NewMemQueue(Config{MaxEvents: 100, MaxBytes: 20})
+
+	q.Push(Event{ID: fakeID(0), Payload: make([]byte, 20)})
+	q.Ack(fakeID(0))
+
+	// With the first event's bytes released, a second same-sized event
+	// must fit without needing to evict anything (there is nothing left
+	// to evict).
+	if added := q.Push(Event{ID: fakeID(1), Payload: make([]byte, 20)}); !added {
+		t.Fatal("Push after Ack returned false")
+	}
+	if depth := q.Depth(); depth != 1 {
+		t.Fatalf("depth = %d, want 1", depth)
+	}
+	if dropped := q.Dropped(); dropped != 0 {
+		t.Fatalf("dropped = %d, want 0 (Ack should have freed the byte budget already)", dropped)
 	}
 }

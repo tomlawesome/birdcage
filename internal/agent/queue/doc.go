@@ -1,6 +1,9 @@
 // Package queue holds the canary agent's restart-safe in-memory state for
 // events awaiting delivery to birdcage: the capped send queue itself, and
-// the last acknowledged log position.
+// the last acknowledged log position. MemQueue is capped by both event
+// count and total queued payload bytes (#48 gap 4), so a flood of
+// large-but-individually-valid events cannot exhaust memory merely by
+// staying under the count cap.
 //
 // Deliberately absent: a disk-backed event spool. Issue #48 rules that out
 // explicitly -- "The queue is memory only and capped. No spool; the disk
