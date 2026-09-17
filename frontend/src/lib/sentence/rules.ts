@@ -260,7 +260,9 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   ok: 5,
 }
 
-function worstCanary(canaries: Canary[]): Canary | null {
+/** Exported for the footer (issue #45): both lines rank the fleet the
+ * same way, so the footer cannot call clean what the hero calls broken. */
+export function worstCanary(canaries: Canary[]): Canary | null {
   let worst: Canary | null = null
   for (const c of canaries) {
     if (c.status === 'ok') continue
