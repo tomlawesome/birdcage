@@ -1,0 +1,89 @@
+package client
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
+)
+
+func enrollCanary(t *testing.T, database *db.DB, id string) {
+	t.Helper()
+	if err := store.InsertCanary(ctx(), database, store.Canary{
+		ID: id, Name: id, Lane: "lan", EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", id, err)
+	}
+}
+
+// TestSendHeartbeatStoresSelfReport proves the self-report this package
+// sends decodes into internal/ingest's real handler correctly, field for
+// field, by reading it back from the database exactly like
+// internal/ingest/heartbeat_test.go's own equivalent test.
+func TestSendHeartbeatStoresSelfReport(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		c, _ := newIngestServer(t, database)
+		token := mintToken(t, database, "canary-a")
+
+		err := c.SendHeartbeat(ctx(), token, SelfReport{
+			QueueDepth:   7,
+			LogReadOK:    true,
+			LastEventID:  validID1,
+			AgentVersion: "1.2.3",
+		})
+		if err != nil {
+			t.Fatalf("SendHeartbeat: %v", err)
+		}
+
+		var (
+			version    string
+			queueDepth int
+			logReadOK  int
+			lastEvent  string
+		)
+		row := database.QueryRow(
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
+			t.Fatalf("scan self-report columns: %v", err)
+		}
+		if version != "1.2.3" || queueDepth != 7 || logReadOK != 1 || lastEvent != validID1 {
+			t.Errorf("stored self-report = (%q, %d, %d, %q), want (\"1.2.3\", 7, 1, %q)",
+				version, queueDepth, logReadOK, lastEvent, validID1)
+		}
+	})
+}
+
+// TestSendHeartbeatUnauthorized proves a dead token surfaces as
+// ErrUnauthorized.
+func TestSendHeartbeatUnauthorized(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		c, _ := newIngestServer(t, database)
+
+		err := c.SendHeartbeat(ctx(), "not-a-real-token", SelfReport{AgentVersion: "1.0.0"})
+		if !IsUnauthorized(err) {
+			t.Fatalf("err = %v, want ErrUnauthorized", err)
+		}
+	})
+}
+
+// TestSendHeartbeatRetryableOn429 proves a rate-limited heartbeat is
+// reported as retryable, matching #32 item 8's "crossing a limit is
+// recorded and surfaced, never a silent discard".
+func TestSendHeartbeatRetryableOn429(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	err := c.SendHeartbeat(ctx(), "tok", SelfReport{AgentVersion: "1.0.0"})
+	if !IsRetryable(err) {
+		t.Fatalf("err = %v, want a *RetryableError", err)
+	}
+}
