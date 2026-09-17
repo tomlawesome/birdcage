@@ -33,7 +33,7 @@ func TestCrashRestart_ReadButUnacknowledged_NoLossNoDuplicate(t *testing.T) {
 	}
 
 	// --- Before the crash ---
-	q1 := NewMemQueue(100)
+	q1 := NewMemQueue(Config{MaxEvents: 100, MaxBytes: testMaxBytes})
 	for _, e := range events {
 		q1.Push(e.Event)
 	}
@@ -68,7 +68,7 @@ func TestCrashRestart_ReadButUnacknowledged_NoLossNoDuplicate(t *testing.T) {
 	// re-pushing every event after it -- replay is free because the id
 	// is stable across restarts (#48). A fresh, empty queue stands in
 	// for the new process's memory.
-	q2 := NewMemQueue(100)
+	q2 := NewMemQueue(Config{MaxEvents: 100, MaxBytes: testMaxBytes})
 	for _, e := range events {
 		if e.offset > pos.Offset {
 			q2.Push(e.Event)
@@ -112,7 +112,7 @@ func TestCrashRestart_OverlappingRescanDedupsInsteadOfDuplicating(t *testing.T) 
 		}
 	}
 
-	q1 := NewMemQueue(100)
+	q1 := NewMemQueue(Config{MaxEvents: 100, MaxBytes: testMaxBytes})
 	for _, e := range events {
 		q1.Push(e.Event)
 		q1.Ack(e.ID)
@@ -130,7 +130,7 @@ func TestCrashRestart_OverlappingRescanDedupsInsteadOfDuplicating(t *testing.T) 
 	// strictly-after-pos, mimicking a rotation boundary rounded down to
 	// be safe. Every event -- including already-acked ones -- gets
 	// pushed again.
-	q2 := NewMemQueue(100)
+	q2 := NewMemQueue(Config{MaxEvents: 100, MaxBytes: testMaxBytes})
 	pushed := 0
 	for _, e := range events {
 		if e.offset >= 1 { // "whole log", i.e. no lower bound applied
