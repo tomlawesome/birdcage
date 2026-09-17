@@ -19,6 +19,15 @@ from the github-credentials skill. Issue numbers match across the two
 hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
 #40 are closed placeholders holding the numbers of GitHub pull requests.
 
+## Closing issues from commits
+
+GitLab counts `Implements` as an issue-closing keyword, exactly like `Closes`
+and `Fixes`, and it does not care that the reference is possessive: the commit
+subject "Implements #48's canary-side agent HTTP client" closed #48 when !33
+merged on 2026-09-17, while only one of its parts had been built. Write
+`Refs #N` on a commit that does not finish the issue, and save the closing
+keywords for the commit that does.
+
 ## Security by design
 
 New features are researched before they are designed, including an
