@@ -12,23 +12,49 @@ import (
 // version -- what #45's "silent" and "not delivering" canary states
 // stand on, since birdcage never connects to the agent to check on it
 // directly.
+//
+// Dropped, Rejected, EventIDCollisions and PositionFound (#48's
+// process-composition note, gap 3) are plain values, not pointers: a
+// running agent always knows these -- MemQueue.Dropped(),
+// RejectedCount() and the collision count are cumulative counters that
+// start at zero, and PositionFound comes from every tailer resume -- so
+// there is never a "the agent has no opinion yet" case to represent on
+// this side. The nil-vs-zero distinction those fields need lives on the
+// wire (wireHeartbeat below) and in storage, for the benefit of an agent
+// built before this change, which never populates a SelfReport at all.
 type SelfReport struct {
-	QueueDepth   int
-	LogReadOK    bool
-	LastEventID  string
-	AgentVersion string
+	QueueDepth        int
+	LogReadOK         bool
+	LastEventID       string
+	AgentVersion      string
+	Dropped           int64
+	Rejected          int64
+	EventIDCollisions int64
+	PositionFound     bool
 }
 
 // wireHeartbeat mirrors internal/ingest/heartbeat.go's ingestHeartbeat
-// field-for-field. CanaryID is deliberately not carried here: identity
-// comes from the token on every route on this submux (#32: "the canary
-// is the token's, whatever the body says"), so there is nothing for
-// this client to name.
+// field-for-field -- deliberately, since this package must never import
+// internal/ingest. CanaryID is not carried here: identity comes from the
+// token on every route on this submux (#32: "the canary is the token's,
+// whatever the body says"), so there is nothing for this client to name.
+//
+// Dropped, Rejected, EventIDCollisions and PositionFound are pointers so
+// that, if some future caller ever leaves a SelfReport's new fields at
+// their Go zero value because it genuinely doesn't know them, the wire
+// body can still omit them rather than claim zero -- the same
+// omitempty-on-a-nil-pointer test in heartbeat_test.go's old-shape case
+// proves the ingest side accepts. SendHeartbeat below always sends
+// non-nil pointers for a real SelfReport.
 type wireHeartbeat struct {
-	QueueDepth   int    `json:"queue_depth"`
-	LogReadOK    bool   `json:"log_read_ok"`
-	LastEventID  string `json:"last_event_id,omitempty"`
-	AgentVersion string `json:"agent_version,omitempty"`
+	QueueDepth        int    `json:"queue_depth"`
+	LogReadOK         bool   `json:"log_read_ok"`
+	LastEventID       string `json:"last_event_id,omitempty"`
+	AgentVersion      string `json:"agent_version,omitempty"`
+	Dropped           *int64 `json:"dropped,omitempty"`
+	Rejected          *int64 `json:"rejected,omitempty"`
+	EventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
+	PositionFound     *bool  `json:"position_found,omitempty"`
 }
 
 // SendHeartbeat posts report to POST /ingest/heartbeat on token.
@@ -44,7 +70,16 @@ type wireHeartbeat struct {
 // last-seen does NOT advance" -- is enforced entirely on birdcage's
 // side; this function just reports whichever status came back.
 func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfReport) error {
-	body, err := json.Marshal(wireHeartbeat(report))
+	body, err := json.Marshal(wireHeartbeat{
+		QueueDepth:        report.QueueDepth,
+		LogReadOK:         report.LogReadOK,
+		LastEventID:       report.LastEventID,
+		AgentVersion:      report.AgentVersion,
+		Dropped:           &report.Dropped,
+		Rejected:          &report.Rejected,
+		EventIDCollisions: &report.EventIDCollisions,
+		PositionFound:     &report.PositionFound,
+	})
 	if err != nil {
 		return fmt.Errorf("client: encode heartbeat: %w", err)
 	}
