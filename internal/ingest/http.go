@@ -23,10 +23,11 @@ import (
 // pin "current time" instead of depending on the wall clock, and
 // limiters for the per-canary rate caps (issue #32 item 8).
 type ingestHandler struct {
-	db       *db.DB
-	hub      *stream.Hub
-	now      func() time.Time
-	limiters *limiterRegistry
+	db        *db.DB
+	hub       *stream.Hub
+	now       func() time.Time
+	limiters  *limiterRegistry
+	coalescer *auditCoalescer
 }
 
 // NewHandler returns the ingest submux: bearer-token auth in front of
@@ -49,7 +50,7 @@ func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
 // to cross in a handful of calls rather than thousands -- mirroring
 // internal/api's own newHandler/NewHandler split.
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
-	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits)}
+	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer()}
 
 	// Four routes are registered on this mux, all behind
 	// requireBearerToken. Mirrors internal/api's dashboardRoutes doc
@@ -61,10 +62,10 @@ func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits l
 	// TestIngestMuxCannotReachDashboardRoutes and
 	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
-	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.limiters, h.handleBatch))
-	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.limiters, h.handleRotate))
-	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.limiters, h.handleHeartbeat))
-	mux.Handle("POST /ingest/commands", requireBearerToken(database, now, h.limiters, h.handleCommands))
+	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleBatch))
+	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleRotate))
+	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleHeartbeat))
+	mux.Handle("POST /ingest/commands", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleCommands))
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }

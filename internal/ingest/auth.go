@@ -69,7 +69,7 @@ func bearerToken(header string) (string, bool) {
 // place every route shares that already has the resolved identity;
 // handleBatch used to charge it itself and no longer does, so a batch is
 // still charged exactly once.
-func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, next http.HandlerFunc) http.HandlerFunc {
+func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -93,7 +93,7 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 				writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 				return
 			}
-			recordTokenConflictIfSuccessorActive(r.Context(), database, now, hash)
+			recordTokenConflictIfSuccessorActive(r.Context(), database, now, coalescer, hash)
 			writeIngestError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -118,7 +118,7 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		}
 
 		if !limiters.allowRequest(tok.CanaryID) {
-			recordRateLimitCrossed(r.Context(), database, now, tok.CanaryID, "requests/min")
+			recordRateLimitCrossed(r.Context(), database, now, coalescer, tok.CanaryID, "requests/min")
 			writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
@@ -135,7 +135,13 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 // must not change"). It never changes the response the caller already
 // got -- a uniform 401 either way -- and any error here is only ever
 // logged, never turned into a different status code.
-func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, now func() time.Time, hash string) {
+//
+// Reaching this function costs no working credential -- a revoked token
+// is enough -- so issue #57 routes the actual write through coalescer:
+// see auditcoalesce.go for why a caller-controlled rate of revoked-token
+// presentations must not become a caller-controlled rate of audit_log
+// writes.
+func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, hash string) {
 	tok, err := store.LookupCanaryTokenByHashAnyStatus(ctx, database, hash)
 	if err != nil {
 		if !errors.Is(err, store.ErrTokenNotFound) {
@@ -162,12 +168,18 @@ func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, 
 		return
 	}
 
+	at := now().UTC()
+	write, occurrences := coalescer.admit(tok.CanaryID, "ingest.token_conflict", at)
+	if !write {
+		return
+	}
+
 	if _, err := audit.Append(ctx, database, audit.Entry{
 		Action:      "ingest.token_conflict",
 		Target:      tok.CanaryID,
-		Reason:      "revoked token presented while a successor token is active",
+		Reason:      coalescedReason("revoked token presented while a successor token is active", occurrences, "presentations"),
 		TriggeredBy: tok.CanaryID,
-		CreatedAt:   now().UTC(),
+		CreatedAt:   at,
 	}); err != nil {
 		slog.Error("ingest: record token conflict", "canary", tok.CanaryID, "err", err)
 	}
