@@ -8,9 +8,11 @@ around each hit, and integration with CrowdSec and RouterOS (via a
 dedicated service account) to attempt automated mitigating action against
 confirmed threats.
 
-Birdcage is a sidecar to [mikroview](https://github.com/tomlawesome/mikroview):
-same look and sign-in model, separate app, talking to it only through API
-keys ([ADR-0003](docs/adr/0003-mikroview-sidecar.md)).
+Birdcage is a separate application from
+[mikroview](https://github.com/tomlawesome/mikroview), with its own
+deployment: same look and sign-in model, talking to it only through API
+keys ([ADR-0003](docs/adr/0003-mikroview-sidecar.md),
+[ADR-0008](docs/adr/0008-container-only-distribution-and-two-images.md)).
 
 Birdcage is in early implementation — the components landed so far are the
 HTTPS canary ingest listener (per-canary bearer tokens, TLS 1.3) and the

@@ -5,9 +5,10 @@
 Birdcage centralizes alerts from multiple OpenCanary honeypot instances into
 a single dashboard, and attempts automated mitigating action (via CrowdSec
 and RouterOS) against confirmed threats, with every automated action logged
-to an append-only audit trail. Birdcage runs as a sidecar to mikroview,
-sharing its design language and sign-in model but not its code -- see
-[ADR-0003](adr/0003-mikroview-sidecar.md).
+to an append-only audit trail. Birdcage is deployed separately from
+mikroview, sharing its design language and sign-in model but not its code
+or its deployment -- see [ADR-0003](adr/0003-mikroview-sidecar.md) and
+[ADR-0008](adr/0008-container-only-distribution-and-two-images.md).
 
 Work is tracked as three epics, each grouping the individual issues that
 belong to it:
@@ -57,11 +58,16 @@ Tracked so these aren't lost, not because they're unimportant:
   only planned coupling to it is consuming its bounded IP+time lookback
   query ([mikroview#29](https://github.com/tomlawesome/mikroview/issues/29))
   if useful for correlation -- birdcage does not absorb mikroview's
-  detectors or vice versa. How the two apps sit together -- same compose
-  stack, API keys only -- is [ADR-0003](adr/0003-mikroview-sidecar.md).
+  detectors or vice versa. How the two apps sit together -- separate
+  deployments, API keys only -- is
+  [ADR-0003](adr/0003-mikroview-sidecar.md), as amended by
+  [ADR-0008](adr/0008-container-only-distribution-and-two-images.md).
 
 ## Decisions this scope depends on
 
 See [ADR-0001](adr/0001-stack-and-storage.md) (stack, storage, v1 auth
 stance), [ADR-0002](adr/0002-gitflow-branching.md) (branching model), and
-[ADR-0003](adr/0003-mikroview-sidecar.md) (sidecar, auth model, Svelte).
+[ADR-0003](adr/0003-mikroview-sidecar.md) (separate apps, auth model,
+Svelte), and
+[ADR-0008](adr/0008-container-only-distribution-and-two-images.md)
+(container-only distribution, two images).

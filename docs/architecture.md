@@ -12,7 +12,7 @@ flowchart LR
     browser["Browser dashboard"]
     crowdsec["CrowdSec LAPI"]
     routeros["RouterOS (service account)"]
-    mikroview["mikroview (sidecar)"]
+    mikroview["mikroview (separate app)"]
     idp["OIDC provider (Authentik)"]
 
     canary1 -->|"HTTPS (agent, #48)"| birdcage
@@ -74,5 +74,7 @@ See [ADR-0002](adr/0002-gitflow-branching.md) for the `dev` -> `preview` ->
 `main` branch/promotion model, and mikroview's `Dockerfile`
 (`tomlawesome/mikroview`) for the distroless multi-stage container pattern
 birdcage's own `Dockerfile` is expected to follow once implementation
-starts. Birdcage is deployed in the same compose stack as mikroview --
-see [ADR-0003](adr/0003-mikroview-sidecar.md).
+starts. Birdcage ships as two container images of its own -- Birdcage and
+Mockingbird -- and is deployed independently of mikroview, not in its
+compose stack; see
+[ADR-0008](adr/0008-container-only-distribution-and-two-images.md).

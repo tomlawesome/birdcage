@@ -1,4 +1,4 @@
-# ADR-0008: Birdcage ships only as container images, and the canary is its own image
+# ADR-0008: Birdcage ships only as container images, and Mockingbird is its own image
 
 **Status:** Accepted
 **Date:** 2026-09-18
@@ -86,8 +86,11 @@ the whole product was never written down. This ADR states it.
   capabilities, so it is worth keeping integration in view when
   shaping interfaces. Nothing in v1 depends on it, and birdcage must
   run fully without mikroview present.
-- ADR-0003's title and status need correcting, and the compose-stack
-  and sidecar wording also appears in `docs/architecture.md`,
-  `README.md`, `SECURITY.md`, `docs/v1-scope.md`,
-  `docs/security-by-design.md` and ADR-0001. Correcting those is
-  follow-up work, not part of this ADR.
+- ADR-0003's title and status are corrected alongside this ADR, and the
+  compose-stack wording is removed from `README.md`,
+  `docs/architecture.md` and `docs/v1-scope.md` (#67). ADR-0003 keeps
+  its filename, `0003-mikroview-sidecar.md`, as a historical
+  identifier so existing links still resolve. `SECURITY.md` and
+  ADR-0001 only cite ADR-0003 for claims that still hold, and
+  `docs/security-by-design.md` uses "sidecar" in an unrelated sense;
+  all three are untouched.
