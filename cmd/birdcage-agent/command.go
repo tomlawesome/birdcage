@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/probe"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 )
 
 // commandPollInterval and commandPollJitter are #48 decision 3, ratified
@@ -94,7 +95,7 @@ func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
 		case <-ctx.Done():
 			return
 		case cmd := <-run:
-			if err := runCommand(cmd); err != nil {
+			if err := runCommand(ctx, cmd); err != nil {
 				log.Printf("command %s (%s): refused, executing nothing: %v", cmd.ID, cmd.Kind, err)
 			}
 		}
@@ -108,39 +109,56 @@ func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
 // and the command is never partially executed either way (#48
 // fail-closed: "a command the agent cannot fully parse is an attack or
 // version skew; both end in refusal").
-func runCommand(cmd *client.Command) error {
+func runCommand(ctx context.Context, cmd *client.Command) error {
 	switch cmd.Kind {
 	case kindSelfTest:
-		return runSelfTest(cmd)
+		return runSelfTest(ctx, cmd)
 	default:
 		return fmt.Errorf("unknown command kind %q", cmd.Kind)
 	}
 }
 
-// runSelfTest is the command runner's seat for a selftest command, not
-// the probe engine itself -- #48's process-composition note: "the
-// selftest probe engine is its own later slice (gated on #46's open
-// question about unprobeable modules); this composition only fixes its
-// seat: a runner invoked with opaque params, emitting nothing into the
-// event path, since its probes produce real OpenCanary events that
-// arrive by the ordinary two roads."
+// runSelfTest is the command runner's seat for a selftest command,
+// filled in by #46's probe engine (internal/agent/probe). Decoding
+// cmd.Params is the only way this function can refuse the command --
+// selftest.DecodeParams enforces the same fail-closed rule #48 already
+// established here ("a command the agent cannot fully parse is an
+// attack or version skew; both end in refusal"), so a non-nil return
+// from here means exactly that, never a probe result.
 //
-// Params is opaque here in the same sense the process-composition note
-// uses it: this function does not interpret any specific field (the
-// real schema -- probe order, per-run marker -- is #46's to settle
-// alongside the probe engine). What it does check, generically, is that
-// non-empty params decode as a JSON object at all, matching the shape
-// every command_test.go fixture already uses (`{"marker":"m1"}`) --
-// params that are not an object (a bare string, number, or malformed
-// JSON) are refused as unparseable rather than silently ignored, per
-// #48's fail-closed rule for a command the agent cannot fully parse.
-func runSelfTest(cmd *client.Command) error {
-	if len(cmd.Params) > 0 {
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(cmd.Params, &obj); err != nil {
-			return fmt.Errorf("selftest params is not a JSON object: %w", err)
+// Once params decode, every target is fired regardless of how the
+// others land: per-target success or failure is logged, never returned
+// as a command-level error, because a self-test's whole purpose is
+// measuring which services answer -- a dead one is the expected,
+// correctly-reported case, not a refusal. probe.Sweep also never writes
+// into the event path itself (see its own doc comment): the probes
+// produce ordinary OpenCanary events that reach birdcage by the normal
+// two roads, and this function's job ends at firing them and logging
+// what happened for the operator and, eventually, the heartbeat's
+// counters.
+func runSelfTest(ctx context.Context, cmd *client.Command) error {
+	params, err := selftest.DecodeParams(cmd.Params)
+	if err != nil {
+		return fmt.Errorf("selftest params: %w", err)
+	}
+
+	outcomes := probe.Sweep(ctx, params)
+
+	var ok, failed, noCarrier, notProbeable int
+	for _, o := range outcomes {
+		switch o.Status {
+		case probe.StatusOK:
+			ok++
+		case probe.StatusFailed:
+			failed++
+			log.Printf("selftest %s: target %s:%d failed: %v", params.RunID, o.Service, o.DestPort, o.Err)
+		case probe.StatusNoCarrier:
+			noCarrier++
+		case probe.StatusNotProbeable:
+			notProbeable++
 		}
 	}
-	log.Printf("command %s: selftest accepted (probe engine not yet built, #46)", cmd.ID)
+	log.Printf("command %s: selftest %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
+		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes))
 	return nil
 }
