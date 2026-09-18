@@ -1,47 +1,60 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"testing"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 )
+
+// validSelfTestParams is one well-formed selftest.Params, matching the
+// real wire schema #46 ratified (internal/selftest/params.go) rather
+// than the opaque-object placeholder this seat used to accept. Port 1
+// has nothing listening in this sandbox, so the target itself fails
+// fast (StatusFailed) -- irrelevant here, since runSelfTest's own
+// contract is that a target failing is not a command-level refusal.
+var validSelfTestParams = []byte(`{"run_id":"r1","address":"127.0.0.1","targets":[{"service":"ftp","dest_port":1,"marker":"m1"}]}`)
 
 // TestRunCommandUnknownKindRefused proves #48's fail-closed rule: a
 // command of a kind this agent does not know is refused and nothing is
 // executed -- runCommand's non-nil return is the caller's cue to log the
 // refusal rather than act on it.
 func TestRunCommandUnknownKindRefused(t *testing.T) {
-	err := runCommand(&client.Command{ID: "cmd-1", Kind: "upgrade"})
+	err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: "upgrade"})
 	if err == nil {
 		t.Fatal("runCommand(unknown kind) = nil, want a refusal")
 	}
 }
 
-// TestRunCommandSelfTestAccepted proves the known kind, with no params
-// and with a well-formed object of params, is accepted -- the runner's
-// seat, not the probe engine (#48's process-composition note).
+// TestRunCommandSelfTestAccepted proves a well-formed selftest command
+// is accepted regardless of how its targets fare -- the probe engine's
+// per-target failures are logged, not returned as a command-level
+// refusal (#46: a self-test measuring a dead service is a correct
+// result, not an error).
 func TestRunCommandSelfTestAccepted(t *testing.T) {
-	for _, params := range [][]byte{nil, []byte(`{"marker":"m1"}`), []byte(`{}`)} {
-		if err := runCommand(&client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params}); err != nil {
-			t.Errorf("runCommand(selftest, params=%s) = %v, want nil", params, err)
-		}
+	err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	if err != nil {
+		t.Errorf("runCommand(selftest, params=%s) = %v, want nil", validSelfTestParams, err)
 	}
 }
 
-// TestRunCommandSelfTestUnparseableParamsRefused proves the other half
-// of #48's fail-closed rule for commands: params that are not a JSON
-// object -- a bare string or number, or malformed JSON outright -- are
-// refused rather than silently ignored, even for the one kind this
-// agent knows.
+// TestRunCommandSelfTestUnparseableParamsRefused proves #48's
+// fail-closed rule for commands: params that do not decode as a valid
+// selftest.Params -- absent entirely, an empty object missing every
+// required field, not even a JSON object, or malformed JSON outright --
+// are refused rather than silently ignored or partially run, even for
+// the one kind this agent knows.
 func TestRunCommandSelfTestUnparseableParamsRefused(t *testing.T) {
 	for _, params := range [][]byte{
+		nil,
+		[]byte(`{}`),
+		[]byte(`{"marker":"m1"}`), // the old placeholder's shape: not a valid Params
 		[]byte(`"just-a-string"`),
 		[]byte(`42`),
 		[]byte(`[1,2,3]`),
 		[]byte(`{not valid json`),
 	} {
-		err := runCommand(&client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
+		err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
 		if err == nil {
 			t.Errorf("runCommand(selftest, params=%s) = nil, want a refusal", params)
 		}
@@ -64,17 +77,14 @@ func TestJitteredIntervalStaysInBound(t *testing.T) {
 	}
 }
 
-// selftestParamsRoundTrip is a sanity check that runSelfTest's generic
-// object check accepts exactly the params shape command_test.go's own
-// client package fixtures already mint (`{"marker":"m1"}"`), so this
-// slice's validation cannot be stricter than what #46 already relies on.
-func TestRunSelfTestAcceptsMarkerShapedParams(t *testing.T) {
-	var probe map[string]json.RawMessage
-	params := []byte(`{"marker":"m1"}`)
-	if err := json.Unmarshal(params, &probe); err != nil {
-		t.Fatalf("fixture itself is not a JSON object: %v", err)
-	}
-	if err := runSelfTest(&client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params}); err != nil {
-		t.Fatalf("runSelfTest(%s) = %v, want nil", params, err)
+// TestRunSelfTestLogsOutcomesAndReturnsNil proves runSelfTest itself --
+// not just the runCommand dispatch above it -- accepts a well-formed
+// run and returns nil, leaving per-target reporting to its own logging
+// (probe.Sweep's outcomes are exercised directly in
+// internal/agent/probe's own tests).
+func TestRunSelfTestLogsOutcomesAndReturnsNil(t *testing.T) {
+	err := runSelfTest(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	if err != nil {
+		t.Fatalf("runSelfTest(%s) = %v, want nil", validSelfTestParams, err)
 	}
 }
