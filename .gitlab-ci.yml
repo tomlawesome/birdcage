@@ -183,6 +183,109 @@ test:smoke:
     - npx playwright install --with-deps chromium
     - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
 
+# The two shipped images (#69), built and run as validation only -- nothing
+# here pushes to a registry; publishing is a separate job with its own
+# credentials (git-and-delivery skill, "Validation and publication are
+# separate jobs"). Same shape as mikroview's test:container: the runner
+# host's rootless Docker socket, names carrying $CI_JOB_ID so parallel
+# pipelines never collide, and probes over --network container: rather
+# than --publish, which would race other jobs for host ports.
+test:image:birdcage:
+  stage: test
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: birdcage-test-$CI_JOB_ID
+  script:
+    - docker build --file build/birdcage/Dockerfile --tag "$APP" .
+    - >-
+      docker run --detach --name "$APP"
+      --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m
+      --tmpfs /var/lib/birdcage:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 64 --memory 256m --cpus 0.5
+      "$APP"
+    - |
+      for attempt in $(seq 1 20); do
+        if docker run --rm --network "container:$APP" alpine:3.24 \
+             wget -q -O - http://127.0.0.1:8080/api/alerts 2>/dev/null | grep -q '"alerts"'; then
+          echo "/api/alerts answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 20 ]; then
+          echo "/api/alerts never answered; container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+  after_script:
+    - docker rm --force "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker image rm "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# The agent fails closed without a token and client certificate in its
+# state directory, so the job mints throwaway ones into a named volume
+# (never into the repository) and points BIRDCAGE_AGENT_URL at a closed
+# port: what is under test is that the image starts as uid 65532, binds
+# the honeypot ports, and answers an FTP client. The loopback path from
+# OpenCanary to the agent is #48's end-to-end test, not this job's.
+test:image:mockingbird:
+  stage: test
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: mockingbird-test-$CI_JOB_ID
+  script:
+    - docker build --file build/mockingbird/Dockerfile --tag "$APP" .
+    - docker volume create "$APP-state" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-state:/s" alpine:3.24 sh -c '
+      apk add --no-cache openssl >/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/ca-key.pem -out /s/ca.pem -days 1 -subj /CN=ci-throwaway-ca 2>/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
+      rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      chown -R 65532:65532 /s && chmod 600 /s/*'
+    - >-
+      docker run --detach --name "$APP" --init
+      --sysctl net.ipv4.ip_unprivileged_port_start=0
+      --volume "$APP-state:/var/lib/mockingbird"
+      --tmpfs /var/log/opencanary:rw,noexec,nosuid,size=64m,uid=65532,gid=65532
+      --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 64 --memory 256m --cpus 0.5
+      --env BIRDCAGE_AGENT_URL=https://127.0.0.1:1
+      "$APP"
+    - |
+      for attempt in $(seq 1 30); do
+        if docker run --rm --network "container:$APP" alpine:3.24 \
+             sh -c 'printf "USER x\r\nPASS y\r\nQUIT\r\n" | nc -w 3 127.0.0.1 21' | grep -q '^220 '; then
+          echo "FTP answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 30 ]; then
+          echo "FTP never answered; container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container -- docker-init, the agent, twistd --
+    # must be uid 65532; a root process here is the failure the image
+    # exists to prevent.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | grep -q ' 65532 .*python3' || { echo "OpenCanary is not running as 65532"; exit 1; }
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
+    - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
 # ---------------------------------------------------------------------------
 # SYNC -- mirror the three delivery branches to GitHub after a merge.
 # `needs: []`: the mirror reflects the branch, not the pipeline. Never
