@@ -2,7 +2,7 @@
 // commands. It deliberately adds no new table -- a selftest command's
 // issued markers are already durable in canary_commands.params (written
 // by MintSelfTestCommand, read back once at startup or on first use by
-// selfTestIndex) -- and it deliberately keeps the alert path off the
+// SelfTestIndex) -- and it deliberately keeps the alert path off the
 // database entirely: MatchSelfTest runs once per arriving alert, at a
 // rate an attacker chooses, so the candidate set it checks must be
 // bounded by what's currently live, not by how much self-test history a
@@ -10,7 +10,10 @@
 // (internal/ingest/auditcoalesce.go) is the same defect class -- caller-
 // paced work against an ever-growing table -- fixed the same way: hold
 // the bounded, currently-relevant state in memory instead of querying
-// per occurrence.
+// per occurrence. And, like that coalescer and internal/ingest's
+// limiterRegistry, the state is owned by whoever constructs it and
+// passed explicitly to what needs it, not kept in a package-level
+// registry keyed on pointer identity.
 package store
 
 import (
@@ -41,9 +44,9 @@ type SelfTestTarget struct {
 // let an attacker's own traffic be classified as a test and so kept off
 // the dashboard, which inverts the product) -- queues it through
 // MintCanaryCommand, the one door into canary_commands, and registers its
-// markers in the in-memory index MatchSelfTest reads, so a matching alert
-// arriving moments later never has to wait on that index's own lazy load.
-func MintSelfTestCommand(ctx context.Context, database *db.DB, canaryID, address string, targets []SelfTestTarget, createdAt, expiresAt time.Time) (CanaryCommand, error) {
+// markers in idx, so a matching alert arriving moments later finds it
+// without waiting on idx's own lazy load.
+func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestIndex, canaryID, address string, targets []SelfTestTarget, createdAt, expiresAt time.Time) (CanaryCommand, error) {
 	if len(targets) == 0 {
 		return CanaryCommand{}, selftest.ErrNoTargets
 	}
@@ -86,10 +89,10 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, canaryID, address
 		return CanaryCommand{}, err
 	}
 	// cmd.ExpiresAt, not the caller's expiresAt, is the value actually
-	// stored (MintCanaryCommand normalizes to UTC) -- the index's expiry
-	// must agree with the row's or the two could disagree about whether a
+	// stored (MintCanaryCommand normalizes to UTC) -- idx's expiry must
+	// agree with the row's or the two could disagree about whether a
 	// marker is still live.
-	indexFor(database).add(canaryID, params.Targets, cmd.ExpiresAt)
+	idx.add(canaryID, params.Targets, cmd.ExpiresAt)
 	return cmd, nil
 }
 
@@ -101,66 +104,52 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, canaryID, address
 // selftest.DecodeParams does on the wire.
 //
 // It never queries canary_commands itself: the candidate set comes from
-// the in-memory index (selfTestIndex), loaded from the database at most
-// once per *db.DB, and from there on updated only by MintSelfTestCommand
-// and by this function's own expiry cleanup. That is what keeps this
-// bounded on the alert path -- see this file's package doc comment.
-func MatchSelfTest(ctx context.Context, database *db.DB, alert AlertInsert, now time.Time) (bool, error) {
-	idx := indexFor(database)
+// idx, loaded from the database at most once for idx's lifetime, and
+// from there on updated only by MintSelfTestCommand and by this
+// function's own expiry cleanup. That is what keeps this bounded on the
+// alert path -- see this file's package doc comment.
+func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, alert AlertInsert, now time.Time) (bool, error) {
 	if err := idx.ensureLoaded(ctx, database); err != nil {
 		return false, fmt.Errorf("load selftest index: %w", err)
 	}
 	return idx.match(alert.InstanceID, alert.Raw, now.UTC()), nil
 }
 
-// selfTestIndexes maps a *db.DB to the live-marker index built for it.
-// Keyed by the database handle rather than held as one process-wide
-// global so tests using forEachEngine -- a fresh *db.DB per subtest, per
-// engine -- never see another subtest's markers; production has exactly
-// one long-lived *db.DB, so it gets exactly one index for the process'
-// life.
-var (
-	selfTestIndexesMu sync.Mutex
-	selfTestIndexes   = map[*db.DB]*selfTestIndex{}
-)
-
-// indexFor returns database's index, creating it empty and unloaded on
-// first call.
-func indexFor(database *db.DB) *selfTestIndex {
-	selfTestIndexesMu.Lock()
-	defer selfTestIndexesMu.Unlock()
-	idx, ok := selfTestIndexes[database]
-	if !ok {
-		idx = &selfTestIndex{byCanary: make(map[string]map[string]time.Time)}
-		selfTestIndexes[database] = idx
-	}
-	return idx
-}
-
-// selfTestIndex is the bounded, in-memory answer to "which markers has
-// birdcage issued and not yet seen expire": byCanary[canaryID][marker] is
-// that marker's expiry. Nested by canary, rather than one flat
+// SelfTestIndex is the bounded, in-memory index of markers birdcage has
+// issued and not yet seen expire: byCanary[canaryID][marker] is that
+// marker's expiry. Nested by canary, rather than one flat
 // marker-to-canary map, so a lookup for one canary's alert only ever
 // walks that canary's own currently-live markers -- bounded by targets
 // per run, not by the size of the fleet or of history.
+//
+// Constructed once by whatever owns the ingest path's dependencies --
+// mirroring auditCoalescer and limiterRegistry in internal/ingest, both
+// built once and held as fields, never a process-wide registry keyed on
+// a *db.DB pointer -- and passed explicitly to MintSelfTestCommand and
+// MatchSelfTest.
 //
 // A canary with no live self-test has no entry in byCanary at all, not
 // an empty inner map: match deletes the inner map once it empties, so
 // the index's size tracks "canaries with a currently-live self-test",
 // which shrinks back down on its own as runs expire.
-type selfTestIndex struct {
+type SelfTestIndex struct {
 	mu       sync.Mutex
 	loaded   bool
 	byCanary map[string]map[string]time.Time
 }
 
-// ensureLoaded performs the one-time (per *db.DB) full scan of
+// NewSelfTestIndex returns an empty, unloaded index.
+func NewSelfTestIndex() *SelfTestIndex {
+	return &SelfTestIndex{byCanary: make(map[string]map[string]time.Time)}
+}
+
+// ensureLoaded performs the one-time (per index) full scan of
 // canary_commands that rebuilds byCanary from whatever selftest commands
 // were already live when this process started -- the "rebuild once at
 // startup, or lazily on first use" this index needs so a restart doesn't
 // forget commands minted by a previous run. Already-expired rows are
 // discarded here rather than loaded and immediately dropped later.
-func (idx *selfTestIndex) ensureLoaded(ctx context.Context, database *db.DB) error {
+func (idx *SelfTestIndex) ensureLoaded(ctx context.Context, database *db.DB) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	if idx.loaded {
@@ -214,13 +203,13 @@ func (idx *selfTestIndex) ensureLoaded(ctx context.Context, database *db.DB) err
 // add registers one run's markers -- called by MintSelfTestCommand
 // immediately after the command is durably stored, so a matching alert
 // arriving before ensureLoaded's first run still finds it.
-func (idx *selfTestIndex) add(canaryID string, targets []selftest.Target, expiresAt time.Time) {
+func (idx *SelfTestIndex) add(canaryID string, targets []selftest.Target, expiresAt time.Time) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	idx.addLocked(canaryID, targets, expiresAt)
 }
 
-func (idx *selfTestIndex) addLocked(canaryID string, targets []selftest.Target, expiresAt time.Time) {
+func (idx *SelfTestIndex) addLocked(canaryID string, targets []selftest.Target, expiresAt time.Time) {
 	m := idx.byCanary[canaryID]
 	if m == nil {
 		m = make(map[string]time.Time)
@@ -237,7 +226,7 @@ func (idx *selfTestIndex) addLocked(canaryID string, targets []selftest.Target, 
 // keeps self-testing keeps visiting its own bucket and keeps it small,
 // and one that stops leaves behind only its last run's targets, not its
 // whole history.
-func (idx *selfTestIndex) match(canaryID, raw string, now time.Time) bool {
+func (idx *SelfTestIndex) match(canaryID, raw string, now time.Time) bool {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	markers := idx.byCanary[canaryID]
