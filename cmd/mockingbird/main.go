@@ -9,10 +9,11 @@
 // path -- the loopback receiver, the log tailer, the memory queue, the
 // acknowledged-position ledger and the sender that ties them together
 // -- and the command poll/runner into the process skeleton the previous
-// slice built. Seven long-lived goroutines share one cancellation
+// slice built. Eight long-lived goroutines share one cancellation
 // context and one TokenStore: the receiver, the log road (tailer plus
 // its eviction-recovery restart), the sender, the heartbeat, the
-// command poll, the command runner, and token rotation.
+// command poll, the command runner, token rotation, and (#69) the
+// OpenCanary child supervisor.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -79,8 +80,13 @@ func main() {
 		log.Fatalf("build intake: %v", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// A second, derived cancel: the run must also stop if OpenCanary (see
+	// runChild, below) exits on its own, not only on a signal.
+	ctx, cancel := context.WithCancel(sigCtx)
+	defer cancel()
 
 	var wg sync.WaitGroup
 
@@ -133,6 +139,23 @@ func main() {
 	go func() {
 		defer wg.Done()
 		in.RunLogRoad(ctx)
+	}()
+
+	// OpenCanary as mockingbird's child process (#69): the receiver above
+	// is already listening, so OpenCanary's first webhook attempt finds
+	// it open. With no arguments (os.Args[1:] empty) this is a no-op --
+	// today's behaviour, untouched.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runChild(ctx, os.Args[1:], func(err error) {
+			if err != nil {
+				log.Printf("child %v exited: %v", os.Args[1:], err)
+			} else {
+				log.Printf("child %v exited", os.Args[1:])
+			}
+			cancel()
+		})
 	}()
 
 	log.Printf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL)
