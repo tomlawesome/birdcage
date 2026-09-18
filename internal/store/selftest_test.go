@@ -178,3 +178,47 @@ func TestMatchSelfTestUnknownCanaryIsReal(t *testing.T) {
 		}
 	})
 }
+
+// TestSelfTestIndexShrinksAsRunsExpire is the fix for the review finding
+// on this file's first version: MatchSelfTest used to decode every
+// selftest command a canary had ever been issued, on every arriving
+// alert -- unbounded, attacker-paced work, the same defect class #57's
+// audit-log coalescer fixed. The in-memory index that replaced it must
+// not just avoid the per-alert query; it must actually stop growing.
+// This mints several short-lived runs, lets them expire, and shows the
+// live set for that canary go back down to nothing once a match pass
+// visits it -- not "history", "what's live right now".
+func TestSelfTestIndexShrinksAsRunsExpire(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		now := time.Now()
+		const runs = 5
+		for i := 0; i < runs; i++ {
+			mintSelfTestCommand(t, database, "canary-a", now, time.Minute)
+		}
+
+		idx := indexFor(database)
+		idx.mu.Lock()
+		live := len(idx.byCanary["canary-a"])
+		idx.mu.Unlock()
+		if live != runs {
+			t.Fatalf("live markers after minting = %d, want %d", live, runs)
+		}
+
+		// Well past every run's expiry. A miss on unrelated raw content
+		// still has to walk the bucket to notice it's all expired --
+		// exactly the cleanup match performs on every call.
+		later := now.Add(time.Hour)
+		alert := AlertInsert{InstanceID: "canary-a", Raw: "no marker in here"}
+		if _, err := MatchSelfTest(context.Background(), database, alert, later); err != nil {
+			t.Fatalf("MatchSelfTest: %v", err)
+		}
+
+		idx.mu.Lock()
+		_, stillPresent := idx.byCanary["canary-a"]
+		idx.mu.Unlock()
+		if stillPresent {
+			t.Fatal("canary-a's bucket survived a match pass after every marker expired")
+		}
+	})
+}
