@@ -89,6 +89,16 @@ lint:licences:
   script:
     - scripts/licence-check.sh
 
+# The agent ships in the Mockingbird container, on the machine the product
+# expects to be attacked. No birdcage server package may reach it --
+# ADR-0008 decision 4.
+lint:agent-deps:
+  stage: lint
+  image: golang:1.27
+  <<: [*dev_or_mr, *git_safe]
+  script:
+    - scripts/agent-deps-check.sh
+
 # ---------------------------------------------------------------------------
 # TEST
 # ---------------------------------------------------------------------------
