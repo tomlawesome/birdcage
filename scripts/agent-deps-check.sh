@@ -9,10 +9,10 @@
 set -eu
 
 MODULE=github.com/tomlawesome/birdcage
-CMD=${1:-./cmd/birdcage-agent}
+CMD=${1:-./cmd/mockingbird}
 
 ALLOWED="
-$MODULE/cmd/birdcage-agent
+$MODULE/cmd/mockingbird
 $MODULE/internal/opencanary
 $MODULE/internal/selftest
 "

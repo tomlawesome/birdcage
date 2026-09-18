@@ -44,7 +44,7 @@ func listenTCP(t *testing.T) int {
 // TestSweepWithConfig_ClassifiesEachTargetIndependently exercises every
 // Status a sweep can produce in one run, over params.Targets in one
 // call, proving neither one target's outcome nor its ordering leaks
-// into another's -- the property cmd/birdcage-agent's logging and the
+// into another's -- the property cmd/mockingbird's logging and the
 // eventual heartbeat counters both depend on.
 func TestSweepWithConfig_ClassifiesEachTargetIndependently(t *testing.T) {
 	livePort := listenTCP(t)

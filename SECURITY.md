@@ -65,7 +65,7 @@ Text birdcage did not generate itself -- a canary id, a service name, a
 source address, an OpenCanary `raw` field -- comes from a machine we
 expect to be attacked, and the stored record of it is evidence: nothing
 upstream of output strips, rewrites, or otherwise sanitises it (the same
-rule the birdcage-agent follows for what it forwards). Escaping happens
+rule the Mockingbird agent follows for what it forwards). Escaping happens
 only at the point that text is displayed, per surface:
 
 - **Dashboard:** every value is rendered through Svelte's own text
