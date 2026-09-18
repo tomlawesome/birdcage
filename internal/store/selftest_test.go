@@ -9,9 +9,9 @@ import (
 	"github.com/tomlawesome/birdcage/internal/selftest"
 )
 
-func mintSelfTestCommand(t *testing.T, database *db.DB, canaryID string, createdAt time.Time, ttl time.Duration) CanaryCommand {
+func mintSelfTestCommand(t *testing.T, database *db.DB, idx *SelfTestIndex, canaryID string, createdAt time.Time, ttl time.Duration) CanaryCommand {
 	t.Helper()
-	cmd, err := MintSelfTestCommand(context.Background(), database, canaryID, "192.0.2.10",
+	cmd, err := MintSelfTestCommand(context.Background(), database, idx, canaryID, "192.0.2.10",
 		[]SelfTestTarget{{Service: "ssh", DestPort: 22}}, createdAt, createdAt.Add(ttl))
 	if err != nil {
 		t.Fatalf("MintSelfTestCommand(%s): %v", canaryID, err)
@@ -35,8 +35,9 @@ func mustDecodeParams(t *testing.T, cmd CanaryCommand) selftest.Params {
 func TestMintSelfTestCommandGeneratesUnguessableMarkers(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		now := time.Now()
-		cmd, err := MintSelfTestCommand(context.Background(), database, "canary-a", "192.0.2.10",
+		cmd, err := MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
 			[]SelfTestTarget{{Service: "ssh", DestPort: 22}, {Service: "ftp", DestPort: 21}},
 			now, now.Add(time.Hour))
 		if err != nil {
@@ -57,7 +58,7 @@ func TestMintSelfTestCommandGeneratesUnguessableMarkers(t *testing.T) {
 		}
 
 		// A second mint must never reuse a marker from the first.
-		cmd2, err := MintSelfTestCommand(context.Background(), database, "canary-a", "192.0.2.10",
+		cmd2, err := MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
 			[]SelfTestTarget{{Service: "ssh", DestPort: 22}}, now, now.Add(time.Hour))
 		if err != nil {
 			t.Fatalf("MintSelfTestCommand (second): %v", err)
@@ -75,8 +76,9 @@ func TestMintSelfTestCommandGeneratesUnguessableMarkers(t *testing.T) {
 func TestMatchSelfTestRecognisesAnIssuedMarker(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		now := time.Now()
-		cmd := mintSelfTestCommand(t, database, "canary-a", now, time.Hour)
+		cmd := mintSelfTestCommand(t, database, idx, "canary-a", now, time.Hour)
 		marker := mustDecodeParams(t, cmd).Targets[0].Marker
 
 		alert := AlertInsert{
@@ -85,7 +87,7 @@ func TestMatchSelfTestRecognisesAnIssuedMarker(t *testing.T) {
 			Service:    "ssh",
 			Raw:        `{"logdata":{"probe":"` + marker + `"}}`,
 		}
-		matched, err := MatchSelfTest(context.Background(), database, alert, now)
+		matched, err := MatchSelfTest(context.Background(), database, idx, alert, now)
 		if err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
@@ -102,12 +104,13 @@ func TestMatchSelfTestRecognisesAnIssuedMarker(t *testing.T) {
 func TestMatchSelfTestExpiredCommandDoesNotMatch(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		createdAt := time.Now().Add(-time.Hour)
-		cmd := mintSelfTestCommand(t, database, "canary-a", createdAt, time.Minute) // expires 59 minutes ago
+		cmd := mintSelfTestCommand(t, database, idx, "canary-a", createdAt, time.Minute) // expires 59 minutes ago
 		marker := mustDecodeParams(t, cmd).Targets[0].Marker
 
 		alert := AlertInsert{InstanceID: "canary-a", Raw: `{"probe":"` + marker + `"}`}
-		matched, err := MatchSelfTest(context.Background(), database, alert, time.Now())
+		matched, err := MatchSelfTest(context.Background(), database, idx, alert, time.Now())
 		if err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
@@ -124,13 +127,14 @@ func TestMatchSelfTestExpiredCommandDoesNotMatch(t *testing.T) {
 func TestMatchSelfTestNeverIssuedMarkerIsReal(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		now := time.Now()
-		mintSelfTestCommand(t, database, "canary-a", now, time.Hour) // issues its own, unrelated marker
+		mintSelfTestCommand(t, database, idx, "canary-a", now, time.Hour) // issues its own, unrelated marker
 
 		// Same shape and length as a real hex marker, but never minted.
 		guessed := "0123456789abcdef0123456789abcdef"[:selftest.MarkerBytes*2]
 		alert := AlertInsert{InstanceID: "canary-a", Raw: `{"probe":"` + guessed + `"}`}
-		matched, err := MatchSelfTest(context.Background(), database, alert, now)
+		matched, err := MatchSelfTest(context.Background(), database, idx, alert, now)
 		if err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
@@ -147,12 +151,13 @@ func TestMatchSelfTestDifferentCanaryDoesNotMatch(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
 		insertCanary(t, database, Canary{ID: "canary-b", Name: "b", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		now := time.Now()
-		cmd := mintSelfTestCommand(t, database, "canary-a", now, time.Hour)
+		cmd := mintSelfTestCommand(t, database, idx, "canary-a", now, time.Hour)
 		marker := mustDecodeParams(t, cmd).Targets[0].Marker
 
 		alert := AlertInsert{InstanceID: "canary-b", Raw: `{"probe":"` + marker + `"}`}
-		matched, err := MatchSelfTest(context.Background(), database, alert, now)
+		matched, err := MatchSelfTest(context.Background(), database, idx, alert, now)
 		if err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
@@ -168,8 +173,9 @@ func TestMatchSelfTestDifferentCanaryDoesNotMatch(t *testing.T) {
 // answer as an expired or never-issued marker.
 func TestMatchSelfTestUnknownCanaryIsReal(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		idx := NewSelfTestIndex()
 		alert := AlertInsert{InstanceID: "no-such-canary", Raw: `{"probe":"anything"}`}
-		matched, err := MatchSelfTest(context.Background(), database, alert, time.Now())
+		matched, err := MatchSelfTest(context.Background(), database, idx, alert, time.Now())
 		if err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
@@ -191,13 +197,13 @@ func TestMatchSelfTestUnknownCanaryIsReal(t *testing.T) {
 func TestSelfTestIndexShrinksAsRunsExpire(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "ssh 22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
 		now := time.Now()
 		const runs = 5
 		for i := 0; i < runs; i++ {
-			mintSelfTestCommand(t, database, "canary-a", now, time.Minute)
+			mintSelfTestCommand(t, database, idx, "canary-a", now, time.Minute)
 		}
 
-		idx := indexFor(database)
 		idx.mu.Lock()
 		live := len(idx.byCanary["canary-a"])
 		idx.mu.Unlock()
@@ -210,7 +216,7 @@ func TestSelfTestIndexShrinksAsRunsExpire(t *testing.T) {
 		// exactly the cleanup match performs on every call.
 		later := now.Add(time.Hour)
 		alert := AlertInsert{InstanceID: "canary-a", Raw: "no marker in here"}
-		if _, err := MatchSelfTest(context.Background(), database, alert, later); err != nil {
+		if _, err := MatchSelfTest(context.Background(), database, idx, alert, later); err != nil {
 			t.Fatalf("MatchSelfTest: %v", err)
 		}
 
