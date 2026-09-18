@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
@@ -145,6 +146,7 @@ func main() {
 	// is already listening, so OpenCanary's first webhook attempt finds
 	// it open. With no arguments (os.Args[1:] empty) this is a no-op --
 	// today's behaviour, untouched.
+	var childDied atomic.Bool
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -154,6 +156,7 @@ func main() {
 			} else {
 				log.Printf("child %v exited", os.Args[1:])
 			}
+			childDied.Store(true)
 			cancel()
 		})
 	}()
@@ -167,6 +170,12 @@ func main() {
 	// advanced past them, so the next start re-reads them from the log
 	// -- the durability design working, not a loss.
 	wg.Wait()
+	// A run ended by the child dying is a failure whatever the child's
+	// own status -- even a clean exit means the honeypot is gone -- and
+	// the container's restart policy only acts on a non-zero exit.
+	if childDied.Load() {
+		os.Exit(1)
+	}
 }
 
 // currentSelfReport builds the heartbeat's self-report from the real
