@@ -22,7 +22,7 @@ const MaxTargets = 32
 
 // Params is the schema of a selftest command's params. It replaces the
 // opaque object the command seat accepted while the probe engine was
-// deferred (cmd/birdcage-agent/command.go).
+// deferred (cmd/mockingbird/command.go).
 type Params struct {
 	// RunID identifies this sweep. It is echoed in nothing the agent
 	// sends -- the probes produce ordinary OpenCanary events that

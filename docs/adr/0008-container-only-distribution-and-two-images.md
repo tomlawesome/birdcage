@@ -42,7 +42,8 @@ the whole product was never written down. This ADR states it.
    macvlan. Not one per VM: real machines carry legitimate traffic and
    the signal dies in the noise.
 4. **The image boundary is enforced in code, not by habit.**
-   `go list -deps ./cmd/birdcage-agent | grep tomlawesome` must return
+   `go list -deps ./cmd/mockingbird | grep tomlawesome` (the command was
+   `cmd/birdcage-agent` when first verified) must return
    only `internal/agent/*`, `internal/opencanary`,
    `internal/selftest` and the command itself. Verified 2026-09-18 at
    `456d3d5`. This check should become a CI gate.

@@ -10,7 +10,7 @@
 // target service writes -- which reaches birdcage by the normal two
 // roads and is matched there against the marker birdcage minted, per
 // internal/selftest's own doc comment. Sweep's return value exists
-// purely for cmd/birdcage-agent to log and, eventually, fold into the
+// purely for cmd/mockingbird to log and, eventually, fold into the
 // heartbeat's counters; it is not sent anywhere itself.
 //
 // Every probe is protocol mechanics only: enough of a handshake to reach

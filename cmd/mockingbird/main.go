@@ -1,4 +1,4 @@
-// Command birdcage-agent is the process that runs on every canary box
+// Command mockingbird is the process that runs on every canary box
 // (issue #48): the only thing there that talks to birdcage. OpenCanary's
 // own webhook handler makes one attempt per event and drops it on
 // failure -- this binary is what makes posting that attempt safe, and
@@ -43,7 +43,7 @@ var version = "dev"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	log.SetPrefix("birdcage-agent: ")
+	log.SetPrefix("mockingbird: ")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -135,7 +135,7 @@ func main() {
 		in.RunLogRoad(ctx)
 	}()
 
-	log.Printf("birdcage-agent %s started, talking to %s", version, cfg.BirdcageURL)
+	log.Printf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL)
 
 	<-ctx.Done()
 	log.Printf("shutting down")

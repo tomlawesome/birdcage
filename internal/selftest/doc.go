@@ -4,7 +4,7 @@
 //
 // It is deliberately tiny and dependency-free. Both the server
 // (internal/store, internal/ingest) and the agent
-// (cmd/birdcage-agent, internal/agent/probe) import it, and the agent
+// (cmd/mockingbird, internal/agent/probe) import it, and the agent
 // must never acquire a path to internal/ingest, internal/store,
 // internal/db, internal/api or internal/stream through it (#48: the
 // server must not be linked into the binary that ships to canary
