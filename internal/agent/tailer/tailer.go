@@ -82,6 +82,7 @@ type Tailer struct {
 	oversizeLines    atomic.Uint64
 	discardedPartial atomic.Uint64
 	logReadOK        atomic.Bool
+	resumeFound      atomic.Bool
 }
 
 // New returns a Tailer for the log at path. path's directory is where
@@ -119,6 +120,12 @@ func New(path string, cfg Config) *Tailer {
 	// /health.go's notDelivering resolves a nil self-report -- never as
 	// failing.
 	t.logReadOK.Store(true)
+	// resumeFound starts true for the identical reason: before Follow's
+	// first catch-up has finished, there is no resume outcome yet to
+	// report, and a caller building a heartbeat in that brief window
+	// must not read the log road as having lost the acknowledged
+	// position when nothing has actually been searched for yet.
+	t.resumeFound.Store(true)
 	return t
 }
 
@@ -159,3 +166,17 @@ func (t *Tailer) DiscardedPartialLines() uint64 { return t.discardedPartial.Load
 // polling this alongside the heartbeat cadence always sees the tailer's
 // current state, never a stale one.
 func (t *Tailer) LogReadOK() bool { return t.logReadOK.Load() }
+
+// ResumeFound reports whether the most recently completed catch-up scan
+// located the resume Position it was given -- the live value behind
+// #48's process-composition note, gap in the heartbeat self-report:
+// "position_found ... whether the last resume found the acknowledged
+// position." It is ResumeResult.PositionFound from Follow's own most
+// recent catch-up, made available to a caller (the heartbeat builder)
+// that cannot otherwise see it without waiting for Follow itself to
+// return -- which it does not do until shutdown or a forced restart.
+//
+// Before Follow's first catch-up has finished, ResumeFound reports
+// true, for the same reason New seeds it that way: nothing has been
+// searched for yet, so there is nothing to report as lost.
+func (t *Tailer) ResumeFound() bool { return t.resumeFound.Load() }
