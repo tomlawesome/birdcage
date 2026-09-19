@@ -143,6 +143,10 @@ func TestSetSettingInvalidValueRejected(t *testing.T) {
 		{"schedule out of range hour", SettingSelfTestSchedule, "24:00", `"24:00"`},
 		{"schedule out of range minute", SettingSelfTestSchedule, "12:60", `"12:60"`},
 		{"schedule garbage", SettingRotationSchedule, "whenever", `"whenever"`},
+		{"address empty", SettingAdminApprovalAddress, "", "must not be empty"},
+		{"address whitespace only", SettingReleaseAddress, "   ", "must not be empty"},
+		{"address control character", SettingAdminApprovalAddress, "ops\x07@example.com", "control characters"},
+		{"address newline", SettingReleaseAddress, "ops@example.com\n", "control characters"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,6 +189,8 @@ func TestSetSettingValidValuesAccepted(t *testing.T) {
 		{SettingSelfTestSchedule, "00:00"},
 		{SettingSelfTestSchedule, "23:59"},
 		{SettingRotationSchedule, "09:05"},
+		{SettingAdminApprovalAddress, "ops@example.com"},
+		{SettingReleaseAddress, "#releases"},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.key)+"="+tc.value, func(t *testing.T) {

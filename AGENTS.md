@@ -43,3 +43,19 @@ assumed. See [docs/security-by-design.md](docs/security-by-design.md).
 Findings are reproduced before being acted on — including findings from
 automated research, which has in practice produced wrong version numbers
 and inflated severity scores.
+
+## Approved third-party Go modules
+
+The global rule (dependencies-and-data skill) is: no third-party module
+without the owner's explicit approval. Approved for this project, with the
+issue that records the decision:
+
+- `golang.org/x/net` (bpf) and `golang.org/x/sys` — Go team; #65, 2026-09-19.
+- `github.com/emersion/go-imap/v2` — approval mailbox; #54, 2026-09-19.
+- `github.com/emersion/go-msgauth` (dkim) — agent-side signature check;
+  #54, 2026-09-19. Brings `emersion/go-message`, `emersion/go-sasl`,
+  `emersion/go-milter` (module only, never linked) as the same author.
+- `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
+  for the owner's review on #73.
+
+Anything else goes to the owner first, on the issue, with provenance.

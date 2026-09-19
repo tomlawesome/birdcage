@@ -21,7 +21,7 @@
 // same one-producer-one-consumer shape as MemQueue in the sibling queue
 // package). Persisting the position Advance returns, and rebuilding a
 // fresh Ledger from the tailer's re-read on restart, are the caller's
-// job -- slice 3b's sender loop and cmd/birdcage-agent's wiring, not this
+// job -- slice 3b's sender loop and cmd/mockingbird's wiring, not this
 // package.
 //
 // Webhook-road events never appear here at all: only the tailer's

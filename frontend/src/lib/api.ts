@@ -12,7 +12,7 @@
 // unreachable lazy chunks (Vite code-splits every dynamic import
 // regardless of reachability), but no production request ever fetches
 // them.
-import type { CanariesResponse, Range, TraceResponse, VisitorsResponse } from './types'
+import type { CanariesResponse, HistoryResponse, MailStatus, Range, TraceResponse, VisitorsResponse } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -28,11 +28,21 @@ interface Fixture {
   canaries: CanariesResponse
   visitors: VisitorsResponse
   trace: TraceResponse
+  /** Only the 'history' scene carries one (issue #56): the older scenes
+   * predate the endpoint, and a scene without history reads as a fleet
+   * with nothing recorded yet, which is a state the section draws. */
+  history?: HistoryResponse
+  /** Every scene carries one (issue #55). Mail is off in all of them
+   * except 'alerts', which is the scene where something has gone wrong
+   * and is therefore where a broken mailer is worth showing. A scene
+   * without the block reads as mail being off, the same as an instance
+   * that never configured it. */
+  mail?: MailStatus
 }
 
-type SceneName = 'quiet' | 'silent' | 'night' | 'alerts'
+type SceneName = 'quiet' | 'silent' | 'night' | 'alerts' | 'history'
 
-const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts']
+const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts', 'history']
 
 // Static imports (not a dynamic fetch of the JSON file) so a production
 // build's tree-shaking can drop them entirely once the import.meta.env.DEV
@@ -47,6 +57,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/night.json')) as unknown as Fixture
     case 'alerts':
       return (await import('../dev/fixtures/alerts.json')) as unknown as Fixture
+    case 'history':
+      return (await import('../dev/fixtures/history.json')) as unknown as Fixture
   }
 }
 
@@ -86,4 +98,42 @@ export async function fetchTrace(range: Range = '14d'): Promise<TraceResponse> {
   const scene = fixtureScene()
   if (scene) return (await loadFixture(scene)).trace
   return getJSON<TraceResponse>(`/api/trace?range=${range}`)
+}
+
+/** GET /api/history (issue #56), optionally narrowed to one canary. Takes
+ * the dashboard's own Range straight through -- the endpoint used to
+ * keep a separate, smaller set of windows, which let the range picker
+ * and the history section disagree about what was on screen (issue #56
+ * follow-up). A scene fixture without a history block answers as a
+ * fleet with nothing recorded yet rather than failing the section. */
+export async function fetchHistory(range: Range = '14d', canary?: string): Promise<HistoryResponse> {
+  const scene = fixtureScene()
+  if (scene) {
+    const fixture = await loadFixture(scene)
+    return fixture.history ?? { range, since: fixture.trace.now, until: fixture.trace.now, periods: [], summary: [] }
+  }
+  const canaryParam = canary ? `&canary=${encodeURIComponent(canary)}` : ''
+  return getJSON<HistoryResponse>(`/api/history?range=${range}${canaryParam}`)
+}
+
+/** GET /api/mail (issue #55). Range-free, unlike every other read here:
+ * "is the thing that wakes me up working" is not a question about a
+ * window. A scene fixture without a mail block answers as an instance
+ * with mail switched off. */
+export async function fetchMail(): Promise<MailStatus> {
+  const scene = fixtureScene()
+  if (scene) {
+    const fixture = await loadFixture(scene)
+    return (
+      fixture.mail ?? {
+        configured: false,
+        last_sent_at: null,
+        failing_since: null,
+        last_error: null,
+        pending: 0,
+        suppressed: 0,
+      }
+    )
+  }
+  return getJSON<MailStatus>('/api/mail')
 }
