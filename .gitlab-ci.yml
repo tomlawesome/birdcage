@@ -388,6 +388,33 @@ e2e:enrol-and-hit:
   after_script:
     - scripts/e2e/stack.sh down
 
+# The same journeys against the other engine birdcage ships. Separate
+# job rather than a matrix entry so a Postgres-only failure is named as
+# one in the pipeline, and so the SQLite run -- the common case -- is
+# not held up behind the slower one.
+e2e:enrol-and-hit:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/enrol-and-hit.sh
+    - scripts/e2e/refusals.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
 # ---------------------------------------------------------------------------
 # SYNC -- mirror the three delivery branches to GitHub after a merge.
 # `needs: []`: the mirror reflects the branch, not the pipeline. Never

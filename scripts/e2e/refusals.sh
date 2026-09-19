@@ -119,12 +119,11 @@ esac
 # And the reason birdcage recorded: ingest.client_cert_mismatch names
 # both the canary the token resolved to and the CN that was presented.
 #
-# Read straight out of the SQLite file, because there is no API for the
-# audit log yet. A Postgres run (E2E_DATABASE_URL) needs this one query
-# moved to psql, which is why it refuses rather than quietly skipping.
-[ -z "${E2E_DATABASE_URL:-}" ] \
-  || fail "this step reads the audit log out of SQLite; point it at Postgres before setting E2E_DATABASE_URL"
-audit="$(helper "set -eu; cp /data/birdcage.db /tmp/db; sqlite3 /tmp/db \"select reason from audit_log where action = 'ingest.client_cert_mismatch' order by id desc limit 1\"")" \
+# There is no API for the audit log yet, so this reads the database
+# directly -- through
+# `stack.sh query`, which speaks to whichever engine is underneath, so
+# this step proves itself on Postgres as well as SQLite.
+audit="$("$E2E_STACK" query "select reason from audit_log where action = 'ingest.client_cert_mismatch' order by id desc limit 1")" \
   || fail "could not read the audit log: $audit"
 case "$audit" in
   *"$E2E_CANARY_ID"*"$other"*) ok "audited: $audit" ;;

@@ -39,20 +39,16 @@
 #     see run_printed_command below for the three things the test
 #     environment forces us to change and why.
 #
-# Storage is SQLite. E2E_DATABASE_URL is the seam for Postgres: set it
-# and the value reaches the container as DATABASE_URL, which is the
-# only birdcage-side change Postgres needs. Three things are still
-# missing before a Postgres run works end to end, and none is in this
-# slice:
+# Storage is either engine the product ships. E2E_BACKEND=postgres
+# starts a Postgres on the stack's network and points birdcage at it;
+# the default is SQLite. E2E_DATABASE_URL overrides both and aims the
+# stack at a server somebody else is running.
 #
-#   - a Postgres container on $NET, started before birdcage and torn
-#     down by `down` with everything else;
-#   - waiting for it the way test:go does -- ask the server with
-#     pg_isready, never just the port, because Postgres listens
-#     briefly during its own init and then restarts;
-#   - refusals.sh's one audit-log query, which reads the SQLite file
-#     directly (there is no API for the audit log yet) and refuses
-#     outright when E2E_DATABASE_URL is set rather than skipping.
+# Journeys never ask which engine is underneath: anything they cannot
+# reach through the API goes through `stack.sh query`, which speaks to
+# whichever one is there. That is deliberate -- a journey written
+# against SQLite proves nothing about Postgres, which is how a project
+# ends up saying it supports an engine it only compiles against.
 set -eu
 
 E2E_PREFIX="${E2E_PREFIX:-birdcage-e2e}"
@@ -64,6 +60,7 @@ HELPER_IMAGE="$E2E_PREFIX-helper"
 DATA_VOL="$E2E_PREFIX-data"
 TLS_VOL="$E2E_PREFIX-tls"
 WORK_VOL="$E2E_PREFIX-work"
+PG="$E2E_PREFIX-postgres"
 STATE_VOL="$E2E_PREFIX-state"
 LOG_VOL="$E2E_PREFIX-log"
 
@@ -73,6 +70,17 @@ LOG_VOL="$E2E_PREFIX-log"
 # (E2E_BIRDCAGE_IMAGE=birdcage:local) never deletes it.
 BIRDCAGE_IMAGE="${E2E_BIRDCAGE_IMAGE:-$E2E_PREFIX-birdcage-image}"
 MOCKINGBIRD_IMAGE="${E2E_MOCKINGBIRD_IMAGE:-$E2E_PREFIX-mockingbird-image}"
+
+# E2E_BACKEND picks the database: sqlite (the default) or postgres.
+# Postgres is not an exotic variant to get to later -- it is one of the
+# two engines the product ships, migrations behave differently on it,
+# and a journey that only ever ran on SQLite has not tested it. `up`
+# starts the server itself, so a caller says E2E_BACKEND=postgres and
+# nothing else.
+#
+# E2E_DATABASE_URL still works and wins: it points the stack at a
+# Postgres somebody else is running.
+E2E_BACKEND="${E2E_BACKEND:-sqlite}"
 
 # The canary name and lane journey 1 asserts on.
 CANARY_NAME="${E2E_CANARY_NAME:-e2e-canary}"
@@ -165,6 +173,34 @@ chown 1000:1000 /tls/server.pem /tls/server-key.pem /tls/dashboard-ca.pem
 chmod 644 /tls/server.pem /tls/dashboard-ca.pem
 chmod 600 /tls/server-key.pem
 " || die "generating the throwaway dashboard CA and leaf failed"
+}
+
+# start_postgres runs the second engine the product supports.
+#
+# Plain postgres:18-alpine with no TLS, unlike mikroview's equivalent,
+# because birdcage does not currently refuse a plaintext connection to
+# its database -- see the note in `up`. Nothing here should be read as
+# saying that is right.
+start_postgres() {
+  docker run --detach --name "$PG" --network "$NET" \
+    --env POSTGRES_PASSWORD=e2e --env POSTGRES_DB=birdcage \
+    --pids-limit 128 --memory 512m \
+    postgres:18-alpine >/dev/null || die "starting $PG failed"
+
+  # pg_isready, not a port check: Postgres accepts connections on 5432
+  # well before it will answer a query, and a port check hands over a
+  # server that then refuses the first migration.
+  local attempt
+  for attempt in $(seq 1 60); do
+    if docker exec "$PG" pg_isready -U postgres -d birdcage >/dev/null 2>&1; then
+      log "postgres ready on attempt $attempt"
+      return 0
+    fi
+    sleep 1
+  done
+  log "postgres never became ready; its log follows"
+  docker logs "$PG" >&2 || true
+  die "postgres did not become ready"
 }
 
 start_birdcage() {
@@ -330,6 +366,10 @@ up() {
   done
 
   generate_tls
+  if [ "$E2E_BACKEND" = postgres ] && [ -z "${E2E_DATABASE_URL:-}" ]; then
+    start_postgres
+    E2E_DATABASE_URL="postgres://postgres:e2e@$PG:5432/birdcage?sslmode=disable"
+  fi
   start_birdcage
   copy_birdcage_ca
   enrol_canary
@@ -346,6 +386,7 @@ export E2E_STACK=$REPO_ROOT/scripts/e2e/stack.sh
 export E2E_NET=$NET
 export E2E_BIRDCAGE=$BIRDCAGE
 export E2E_CANARY=$CANARY
+export E2E_BACKEND=$E2E_BACKEND
 export E2E_CANARY_ID=$CANARY_ID
 export E2E_CANARY_NAME=$CANARY_NAME
 export E2E_CANARY_LANE=$CANARY_LANE
@@ -358,6 +399,7 @@ EOF
 down() {
   docker rm --force "$CANARY" >/dev/null 2>&1 || true
   docker rm --force "$BIRDCAGE" >/dev/null 2>&1 || true
+  docker rm --force "$PG" >/dev/null 2>&1 || true
   local vol
   for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true
@@ -380,6 +422,24 @@ case "${1:-}" in
   logs) shift; docker logs "${1:-$BIRDCAGE}" 2>&1 ;;
   helper) shift; helper "$@" ;;
   birdcage) shift; docker exec "$BIRDCAGE" /birdcage "$@" ;;
+  # query runs one read-only SQL statement against whichever engine is
+  # underneath and prints the rows, so a journey asserting on something
+  # with no API -- the audit log, today -- reads the same on both.
+  # Without this a journey silently only ever proves itself on SQLite,
+  # which is how "we support Postgres" turns out to mean "we compile
+  # against it".
+  query)
+    shift
+    [ $# -eq 1 ] || die "usage: $0 query <sql>"
+    if [ "$E2E_BACKEND" = postgres ] || [ -n "${E2E_DATABASE_URL:-}" ]; then
+      docker exec "$PG" psql -U postgres -d birdcage -At -c "$1" \
+        || die "the query failed against postgres"
+    else
+      # Copied first: the database is open in the birdcage container
+      # and sqlite3 would otherwise take a lock on a live file.
+      helper "set -eu; cp /data/birdcage.db /tmp/db; sqlite3 /tmp/db \"$1\"" \
+        || die "the query failed against sqlite"
+    fi ;;
   # write-work reads stdin into the work volume, so a journey can park
   # something a container needs to read without it ever reaching the
   # host filesystem (under a remote docker socket there is no shared
@@ -391,6 +451,6 @@ case "${1:-}" in
     case "$1" in */*|"") die "write-work takes a bare file name, not a path" ;; esac
     helper_in "cat > /work/$1; chmod 600 /work/$1" ;;
   *)
-    echo "usage: $0 {up|down|logs [container]|helper <sh command>|birdcage <args>|write-work <name>}" >&2
+    echo "usage: $0 {up|down|logs [container]|helper <sh command>|birdcage <args>|query <sql>|write-work <name>}" >&2
     exit 2 ;;
 esac
