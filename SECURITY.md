@@ -58,6 +58,18 @@ This section is rewritten route-by-route when #8 lands.
   may issue `UPDATE`/`DELETE` against it. This is what makes "birdcage took
   automated action" reviewable and reversible rather than a black box --
   see [ADR-0001](docs/adr/0001-stack-and-storage.md).
+- **Canary state history (`canary_state_periods`, issue #56) is written
+  only by birdcage's own recorder** (`internal/history`), never from a
+  request path, and only from signals that have already been
+  authenticated and derived into a health state (`internal/store/health.go`)
+  -- an operator or an enrolled canary cannot write a row directly, only
+  cause one indirectly by behaving in a way birdcage already classifies.
+  A 10-minute collapse window folds a rapidly re-entered state into its
+  existing row instead of a new one, bounding how many rows an attacker
+  who can pace a signal (crossing the ingest rate limit repeatedly, say)
+  can make birdcage write. A gap in which birdcage itself was not
+  running is recorded as its own "unobserved" span rather than left to
+  read as a healthy period the dashboard never actually watched.
 
 ## Output escaping
 
