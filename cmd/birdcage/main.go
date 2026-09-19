@@ -88,14 +88,12 @@ type serviceResult struct {
 }
 
 func main() {
-	// #71's ratified startup order: level first, so nothing logged below
-	// this line is ever silently dropped or shown by mistake at the
-	// wrong threshold; the banner immediately after, unconditionally --
-	// including ahead of the `canary`/`settings` one-shot CLI modes
-	// below, matching the decision as written rather than mikroview's
-	// own "server-start path only" carve-out for PrintBanner.
+	// Level first, so nothing logged below this line is ever silently
+	// dropped or shown at the wrong threshold. The banner waits for the
+	// server-start path: it exists to mark a restart in `docker logs`,
+	// and a one-shot `birdcage canary enrol` whose output the operator
+	// is about to paste must not be buried under it.
 	logging.SetLevel(os.Getenv(envLogLevel))
-	logging.PrintBanner()
 
 	canaryLog := logging.New("canary")
 	settingsLog := logging.New("settings")
@@ -161,6 +159,8 @@ func main() {
 		}
 		return
 	}
+
+	logging.PrintBanner()
 
 	// Component loggers for the real server-start path below -- one per
 	// subsystem, so `docker logs | grep ingest` (or config, db, http)
