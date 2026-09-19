@@ -301,6 +301,123 @@ not running sends nothing, including a message about not running. If
 that matters to you, your own monitoring has to watch birdcage from
 outside it.
 
+## Approval mailbox
+
+An agent only upgrades itself when the administrator has approved it by
+replying to birdcage's summary email, and every agent checks that
+reply's DKIM signature for itself -- see
+[ADR-0007](adr/0007-upgrade-approval-signed-email-and-published-checksums.md).
+This is where birdcage collects those replies.
+
+It is off unless you configure it, and nothing else about birdcage
+changes if you leave it off. In this release nothing is applied either:
+birdcage records what arrived and what it made of it, and the upgrade
+command itself is still unmintable.
+
+| Variable | Required | What it is |
+| --- | --- | --- |
+| `BIRDCAGE_APPROVAL_IMAP_HOST` | yes | Your IMAP server, as `imap.example.net` or `imap.example.net:993`. |
+| `BIRDCAGE_APPROVAL_IMAP_USERNAME` | yes | The IMAP username. |
+| `BIRDCAGE_APPROVAL_IMAP_PASSWORD_FILE` | one of the two | Path to a file containing the password. **Preferred** -- see below. |
+| `BIRDCAGE_APPROVAL_IMAP_PASSWORD` | one of the two | The password itself. |
+| `BIRDCAGE_APPROVAL_IMAP_MAILBOX` | no | Which mailbox to read. Defaults to `INBOX`. |
+
+### All of them, or none of them
+
+Set none and the mailbox is off. Set any one and every required one must
+be set and valid, or birdcage refuses to start and names the variable you
+need to fix -- the same rule, for the same reason, as ["Outbound
+mail"](#outbound-mail) above.
+
+The same check covers the values themselves: the host must parse, its
+port must be a real port, and no value may contain a line break or a
+control character. IMAP is a line protocol, so a newline in the username
+or the mailbox name would be a command of whoever chose it.
+
+### Port 993, and nothing else
+
+The connection is TLS from the first byte, which is what port 993 is
+for, so the port is filled in for you if you leave it out. There is no
+STARTTLS option here, unlike outbound mail: submission genuinely splits
+across 465 and 587, and IMAP does not.
+
+**There is no plaintext mode, and no way to skip certificate
+verification.** Neither has a switch. This credential reads the mailbox
+that authorises upgrades, and accepting any certificate would hand it to
+anything sitting on the network path.
+
+### Prefer the password file
+
+`BIRDCAGE_APPROVAL_IMAP_PASSWORD_FILE` is the recommended one, for the
+reason given under ["Prefer the password
+file"](#prefer-the-password-file) above: an environment variable is
+readable by anything that can look at `/proc/<pid>/environ` and is
+inherited by every process birdcage starts. In Docker Compose:
+
+```yaml
+services:
+  birdcage:
+    environment:
+      BIRDCAGE_APPROVAL_IMAP_HOST: imap.example.net
+      BIRDCAGE_APPROVAL_IMAP_USERNAME: birdcage@example.net
+      BIRDCAGE_APPROVAL_IMAP_PASSWORD_FILE: /run/secrets/birdcage_imap_password
+    secrets:
+      - birdcage_imap_password
+
+secrets:
+  birdcage_imap_password:
+    file: ./secrets/imap-password
+```
+
+Set both and the file wins, with a `WARN` saying so. The file must be
+readable by the user birdcage runs as and must not be empty; either way
+it refuses to start, naming the path and this process's uid and gid.
+One trailing newline is trimmed.
+
+### What a poll does
+
+Once a minute birdcage logs in, looks for unread messages whose subject
+contains `[birdcage `, downloads them, checks each one, and marks it
+read. Everything is bounded, because anyone who learns the address can
+put a message in that mailbox: fifty messages a poll, one megabyte a
+message, sixty seconds for the whole poll. A message over the size limit
+is marked read and skipped without being downloaded, so it cannot block
+the mailbox.
+
+A message is only marked read once birdcage has successfully written
+down what it made of it. If the database is unavailable the message
+stays unread and the next poll picks it up again.
+
+### Checking your provider's signatures
+
+Whether this works at all depends on your mail provider signing what you
+send. Save one of your own replies as a `.eml` file and run:
+
+```
+birdcage approval check reply.eml
+```
+
+It runs exactly the checks an agent runs and tells you in plain words
+what passed and the first thing that did not. Two things are relaxed,
+and the output says so: it accepts a message up to thirty days old
+rather than an hour, and it does not object to a message it has seen
+before, because re-reading a saved file is the point.
+
+Set the administrator's address first, or there is nothing to check
+against:
+
+```
+birdcage settings set admin_approval_address you@example.net
+```
+
+One thing worth knowing before you pin an address: the signature has to
+come from that address's own domain. If you are `you@mail.example.net`
+but your provider signs with `example.net`, pin the address whose domain
+matches what they sign with. birdcage will not accept a parent domain,
+because working out which parent is legitimate needs a list of every
+domain registry's rules, and getting that wrong would let anyone at the
+same registry approve your upgrades.
+
 ## Other environment variables
 
 See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
