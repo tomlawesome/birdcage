@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 	"github.com/tomlawesome/birdcage/internal/agent/probe"
+	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/selftest"
+)
+
+var (
+	commandLog  = logging.New("command")
+	selftestLog = logging.New("selftest")
 )
 
 // commandPollInterval and commandPollJitter are #48 decision 3, ratified
@@ -54,9 +59,9 @@ func runCommandPollLoop(ctx context.Context, c *client.Client, ts *TokenStore, r
 		})
 		if err != nil {
 			if client.IsUnauthorized(err) {
-				log.Printf("command poll: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+				commandLog.Warn("poll: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
 			} else {
-				log.Printf("command poll: failed, will retry next cycle: %v", err)
+				commandLog.Warn(fmt.Sprintf("poll: failed, will retry next cycle: %s", safeErr(err)))
 			}
 			continue
 		}
@@ -69,7 +74,7 @@ func runCommandPollLoop(ctx context.Context, c *client.Client, ts *TokenStore, r
 		case <-ctx.Done():
 			return
 		default:
-			log.Printf("command runner: buffer full, dropping newest command %s (%s) -- birdcage re-mints from observed state", cmd.ID, cmd.Kind)
+			commandLog.Warn(fmt.Sprintf("runner: buffer full, dropping newest command %s (%s) -- birdcage re-mints from observed state", cmd.ID, cmd.Kind))
 		}
 	}
 }
@@ -96,7 +101,7 @@ func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
 			return
 		case cmd := <-run:
 			if err := runCommand(ctx, cmd); err != nil {
-				log.Printf("command %s (%s): refused, executing nothing: %v", cmd.ID, cmd.Kind, err)
+				commandLog.Warn(fmt.Sprintf("%s (%s): refused, executing nothing: %s", cmd.ID, cmd.Kind, safeErr(err)))
 			}
 		}
 	}
@@ -151,14 +156,14 @@ func runSelfTest(ctx context.Context, cmd *client.Command) error {
 			ok++
 		case probe.StatusFailed:
 			failed++
-			log.Printf("selftest %s: target %s:%d failed: %v", params.RunID, o.Service, o.DestPort, o.Err)
+			selftestLog.Warn(fmt.Sprintf("%s: target %s:%d failed: %s", params.RunID, o.Service, o.DestPort, safeErr(o.Err)))
 		case probe.StatusNoCarrier:
 			noCarrier++
 		case probe.StatusNotProbeable:
 			notProbeable++
 		}
 	}
-	log.Printf("command %s: selftest %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
-		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes))
+	selftestLog.Info(fmt.Sprintf("command %s: %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
+		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes)))
 	return nil
 }

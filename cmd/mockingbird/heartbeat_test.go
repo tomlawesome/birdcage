@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"log"
 	"strings"
 	"testing"
 
@@ -48,23 +46,21 @@ func TestSendHeartbeatStoresReport(t *testing.T) {
 // fail-closed rule for a dead token: "log loudly ... keep every loop
 // running." With no rotation happening concurrently, TokenStore's value
 // is unchanged on authedRetry's re-check, so this is the "current token
-// itself is refused" branch -- captured here by redirecting the standard
-// logger and checking the loud message actually printed, since
+// itself is refused" branch -- captured here by redirecting os.Stdout
+// (internal/logging's component loggers write there, see
+// captureStdout) and checking the loud message actually printed, since
 // sendHeartbeat itself must not panic or block on this path.
 func TestSendHeartbeatPersistentUnauthorizedLogsLoudly(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		c, _ := newIngestServer(t, database)
 		ts := &TokenStore{current: "not-a-real-token"}
 
-		var buf bytes.Buffer
-		orig := log.Writer()
-		log.SetOutput(&buf)
-		defer log.SetOutput(orig)
+		out := captureStdout(t, func() {
+			sendHeartbeat(ctx(), c, ts, func() client.SelfReport { return client.SelfReport{} })
+		})
 
-		sendHeartbeat(ctx(), c, ts, func() client.SelfReport { return client.SelfReport{} })
-
-		if !strings.Contains(buf.String(), "re-enrolment") {
-			t.Fatalf("log output = %q, want a loud re-enrolment message", buf.String())
+		if !strings.Contains(out, "re-enrolment") {
+			t.Fatalf("log output = %q, want a loud re-enrolment message", out)
 		}
 	})
 }

@@ -118,15 +118,21 @@ func loadConfig() (Config, error) {
 	cfg.TokenPath = filepath.Join(cfg.StateDir, tokenFileName)
 	cfg.PositionPath = filepath.Join(cfg.StateDir, positionFileName)
 
+	// safeErr, not a bare %w: os.ReadFile's own error names the full
+	// path it failed on, which here is always something under StateDir
+	// -- one of the values this agent must never log (see safelog.go).
+	// %s of the filename alone already tells an operator which file;
+	// safeErr keeps the underlying reason (permission denied, not
+	// found, ...) without the path.
 	var err error
 	if cfg.CACert, err = os.ReadFile(filepath.Join(cfg.StateDir, caFileName)); err != nil {
-		return Config{}, fmt.Errorf("read %s: %w", caFileName, err)
+		return Config{}, fmt.Errorf("read %s: %s", caFileName, safeErr(err))
 	}
 	if cfg.ClientCert, err = os.ReadFile(filepath.Join(cfg.StateDir, clientCertFileName)); err != nil {
-		return Config{}, fmt.Errorf("read %s: %w", clientCertFileName, err)
+		return Config{}, fmt.Errorf("read %s: %s", clientCertFileName, safeErr(err))
 	}
 	if cfg.ClientKey, err = os.ReadFile(filepath.Join(cfg.StateDir, clientKeyFileName)); err != nil {
-		return Config{}, fmt.Errorf("read %s: %w", clientKeyFileName, err)
+		return Config{}, fmt.Errorf("read %s: %s", clientKeyFileName, safeErr(err))
 	}
 
 	return cfg, nil

@@ -120,3 +120,23 @@ BIRDCAGE_INTERNAL_RANGES=100.64.0.0/10,203.0.113.0/24
 Unset (the common case) adds nothing beyond the built-in defaults. An
 invalid entry stops birdcage at startup with an error naming the bad CIDR,
 rather than silently ignoring it.
+
+### `BIRDCAGE_LOG_LEVEL` / `MOCKINGBIRD_LOG_LEVEL`
+
+Each binary reads its own leveled-logging threshold from its own
+environment variable, case-insensitively:
+
+| Value | Effect |
+| --- | --- |
+| `debug` | Everything, including per-cycle detail. |
+| `info` | Normal operation (the default -- unset or an unrecognized value both fall back to this). |
+| `warn` | Only failures and degraded conditions. |
+| `error` | Only failures that stop a subsystem. |
+
+birdcage (`BIRDCAGE_LOG_LEVEL`) prints a startup banner and a boot
+inventory (what was configured, what was skipped and why) ahead of its
+usual per-request/per-batch lines. Mockingbird (`MOCKINGBIRD_LOG_LEVEL`)
+deliberately prints neither: it runs on the honeypot box itself, so unlike
+birdcage it never logs its own configuration, and its log lines are
+limited to its own startup announcement, connection failures to
+birdcage, and the OpenCanary child process starting or exiting.

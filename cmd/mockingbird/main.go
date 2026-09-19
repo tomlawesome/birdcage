@@ -20,12 +20,29 @@
 // the whole server into the binary that ships to canary boxes (#48's own
 // hard constraint). internal/opencanary exists for whatever this binary
 // needs from that side.
+//
+// Logging (#71): this binary runs on the honeypot, the one machine in
+// this whole system an attacker who compromises the box gets to read
+// stdout/stderr from directly -- so, unlike cmd/birdcage, it never
+// prints a boot banner or a configuration inventory. What it does log
+// through internal/logging's component loggers is deliberately narrow:
+// "started" with its own version, each connection failure to birdcage
+// (the existing lines below), and the OpenCanary child's start/exit.
+// What it must never log, in any component, at any level: the bearer
+// token, any certificate's path or content, the receiver's listen
+// address, the log path, the state directory, or an event body. Every
+// error that could carry one of those (a file or listen-address error
+// from the standard library embeds its path/address verbatim in its own
+// Error() text) goes through safeErr (safelog.go) before it reaches a
+// log line -- see cmd/mockingbird/nolog_test.go for the test that
+// startup path can never regress.
 package main
 
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,7 +51,14 @@ import (
 	"syscall"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
+
+// envLogLevel selects internal/logging's threshold (debug/info/warn/
+// error, case-insensitive; unset or unrecognized falls back to info) --
+// see docs/configuration.md. Named and read the same way cmd/birdcage's
+// own envLogLevel is.
+const envLogLevel = "MOCKINGBIRD_LOG_LEVEL"
 
 // version is stamped at build time (-ldflags "-X main.version=...") --
 // #48's ratified deliverable design, item 1: "Stamped into the binary at
@@ -44,8 +68,8 @@ import (
 var version = "dev"
 
 func main() {
-	log.SetFlags(log.LstdFlags)
-	log.SetPrefix("mockingbird: ")
+	logging.SetLevel(os.Getenv(envLogLevel))
+	mainLog := logging.New("mockingbird")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -53,32 +77,18 @@ func main() {
 		// required input ... is a loud non-zero exit ... a
 		// half-credentialed agent must never half-run." systemd's own
 		// Restart= policy is what retries this, with backoff, rather
-		// than anything in this process looping on its own.
-		log.Fatalf("configuration: %v", err)
+		// than anything in this process looping on its own. safeErr:
+		// loadConfig's own error already names which file by its bare
+		// name (see config.go), but a wrapped os error under it would
+		// otherwise still carry the real StateDir path.
+		mainLog.Error(fmt.Sprintf("configuration: %s", safeErr(err)))
+		os.Exit(1)
 	}
 
-	c, err := client.New(client.Config{
-		BaseURL:    cfg.BirdcageURL,
-		CACert:     cfg.CACert,
-		ClientCert: cfg.ClientCert,
-		ClientKey:  cfg.ClientKey,
-	})
+	c, ts, in, err := boot(cfg, version, mainLog)
 	if err != nil {
-		log.Fatalf("build birdcage client: %v", err)
-	}
-
-	ts, err := loadTokenStore(cfg.TokenPath)
-	if err != nil {
-		log.Fatalf("load token: %v", err)
-	}
-
-	in, err := NewIntake(IntakeConfig{
-		LogPath:      cfg.LogPath,
-		PositionPath: cfg.PositionPath,
-		Listen:       cfg.Listen,
-	})
-	if err != nil {
-		log.Fatalf("build intake: %v", err)
+		mainLog.Error(safeErr(err))
+		os.Exit(1)
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -97,11 +107,12 @@ func main() {
 	// single, synchronous try can drop, even though the log road
 	// recovers it. Everything else follows, log road (tailer) last,
 	// mirroring the note's own ordering exactly.
+	receiverLog := logging.New("receiver")
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := in.Receiver.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("receiver: stopped: %v", err)
+			receiverLog.Warn(fmt.Sprintf("stopped: %s", safeErr(err)))
 		}
 	}()
 	wg.Add(1)
@@ -146,25 +157,27 @@ func main() {
 	// is already listening, so OpenCanary's first webhook attempt finds
 	// it open. With no arguments (os.Args[1:] empty) this is a no-op --
 	// today's behaviour, untouched.
+	childLog := logging.New("child")
 	var childDied atomic.Bool
+	if len(os.Args) > 1 {
+		childLog.Info(fmt.Sprintf("starting %v", os.Args[1:]))
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		runChild(ctx, os.Args[1:], func(err error) {
 			if err != nil {
-				log.Printf("child %v exited: %v", os.Args[1:], err)
+				childLog.Warn(fmt.Sprintf("%v exited: %v", os.Args[1:], err))
 			} else {
-				log.Printf("child %v exited", os.Args[1:])
+				childLog.Info(fmt.Sprintf("%v exited", os.Args[1:]))
 			}
 			childDied.Store(true)
 			cancel()
 		})
 	}()
 
-	log.Printf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL)
-
 	<-ctx.Done()
-	log.Printf("shutting down")
+	mainLog.Info("shutting down")
 	// Queued-but-unsent events are deliberately abandoned here rather
 	// than flushed (#48 decision 1): the acknowledged position never
 	// advanced past them, so the next start re-reads them from the log
@@ -176,6 +189,41 @@ func main() {
 	if childDied.Load() {
 		os.Exit(1)
 	}
+}
+
+// boot builds the birdcage client, token store and intake from cfg, and
+// logs the "started" line -- everything main does before starting its
+// long-lived goroutines. Split out from main so a test (see
+// nolog_test.go) can run exactly this path with a fake config and
+// capture its log output, without also running main's blocking service
+// loops.
+func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *TokenStore, *Intake, error) {
+	c, err := client.New(client.Config{
+		BaseURL:    cfg.BirdcageURL,
+		CACert:     cfg.CACert,
+		ClientCert: cfg.ClientCert,
+		ClientKey:  cfg.ClientKey,
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("build birdcage client: %s", safeErr(err))
+	}
+
+	ts, err := loadTokenStore(cfg.TokenPath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load token: %s", safeErr(err))
+	}
+
+	in, err := NewIntake(IntakeConfig{
+		LogPath:      cfg.LogPath,
+		PositionPath: cfg.PositionPath,
+		Listen:       cfg.Listen,
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("build intake: %s", safeErr(err))
+	}
+
+	logger.Info(fmt.Sprintf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL))
+	return c, ts, in, nil
 }
 
 // currentSelfReport builds the heartbeat's self-report from the real

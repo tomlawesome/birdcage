@@ -5,7 +5,11 @@
 # decision 4.
 #
 # internal/selftest is deliberately allowed: it is the wire contract both
-# ends share, a data-only package, not server logic.
+# ends share, a data-only package, not server logic. internal/logging and
+# internal/term (#71) are allowed for the same reason: leveled-log line
+# formatting and terminal-output escaping, not server logic or CA/key
+# handling -- Mockingbird uses the same log handler birdcage does, just
+# without its banner or configuration inventory.
 set -eu
 
 MODULE=github.com/tomlawesome/birdcage
@@ -15,6 +19,8 @@ ALLOWED="
 $MODULE/cmd/mockingbird
 $MODULE/internal/opencanary
 $MODULE/internal/selftest
+$MODULE/internal/logging
+$MODULE/internal/term
 "
 
 unexpected=$(go list -deps "$CMD" | grep "^$MODULE/" | while read -r pkg; do
@@ -30,7 +36,7 @@ if [ -n "$unexpected" ]; then
   echo "$unexpected" | sed 's/^/  /'
   echo
   echo "Allowed: internal/agent/*, internal/opencanary, internal/selftest,"
-  echo "and the command itself."
+  echo "internal/logging, internal/term, and the command itself."
   exit 1
 fi
 
