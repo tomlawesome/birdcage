@@ -25,6 +25,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/enrol"
+	"github.com/tomlawesome/birdcage/internal/history"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/startcheck"
@@ -137,6 +138,15 @@ const (
 	// to finish once ctx is canceled, so process exit is never blocked
 	// on a client that never goes away.
 	httpShutdownTimeout = 5 * time.Second
+
+	// historyTickInterval is how often internal/history reconciles each
+	// canary's health states against the spans it has open (issue #56).
+	// It is the granularity of every start and end time in that history:
+	// a state is recorded as having begun at the first tick that saw it,
+	// so 30s is the most a span's edges can be wrong by. Cheap enough to
+	// run that often -- a tick is the same query GET /api/canaries
+	// already runs on every dashboard poll, plus one small transaction.
+	historyTickInterval = 30 * time.Second
 )
 
 // serviceResult is what each of the two services below reports once it
@@ -314,6 +324,41 @@ func main() {
 		os.Exit(1)
 	}
 	dbLog.Info(fmt.Sprintf("opened %s database, storing alerts via %s", database.Engine, redactDatabaseURL(databaseURL)))
+
+	// Issue #56's canary state recorder, started as soon as the schema
+	// is in place. Start runs once, before the loop: only it can see the
+	// gap between the last tick this database recorded and now -- the
+	// stretch nothing was watching -- and it writes that down instead of
+	// letting the history read as healthy through an outage.
+	//
+	// Neither a failed start nor a failed tick stops the process. The
+	// dashboard and the ingest listener are what this binary is for, and
+	// neither reads this table; losing a tick costs 30s of precision at
+	// the edge of a span, while exiting would take the whole service
+	// down over bookkeeping. Every failure is logged at ERROR and the
+	// loop carries on.
+	historyLog := logging.New("history")
+	stateRecorder := history.New(database)
+	if err := stateRecorder.Start(ctx, time.Now().UTC()); err != nil {
+		historyLog.Error(fmt.Sprintf("start canary state recorder: %v", err))
+	}
+	go func() {
+		ticker := time.NewTicker(historyTickInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case tick := <-ticker.C:
+				// ctx.Err() == nil keeps a tick canceled by shutdown
+				// itself out of the log: that is the signal arriving
+				// mid-tick, not a failure worth reporting.
+				if err := stateRecorder.Tick(ctx, tick.UTC()); err != nil && ctx.Err() == nil {
+					historyLog.Error(fmt.Sprintf("record canary state history: %v", err))
+				}
+			}
+		}
+	}()
 
 	internalRangesEnv := os.Getenv(envInternalRanges)
 	if internalRangesEnv != "" {
