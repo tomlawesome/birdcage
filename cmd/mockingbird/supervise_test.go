@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,5 +122,44 @@ func TestRunChildEmptyArgvIsNoop(t *testing.T) {
 	}
 	if called {
 		t.Fatal("onExit was called for an empty argv, want it left uncalled")
+	}
+}
+
+// TestChildEnvWithholdsSecrets proves the OpenCanary child never sees
+// the enrolment inputs or birdcage's address (#47, #61): only the
+// variables its config file expands, and what twistd needs to start.
+func TestChildEnvWithholdsSecrets(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"PYTHONPATH=/opt/opencanary",
+		"MOCKINGBIRD_LOG_PATH=/var/log/opencanary/opencanary.log",
+		"MOCKINGBIRD_LISTEN=127.0.0.1:9919",
+		"MOCKINGBIRD_BIRDCAGE_URL=https://birdcage.example:8444",
+		"MOCKINGBIRD_CA_PIN=abc",
+		"MOCKINGBIRD_DEPLOY_TOKEN=secret-deploy-token",
+		"MOCKINGBIRD_STATE_DIR=/var/lib/mockingbird",
+		"SOMETHING_ELSE=1",
+	}
+	got := childEnv(in)
+	want := []string{
+		"PATH=/usr/bin",
+		"PYTHONPATH=/opt/opencanary",
+		"MOCKINGBIRD_LOG_PATH=/var/log/opencanary/opencanary.log",
+		"MOCKINGBIRD_LISTEN=127.0.0.1:9919",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("childEnv = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("childEnv[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	for _, kv := range got {
+		for _, forbidden := range []string{"DEPLOY_TOKEN", "CA_PIN", "BIRDCAGE_URL", "STATE_DIR", "secret-deploy-token"} {
+			if strings.Contains(kv, forbidden) {
+				t.Fatalf("child env carries %q: %q", forbidden, kv)
+			}
+		}
 	}
 }

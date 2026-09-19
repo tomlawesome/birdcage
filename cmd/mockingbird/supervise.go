@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -56,7 +57,7 @@ func runChild(ctx context.Context, argv []string, onExit func(error)) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = childEnv(os.Environ())
 
 	if err := cmd.Start(); err != nil {
 		onExit(err)
@@ -82,4 +83,41 @@ func runChild(ctx context.Context, argv []string, onExit func(error)) {
 			<-waitErr
 		}
 	}
+}
+
+// childEnvAllowed is every environment variable the OpenCanary child is
+// handed. Everything else the agent was started with is withheld -- in
+// particular MOCKINGBIRD_DEPLOY_TOKEN, MOCKINGBIRD_CA_PIN and
+// MOCKINGBIRD_BIRDCAGE_URL (#47, #61): OpenCanary is the process that
+// faces the network, and a compromise of one of its modules must not
+// read birdcage's address or a credential out of /proc/self/environ,
+// spent or not. The two MOCKINGBIRD_* names here are the ones
+// build/mockingbird/opencanary.conf expands; PATH/PYTHONPATH/HOME are
+// what twistd needs to start at all;
+// the PYTHON*/SSL_CERT_FILE ones are what build/mockingbird/Dockerfile
+// sets for it.
+var childEnvAllowed = map[string]bool{
+	"PATH":                    true,
+	"PYTHONPATH":              true,
+	"PYTHONUNBUFFERED":        true,
+	"PYTHONDONTWRITEBYTECODE": true,
+	"SSL_CERT_FILE":           true,
+	"HOME":                    true,
+	"LANG":                    true,
+	"TZ":                      true,
+	"MOCKINGBIRD_LOG_PATH":    true,
+	"MOCKINGBIRD_LISTEN":      true,
+}
+
+// childEnv filters environ (KEY=value strings, os.Environ's shape) down
+// to childEnvAllowed.
+func childEnv(environ []string) []string {
+	out := make([]string, 0, len(childEnvAllowed))
+	for _, kv := range environ {
+		key, _, _ := strings.Cut(kv, "=")
+		if childEnvAllowed[key] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
