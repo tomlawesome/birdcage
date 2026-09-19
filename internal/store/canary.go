@@ -83,6 +83,16 @@ type Canary struct {
 	RotationStalledEscalated bool   `json:"rotation_stalled_escalated,omitempty"`
 	TokenConflictForS        *int64 `json:"token_conflict_for_s,omitempty"`
 
+	// ActiveStates is every state active on this canary right now,
+	// worst first by healthStateRank -- the whole set Status names only
+	// the head of. Issue #56's history needs all of it: a canary that
+	// is silent and token-conflicted at once spent that time in two
+	// states, and recording only the worst would lose the other one
+	// exactly while they overlapped. Empty precisely when Status is
+	// "ok" (no state active is what "ok" means), so it is omitted from
+	// the JSON then, like the detail fields above.
+	ActiveStates []string `json:"active_states,omitempty"`
+
 	Hits int64 `json:"hits"`
 }
 
@@ -156,7 +166,13 @@ func portsDisplay(raw string) string {
 // DefaultHeartbeatIntervalS; c.EnrolledAt must be set by the caller
 // (time.Now().UTC() in practice) since InsertCanary does not default it,
 // matching internal/audit.Append's stance on CreatedAt.
-func InsertCanary(ctx context.Context, database *db.DB, c Canary) error {
+//
+// database is db.Conn, not *db.DB (issue #47 slice 3): store.Provision
+// calls this from inside its own transaction, the same reason
+// MintCanaryToken and audit.Append already take the narrower interface.
+// Every existing caller passes a *db.DB, which satisfies db.Conn
+// unchanged.
+func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	interval := c.HeartbeatIntervalS
 	if interval <= 0 {
 		interval = DefaultHeartbeatIntervalS

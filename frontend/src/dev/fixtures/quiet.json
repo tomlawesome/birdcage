@@ -152,5 +152,13 @@
       "service": "telnet",
       "kind": "touch"
     }
+  },
+  "mail": {
+    "configured": false,
+    "last_sent_at": null,
+    "failing_since": null,
+    "last_error": null,
+    "pending": 0,
+    "suppressed": 0
   }
 }

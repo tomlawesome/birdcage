@@ -1,74 +1,33 @@
 package ingest
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/ca"
 )
 
-// generateSelfSignedCert writes a throwaway self-signed certificate and
-// key (PEM) into dir, for tests that need something on disk for
-// NewTLSServer to load. Not a stand-in for #47's enrolment CA -- purely
-// a fixture, never used against a real network.
-func generateSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string) {
+// newTestCA loads a fresh internal/ca.CA in a throwaway 0700 directory
+// -- the same fixture NewTLSServer's real caller (cmd/birdcage/main.go)
+// produces via ca.Load, standing in here for tests that need a
+// GetCertificate function without a real CA directory on disk.
+func newTestCA(t *testing.T) *ca.CA {
 	t.Helper()
-
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	dir := filepath.Join(t.TempDir(), "ca")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir CA dir: %v", err)
+	}
+	c, _, err := ca.Load(dir, nil)
 	if err != nil {
-		t.Fatalf("generate key: %v", err)
+		t.Fatalf("ca.Load: %v", err)
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "ingest-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("create certificate: %v", err)
-	}
-
-	certFile = filepath.Join(dir, "cert.pem")
-	keyFile = filepath.Join(dir, "key.pem")
-
-	certOut, err := os.Create(certFile)
-	if err != nil {
-		t.Fatalf("create cert file: %v", err)
-	}
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		t.Fatalf("encode certificate: %v", err)
-	}
-	if err := certOut.Close(); err != nil {
-		t.Fatalf("close cert file: %v", err)
-	}
-
-	keyBytes, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	keyOut, err := os.Create(keyFile)
-	if err != nil {
-		t.Fatalf("create key file: %v", err)
-	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
-		t.Fatalf("encode key: %v", err)
-	}
-	if err := keyOut.Close(); err != nil {
-		t.Fatalf("close key file: %v", err)
-	}
-	return certFile, keyFile
+	return c
 }
 
 // TestNewTLSServerPinsHTTP1AndTLS13AndTimeouts checks the server
@@ -77,18 +36,19 @@ func generateSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string)
 // (research #1 and #2). No network handshake is needed to verify these
 // -- they're all fields on the returned *http.Server.
 func TestNewTLSServerPinsHTTP1AndTLS13AndTimeouts(t *testing.T) {
-	certFile, keyFile := generateSelfSignedCert(t, t.TempDir())
+	c := newTestCA(t)
+	getCert := c.ServerCertificateSource([]string{"127.0.0.1"}, time.Hour, 10*time.Minute, nil)
 
-	srv, err := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), certFile, keyFile)
-	if err != nil {
-		t.Fatalf("NewTLSServer: %v", err)
-	}
+	srv := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), getCert, nil)
 
 	if srv.TLSConfig == nil || srv.TLSConfig.MinVersion != tls.VersionTLS13 {
 		t.Errorf("TLSConfig.MinVersion = %v, want tls.VersionTLS13", srv.TLSConfig)
 	}
-	if len(srv.TLSConfig.Certificates) != 1 {
-		t.Errorf("TLSConfig.Certificates has %d entries, want 1", len(srv.TLSConfig.Certificates))
+	if srv.TLSConfig.GetCertificate == nil {
+		t.Error("TLSConfig.GetCertificate is nil")
+	}
+	if srv.TLSConfig.ClientAuth != tls.NoClientCert {
+		t.Errorf("ClientAuth = %v, want tls.NoClientCert when clientCAs is nil", srv.TLSConfig.ClientAuth)
 	}
 	if srv.Protocols == nil || !srv.Protocols.HTTP1() {
 		t.Error("Protocols does not enable HTTP/1.1")
@@ -105,16 +65,76 @@ func TestNewTLSServerPinsHTTP1AndTLS13AndTimeouts(t *testing.T) {
 	}
 }
 
-// TestNewTLSServerRejectsUnloadableCertificate is issue #32's fail-closed
-// rule for listener startup: "TLS certificate or key unloadable -> the
-// ingest listener refuses to start, loudly. No plaintext fallback."
-// NewTLSServer is the point that load happens; returning an error here,
-// rather than a *http.Server a caller might start anyway, is what makes
-// that refusal happen before any socket binds.
-func TestNewTLSServerRejectsUnloadableCertificate(t *testing.T) {
-	dir := t.TempDir()
-	_, err := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), filepath.Join(dir, "missing-cert.pem"), filepath.Join(dir, "missing-key.pem"))
-	if err == nil {
-		t.Fatal("NewTLSServer with unloadable cert/key returned nil error, want an error")
+// TestNewTLSServerWithClientCAsRequiresClientCert is issue #47 slice 3's
+// wiring check: a non-nil clientCAs sets RequireAndVerifyClientCert
+// against that exact pool, rather than merely "some" client auth.
+func TestNewTLSServerWithClientCAsRequiresClientCert(t *testing.T) {
+	c := newTestCA(t)
+	getCert := c.ServerCertificateSource([]string{"127.0.0.1"}, time.Hour, 10*time.Minute, nil)
+	pool := c.Pool()
+
+	srv := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), getCert, pool)
+
+	if srv.TLSConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Errorf("ClientAuth = %v, want tls.RequireAndVerifyClientCert when clientCAs is non-nil", srv.TLSConfig.ClientAuth)
+	}
+	if srv.TLSConfig.ClientCAs != pool {
+		t.Error("ClientCAs is not the pool passed in")
+	}
+}
+
+// TestNewTLSServerServesAgainstCAPool is the end-to-end check that the
+// listener's GetCertificate wiring actually works: an http.Client
+// trusting the CA succeeds, and one that doesn't fails verification --
+// #47 slice 1's replacement for the old on-disk cert/key fixture test.
+func TestNewTLSServerServesAgainstCAPool(t *testing.T) {
+	c := newTestCA(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
+
+	host, _, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split host/port: %v", err)
+	}
+
+	getCert := c.ServerCertificateSource([]string{host}, time.Hour, 10*time.Minute, nil)
+	srv := NewTLSServer(ln.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), getCert, nil)
+
+	go func() {
+		_ = srv.ServeTLS(ln, "", "") // returns http.ErrServerClosed on the teardown Close below; nothing to act on
+	}()
+	defer func() { _ = srv.Close() }() // test teardown; nothing left to act on a close error
+
+	url := "https://" + ln.Addr().String() + "/"
+
+	trustingClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: c.Pool()},
+		},
+		Timeout: 5 * time.Second,
+	}
+	resp, err := trustingClient.Get(url)
+	if err != nil {
+		t.Fatalf("GET with trusted pool: %v", err)
+	}
+	_ = resp.Body.Close() // test teardown; nothing left to act on a close error
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	distrustingClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: x509.NewCertPool()},
+		},
+		Timeout: 5 * time.Second,
+	}
+	if _, err := distrustingClient.Get(url); err == nil {
+		t.Fatal("GET without the CA pool succeeded, want a verification error")
 	}
 }

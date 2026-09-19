@@ -106,3 +106,71 @@ export interface TraceResponse {
   canaries: TraceCanary[]
   last_hit: LastHit | null
 }
+
+/** What a canary's history remembers: CanaryStatus's five unhealthy
+ * states, plus 'unobserved' -- birdcage itself was not watching, which
+ * is neither a fault of the canary's nor a clean bill of health. */
+export type HistoryState =
+  | 'token_conflict'
+  | 'silent'
+  | 'not_delivering'
+  | 'throttled'
+  | 'rotation_stalled'
+  | 'unobserved'
+
+/** Why a period ended: the state cleared, a quiet period covered it, or
+ * birdcage stopped watching. null while the period is still open. */
+export type HistoryEndReason = 'cleared' | 'quiet_period' | 'unobserved'
+
+/** One unbroken run of a state (issue #56). `ended_at` null means the
+ * period is still open and runs to the response's `until`; flap_count
+ * above 1 counts re-entries within ten minutes, collapsed into this one
+ * span rather than drawn as a row of slivers. */
+export interface HistoryPeriod {
+  canary_id: string
+  canary_name: string
+  state: HistoryState
+  started_at: string
+  ended_at: string | null
+  flap_count: number
+  end_reason: HistoryEndReason | null
+}
+
+/** Per canary and state, the window's totals -- a row's one-line summary
+ * is written from these, never counted off the periods (a period clipped
+ * by the window edge would otherwise be counted at the wrong length). */
+export interface HistorySummary {
+  canary_id: string
+  canary_name: string
+  state: HistoryState
+  count: number
+  longest_s: number
+  total_s: number
+}
+
+/** GET /api/mail (issue #55): whether outbound mail is configured, and
+ * how the sending itself is going. Nothing here is a credential or
+ * derived from one -- no host, no username, no address.
+ *
+ * `failing_since` is the created_at of the oldest message still owed
+ * that has actually been tried, and `last_error` is that same message's
+ * error, so the two always describe one failure. `suppressed` is how
+ * many alerts birdcage's own rate limits deliberately did not send;
+ * they are reported on the next message that does go out, never
+ * dropped. */
+export interface MailStatus {
+  configured: boolean
+  last_sent_at: string | null
+  failing_since: string | null
+  last_error: string | null
+  pending: number
+  suppressed: number
+}
+
+export interface HistoryResponse {
+  range: Range
+  since: string
+  until: string
+  periods: HistoryPeriod[]
+  summary: HistorySummary[]
+}

@@ -1,8 +1,13 @@
-# ADR-0003: Birdcage is a sidecar to mikroview
+# ADR-0003: Birdcage is a separate app beside mikroview, not merged into it
 
-**Status:** Accepted; amended by ADR-0005 (2026-09-13): the auth and token
-models below are delivered by the shared module `gauntlet`, not by code
-copied into birdcage.
+**Status:** Accepted; amended twice. ADR-0005 (2026-09-13): the auth and
+token models below are delivered by the shared module `gauntlet`, not by
+code copied into birdcage. [ADR-0008](0008-container-only-distribution-and-two-images.md)
+(2026-09-18): birdcage is *not* deployed in mikroview's compose stack --
+it ships as two container images of its own and is deployed
+independently. The separation this ADR decides is unchanged; only the
+co-location is. The filename keeps the word "sidecar" as a historical
+identifier so existing links still resolve.
 **Date:** 2026-09-12
 
 ## Context
@@ -33,8 +38,10 @@ separate mux; per-device ingest tokens). See mikroview `SECURITY.md`,
 ## Decision
 
 1. **Sidecar, not merge.** Birdcage stays its own repository, binary,
-   container, database and port. It is deployed alongside mikroview in the
-   same compose stack. Neither app is required for the other to run.
+   container, database and port. Neither app is required for the other to
+   run. *Amended by ADR-0008 (2026-09-18): the original "deployed
+   alongside mikroview in the same compose stack" is withdrawn --
+   birdcage has its own deployment, as two container images.*
 
 2. **The two apps talk only through API keys.** Birdcage holds a mikroview
    read-only API token and calls the bounded IP+time lookback query

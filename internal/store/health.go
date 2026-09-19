@@ -216,10 +216,11 @@ func rotationSignal(ctx context.Context, database *db.DB, canaryID string, now t
 // applyHealthState computes c's ordered HealthState (issue #45) from the
 // silent/ok status applyStatus already derived, plus the throttled,
 // not-delivering, rotation-stalled and token-conflict signals passed in.
-// c.Status is overwritten with the worst active state's string value;
-// every other active signal's own detail fields are still populated
-// ("one state on the tile, the worst; the rest in its detail" -- issue
-// #45), so a caller that wants to show more than the headline state can.
+// c.ActiveStates is filled with every active state, worst first, and
+// c.Status with the head of that list ("one state on the tile, the
+// worst; the rest in its detail" -- issue #45); every other active
+// signal's own detail fields are still populated, so a caller that
+// wants to show more than the headline state can.
 func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Time, rotationStalled, rotationEscalated bool, rotationSinceS int64, tokenConflictSince *time.Time, now time.Time) {
 	if notDeliveringNow {
 		c.NotDelivering = true
@@ -238,18 +239,34 @@ func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Tim
 		c.TokenConflictForS = &s
 	}
 
-	best := StateOK
-	if c.Status == string(StateSilent) {
-		best = StateSilent
-	}
-	consider := func(state HealthState, active bool) {
-		if active && healthStateRank[state] < healthStateRank[best] {
-			best = state
+	// The full set first, then Status as its head. Issue #45 asked only
+	// for the worst state; #56's history needs every active one, and
+	// deriving the set once here is what stops the recorder growing a
+	// second copy of this precedence to disagree with.
+	active := []HealthState{}
+	add := func(state HealthState, on bool) {
+		if on {
+			active = append(active, state)
 		}
 	}
-	consider(StateTokenConflict, tokenConflictSince != nil)
-	consider(StateNotDelivering, notDeliveringNow)
-	consider(StateThrottled, throttledSince != nil)
-	consider(StateRotationStalled, rotationStalled)
-	c.Status = string(best)
+	// applyStatus has already run, so c.Status carries "silent" or "ok"
+	// at this point -- silent is one of the states, not a separate axis.
+	add(StateSilent, c.Status == string(StateSilent))
+	add(StateTokenConflict, tokenConflictSince != nil)
+	add(StateNotDelivering, notDeliveringNow)
+	add(StateThrottled, throttledSince != nil)
+	add(StateRotationStalled, rotationStalled)
+	sort.SliceStable(active, func(i, j int) bool {
+		return healthStateRank[active[i]] < healthStateRank[active[j]]
+	})
+
+	c.ActiveStates = nil
+	c.Status = string(StateOK)
+	if len(active) > 0 {
+		c.ActiveStates = make([]string, len(active))
+		for i, state := range active {
+			c.ActiveStates[i] = string(state)
+		}
+		c.Status = c.ActiveStates[0]
+	}
 }

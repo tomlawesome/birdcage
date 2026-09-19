@@ -98,6 +98,31 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 			return
 		}
 
+		// Mutual TLS (issue #47 slice 3): a real HTTPS connection through
+		// this package's own NewTLSServer, with clientCAs set (as the
+		// ingest listener's is), always has r.TLS set and a verified
+		// client certificate by the time the handshake completes -- the
+		// server-side ClientAuth setting enforces that before any
+		// request is even read. This check is what ties that certificate
+		// to the bearer token that already resolved above: the
+		// certificate's CommonName (internal/ca.IssueClient's own
+		// convention) must name the same canary. r.TLS == nil is the one
+		// exemption, so every existing handler test built on plain
+		// httptest.NewRequest keeps working unchanged; a plain HTTP
+		// request never reaches a real deployment of this listener in
+		// the first place.
+		if r.TLS != nil {
+			var presentedCN string
+			if len(r.TLS.PeerCertificates) > 0 {
+				presentedCN = r.TLS.PeerCertificates[0].Subject.CommonName
+			}
+			if presentedCN != tok.CanaryID {
+				recordClientCertMismatch(r.Context(), database, now, tok.CanaryID, presentedCN)
+				writeIngestError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+		}
+
 		// Recovered before RecordCanaryTokenUse below overwrites it: nil
 		// here means this is the token's first use (issue #32 slice 5),
 		// the trigger for completeRotation's revoke-every-older-token
@@ -182,6 +207,28 @@ func recordTokenConflictIfSuccessorActive(ctx context.Context, database *db.DB, 
 		CreatedAt:   at,
 	}); err != nil {
 		slog.Error("ingest: record token conflict", "canary", tok.CanaryID, "err", err)
+	}
+}
+
+// recordClientCertMismatch writes ingest.client_cert_mismatch (issue #47
+// slice 3): the bearer token resolved to canaryID, but the TLS
+// connection's client certificate either named a different canary or
+// (presentedCN == "") presented no certificate at all -- unreachable in
+// production against a real ClientAuth: RequireAndVerifyClientCert
+// listener, but defended anyway. Reason names the presented CN, which is
+// a certificate subject, not a secret, so it is safe to log and audit
+// verbatim -- unlike the bearer token or enrolment secret, neither of
+// which this package's audit entries ever include.
+func recordClientCertMismatch(ctx context.Context, database *db.DB, now func() time.Time, canaryID, presentedCN string) {
+	reason := fmt.Sprintf("bearer token resolved to canary %s but the presented client certificate CN was %q", canaryID, presentedCN)
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "ingest.client_cert_mismatch",
+		Target:      canaryID,
+		Reason:      reason,
+		TriggeredBy: canaryID,
+		CreatedAt:   now().UTC(),
+	}); err != nil {
+		slog.Error("ingest: record client cert mismatch", "canary", canaryID, "err", err)
 	}
 }
 
