@@ -155,7 +155,12 @@ func (h *handler) handleHello(w http.ResponseWriter, r *http.Request) {
 		// Design note decision 1: "a second /enrol/hello with a burned
 		// token: uniform refusal plus an audit entry
 		// enrolment.deploy_token_reuse" -- naming the session id, never
-		// the token itself.
+		// the token itself. Logged at WARN as well as audited: #47 "The
+		// flow" step 2, "refused loudly and shown to the operator as
+		// hostile, not as a retry: a lost race *is* the attack
+		// signature" -- an operator watching `docker logs` sees it
+		// without opening the audit trail.
+		h.logger.Warn("enrol: deploy token reused after it was burned; treat as hostile", "session", session.ID, "remote", r.RemoteAddr)
 		if _, err := audit.Append(ctx, h.db, audit.Entry{
 			Action:      "enrolment.deploy_token_reuse",
 			Target:      session.ID,
