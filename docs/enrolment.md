@@ -57,6 +57,15 @@ docker run -d --name mockingbird --restart unless-stopped --init \
 token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 ```
 
+The two `-v` flags are not optional. `mockingbird-state` holds the
+canary's credentials and its place in the log; `mockingbird-log` holds
+OpenCanary's log, which is the event store the agent replays from. Named
+volumes survive `docker rm` and an image upgrade; the anonymous volumes
+Docker would otherwise create do not. Lose the state volume and the
+canary cannot start -- it refuses loudly rather than coming back healthy
+with no credentials -- and has to be enrolled again. Lose the log volume
+and any hits not yet delivered are gone.
+
 Copy the whole `docker run` block and paste it into a shell on the box
 you want to turn into a canary. That's it -- the canary's agent
 (mockingbird) takes it from there: it dials birdcage at the address and
