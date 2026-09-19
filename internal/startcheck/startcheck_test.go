@@ -95,3 +95,55 @@ func assertNamesPathUIDGIDAndFix(t *testing.T, err error, path string) {
 		t.Errorf("error %q does not name both fixes (chown and --user)", msg)
 	}
 }
+
+// TestSecretFileReturnsTheSecret covers issue #55's
+// BIRDCAGE_MAIL_PASSWORD_FILE: readable, non-empty, and with the one
+// trailing newline every editor adds removed -- a password with a
+// newline welded onto the end fails SMTP authentication in a way that
+// looks like a wrong password rather than a formatting mistake. The
+// values below are literal, obviously-fake placeholders.
+func TestSecretFileReturnsTheSecret(t *testing.T) {
+	cases := map[string]string{
+		"not-a-real-password":     "not-a-real-password",
+		"not-a-real-password\n":   "not-a-real-password",
+		"not-a-real-password\r\n": "not-a-real-password",
+		" leading space kept":     " leading space kept",
+		"two\nlines":              "two\nlines",
+	}
+	for contents, want := range cases {
+		path := filepath.Join(t.TempDir(), "secret")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		got, err := SecretFile(path)
+		if err != nil {
+			t.Fatalf("SecretFile(%q): %v", contents, err)
+		}
+		if got != want {
+			t.Errorf("SecretFile(%q) = %q, want %q", contents, got, want)
+		}
+	}
+}
+
+func TestSecretFileRefusesAnEmptyFile(t *testing.T) {
+	for _, contents := range []string{"", "\n"} {
+		path := filepath.Join(t.TempDir(), "secret")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		if _, err := SecretFile(path); err == nil {
+			t.Errorf("SecretFile(%q) succeeded, want a refusal", contents)
+		}
+	}
+}
+
+// A missing file gets the same shape of message every other startcheck
+// refusal does: the path, this process's uid/gid, and the fix.
+func TestSecretFileMissingNamesPathUIDGIDAndFix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist")
+	_, err := SecretFile(path)
+	if err == nil {
+		t.Fatal("SecretFile on a missing file succeeded, want a refusal")
+	}
+	assertNamesPathUIDGIDAndFix(t, err, path)
+}

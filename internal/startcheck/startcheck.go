@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // WritableDir proves dir is writable by this process by creating and
@@ -44,6 +45,35 @@ func ReadableFile(path string) error {
 		return unusable(path, err)
 	}
 	return f.Close()
+}
+
+// SecretFile proves path holds a usable secret and returns it: readable
+// by this process (ReadableFile's check, with the same message) and not
+// empty once a single trailing newline is removed. Used for issue #55's
+// BIRDCAGE_MAIL_PASSWORD_FILE, the preferred way to supply the SMTP
+// password -- a mounted file that only the birdcage uid can read,
+// rather than an environment variable every child process inherits.
+//
+// One trailing newline is trimmed because `printf` and every text
+// editor add one, and a password with a newline welded onto the end
+// fails authentication in a way that looks like a wrong password rather
+// than like a formatting mistake. Nothing else is trimmed: leading or
+// interior whitespace could genuinely be part of a password.
+//
+// The returned value is a credential. It is never logged, and neither
+// is any part of it -- the errors here name the path, never the
+// contents.
+func SecretFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", unusable(path, err)
+	}
+	secret := strings.TrimSuffix(string(b), "\n")
+	secret = strings.TrimSuffix(secret, "\r")
+	if secret == "" {
+		return "", fmt.Errorf("startcheck: %s is empty; it must contain the secret and nothing else", path)
+	}
+	return secret, nil
 }
 
 // unusable formats startcheck's one error shape: the path, this
