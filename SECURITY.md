@@ -196,6 +196,30 @@ only at the point that text is displayed, per surface:
   contact and expired within five minutes regardless -- a copy yields a
   dead credential and a loud audit entry -- so clear the history line if
   you like, but nothing live is recoverable from it.
+  **The one capability the canary holds (issue #65).** The agent watches
+  for port scans itself, from inside the Mockingbird container, because
+  OpenCanary's own port-scan module reads iptables log lines and so needs
+  firewall rules and a root process -- neither of which that image has or
+  should gain. It opens one `AF_PACKET` socket and attaches a kernel
+  packet filter to it before the socket receives anything, so the kernel
+  discards everything except bare TCP SYNs and UDP datagrams: the box is
+  built to attract floods, and that filter is what stops a flood costing
+  a syscall per packet. The privilege for this is `cap_net_raw` and
+  nothing else, carried as a file capability on the binary so the process
+  still runs as uid 65532 with no shell and no route to root; the
+  container is run with `--cap-drop ALL --cap-add NET_RAW`. `CAP_NET_RAW`
+  permits opening raw and packet sockets and nothing further, and the
+  agent only ever reads -- it never sends on that socket. What it can see
+  is every frame arriving on the container's own interfaces; what it
+  cannot see is any other container, the host, or anything off that
+  network segment, and it does not read IPv6, fragmented packets, or
+  packet payloads at all -- only the addresses, ports and TCP flags it
+  needs to tell a connection attempt from a reply. Omitting the
+  capability is supported and safe: detection is off, the agent logs one
+  line saying so, and every hit on an emulated service is still reported.
+  Note that `--security-opt no-new-privileges` makes the kernel ignore
+  file capabilities, so it and port-scan detection are mutually
+  exclusive; see [docs/enrolment.md](docs/enrolment.md) for the trade.
 - **Dashboard HTTPS — never plain HTTP across a network** (issue #63,
   owner decision: "we must never allow the GUI to run without https in
   some form"). `BIRDCAGE_HTTP_ADDR` (default `:8080`) together with

@@ -9,11 +9,20 @@
 // path -- the loopback receiver, the log tailer, the memory queue, the
 // acknowledged-position ledger and the sender that ties them together
 // -- and the command poll/runner into the process skeleton the previous
-// slice built. Eight long-lived goroutines share one cancellation
+// slice built. Nine long-lived goroutines share one cancellation
 // context and one TokenStore: the receiver, the log road (tailer plus
 // its eviction-recovery restart), the sender, the heartbeat, the
-// command poll, the command runner, token rotation, and (#69) the
-// OpenCanary child supervisor.
+// command poll, the command runner, token rotation, (#69) the
+// OpenCanary child supervisor, and (#65) the port-scan road.
+//
+// The port-scan road (#65) is the third way an event reaches the queue,
+// alongside the webhook receiver and the log tailer, and the only one
+// that produces an event nothing else generated: internal/agent/portscan
+// watches this container's own network namespace through a
+// kernel-filtered raw socket and emits an OpenCanary-shaped event when
+// somebody sweeps ports nothing is listening on. It needs CAP_NET_RAW
+// and nothing else; a run without it logs one WARN and carries on with
+// detection off. See portscan.go.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -27,7 +36,12 @@
 // prints a boot banner or a configuration inventory. What it does log
 // through internal/logging's component loggers is deliberately narrow:
 // "started" with its own version, each connection failure to birdcage
-// (the existing lines below), and the OpenCanary child's start/exit.
+// (the existing lines below), the OpenCanary child's start/exit, and
+// (#65) one line saying whether port-scan detection is running. That
+// last one is the nearest thing this binary has to an inventory, and it
+// is deliberately thin: a count of how many ports are treated as
+// listening, never which, and no address beyond the source of a scan
+// that is already on its way to birdcage anyway.
 // What it must never log, in any component, at any level: the bearer
 // token, any certificate's path or content, the receiver's listen
 // address, the log path, the state directory, or an event body. Every
@@ -125,7 +139,18 @@ func main() {
 	pacer := newPacer()
 	commands := make(chan *client.Command, commandRunnerBuffer)
 
-	wg.Add(6)
+	// The port-scan road (#65): the capture socket is opened here, on
+	// the startup path, so an operator who forgot --cap-add NET_RAW sees
+	// one WARN beside the rest of the startup log rather than whenever a
+	// goroutine happened to be scheduled. A nil detector means detection
+	// is off -- disabled, or the capability was missing -- and
+	// runPortscanRoad is then a no-op, so the goroutine count below does
+	// not depend on it.
+	portscanLog := logging.New("portscan")
+	detector, inventory := newPortscanRoad(cfg, in, portscanLog)
+	portscanLog.Info(inventory.line())
+
+	wg.Add(7)
 	go func() {
 		defer wg.Done()
 		runSenderLoop(ctx, c, ts, in, pacer)
@@ -151,6 +176,10 @@ func main() {
 	go func() {
 		defer wg.Done()
 		in.RunLogRoad(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		runPortscanRoad(ctx, detector, portscanLog)
 	}()
 
 	// OpenCanary as mockingbird's child process (#69): the receiver above
