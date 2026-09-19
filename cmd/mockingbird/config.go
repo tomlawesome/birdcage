@@ -31,6 +31,18 @@ const (
 	// OpenCanary's webhook URL to match; loopback-only is enforced where
 	// the receiver actually binds, not duplicated here.
 	envListen = "MOCKINGBIRD_LISTEN"
+	// envCAPin is the SHA-256 fingerprint (lower-case hex) of birdcage's
+	// CA certificate, printed by `birdcage canary enrol` alongside the
+	// deploy token (docs/enrolment.md). #47's first-contact step
+	// (internal/agent/enrol.FirstContact) trusts nothing about
+	// envBirdcageURL's TLS server ahead of time except this.
+	envCAPin = "MOCKINGBIRD_CA_PIN"
+	// envDeployToken is the one-time, five-minute deploy token from the
+	// same `birdcage canary enrol` output. Both this and envCAPin are
+	// read only at boot, only when the state directory holds none of
+	// enrolAtBoot's four state files yet -- see loadConfig -- and are
+	// ignored once enrolment has already happened.
+	envDeployToken = "MOCKINGBIRD_DEPLOY_TOKEN"
 )
 
 // File names inside StateDir. Fixed, not configurable -- #48 decision 6:
@@ -47,7 +59,26 @@ const (
 	caFileName         = "ca.pem"
 	clientCertFileName = "client.pem"
 	clientKeyFileName  = "client-key.pem"
+	// ingestURLFileName, adminApprovalAddressFileName and
+	// releaseAddressFileName are written once, at enrolment
+	// (enrolAtBoot in enrol.go), from POST /enrol/hello's own response --
+	// never configurable, never written any other way. ingestURLFileName
+	// is what loadConfig prefers for Config.BirdcageURL once it exists
+	// (see loadConfig): envBirdcageURL names the enrolment listener,
+	// which is a different address from the ingest listener a canary
+	// talks to for the rest of its life.
+	ingestURLFileName            = "ingest-url"
+	adminApprovalAddressFileName = "admin-approval-address"
+	releaseAddressFileName       = "release-address"
 )
+
+// enrolStateFiles are the four files whose presence loadConfig treats as
+// "this canary is already enrolled" (enrol.go's ensureEnrolled). The three
+// files above are enrolment's own record of what hello returned, written
+// alongside these but not part of the presence test itself -- a state
+// directory could in principle be missing one of those and still be a
+// fully enrolled canary in every way that matters to this check.
+var enrolStateFiles = []string{caFileName, clientCertFileName, clientKeyFileName, tokenFileName}
 
 // Config is every input this agent reads at startup. Every field is
 // required: loadConfig fails loudly rather than defaulting any of them
@@ -115,8 +146,30 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("missing required environment variable(s): %s", strings.Join(missing, ", "))
 	}
 
+	// #47: enrol before anything else reads the state directory, if it
+	// looks like this canary has never been enrolled and a deploy token
+	// was offered to do it with. ensureEnrolled leaves the state
+	// directory untouched (and returns nil) whenever enrolment does not
+	// apply -- already enrolled, or nothing to enrol with either --
+	// so every other case below behaves exactly as it did before this
+	// existed.
+	if err := ensureEnrolled(cfg.StateDir, cfg.BirdcageURL, os.Getenv(envCAPin), os.Getenv(envDeployToken)); err != nil {
+		return Config{}, err
+	}
+
 	cfg.TokenPath = filepath.Join(cfg.StateDir, tokenFileName)
 	cfg.PositionPath = filepath.Join(cfg.StateDir, positionFileName)
+
+	// BaseURL prefers whatever enrolment itself learned the ingest
+	// listener's address to be -- envBirdcageURL, once enrolled, names
+	// the enrolment listener, a different address (#47 "The flow"'s own
+	// distinction between the two). A state directory pre-populated
+	// without this file (the CI image test's own setup, which skips
+	// enrolment entirely) falls back to envBirdcageURL unchanged, the
+	// pre-#47 behavior.
+	if raw, err := os.ReadFile(filepath.Join(cfg.StateDir, ingestURLFileName)); err == nil {
+		cfg.BirdcageURL = strings.TrimSpace(string(raw))
+	}
 
 	// safeErr, not a bare %w: os.ReadFile's own error names the full
 	// path it failed on, which here is always something under StateDir
