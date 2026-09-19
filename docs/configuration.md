@@ -166,6 +166,33 @@ run` command. Default `mockingbird:latest` -- birdcage doesn't publish
 this image anywhere yet (issue #69), so until then an operator builds
 and tags it by hand and points this at whatever they called it.
 
+### `MOCKINGBIRD_CA_PIN` / `MOCKINGBIRD_DEPLOY_TOKEN`
+
+Issue #47's own two enrolment inputs -- the two values `birdcage canary
+enrol` prints into the `docker run` command alongside `MOCKINGBIRD_BIRDCAGE_URL`
+(see [docs/enrolment.md](enrolment.md)). `MOCKINGBIRD_CA_PIN` is birdcage's
+CA certificate's SHA-256 fingerprint (lower-case hex); `MOCKINGBIRD_DEPLOY_TOKEN`
+is the one-time, five-minute deploy token. Mockingbird reads both only at
+startup, and only when its state directory (`MOCKINGBIRD_STATE_DIR`) holds
+none of `ca.pem`, `client.pem`, `client-key.pem` or `token` yet -- when both
+are set in that situation, it enrols before doing anything else: contacts
+`MOCKINGBIRD_BIRDCAGE_URL` (birdcage's enrolment listener, pinned by
+`MOCKINGBIRD_CA_PIN`), then writes everything enrolment hands back into the
+state directory (mode `0600`):
+
+| File | Contents |
+| --- | --- |
+| `ca.pem`, `client.pem`, `client-key.pem`, `token` | Same files a canary needs on every later start (`cmd/mockingbird/config.go`). |
+| `ingest-url` | The ingest listener's own address, which `MOCKINGBIRD_BIRDCAGE_URL` no longer names once enrolled -- preferred over it for every request after enrolment. |
+| `admin-approval-address`, `release-address` | Issue #54's two addresses, as `POST /enrol/hello` returned them. |
+
+Once the state directory already holds all four of `ca.pem`, `client.pem`,
+`client-key.pem` and `token`, both variables are ignored -- Mockingbird logs
+that it is ignoring `MOCKINGBIRD_DEPLOY_TOKEN` (never its value) and boots
+normally. A state directory holding *some* but not all of those four fails
+closed at startup, naming which are missing, rather than guessing whether
+to enrol or to boot.
+
 ### `BIRDCAGE_INTERNAL_RANGES`
 
 `GET /api/visitors` and `GET /api/trace` (issue #35) classify a source as
