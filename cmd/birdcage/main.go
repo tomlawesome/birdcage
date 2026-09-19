@@ -29,6 +29,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/mail"
+	"github.com/tomlawesome/birdcage/internal/mailbox"
 	"github.com/tomlawesome/birdcage/internal/startcheck"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
@@ -233,6 +234,34 @@ func main() {
 		return
 	}
 
+	// `birdcage approval check <file>` (cmd/birdcage/approval.go) is
+	// issue #54's way of trying a real provider's DKIM signature by
+	// hand: a real signed approval cannot be a committed test fixture,
+	// so the only honest way to find out whether an operator's mail
+	// provider satisfies the rules is to run one through the same
+	// verifier the agents use. Like `canary` and `settings` above, it
+	// exits immediately rather than starting the services below.
+	if len(os.Args) > 1 && os.Args[1] == "approval" {
+		approvalLog := logging.New("approval")
+		if len(os.Args) < 3 {
+			approvalLog.Error("usage: birdcage approval check <file.eml>")
+			os.Exit(1)
+		}
+		var err error
+		switch os.Args[2] {
+		case "check":
+			err = runApprovalCheck(os.Args[3:])
+		default:
+			approvalLog.Error(fmt.Sprintf("unknown approval subcommand %q (want check)", os.Args[2]))
+			os.Exit(1)
+		}
+		if err != nil {
+			approvalLog.Error(err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+
 	logging.PrintBanner()
 
 	// Component loggers for the real server-start path below -- one per
@@ -304,6 +333,13 @@ func main() {
 	// surfacing much later inside a failed send.
 	mailLog := logging.New("mail")
 	mailConfig, mailEnabled := loadMailConfig(mailLog)
+
+	// Issue #54: the inbound half, settled in the same place and for
+	// the same reason -- including reading the IMAP password file, so
+	// an unreadable or empty one refuses to start here rather than
+	// surfacing much later inside a failed poll.
+	approvalLog := logging.New("approval")
+	mailboxConfig, mailboxEnabled := loadMailboxConfig(approvalLog)
 
 	// DATABASE_URL, when set, picks the engine (including Postgres);
 	// unset, dbPath (BIRDCAGE_DB_PATH or its default) is passed through
@@ -402,6 +438,40 @@ func main() {
 			}
 		}
 	}()
+
+	// Issue #54's approval mailbox, on a tick of its own rather than
+	// sharing the history loop's: a poll opens a TLS connection to
+	// somebody else's IMAP server and is bounded at 60s, so hanging it
+	// off the 30s loop that records canary state would let a slow mail
+	// provider delay the thing this binary is actually for. Started
+	// only when the mailbox is configured; there is no nil-safe no-op
+	// tick to run otherwise.
+	//
+	// A failed poll is logged and the loop carries on, for the same
+	// reason a failed history tick is: losing a poll costs a minute of
+	// latency on a human's reply, while exiting would take the
+	// dashboard and the ingest listener down over it.
+	if mailboxEnabled {
+		reader := mailbox.New(mailboxConfig, approvalLog)
+		handle := approvalHandler(database, approvalLog)
+		go func() {
+			ticker := time.NewTicker(approvalPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					// ctx.Err() == nil keeps a poll cut short by
+					// shutdown out of the log: that is the signal
+					// arriving mid-poll, not a failure worth reporting.
+					if _, err := reader.Poll(ctx, handle); err != nil && ctx.Err() == nil {
+						approvalLog.Error(fmt.Sprintf("poll the approval mailbox: %v", err))
+					}
+				}
+			}
+		}()
+	}
 
 	internalRangesEnv := os.Getenv(envInternalRanges)
 	if internalRangesEnv != "" {
