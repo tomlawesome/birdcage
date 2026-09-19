@@ -66,17 +66,45 @@ const (
 	unobservedAfter = 90 * time.Second
 )
 
+// TokenConflictHook is called when a token_conflict span is opened or
+// reopened, inside the same transaction as the write that opened it
+// (issue #55). cmd/birdcage installs internal/mail's enqueue here when
+// outbound mail is configured, and leaves it nil when it is not.
+//
+// Being inside the transaction is the whole design. A mail promised
+// about a span that was then rolled back would be an alert about
+// something birdcage has no record of; a span recorded without the mail
+// it was supposed to trigger would be a silence exactly where the
+// operator asked to be woken. An error from the hook rolls the tick
+// back like any other, per this package's "never resolve toward
+// healthy" rule.
+//
+// token_conflict is the only state with a hook, and deliberately the
+// only one: it is the single state whose right response is "go and look
+// at that box now" rather than "it will be on the dashboard in the
+// morning" (issue #45's ranking puts it first for the same reason).
+type TokenConflictHook func(ctx context.Context, tx *db.Tx, canaryID, canaryName string, now time.Time) error
+
 // Recorder reconciles canary_state_periods against the states
 // store.ListCanaries derives. One per process: cmd/birdcage constructs
 // it after the database is open and migrated, calls Start once, then
 // Tick on a ticker.
 type Recorder struct {
-	db *db.DB
+	db              *db.DB
+	onTokenConflict TokenConflictHook
 }
 
-// New returns a Recorder writing to database.
+// New returns a Recorder writing to database, with no hook -- the
+// recorder as it behaved before issue #55, and what every caller that
+// does not send mail wants.
 func New(database *db.DB) *Recorder {
 	return &Recorder{db: database}
+}
+
+// NewWithTokenConflictHook is New plus issue #55's hook. A nil hook is
+// the same as New.
+func NewWithTokenConflictHook(database *db.DB, hook TokenConflictHook) *Recorder {
+	return &Recorder{db: database, onTokenConflict: hook}
 }
 
 // Start is called once at boot, before the tick loop. It reads the last
@@ -200,7 +228,7 @@ func (r *Recorder) reconcile(ctx context.Context, tx *db.Tx, canaries []store.Ca
 			if _, alreadyOpen := openByKey[spanKey{c.ID, state}]; alreadyOpen {
 				continue
 			}
-			if err := r.openOrCollapse(ctx, tx, c.ID, state, now); err != nil {
+			if err := r.openOrCollapse(ctx, tx, c, state, now); err != nil {
 				return err
 			}
 		}
@@ -226,23 +254,44 @@ func (r *Recorder) reconcile(ctx context.Context, tx *db.Tx, canaries []store.Ca
 	return nil
 }
 
-// openOrCollapse starts canaryID's span in state -- either by reopening
-// the span that closed within collapseWindow of now (flap collapse; see
-// the constant's doc comment for why the bound exists) or, if there is
+// openOrCollapse starts c's span in state -- either by reopening the
+// span that closed within collapseWindow of now (flap collapse; see the
+// constant's doc comment for why the bound exists) or, if there is
 // none, by inserting a new one starting at now.
-func (r *Recorder) openOrCollapse(ctx context.Context, tx *db.Tx, canaryID, state string, now time.Time) error {
-	recent, err := store.LatestClosedStatePeriod(ctx, tx, r.db.Engine, canaryID, state, now.Add(-collapseWindow))
+//
+// Either way, a token_conflict span that has just started counts as an
+// alert: issue #55's hook fires on an open and on a reopen alike,
+// because a conflict that stopped and came back inside ten minutes is
+// still a conflict happening now, and the collapse exists to bound row
+// count rather than to decide what is worth telling anybody about. The
+// hook's own rate limits are what stop that becoming a flood.
+//
+// The hook is called on the same tx, so it commits with the span or
+// with neither.
+func (r *Recorder) openOrCollapse(ctx context.Context, tx *db.Tx, c store.Canary, state string, now time.Time) error {
+	recent, err := store.LatestClosedStatePeriod(ctx, tx, r.db.Engine, c.ID, state, now.Add(-collapseWindow))
 	if err != nil {
 		return err
 	}
 	if recent != nil {
-		return store.ReopenStatePeriod(ctx, tx, recent.ID)
-	}
-	return store.OpenStatePeriod(ctx, tx, store.StatePeriod{
-		CanaryID:  canaryID,
+		if err := store.ReopenStatePeriod(ctx, tx, recent.ID); err != nil {
+			return err
+		}
+	} else if err := store.OpenStatePeriod(ctx, tx, store.StatePeriod{
+		CanaryID:  c.ID,
 		State:     state,
 		StartedAt: now,
-	})
+	}); err != nil {
+		return err
+	}
+
+	if r.onTokenConflict == nil || state != string(store.StateTokenConflict) {
+		return nil
+	}
+	if err := r.onTokenConflict(ctx, tx, c.ID, c.Name, now); err != nil {
+		return fmt.Errorf("enqueue token conflict alert for %s: %w", c.ID, err)
+	}
+	return nil
 }
 
 // recordUnobserved writes down the stretch between lastTick and now, in
