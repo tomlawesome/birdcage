@@ -111,6 +111,32 @@ only at the point that text is displayed, per surface:
   an `ingest.client_cert_mismatch` audit entry. The enrolment listener
   (below) does not require one -- a canary has no certificate to present
   until `POST /enrol/provision` issues its first one.
+- **Canary enrolment — HTTPS, default `:8444`** (`BIRDCAGE_ENROL_ADDR`;
+  starts and stops with the ingest listener). Its own `*http.Server`,
+  no client certificate, two routes: `POST /enrol/hello` accepts a
+  deploy token minted by `birdcage canary enrol`, and
+  `POST /enrol/provision` accepts the enrolment secret that call
+  returned. Both credentials are stored only as SHA-256 hashes. A deploy
+  token dies at first contact or five minutes after minting, whichever
+  comes first; the secret is erased from birdcage at provisioning. Every
+  refusal -- unknown, expired, already used -- is the same 401 body, and
+  a replayed deploy token is also logged at WARN and audited as
+  `enrolment.deploy_token_reuse`, because a second use is the signature
+  of a copied command, not a retry. See [docs/enrolment.md](docs/enrolment.md).
+
+  **What enrolment leaves behind (issue #61).** The canary side runs no
+  script and no `curl`: the agent does the whole exchange in memory and
+  writes only its own state directory (mode 0600, uid 65532). The
+  enrolment secret, canary token and client key never appear in a
+  command line, an environment variable, a log line or a temp file, and
+  the OpenCanary child gets a filtered environment that carries none of
+  the agent's inputs. The one accepted exception is the pasted `docker
+  run` line itself: the deploy token sits in the operator's shell
+  history and in `docker inspect` of that container for as long as
+  either exists. What bounds it is that the token is spent at first
+  contact and expired within five minutes regardless -- a copy yields a
+  dead credential and a loud audit entry -- so clear the history line if
+  you like, but nothing live is recoverable from it.
 - **Dashboard HTTP — TCP, default `:8080`** (override with
   `BIRDCAGE_HTTP_ADDR`). No authentication yet --
   [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
