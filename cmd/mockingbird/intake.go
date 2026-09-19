@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -11,8 +11,11 @@ import (
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
 	"github.com/tomlawesome/birdcage/internal/agent/receiver"
 	"github.com/tomlawesome/birdcage/internal/agent/tailer"
+	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/opencanary"
 )
+
+var intakeLog = logging.New("intake")
 
 // Backpressure numbers from #48's process-composition note, decision 2,
 // all marked [contested] there -- documented, tunable implementation
@@ -152,7 +155,10 @@ func (in *Intake) RunLogRoad(ctx context.Context) {
 func (in *Intake) runLogRoadOnce(ctx context.Context) {
 	pos, hasResume, err := in.posStore.Load()
 	if err != nil {
-		log.Printf("intake: load saved position failed, replaying the log from the start: %v", err)
+		// safeErr: PositionStore.Load's own error wraps the position
+		// file's path, which lives inside StateDir -- one of the values
+		// this agent must never log (see safelog.go).
+		intakeLog.Warn(fmt.Sprintf("load saved position failed, replaying the log from the start: %s", safeErr(err)))
 		hasResume = false
 	}
 
@@ -177,7 +183,9 @@ func (in *Intake) runLogRoadOnce(ctx context.Context) {
 	go func() {
 		defer close(done)
 		if _, err := in.tailer.Follow(sessionCtx, pos, hasResume, emit); err != nil && sessionCtx.Err() == nil {
-			log.Printf("intake: tailer.Follow returned unexpectedly: %v", err)
+			// safeErr: a tailer.Follow error can wrap LogPath, which
+			// this agent must never log (see safelog.go).
+			intakeLog.Warn(fmt.Sprintf("tailer.Follow returned unexpectedly: %s", safeErr(err)))
 		}
 	}()
 
@@ -228,7 +236,7 @@ func (in *Intake) handleLogLine(ctx context.Context, ldg *ledger.Ledger, line ta
 		// oversize line from ever reaching emit). Nothing computable to
 		// queue or append; #48 never interprets a line beyond locating
 		// this byte.
-		log.Printf("intake: log line produced no event id, skipping: %v", err)
+		intakeLog.Warn(fmt.Sprintf("log line produced no event id, skipping: %v", err))
 		return
 	}
 

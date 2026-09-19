@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 	"github.com/tomlawesome/birdcage/internal/agent/ledger"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
+
+var senderLog = logging.New("sender")
 
 // senderIdleInterval is how often the sender checks an empty queue for
 // new arrivals. Short, since a healthy fleet's normal latency floor is
@@ -65,9 +68,9 @@ func runSenderLoop(ctx context.Context, c *client.Client, ts *TokenStore, in *In
 		})
 		if err != nil {
 			if client.IsUnauthorized(err) {
-				log.Printf("sender: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+				senderLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
 			} else {
-				log.Printf("sender: push failed, will retry: %v", err)
+				senderLog.Warn(fmt.Sprintf("push failed, will retry: %s", safeErr(err)))
 			}
 			// #48 fail-closed: "Push gets 429, 5xx, timeout or connection
 			// failure -> retry ... queue holds." Nothing is resolved for
@@ -130,7 +133,7 @@ func (in *Intake) applyVerdicts(sentIDs []string, result client.BatchResult) {
 			// protective rule: an unrecognised response is a retry,
 			// never a resolve -- so this id is left queued and
 			// unresolved rather than settled either way.
-			log.Printf("sender: event %s named as both stored and rejected, treating as unresolved", id)
+			senderLog.Warn(fmt.Sprintf("event %s named as both stored and rejected, treating as unresolved", id))
 		default:
 			// Named as neither: birdcage's Retry case. Left queued and
 			// unresolved, retried on the next Peek.
@@ -147,8 +150,10 @@ func (in *Intake) applyVerdicts(sentIDs []string, result client.BatchResult) {
 			// keep forwarding, report it; on restart, re-read from the
 			// last written position." Nothing here needs to retry the
 			// save itself -- the next Advance that moves the frontier
-			// tries again.
-			log.Printf("sender: save acknowledged position failed, will retry on the next advance: %v", err)
+			// tries again. safeErr: PositionStore.Save's own error
+			// wraps the position file's path, inside StateDir -- one of
+			// the values this agent must never log (see safelog.go).
+			senderLog.Warn(fmt.Sprintf("save acknowledged position failed, will retry on the next advance: %s", safeErr(err)))
 		}
 	}
 }

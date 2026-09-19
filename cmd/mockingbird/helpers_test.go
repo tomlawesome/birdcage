@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/pem"
+	"io"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -91,4 +93,32 @@ func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 		t.Fatalf("MintCanaryToken: %v", err)
 	}
 	return raw
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns
+// everything it printed -- the same technique cmd/birdcage's own
+// canary_test.go uses, needed here because internal/logging's component
+// loggers write to whatever os.Stdout currently is (see that package's
+// stdoutWriter) rather than through the stdlib log package a plain
+// log.SetOutput could redirect. Not safe to run in parallel with
+// another test doing the same (os.Stdout is process-global), which is
+// why no test in this package calls t.Parallel().
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("close pipe writer: %v", cerr)
+	}
+	os.Stdout = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(out)
 }

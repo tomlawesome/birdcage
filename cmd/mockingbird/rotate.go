@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
+
+var rotationLog = logging.New("rotation")
 
 const (
 	// rotationInterval is how often the agent asks birdcage to rotate
@@ -89,10 +92,10 @@ func rotate(ctx context.Context, c *client.Client, ts *TokenStore) time.Duration
 			// refused. Log loudly and keep every other loop running --
 			// the agent never invents a path back to a token mint;
 			// recovery is re-enrolment (#47).
-			log.Printf("rotation: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+			rotationLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
 			return rotationInterval
 		}
-		log.Printf("rotation: mint failed, keeping current token: %v", err)
+		rotationLog.Warn(fmt.Sprintf("mint failed, keeping current token: %s", safeErr(err)))
 		return rotationRetryInterval
 	}
 
@@ -100,12 +103,15 @@ func rotate(ctx context.Context, c *client.Client, ts *TokenStore) time.Duration
 		// #48: "A write failure discards the new token unused and keeps
 		// the old." newToken is never presented to birdcage, so it is
 		// simply never used and expires unused at the next completed
-		// rotation -- nothing here needs to revoke it.
-		log.Printf("rotation: write new token to disk failed, keeping current token: %v", err)
+		// rotation -- nothing here needs to revoke it. safeErr:
+		// writeFileAtomic's own error wraps ts.path, which lives inside
+		// StateDir -- one of the values this agent must never log (see
+		// safelog.go).
+		rotationLog.Warn(fmt.Sprintf("write new token to disk failed, keeping current token: %s", safeErr(err)))
 		return rotationRetryInterval
 	}
 
 	ts.set(newToken)
-	log.Printf("rotation: token rotated")
+	rotationLog.Info("token rotated")
 	return rotationInterval
 }

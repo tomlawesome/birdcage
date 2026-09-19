@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
+
+var heartbeatLog = logging.New("heartbeat")
 
 // heartbeatInterval matches the server's per-canary HeartbeatIntervalS
 // default of 60s (#48's process-composition note: "that value is
@@ -64,8 +67,8 @@ func sendHeartbeat(ctx context.Context, c *client.Client, ts *TokenStore, report
 		return
 	}
 	if client.IsUnauthorized(err) {
-		log.Printf("heartbeat: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+		heartbeatLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
 		return
 	}
-	log.Printf("heartbeat: send failed, will retry next cycle: %v", err)
+	heartbeatLog.Warn(fmt.Sprintf("send failed, will retry next cycle: %s", safeErr(err)))
 }

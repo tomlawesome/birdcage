@@ -10,7 +10,8 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,12 +22,18 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
+	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
 	"github.com/tomlawesome/birdcage/web"
 )
 
 const (
+	// envLogLevel selects internal/logging's threshold (debug/info/warn/
+	// error, case-insensitive; unset or unrecognized falls back to info)
+	// -- see docs/configuration.md.
+	envLogLevel = "BIRDCAGE_LOG_LEVEL"
+
 	// envDatabaseURL selects the storage engine per issue #7: unset, or
 	// a bare path / "sqlite:PATH", means SQLite; "postgres://..." or
 	// "postgresql://..." means Postgres. Takes priority over
@@ -81,8 +88,17 @@ type serviceResult struct {
 }
 
 func main() {
-	log.SetFlags(log.LstdFlags)
-	log.SetPrefix("birdcage: ")
+	// #71's ratified startup order: level first, so nothing logged below
+	// this line is ever silently dropped or shown by mistake at the
+	// wrong threshold; the banner immediately after, unconditionally --
+	// including ahead of the `canary`/`settings` one-shot CLI modes
+	// below, matching the decision as written rather than mikroview's
+	// own "server-start path only" carve-out for PrintBanner.
+	logging.SetLevel(os.Getenv(envLogLevel))
+	logging.PrintBanner()
+
+	canaryLog := logging.New("canary")
+	settingsLog := logging.New("settings")
 
 	// `birdcage canary ...` (cmd/birdcage/canary.go) are standalone CLI
 	// subcommands -- `add` a dev/testing convenience predating enrollment
@@ -91,7 +107,8 @@ func main() {
 	// starting the HTTP/ingest services below.
 	if len(os.Args) > 1 && os.Args[1] == "canary" {
 		if len(os.Args) < 3 {
-			log.Fatal("usage: birdcage canary <add|mint|list|revoke> ...")
+			canaryLog.Error("usage: birdcage canary <add|mint|list|revoke> ...")
+			os.Exit(1)
 		}
 		var err error
 		switch os.Args[2] {
@@ -104,10 +121,12 @@ func main() {
 		case "revoke":
 			err = runCanaryRevoke(os.Args[3:])
 		default:
-			log.Fatalf("unknown canary subcommand %q (want add, mint, list or revoke)", os.Args[2])
+			canaryLog.Error(fmt.Sprintf("unknown canary subcommand %q (want add, mint, list or revoke)", os.Args[2]))
+			os.Exit(1)
 		}
 		if err != nil {
-			log.Fatal(err)
+			canaryLog.Error(err.Error())
+			os.Exit(1)
 		}
 		return
 	}
@@ -121,7 +140,8 @@ func main() {
 	// starting the HTTP/ingest services below.
 	if len(os.Args) > 1 && os.Args[1] == "settings" {
 		if len(os.Args) < 3 {
-			log.Fatal("usage: birdcage settings <list|get|set> ...")
+			settingsLog.Error("usage: birdcage settings <list|get|set> ...")
+			os.Exit(1)
 		}
 		var err error
 		switch os.Args[2] {
@@ -132,13 +152,23 @@ func main() {
 		case "set":
 			err = runSettingsSet(os.Args[3:])
 		default:
-			log.Fatalf("unknown settings subcommand %q (want list, get or set)", os.Args[2])
+			settingsLog.Error(fmt.Sprintf("unknown settings subcommand %q (want list, get or set)", os.Args[2]))
+			os.Exit(1)
 		}
 		if err != nil {
-			log.Fatal(err)
+			settingsLog.Error(err.Error())
+			os.Exit(1)
 		}
 		return
 	}
+
+	// Component loggers for the real server-start path below -- one per
+	// subsystem, so `docker logs | grep ingest` (or config, db, http)
+	// isolates exactly that subsystem's lines.
+	configLog := logging.New("config")
+	dbLog := logging.New("db")
+	httpLog := logging.New("http")
+	ingestLog := logging.New("ingest")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -147,10 +177,13 @@ func main() {
 	if dbPath == "" {
 		dbPath = defaultDBPath
 	}
+	configLog.Info(fmt.Sprintf("%s=%s", envDBPath, dbPath))
+
 	httpAddr := os.Getenv(envHTTPAddr)
 	if httpAddr == "" {
 		httpAddr = defaultHTTPAddr
 	}
+	configLog.Info(fmt.Sprintf("%s=%s", envHTTPAddr, httpAddr))
 
 	// DATABASE_URL, when set, picks the engine (including Postgres);
 	// unset, dbPath (BIRDCAGE_DB_PATH or its default) is passed through
@@ -159,25 +192,36 @@ func main() {
 	databaseURL := os.Getenv(envDatabaseURL)
 	if databaseURL == "" {
 		databaseURL = dbPath
+	} else {
+		configLog.Info(fmt.Sprintf("%s=%s", envDatabaseURL, redactDatabaseURL(databaseURL)))
 	}
 
 	database, err := db.Open(databaseURL)
 	if err != nil {
-		log.Fatalf("open database (%s=%q): %v", envDatabaseURL, databaseURL, err)
+		dbLog.Error(fmt.Sprintf("open database (%s=%q): %v", envDatabaseURL, databaseURL, err))
+		os.Exit(1)
 	}
 	defer func() {
 		if err := database.Close(); err != nil {
-			log.Fatalf("close database: %v", err)
+			dbLog.Error(fmt.Sprintf("close database: %v", err))
+			os.Exit(1)
 		}
 	}()
 
 	if err := db.Migrate(ctx, database); err != nil {
-		log.Fatalf("migrate database: %v", err)
+		dbLog.Error(fmt.Sprintf("migrate database: %v", err))
+		os.Exit(1)
 	}
+	dbLog.Info(fmt.Sprintf("opened %s database, storing alerts via %s", database.Engine, redactDatabaseURL(databaseURL)))
 
-	internalRanges, err := store.ParseInternalRanges(os.Getenv(envInternalRanges))
+	internalRangesEnv := os.Getenv(envInternalRanges)
+	if internalRangesEnv != "" {
+		configLog.Info(fmt.Sprintf("%s=%s", envInternalRanges, internalRangesEnv))
+	}
+	internalRanges, err := store.ParseInternalRanges(internalRangesEnv)
 	if err != nil {
-		log.Fatalf("%s: %v", envInternalRanges, err)
+		configLog.Error(fmt.Sprintf("%s: %v", envInternalRanges, err))
+		os.Exit(1)
 	}
 
 	// hub is shared between the dashboard's GET /api/stream (issue #44)
@@ -195,10 +239,10 @@ func main() {
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/api/", api.NewHandlerWithHub(database, internalRanges, hub))
 	if uiHandler, err := web.Handler(); err != nil {
-		log.Printf("frontend: %v (serving API only)", err)
+		httpLog.Warn(fmt.Sprintf("frontend: %v (serving API only)", err))
 	} else {
 		if !web.HasUI() {
-			log.Print("no frontend was built into this binary (run `npm run build` in frontend/, see README) -- serving API only")
+			httpLog.Warn("no frontend was built into this binary (run `npm run build` in frontend/, see README) -- serving API only")
 			uiHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "no frontend was built into this binary -- the API is available under /api/", http.StatusServiceUnavailable)
 			})
@@ -210,6 +254,13 @@ func main() {
 		Addr:              httpAddr,
 		Handler:           rootMux,
 		ReadHeaderTimeout: httpReadHeaderTimeout,
+		// Routes Go's own internal server diagnostics (TLS handshake
+		// errors from misbehaving clients, etc.) through the same
+		// leveled/component output as everything else this binary
+		// logs, rather than the stdlib default logger's unformatted
+		// stderr lines being the one exception (mikroview's
+		// main.go:1997 does the same).
+		ErrorLog: slog.NewLogLogger(httpLog.Handler(), slog.LevelWarn),
 	}
 
 	// The ingest listener (issue #32) is only started once both TLS
@@ -223,20 +274,25 @@ func main() {
 	var ingestServer *http.Server
 	switch {
 	case ingestCert == "" && ingestKey == "":
-		log.Printf("ingest: %s/%s not set; HTTPS ingest listener disabled (pending #47 enrolment)", envIngestTLSCert, envIngestTLSKey)
+		ingestLog.Info(fmt.Sprintf("%s/%s not set; HTTPS ingest listener disabled (pending #47 enrolment)", envIngestTLSCert, envIngestTLSKey))
 	case ingestCert == "" || ingestKey == "":
-		log.Fatalf("ingest: both %s and %s must be set together", envIngestTLSCert, envIngestTLSKey)
+		ingestLog.Error(fmt.Sprintf("both %s and %s must be set together", envIngestTLSCert, envIngestTLSKey))
+		os.Exit(1)
 	default:
+		configLog.Info(fmt.Sprintf("%s=%s", envIngestTLSCert, ingestCert))
+		configLog.Info(fmt.Sprintf("%s=%s", envIngestTLSKey, ingestKey))
 		ingestAddr := os.Getenv(envIngestAddr)
 		if ingestAddr == "" {
 			ingestAddr = defaultIngestAddr
 		}
+		configLog.Info(fmt.Sprintf("%s=%s", envIngestAddr, ingestAddr))
 		srv, err := ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), ingestCert, ingestKey)
 		if err != nil {
 			// Fail-closed, loudly, before any socket binds (issue #32:
 			// "TLS certificate or key unloadable -> the ingest listener
 			// refuses to start").
-			log.Fatalf("ingest: %v", err)
+			ingestLog.Error(err.Error())
+			os.Exit(1)
 		}
 		ingestServer = srv
 	}
@@ -256,8 +312,7 @@ func main() {
 	results := make(chan serviceResult, serviceCount)
 
 	go func() {
-		log.Printf("serving dashboard HTTP API on %s, storing alerts via %s (%s)",
-			httpAddr, database.Engine, redactDatabaseURL(databaseURL))
+		httpLog.Info(fmt.Sprintf("serving dashboard HTTP API on %s", httpAddr))
 		err := httpServer.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			// The expected return from Shutdown below, not a failure.
@@ -271,13 +326,13 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("http server shutdown: %v", err)
+			httpLog.Warn(fmt.Sprintf("shutdown: %v", err))
 		}
 	}()
 
 	if ingestServer != nil {
 		go func() {
-			log.Printf("serving HTTPS ingest listener on %s", ingestServer.Addr)
+			ingestLog.Info(fmt.Sprintf("serving HTTPS ingest listener on %s", ingestServer.Addr))
 			// Cert/key are already loaded into ingestServer.TLSConfig by
 			// ingest.NewTLSServer, so both arguments here are empty.
 			err := ingestServer.ListenAndServeTLS("", "")
@@ -292,7 +347,7 @@ func main() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 			defer cancel()
 			if err := ingestServer.Shutdown(shutdownCtx); err != nil {
-				log.Printf("ingest server shutdown: %v", err)
+				ingestLog.Warn(fmt.Sprintf("shutdown: %v", err))
 			}
 		}()
 	}
@@ -302,11 +357,12 @@ func main() {
 	// other service is asked to stop too; every remaining result is then
 	// drained so main doesn't exit while a service is still shutting
 	// down.
+	mainLog := logging.New("birdcage")
 	failed := false
 	for i := 0; i < serviceCount; i++ {
 		res := <-results
 		if res.err != nil {
-			log.Printf("%s: %v", res.name, res.err)
+			mainLog.Error(fmt.Sprintf("%s: %v", res.name, res.err))
 			failed = true
 		}
 		if i == 0 {
@@ -317,7 +373,7 @@ func main() {
 	if failed {
 		os.Exit(1)
 	}
-	log.Print("shutdown complete")
+	mainLog.Info("shutdown complete")
 }
 
 // redactDatabaseURL returns raw with any embedded userinfo (a Postgres

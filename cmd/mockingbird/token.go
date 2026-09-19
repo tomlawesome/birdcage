@@ -31,7 +31,9 @@ type TokenStore struct {
 func loadTokenStore(path string) (*TokenStore, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read token file: %w", err)
+		// safeErr, not %w: path is TokenPath, under StateDir -- one of
+		// the values this agent must never log (see safelog.go).
+		return nil, fmt.Errorf("read token file: %s", safeErr(err))
 	}
 	token := strings.TrimSpace(string(raw))
 	if token == "" {

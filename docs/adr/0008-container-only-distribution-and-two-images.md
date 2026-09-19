@@ -45,8 +45,16 @@ the whole product was never written down. This ADR states it.
    `go list -deps ./cmd/mockingbird | grep tomlawesome` (the command was
    `cmd/birdcage-agent` when first verified) must return
    only `internal/agent/*`, `internal/opencanary`,
-   `internal/selftest` and the command itself. Verified 2026-09-18 at
-   `456d3d5`. This check should become a CI gate.
+   `internal/selftest`, `internal/logging`, `internal/term` and the
+   command itself. Verified 2026-09-18 at `456d3d5`. This check should
+   become a CI gate (it is `scripts/agent-deps-check.sh`, run in the
+   test gate). `internal/logging` and `internal/term` were added to the
+   allowed list by #71 (leveled logging, shared between both binaries so
+   Mockingbird's log lines use the same handler birdcage's do): neither
+   is server logic or CA/key handling -- `internal/logging` is log line
+   formatting, and `internal/term` (which it uses for
+   `logging.Printable`) is terminal-output escaping, the same kind of
+   small shared-contract package `internal/selftest` already was.
 
 ## Consequences
 
