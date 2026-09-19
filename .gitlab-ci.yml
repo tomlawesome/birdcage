@@ -93,6 +93,26 @@ lint:licences:
 # The agent ships in the Mockingbird container, on the machine the product
 # expects to be attacked. No birdcage server package may reach it --
 # ADR-0008 decision 4.
+# ---------------------------------------------------------------------------
+# The live checks in AGENTS.md ("Live testing is not optional") are only
+# worth having if they cannot be quietly switched off. This job is that
+# rule as a red pipeline: it refuses an e2e stage that is missing, empty,
+# allowed to fail, manual, or ruled out of merge requests. Its own tests
+# are scripts/ci-e2e-guard.test.sh, run here too -- a guard nobody tests
+# guards nothing.
+# ---------------------------------------------------------------------------
+lint:ci:
+  stage: lint
+  image: python:3.13-alpine
+  <<: *dev_or_mr
+  needs: []
+  before_script:
+    - apk add --no-cache bash >/dev/null
+    - pip install --quiet pyyaml
+  script:
+    - python3 scripts/ci-e2e-guard.py
+    - scripts/ci-e2e-guard.test.sh
+
 lint:agent-deps:
   stage: lint
   image: golang:1.27
