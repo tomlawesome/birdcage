@@ -642,3 +642,44 @@ func TestVerifyRejectsAnInjectedDate(t *testing.T) {
 
 	mustReject(t, attacked, rules(now, key), "Date headers")
 }
+
+// Owner decision 25 (2026-09-19): the signing domain is pinned from
+// what the administrator's provider actually signs with, learned from
+// the setup test approval, rather than derived from the address. A
+// provider handling mail for you@mail.example.net commonly signs as
+// example.net, and working out whether one domain legitimately covers
+// another needs the Public Suffix List.
+func TestVerifyAcceptsThePinnedSigningDomain(t *testing.T) {
+	now := fixedNow(t)
+	key := rsaTestKey(t)
+
+	const subdomain = "mail." + testDomain
+	m := baseMessage(now).set("From", "Birdcage Admin <admin@"+subdomain+">")
+	raw := sign(t, m, key, testDomain, testSelector, nil)
+
+	r := rules(now, key)
+	r.PinnedFrom = "admin@" + subdomain
+
+	// Unpinned, the address's own domain is required, and this is not it.
+	mustReject(t, raw, r, "no DKIM signature was made by "+subdomain)
+
+	// Pinned to what the provider actually signs with, it verifies.
+	r.PinnedSigningDomain = testDomain
+	got, err := Verify(context.Background(), raw, r)
+	if err != nil {
+		t.Fatalf("Verify with the pinned signing domain: %v", err)
+	}
+	if got.Domain != testDomain {
+		t.Errorf("Domain = %q, want %q", got.Domain, testDomain)
+	}
+}
+
+func TestVerifyRejectsASignatureFromAnotherPinnedDomain(t *testing.T) {
+	now := fixedNow(t)
+	key := rsaTestKey(t)
+	raw := sign(t, baseMessage(now), key, testDomain, testSelector, nil)
+
+	r := rules(now, key)
+	r.PinnedSigningDomain = "somewhere-else.example"
+	mustReject(t, raw, r, "no DKIM signature was made by somewhere-else.example")
+}

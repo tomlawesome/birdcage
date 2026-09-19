@@ -110,6 +110,24 @@ type Rules struct {
 	// at enrolment (issue #47) -- the settings row
 	// admin_approval_address.
 	PinnedFrom string
+	// PinnedSigningDomain is the domain the administrator's provider
+	// actually signs their mail with -- the DKIM d= value -- pinned on
+	// the agent at enrolment beside PinnedFrom (owner decision 25,
+	// 2026-09-19).
+	//
+	// It is pinned rather than derived from PinnedFrom's domain because
+	// the two often differ: a provider handling mail for
+	// you@mail.example.net commonly signs as example.net. Deciding
+	// whether one domain is a legitimate parent of another needs the
+	// Public Suffix List -- thousands of entries, continuously
+	// changing, and dropping any of them makes the check accept more
+	// rather than less. Setup learns the real value from the test
+	// approval the administrator sends and has them confirm it, so
+	// there is nothing to guess here.
+	//
+	// Empty means PinnedFrom's own domain, which is the common case
+	// where a provider signs with exactly the address's domain.
+	PinnedSigningDomain string
 	// Reference is the request reference the subject must carry, as the
 	// token "[birdcage <ref>]".
 	Reference string
@@ -241,7 +259,7 @@ func Verify(ctx context.Context, raw []byte, rules Rules) (Approval, error) {
 		return Approval{}, fmt.Errorf("approval: %s has already been accepted; an approval is used once", messageID)
 	}
 
-	selector, domain, err := verifySignature(ctx, raw, pinned.domain(), rules.Resolver)
+	selector, domain, err := verifySignature(ctx, raw, rules.signingDomain(pinned), rules.Resolver)
 	if err != nil {
 		return Approval{}, err
 	}
@@ -286,6 +304,15 @@ func SubjectReference(subject string) string {
 
 // pinnedAddress is a validated PinnedFrom.
 type pinnedAddress struct{ Address string }
+
+// signingDomain is the d= value a signature must carry: the pinned one
+// where setup learned it, otherwise the address's own domain.
+func (r Rules) signingDomain(pinned pinnedAddress) string {
+	if d := strings.TrimSpace(r.PinnedSigningDomain); d != "" {
+		return d
+	}
+	return pinned.domain()
+}
 
 func (p pinnedAddress) domain() string {
 	_, d, _ := strings.Cut(p.Address, "@")
