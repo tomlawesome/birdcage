@@ -19,7 +19,7 @@ func acceptOneAndCapture(t *testing.T, exchange func(net.Conn) []byte) (port int
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() }) // test teardown; nothing left to act on a close error
 
 	ch := make(chan []byte, 1)
 	go func() {
@@ -27,7 +27,7 @@ func acceptOneAndCapture(t *testing.T, exchange func(net.Conn) []byte) (port int
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }() // test teardown; nothing left to act on a close error
 		ch <- exchange(c)
 	}()
 
@@ -87,7 +87,7 @@ func TestProbeMySQL_PlantsMarkerAsHandshakeUsername(t *testing.T) {
 		// sequence=0) then a single payload byte. The client under
 		// test only needs the length and sequence number to respond;
 		// the payload's content is never interpreted.
-		c.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x0A})
+		_, _ = c.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x0A}) // fixture write; a failure surfaces as a mismatch below
 		buf := make([]byte, 4096)
 		n, _ := c.Read(buf)
 		return buf[:n]
@@ -114,8 +114,8 @@ func TestProbeMSSQL_PlantsMarkerAsLogin7Username(t *testing.T) {
 		// response so the client's own drainBriefly has something to
 		// consume, then capture the LOGIN7 packet that follows.
 		buf := make([]byte, 4096)
-		c.Read(buf)
-		c.Write([]byte{0x04, 0x01, 0x00, 0x09, 0x00, 0x00, 0x01, 0x00, 0xFF})
+		_, _ = c.Read(buf)                                                           // fixture drain; a failure surfaces as a mismatch below
+		_, _ = c.Write([]byte{0x04, 0x01, 0x00, 0x09, 0x00, 0x00, 0x01, 0x00, 0xFF}) // fixture write; a failure surfaces as a mismatch below
 		n, _ := c.Read(buf)
 		return buf[:n]
 	})

@@ -20,14 +20,14 @@ func listenTCP(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() }) // test teardown; nothing left to act on a close error
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			c.Close()
+			_ = c.Close() // immediately-closed accept loop; nothing left to act on a close error
 		}
 	}()
 	_, portStr, err := net.SplitHostPort(ln.Addr().String())

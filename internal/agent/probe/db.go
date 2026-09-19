@@ -19,7 +19,9 @@ func probePostgres(ctx context.Context, address string, port int, marker string)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	body := concat(
 		[]byte{0x00, 0x03, 0x00, 0x00}, // protocol version 3.0
@@ -43,7 +45,9 @@ func probeRedis(ctx context.Context, address string, port int, marker string) er
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	cmd := fmt.Sprintf("*2\r\n$4\r\nAUTH\r\n$%d\r\n%s\r\n", len(marker), marker)
 	_, err = conn.Write([]byte(cmd))
@@ -63,7 +67,9 @@ func probeMySQL(ctx context.Context, address string, port int, marker string) er
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	r := bufio.NewReader(conn)
 	header := make([]byte, 4)
@@ -113,7 +119,9 @@ func probeMSSQL(ctx context.Context, address string, port int, marker string) er
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	if err := sendTDSPacket(conn, 0x12, buildPreLogin()); err != nil {
 		return fmt.Errorf("probe: mssql: prelogin: %w", err)

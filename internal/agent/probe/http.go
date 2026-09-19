@@ -22,7 +22,9 @@ func probeHTTP(ctx context.Context, address string, port int, marker string) err
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	req := fmt.Sprintf(
 		"GET /%s HTTP/1.1\r\nHost: %s\r\nX-Birdcage-Selftest: %s\r\nConnection: close\r\n\r\n",

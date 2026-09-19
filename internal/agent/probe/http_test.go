@@ -15,7 +15,7 @@ func TestProbeHTTP_PlantsMarkerInPathAndHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
 	reqCh := make(chan string, 1)
 	go func() {
@@ -23,7 +23,7 @@ func TestProbeHTTP_PlantsMarkerInPathAndHeader(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }() // test teardown; nothing left to act on a close error
 		r := bufio.NewReader(c)
 		var b strings.Builder
 		for {

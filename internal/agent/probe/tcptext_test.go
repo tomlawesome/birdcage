@@ -21,7 +21,7 @@ func acceptOneAndRead(t *testing.T, greeting string) (port int, lineCh <-chan st
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() }) // test teardown; nothing left to act on a close error
 
 	ch := make(chan string, 1)
 	go func() {
@@ -29,10 +29,10 @@ func acceptOneAndRead(t *testing.T, greeting string) (port int, lineCh <-chan st
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }() // test teardown; nothing left to act on a close error
 		if greeting != "" {
 			time.Sleep(50 * time.Millisecond)
-			c.Write([]byte(greeting))
+			_, _ = c.Write([]byte(greeting)) // fixture write; a failure surfaces as a timeout in the test below
 		}
 		line, _ := bufio.NewReader(c).ReadString('\n')
 		ch <- line
@@ -94,7 +94,7 @@ func TestProbeFTP_DialFailureIsAnError(t *testing.T) {
 	}
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	ln.Close()
+	_ = ln.Close() // nothing listens here now
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

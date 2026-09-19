@@ -98,7 +98,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request with matching client cert: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }() // test teardown; nothing left to act on a close error
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("status = %d, want 200", resp.StatusCode)
 			}
@@ -109,7 +109,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request with mismatched client cert: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }() // test teardown; nothing left to act on a close error
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Errorf("status = %d, want 401", resp.StatusCode)
 			}
@@ -141,7 +141,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 		t.Run("no client certificate refused at the handshake", func(t *testing.T) {
 			resp, err := doRequest()
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close() // test teardown; nothing left to act on a close error
 				t.Fatal("request without a client certificate succeeded, want a TLS handshake failure")
 			}
 		})

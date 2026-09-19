@@ -28,7 +28,13 @@ func WritableDir(dir string) error {
 	if err != nil {
 		return unusable(dir, err)
 	}
-	f.Close()
+	// A failed Close here is itself evidence dir isn't fully usable (a
+	// stale NFS handle, say) -- exactly what this function exists to
+	// catch -- so it's worth surfacing rather than silently trying the
+	// Remove below anyway.
+	if err := f.Close(); err != nil {
+		return unusable(dir, err)
+	}
 	if err := os.Remove(probe); err != nil {
 		return unusable(dir, err)
 	}

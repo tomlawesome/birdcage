@@ -264,7 +264,7 @@ func TestPrintableIsTermEscape(t *testing.T) {
 	cases := []string{
 		"alice\x1b[2K\rroot",
 		"alice\x00",
-		"alice‮eslaf",
+		"alice\u202eeslaf",
 		"tom@example.com",
 		"日本語",
 		"",
@@ -293,7 +293,7 @@ func TestPrintableNeutralisesTerminalControlSequences(t *testing.T) {
 		{"cursor move", "\x1b[10;10H"},
 		{"newline", "alice\nadmin"},
 		{"NUL", "alice\x00"},
-		{"RTL override", "alice‮eslaf"},
+		{"RTL override", "alice\u202eeslaf"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -322,7 +322,7 @@ func TestPrintableLeavesOrdinaryTextAlone(t *testing.T) {
 // therefore this alias -- does not treat it as unsafe the way
 // mikroview's blanket Cf check did.
 func TestPrintableLeavesZeroWidthJoinerAlone(t *testing.T) {
-	s := "ali‍ce"
+	s := "ali\u200dce"
 	if got := Printable(s); got != s {
 		t.Errorf("Printable(%q) = %q, want the zero-width joiner left alone", s, got)
 	}
@@ -334,8 +334,8 @@ func TestPrintableLeavesZeroWidthJoinerAlone(t *testing.T) {
 // triggers quoting is what this guards, since unicode.IsControl alone
 // lets U+202E through untouched.
 func TestAttrValueQuotesABidiOverride(t *testing.T) {
-	got := quoteAttrValue("host‮evil")
-	if strings.Contains(got, "‮") {
+	got := quoteAttrValue("host\u202eevil")
+	if strings.Contains(got, "\u202e") {
 		t.Errorf("quoteAttrValue left a bidi override unescaped: %q", got)
 	}
 }

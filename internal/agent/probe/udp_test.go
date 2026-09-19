@@ -18,7 +18,7 @@ func listenOneUDPDatagram(t *testing.T) (port int, pktCh <-chan []byte) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() }) // test teardown; nothing left to act on a close error
 
 	ch := make(chan []byte, 1)
 	go func() {

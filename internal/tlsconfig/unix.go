@@ -39,8 +39,15 @@ func UnixListener(path string) (net.Listener, error) {
 	// internal/ca.go's writeFileExcl gives for chmodding after create),
 	// so it's set explicitly here.
 	if err := os.Chmod(path, unixSocketPerm); err != nil {
-		ln.Close()
-		os.Remove(path)
+		// We're already abandoning this listener because Chmod failed;
+		// a failed Close here would only be about the same socket we're
+		// about to Remove anyway.
+		_ = ln.Close()
+		// Best-effort cleanup of the socket file we're abandoning because
+		// Chmod failed; a failed Remove here doesn't change that error,
+		// it just leaves a stale socket for the next UnixListener call's
+		// own stale-file removal (above) to clear.
+		_ = os.Remove(path)
 		return nil, fmt.Errorf("tlsconfig: chmod unix socket %s: %w", path, err)
 	}
 

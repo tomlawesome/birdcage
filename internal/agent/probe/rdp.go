@@ -15,7 +15,9 @@ func probeRDP(ctx context.Context, address string, port int, marker string) erro
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	cookie := []byte("Cookie: mstshash=" + marker + "\r\n")
 
