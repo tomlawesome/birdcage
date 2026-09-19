@@ -125,8 +125,8 @@
     }
   },
   "history": {
-    "range": "7d",
-    "since": "2026-09-10T09:00:00Z",
+    "range": "14d",
+    "since": "2026-09-03T09:00:00Z",
     "until": "2026-09-17T09:00:00Z",
     "periods": [
       {
@@ -235,8 +235,8 @@
         "canary_name": "canary-srv",
         "state": "silent",
         "count": 2,
-        "longest_s": 12000,
-        "total_s": 22800
+        "longest_s": 21600,
+        "total_s": 33600
       },
       {
         "canary_id": "canary-srv",

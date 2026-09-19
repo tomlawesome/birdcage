@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryPeriod, HistoryResponse, HistorySummary } from '../types'
 import {
-  historyRangeFor,
+  historyRangeLabel,
   historyRows,
   historyTicks,
   layoutLanes,
@@ -228,29 +228,38 @@ describe('historyRows -- one row per canary the window has something on', () => 
 })
 
 describe('historyTicks -- a few labels along the bar', () => {
+  it('a quarter hour is labelled in clock minutes, every five', () => {
+    const ticks = historyTicks('2026-09-17T08:45:00Z', '2026-09-17T09:00:00Z', '15m')
+    expect(ticks.map((t) => t.label)).toEqual(['08:45', '08:50', '08:55', '09:00'])
+  })
+
+  it('an hour is labelled in clock minutes, every fifteen', () => {
+    const ticks = historyTicks('2026-09-17T08:00:00Z', '2026-09-17T09:00:00Z', '1h')
+    expect(ticks.map((t) => t.label)).toEqual(['08:00', '08:15', '08:30', '08:45', '09:00'])
+  })
+
   it('a day is labelled in clock hours, every six', () => {
     const ticks = historyTicks(SINCE, UNTIL, '24h')
     expect(ticks.map((t) => t.label)).toEqual(['00:00', '06:00', '12:00', '18:00', '00:00'])
     expect(ticks[2].leftPct).toBe(50)
   })
 
-  it('a week is labelled in days', () => {
-    const ticks = historyTicks('2026-09-10T09:00:00Z', '2026-09-17T09:00:00Z', '7d')
+  it('a fortnight is labelled in dates, every two days', () => {
+    const ticks = historyTicks('2026-09-03T09:00:00Z', '2026-09-17T09:00:00Z', '14d')
     expect(ticks).toHaveLength(7)
-    expect(ticks[0].label).toBe('fri 11 sep')
+    expect(ticks[0].label).toBe('fri 4 sep')
   })
 
-  it('a month is labelled every fifth day', () =>
-    expect(historyTicks('2026-08-18T09:00:00Z', '2026-09-17T09:00:00Z', '30d')).toHaveLength(6))
+  it('ninety days is labelled in dates, every fifteen', () =>
+    expect(historyTicks('2026-06-19T09:00:00Z', '2026-09-17T09:00:00Z', '90d')).toHaveLength(6))
 })
 
-describe('historyRangeFor -- the dashboard\'s chips against the endpoint\'s windows', () => {
-  it('anything under a day asks for the day', () => {
-    expect(historyRangeFor('15m')).toBe('24h')
-    expect(historyRangeFor('1h')).toBe('24h')
-    expect(historyRangeFor('24h')).toBe('24h')
+describe('historyRangeLabel -- the section heading, in the picker\'s own words', () => {
+  it('matches the range chip exactly, for every range the dashboard offers', () => {
+    expect(historyRangeLabel('15m')).toBe('15 m')
+    expect(historyRangeLabel('1h')).toBe('1 h')
+    expect(historyRangeLabel('24h')).toBe('24 h')
+    expect(historyRangeLabel('14d')).toBe('14 d')
+    expect(historyRangeLabel('90d')).toBe('90 d')
   })
-
-  it('a fortnight is nearer a week than a month', () => expect(historyRangeFor('14d')).toBe('7d'))
-  it('90 days takes the longest window there is', () => expect(historyRangeFor('90d')).toBe('30d'))
 })

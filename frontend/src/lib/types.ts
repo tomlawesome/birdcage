@@ -107,11 +107,6 @@ export interface TraceResponse {
   last_hit: LastHit | null
 }
 
-/** GET /api/history's own range chips (issue #56) -- deliberately fewer
- * than the dashboard's five: the endpoint keeps three windows, and
- * lib/history/model.ts maps each chip to the nearest one. */
-export type HistoryRange = '24h' | '7d' | '30d'
-
 /** What a canary's history remembers: CanaryStatus's five unhealthy
  * states, plus 'unobserved' -- birdcage itself was not watching, which
  * is neither a fault of the canary's nor a clean bill of health. */
@@ -154,7 +149,7 @@ export interface HistorySummary {
 }
 
 export interface HistoryResponse {
-  range: HistoryRange
+  range: Range
   since: string
   until: string
   periods: HistoryPeriod[]

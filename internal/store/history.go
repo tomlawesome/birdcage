@@ -116,33 +116,12 @@ func stateSortRank(state string) int {
 	return len(healthStateRank)
 }
 
-// historyRangeDurations maps every range GET /api/history accepts to the
-// window it looks back over. Deliberately its own list, not
-// rangeDurations: a state history is read in days, and the 15m/1h
-// windows that suit a hit count say nothing here.
-var historyRangeDurations = map[string]time.Duration{
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
-
-// DefaultHistoryRange is the range GET /api/history uses when ?range= is
-// omitted.
-const DefaultHistoryRange = "24h"
-
-// ParseHistoryRange resolves s to the window ListStatePeriods should
-// cover. Empty means DefaultHistoryRange; anything else unrecognized is
-// an error the caller reports as 400.
-func ParseHistoryRange(s string) (time.Duration, error) {
-	if s == "" {
-		s = DefaultHistoryRange
-	}
-	d, ok := historyRangeDurations[s]
-	if !ok {
-		return 0, fmt.Errorf("unknown history range %q", s)
-	}
-	return d, nil
-}
+// GET /api/history used to keep its own 24h/7d/30d range list, separate
+// from the dashboard's 15m/1h/24h/14d/90d chips -- the mismatch made the
+// range picker and the history section disagree about what window was
+// showing. It now takes the same Range through ParseRange and
+// DefaultRange (canary.go) as every other range-scoped handler, so
+// there is exactly one place that set lives.
 
 // OpenStatePeriods returns every span that is still open (ended_at IS
 // NULL) -- the whole input to one reconcile pass. CanaryName is not

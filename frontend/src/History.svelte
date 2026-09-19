@@ -10,15 +10,14 @@
   // lane and sentence comes from lib/history/model.ts -- this file only
   // positions what that returns, the same split Band and Tiles use.
   import type { HistoryResponse, Range } from './lib/types'
-  import { historyRangeFor, historyRangeLabel, historyRows, historyTicks } from './lib/history/model'
+  import { historyRangeLabel, historyRows, historyTicks } from './lib/history/model'
 
   let { history, failed, range }: { history: HistoryResponse | null; failed: boolean; range: Range } = $props()
 
   // The window the section actually drew, which is the response's own --
-  // the chip may have asked for a window the endpoint doesn't keep (see
-  // historyRangeFor), so the heading names what came back, not what was
-  // asked for.
-  let windowRange = $derived(history?.range ?? historyRangeFor(range))
+  // falling back to the requested range only before the first response
+  // lands, so the heading never has nothing to say.
+  let windowRange = $derived(history?.range ?? range)
   let rows = $derived(history ? historyRows(history) : [])
   let ticks = $derived(history ? historyTicks(history.since, history.until, windowRange) : [])
 
@@ -106,8 +105,15 @@
     display: grid;
     grid-template-columns: 132px 1fr 330px;
     column-gap: 14px;
-    align-items: center;
-    height: 26px;
+    /* start, not center: .sum can now run to a second line, and the row
+       has to grow with it. Starting every column at the top keeps the
+       bar lined up with .sum's first line instead of drifting toward
+       the middle of a two-line row -- a single-line row is still
+       exactly 26px (14px of content plus this padding), so the common
+       case is unchanged. */
+    align-items: start;
+    min-height: 26px;
+    padding: 6px 0;
   }
   .who {
     font: 700 11.5px var(--mono);
@@ -167,13 +173,24 @@
   }
   .sum {
     font: 11px var(--mono);
+    line-height: 1.3;
     color: var(--ink-2);
+    /* Several states on one canary can outrun one line ("throttled 4
+       times, longest 11 m · silent once, 3 h 20 m"); wrap onto a second
+       rather than truncating it away, and stop there -- .row grows to
+       fit (see .row's align-items:start). */
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
   .axis-row {
-    height: 14px;
+    /* Never a two-line .sum here (there is no .sum in this row), so
+       none of .row's padding/min-height is wanted -- back to exactly
+       the axis labels' own height, as before. */
+    min-height: 14px;
+    padding: 0;
   }
   .axis {
     position: relative;

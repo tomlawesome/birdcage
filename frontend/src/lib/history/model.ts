@@ -7,36 +7,27 @@
 // All arithmetic is in milliseconds off Date.parse and all positions are
 // percentages of the window, so the bar is resolution-independent and
 // the sums are testable without a DOM.
-import type { HistoryPeriod, HistoryRange, HistoryResponse, HistoryState, HistorySummary, Range } from '../types'
+import type { HistoryPeriod, HistoryResponse, HistoryState, HistorySummary, Range } from '../types'
 import { durationCoarse, durationExact } from '../sentence/duration'
 import { formatClock, formatDate } from '../band/format'
 
-/** The dashboard's five range chips against the endpoint's three windows
- * (issue #56): each chip asks for the nearest window it can get. 15 m and
- * 1 h have no shorter history to ask for, and a fortnight is nearer a
- * week than a month, so the chip and the section can disagree about how
- * far back they look -- the section's heading says which window it drew. */
-const HISTORY_RANGE: Record<Range, HistoryRange> = {
-  '15m': '24h',
-  '1h': '24h',
-  '24h': '24h',
-  '14d': '7d',
-  '90d': '30d',
+/** The section's heading, in the range picker's own words (App.svelte's
+ * RANGE_LABELS, Tiles.svelte's copy of the same) -- the history section
+ * used to keep its own, coarser three-window label set, which let the
+ * picker say "14 d" while the section under it said "7 days" for the
+ * same request (issue #56 follow-up: GET /api/history now takes the
+ * dashboard's own Range, so there is one window, not two). */
+const HISTORY_RANGE_LABEL: Record<Range, string> = {
+  '15m': '15 m',
+  '1h': '1 h',
+  '24h': '24 h',
+  '14d': '14 d',
+  '90d': '90 d',
 }
 
-export function historyRangeFor(range: Range): HistoryRange {
-  return HISTORY_RANGE[range]
-}
-
-const HISTORY_RANGE_LABEL: Record<HistoryRange, string> = {
-  '24h': '24 hours',
-  '7d': '7 days',
-  '30d': '30 days',
-}
-
-/** "7 days" -- the section heading's window, in the events heading's voice
+/** "14 d" -- the section heading's window, in the events heading's voice
  * ("events · 14 days · none"). */
-export function historyRangeLabel(range: HistoryRange): string {
+export function historyRangeLabel(range: Range): string {
   return HISTORY_RANGE_LABEL[range]
 }
 
@@ -259,17 +250,29 @@ export interface HistoryTick {
   label: string
 }
 
-const TICK_STEP_S: Record<HistoryRange, number> = {
+/** One tick spacing per dashboard range, chosen so a window never draws
+ * either a bare handful of ticks or so many they blur: five minutes
+ * across a quarter hour, a quarter hour across an hour, six hours
+ * across a day (the original 24h spacing), two days across a
+ * fortnight, and fifteen days across ninety. */
+const TICK_STEP_S: Record<Range, number> = {
+  '15m': 5 * 60,
+  '1h': 15 * 60,
   '24h': 6 * 3600,
-  '7d': 86400,
-  '30d': 5 * 86400,
+  '14d': 2 * 86400,
+  '90d': 15 * 86400,
 }
 
-/** A few labels along the bar, on round boundaries: clock hours every six
- * for a day, dates for a week or a month. Ticks outside the window are
- * dropped rather than clamped -- a label pinned to an edge it does not
- * belong to would misread the bar. */
-export function historyTicks(since: string, until: string, range: HistoryRange): HistoryTick[] {
+/** Ranges short enough that a clock time, not a date, is what a tick
+ * needs to say -- the same three the axis already drew a clock for
+ * before this covered 15m and 1h too. */
+const CLOCK_TICK_RANGES: ReadonlySet<Range> = new Set(['15m', '1h', '24h'])
+
+/** A few labels along the bar, on round boundaries: clock times for
+ * anything a day or shorter, dates for a fortnight or longer. Ticks
+ * outside the window are dropped rather than clamped -- a label pinned
+ * to an edge it does not belong to would misread the bar. */
+export function historyTicks(since: string, until: string, range: Range): HistoryTick[] {
   const sinceMs = Date.parse(since)
   const untilMs = Date.parse(until)
   const span = untilMs - sinceMs
@@ -281,7 +284,7 @@ export function historyTicks(since: string, until: string, range: HistoryRange):
     const d = new Date(at)
     ticks.push({
       leftPct: round(((at - sinceMs) / span) * 100),
-      label: range === '24h' ? formatClock(d) : formatDate(d),
+      label: CLOCK_TICK_RANGES.has(range) ? formatClock(d) : formatDate(d),
     })
   }
   return ticks
