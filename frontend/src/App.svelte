@@ -11,9 +11,9 @@
   // nothing themselves. Issue #56 adds the state history on the same
   // tick, alongside those three rather than inside their Promise.all --
   // see the `history` state below for why.
-  import { fetchCanaries, fetchHistory, fetchTrace, fetchVisitors } from './lib/api'
-  import type { HistoryResponse } from './lib/types'
-  import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
+  import { fetchCanaries, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
+  import type { HistoryResponse, MailStatus } from './lib/types'
+  import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
   import { initialLoaderState, onFetchError, onFetchSuccess, type LoaderState } from './lib/loader'
   import Band from './lib/band/Band.svelte'
@@ -51,6 +51,15 @@
   let history: HistoryResponse | null = $state(null)
   let historyFailed = $state(false)
 
+  // Issue #55's fifth read, on the same refresh and kept out of the
+  // Promise.all for the same reason the history is: the mail line is
+  // one item in the status strip, so a failed /api/mail read drops that
+  // item and leaves the whole rest of the page exactly as it was. A
+  // read that has never succeeded leaves this null, and the strip
+  // simply has one fewer item rather than claiming a state it does not
+  // know yet.
+  let mail: MailStatus | null = $state(null)
+
   // triggerRefresh always points at the current effect run's `load`
   // below, so issue #44's stream subscription can ask for an immediate
   // refetch without duplicating the range/in-flight logic that effect
@@ -87,6 +96,19 @@
         .catch(() => {
           if (range === activeRange) historyFailed = true
         })
+      // Same tick, same "drop a response for a range we've since left"
+      // check. Range-free itself -- "is mail working" is not a question
+      // about a window -- but still guarded, so a slow response landing
+      // after the operator changed range cannot overwrite a newer one.
+      const mailLoad = fetchMail()
+        .then((m) => {
+          if (range === activeRange) mail = m
+        })
+        .catch(() => {
+          // Leave whatever was last known in place: one failed poll is
+          // not evidence about the mailer, and the strip going blank
+          // every time a poll blips would be noise.
+        })
       try {
         const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
         if (range === activeRange) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
@@ -94,6 +116,7 @@
         if (range === activeRange) loaderState = onFetchError(loaderState)
       } finally {
         await historyLoad
+        await mailLoad
         inFlight = false
       }
     }
@@ -137,6 +160,12 @@
     data && trace ? computeSentence(canaries, visitors, activeRange, trace.now, trace.last_hit) : null,
   )
   let footer = $derived(data && trace ? computeFooter(canaries, visitors, activeRange, trace.now, trace.last_hit) : null)
+
+  // The strip's mail item (issue #55). Measured against trace.now, the
+  // same clock every other duration on this page uses, so a fixture
+  // scene reads the same as a live fleet. Null until both reads have
+  // landed -- there is no useful "mail ok · last ? ago".
+  let mailStatus = $derived(trace ? mailLine(mail, trace.now) : null)
 
   const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
   const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
@@ -213,6 +242,11 @@
       <span><span class="dot" aria-hidden="true"></span>QUIET &middot; {status.okCount} of {status.total} phoning home</span>
       <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
     {/if}
+    <!-- issue #55: after the visitors count, in the strip's own voice
+         and its existing classes -- muted for "off" and "ok", the alarm
+         class only when mail has actually stopped working, since
+         nothing else on this page would go red about that. -->
+    {#if mailStatus}<span class={mailStatus.cls}>{mailStatus.text}</span>{/if}
     <span class="who">tom (admin)</span>
   </div>
 

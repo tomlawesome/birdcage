@@ -12,7 +12,7 @@
 // unreachable lazy chunks (Vite code-splits every dynamic import
 // regardless of reachability), but no production request ever fetches
 // them.
-import type { CanariesResponse, HistoryResponse, Range, TraceResponse, VisitorsResponse } from './types'
+import type { CanariesResponse, HistoryResponse, MailStatus, Range, TraceResponse, VisitorsResponse } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -32,6 +32,12 @@ interface Fixture {
    * predate the endpoint, and a scene without history reads as a fleet
    * with nothing recorded yet, which is a state the section draws. */
   history?: HistoryResponse
+  /** Every scene carries one (issue #55). Mail is off in all of them
+   * except 'alerts', which is the scene where something has gone wrong
+   * and is therefore where a broken mailer is worth showing. A scene
+   * without the block reads as mail being off, the same as an instance
+   * that never configured it. */
+  mail?: MailStatus
 }
 
 type SceneName = 'quiet' | 'silent' | 'night' | 'alerts' | 'history'
@@ -108,4 +114,26 @@ export async function fetchHistory(range: Range = '14d', canary?: string): Promi
   }
   const canaryParam = canary ? `&canary=${encodeURIComponent(canary)}` : ''
   return getJSON<HistoryResponse>(`/api/history?range=${range}${canaryParam}`)
+}
+
+/** GET /api/mail (issue #55). Range-free, unlike every other read here:
+ * "is the thing that wakes me up working" is not a question about a
+ * window. A scene fixture without a mail block answers as an instance
+ * with mail switched off. */
+export async function fetchMail(): Promise<MailStatus> {
+  const scene = fixtureScene()
+  if (scene) {
+    const fixture = await loadFixture(scene)
+    return (
+      fixture.mail ?? {
+        configured: false,
+        last_sent_at: null,
+        failing_since: null,
+        last_error: null,
+        pending: 0,
+        suppressed: 0,
+      }
+    )
+  }
+  return getJSON<MailStatus>('/api/mail')
 }

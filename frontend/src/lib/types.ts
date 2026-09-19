@@ -148,6 +148,25 @@ export interface HistorySummary {
   total_s: number
 }
 
+/** GET /api/mail (issue #55): whether outbound mail is configured, and
+ * how the sending itself is going. Nothing here is a credential or
+ * derived from one -- no host, no username, no address.
+ *
+ * `failing_since` is the created_at of the oldest message still owed
+ * that has actually been tried, and `last_error` is that same message's
+ * error, so the two always describe one failure. `suppressed` is how
+ * many alerts birdcage's own rate limits deliberately did not send;
+ * they are reported on the next message that does go out, never
+ * dropped. */
+export interface MailStatus {
+  configured: boolean
+  last_sent_at: string | null
+  failing_since: string | null
+  last_error: string | null
+  pending: number
+  suppressed: number
+}
+
 export interface HistoryResponse {
   range: Range
   since: string

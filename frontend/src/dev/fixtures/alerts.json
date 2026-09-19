@@ -158,5 +158,13 @@
       "service": "telnet",
       "kind": "touch"
     }
+  },
+  "mail": {
+    "configured": true,
+    "last_sent_at": "2026-09-16T21:00:00Z",
+    "failing_since": "2026-09-17T06:00:00Z",
+    "last_error": "could not send the token_conflict alert: TLS connect to smtp.example.net:465: dial tcp 198.51.100.25:465: connect: connection refused",
+    "pending": 2,
+    "suppressed": 3
   }
 }

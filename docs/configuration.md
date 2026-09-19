@@ -174,9 +174,137 @@ by proxy buffering) keeps the page correct either way -- but the "see a
 hit the moment it lands" feature this route exists for won't actually
 happen until the proxy stops buffering it.
 
+## Outbound mail
+
+birdcage sends exactly one kind of email: a canary has presented a
+credential birdcage had already revoked. That is the one state where the
+right response is "go and look at that box now" rather than "it will be
+on the dashboard in the morning", and nobody is looking at a dashboard
+at three in the morning.
+
+It is off unless you configure it, and nothing else about birdcage
+changes if you leave it off. The dashboard's status strip says `mail
+off` so the state is visible rather than assumed.
+
+| Variable | Required | What it is |
+| --- | --- | --- |
+| `BIRDCAGE_MAIL_HOST` | yes | Your submission server as `host:port`, e.g. `smtp.example.net:465`. |
+| `BIRDCAGE_MAIL_STARTTLS` | no | `1` to use STARTTLS (port 587). Unset or `0` uses implicit TLS (port 465). |
+| `BIRDCAGE_MAIL_USERNAME` | yes | The SMTP username. |
+| `BIRDCAGE_MAIL_PASSWORD_FILE` | one of the two | Path to a file containing the password. **Preferred** -- see below. |
+| `BIRDCAGE_MAIL_PASSWORD` | one of the two | The password itself. |
+| `BIRDCAGE_MAIL_FROM` | yes | The address the mail comes from. |
+| `BIRDCAGE_MAIL_TO` | yes | The one administrator address it goes to. |
+
+### All of them, or none of them
+
+Set none and mail is off. Set any one and every required one must be set
+and valid, or birdcage refuses to start and names the variable you need
+to fix.
+
+That is deliberate. A mailer that starts on a half-finished
+configuration works perfectly right up until the moment it matters, and
+then fails silently at exactly the moment a canary was cloned. Refusing
+at startup, where you are watching, is the only useful time to fail.
+
+The same check covers the values themselves: the two addresses must
+parse as addresses, the host must have a real port, and no value may
+contain a line break or a control character — a newline in an address
+would let whoever chose it add headers of their own to the message.
+
+### Prefer the password file
+
+`BIRDCAGE_MAIL_PASSWORD_FILE` is the recommended one. An environment
+variable is readable by anything that can look at `/proc/<pid>/environ`
+and is inherited by every process birdcage starts; a file can be mounted
+read-only and owned by the birdcage user alone. In Docker Compose that
+is a `secrets:` entry, which lands as a file under `/run/secrets/`:
+
+```yaml
+services:
+  birdcage:
+    environment:
+      BIRDCAGE_MAIL_HOST: smtp.example.net:465
+      BIRDCAGE_MAIL_USERNAME: birdcage@example.net
+      BIRDCAGE_MAIL_PASSWORD_FILE: /run/secrets/birdcage_smtp_password
+      BIRDCAGE_MAIL_FROM: birdcage@example.net
+      BIRDCAGE_MAIL_TO: you@example.net
+    secrets:
+      - birdcage_smtp_password
+
+secrets:
+  birdcage_smtp_password:
+    file: ./secrets/smtp-password
+```
+
+If you set both, the file wins and birdcage logs a `WARN` saying so —
+rather than choosing silently and leaving you convinced you had rotated
+a password you had not.
+
+The file must be readable by the user birdcage runs as and must not be
+empty; either way it refuses to start, naming the path and this
+process's uid and gid (see ["Running as a different
+user"](#running-as-a-different-user)). One trailing newline is trimmed,
+so a file written with `printf 'secret\n' > ...` or by any text editor
+works as you would expect.
+
+### Port 465 or port 587
+
+Two ways in, and you pick by which port your provider gives you:
+
+- **465, implicit TLS.** Leave `BIRDCAGE_MAIL_STARTTLS` unset. The
+  connection is encrypted from the first byte.
+- **587, submission with STARTTLS.** Set `BIRDCAGE_MAIL_STARTTLS=1`. The
+  connection starts in the clear and is upgraded before anything is
+  sent. If the server does not offer the upgrade, birdcage stops there:
+  no password, no message. It never continues in the clear.
+
+Set the wrong one for your port and the connection will hang or fail the
+handshake, so birdcage logs a `WARN` at startup if the port and the
+setting disagree.
+
+**There is no plaintext mode, and no way to skip certificate
+verification.** Both are deliberate and neither has a switch. If your
+server's certificate does not verify, that is a problem with the server
+worth fixing — accepting any certificate would hand your SMTP password
+to anything sitting on the network path.
+
+### What the mail says, and what it does not
+
+The subject is always the same and names no canary. The body says what
+happened, when, what it probably means, and what to do. It contains no
+link, no token and no detail of what was actually seen.
+
+Your mailbox is outside birdcage's control, so the message points at the
+evidence rather than copying it: "open birdcage the way you always do".
+See [SECURITY.md](../SECURITY.md#data-handling).
+
+### How much mail to expect
+
+Very little, by design. One canary can produce at most one message an
+hour, and the whole fleet at most twenty an hour. Anything those limits
+stop is counted, not dropped: the next message that does go out says how
+many alerts were suppressed and since when.
+
+None of this affects the dashboard. A canary's state is what it is
+whether or not an email went out about it.
+
+### Checking it works
+
+`GET /api/mail` reports whether mail is configured, when the last
+message went out, whether anything is stuck and since when. The
+dashboard's status strip shows the same thing in a few words: `mail
+off`, `mail ok · last 2 h ago`, or `mail failing since 3 h — <reason>`.
+
+One thing birdcage cannot do is tell you it has died. A process that is
+not running sends nothing, including a message about not running. If
+that matters to you, your own monitoring has to watch birdcage from
+outside it.
+
 ## Other environment variables
 
-See ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
+See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
+variables, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
 `BIRDCAGE_HTTP_TLS_CERT` and `BIRDCAGE_HTTP_TLS_KEY`, and
 [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_INGEST_ADDR`
 (issue #32's HTTPS canary ingest listener) and its own network-exposure

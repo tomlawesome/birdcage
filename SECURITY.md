@@ -70,6 +70,53 @@ This section is rewritten route-by-route when #8 lands.
   can make birdcage write. A gap in which birdcage itself was not
   running is recorded as its own "unobserved" span rather than left to
   read as a healthy period the dashboard never actually watched.
+- **The SMTP account birdcage sends from (issue #55) is a secret**, and
+  is handled exactly like the CrowdSec/RouterOS credentials above:
+  supplied by file (`BIRDCAGE_MAIL_PASSWORD_FILE`, preferred — see
+  [docs/configuration.md](docs/configuration.md#outbound-mail)) or
+  environment variable, never committed, and never logged. It is never
+  written to the `mail_outbox` table either: a rejected credential can
+  come back out of an SMTP server's own error text, so every stored
+  error and every log line is scrubbed of the username and password
+  first, and the outbox is read back by `GET /api/mail` and shown on the
+  dashboard. The connection carrying it is TLS from the first byte
+  (port 465) or STARTTLS the operator asked for by name (587), always
+  with the server's certificate verified; a server that does not offer
+  the upgrade gets nothing rather than a cleartext login, and there is
+  no plaintext mode and no skip-verify option anywhere in the
+  configuration.
+- **The mailbox is outside birdcage's trust boundary**, so a message
+  carries a pointer and not a copy. It has a fixed subject naming no
+  canary, and a body with no link, no token, no source address and no
+  event content — only that a canary presented a revoked credential,
+  which one, when, and "open birdcage the way you always do". Anyone who
+  can read the operator's mail, or the mail server's logs, or a phone's
+  lock screen over their shoulder, therefore learns nothing they could
+  act on. The no-link rule is its own control: an alert mail that
+  contains a link trains the operator to click links in alert mails,
+  which is the delivery mechanism of the phishing message that would
+  impersonate this one.
+- **The mail rate limits are security controls, not tuning.** A token
+  conflict is driven by a signal an attacker paces — they choose when
+  the stolen credential is presented — so without a bound they would
+  choose how much mail birdcage sends, which is an attack on the
+  operator's mailbox, on their provider's standing, and on the operator's
+  own attention. One message per canary per hour, twenty per hour across
+  the fleet, both named constants in `internal/mail`. The same argument
+  the 10-minute collapse window makes about row count above. Nothing a
+  limit stops is discarded: a suppressed alert is counted against the
+  most recent message for that canary, and the next one that goes out
+  reports how many were suppressed and since when — a rate limit that
+  silently drops what it stops is indistinguishable from a bug.
+- **birdcage cannot send mail about its own death.** A process that is
+  not running sends nothing, including a message saying it is not
+  running, and no amount of care inside this codebase changes that. An
+  operator who needs to know birdcage has stopped must watch it from
+  outside — their own uptime monitoring, a container restart policy with
+  alerting, or a periodic check against the dashboard. This is stated
+  rather than worked around deliberately: a self-monitoring heartbeat
+  inside the same process would be a feature that appears to cover the
+  gap and does not.
 
 ## Output escaping
 
