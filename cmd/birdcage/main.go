@@ -16,10 +16,12 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/api"
+	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
@@ -49,26 +51,51 @@ const (
 	// link-local) -- for an operator whose LAN uses address space
 	// outside those. See docs/configuration.md.
 	envInternalRanges = "BIRDCAGE_INTERNAL_RANGES"
-	// envIngestAddr, envIngestTLSCert and envIngestTLSKey configure issue
-	// #32's HTTPS ingest listener -- a canary's agent (#48) posts event
-	// batches here, authenticated by its own bearer token, never the
-	// dashboard's requireAuth seam. Cert/key are PEM files on disk;
-	// #47 (enrolment) is what will eventually mint them automatically,
-	// so until it lands an operator supplies them by hand. Leaving both
-	// unset disables this listener entirely (see the switch in main
-	// below) rather than failing startup, since no project this size can
-	// assume #47's CA exists yet; setting only one of the two is treated
-	// as a configuration error and fails startup loudly, since a
-	// half-configured TLS listener is never an acceptable fallback
-	// (issue #32 fail-closed: "no plaintext fallback; no plaintext
-	// listener on any ingest port, ever").
-	envIngestAddr    = "BIRDCAGE_INGEST_ADDR"
-	envIngestTLSCert = "BIRDCAGE_INGEST_TLS_CERT"
-	envIngestTLSKey  = "BIRDCAGE_INGEST_TLS_KEY"
+	// envIngestAddr configures issue #32's HTTPS ingest listener -- a
+	// canary's agent (#48) posts event batches here, authenticated by
+	// its own bearer token, never the dashboard's requireAuth seam.
+	// Since #47 slice 1, the listener's serving certificate is minted by
+	// birdcage's own CA (internal/ca, envCADir below) rather than a
+	// cert/key pair an operator supplied by hand, so envIngestAddr alone
+	// now gates the listener: unset disables it entirely (see the
+	// switch in main below); set, it both picks the address and turns
+	// the listener on. There is no half-configured state left to reject
+	// -- issue #32's fail-closed rule ("no plaintext fallback; no
+	// plaintext listener on any ingest port, ever") is upheld instead by
+	// envCADir: an unloadable or misconfigured CA directory fails
+	// startup loudly rather than falling back to plaintext.
+	envIngestAddr = "BIRDCAGE_INGEST_ADDR"
+	// envCADir is where internal/ca.Load keeps birdcage's own CA: it
+	// loads dir/ca-key.pem and dir/ca.pem, generating and persisting
+	// both the first time (#62 owner decision: this key is the only
+	// private key birdcage ever writes to disk -- every certificate the
+	// ingest listener serves after that is minted fresh in memory). The
+	// directory must already exist, mode 0700, owned by the birdcage
+	// process. Defaults under the Dockerfile's existing
+	// /var/lib/birdcage volume, so a container operator gets a
+	// persistent CA with no Dockerfile change.
+	envCADir = "BIRDCAGE_CA_DIR"
+	// envAdvertiseHost is the hostname or IP a canary's agent reaches
+	// this birdcage instance on -- added as a SAN (alongside localhost
+	// and 127.0.0.1, always included) to the ingest listener's serving
+	// certificate, so a canary connecting to that address passes
+	// certificate verification. Unset means only localhost/127.0.0.1
+	// are covered, which is enough for same-host testing but not for a
+	// real canary on another box.
+	envAdvertiseHost = "BIRDCAGE_ADVERTISE_HOST"
 
-	defaultDBPath     = "birdcage.db"
-	defaultHTTPAddr   = ":8080"
-	defaultIngestAddr = ":8443"
+	defaultDBPath   = "birdcage.db"
+	defaultHTTPAddr = ":8080"
+	defaultCADir    = "/var/lib/birdcage/ca"
+
+	// ingestServingTTL/ingestRenewBefore are internal/ca.CA.
+	// ServerCertificateSource's lifetime for the ingest listener's
+	// serving leaf -- minted fresh in memory, so a short TTL costs
+	// nothing on disk and limits how long a leaked leaf (never the CA
+	// key) stays valid; renewal happens well ahead of expiry so a slow
+	// handshake never races it.
+	ingestServingTTL  = 24 * time.Hour
+	ingestRenewBefore = 6 * time.Hour
 
 	// httpReadHeaderTimeout bounds how long the HTTP server waits for a
 	// client to finish sending request headers, so a slow or stalled
@@ -263,38 +290,61 @@ func main() {
 		ErrorLog: slog.NewLogLogger(httpLog.Handler(), slog.LevelWarn),
 	}
 
-	// The ingest listener (issue #32) is only started once both TLS
-	// files are configured -- see envIngestTLSCert's doc comment above
-	// for why an operator who hasn't set them yet (normal, pending #47)
-	// gets a disabled listener rather than a startup failure, while a
-	// half-configured pair or an unloadable cert/key does fail startup:
-	// this listener has no plaintext fallback to degrade to.
-	ingestCert := os.Getenv(envIngestTLSCert)
-	ingestKey := os.Getenv(envIngestTLSKey)
+	// The ingest listener (issue #32) is only started when
+	// BIRDCAGE_INGEST_ADDR is set -- see envIngestAddr's doc comment
+	// above for why that alone now gates it. Once set, birdcage loads
+	// (or, on a fresh CA directory, generates) its own CA and mints the
+	// listener's serving certificate from it -- #47 slice 1, #62 "Drop
+	// them": an unloadable or wrongly-permissioned CA directory fails
+	// startup loudly, before any socket binds, the same fail-closed
+	// posture issue #32 required of the cert/key files this replaces.
 	var ingestServer *http.Server
-	switch {
-	case ingestCert == "" && ingestKey == "":
-		ingestLog.Info(fmt.Sprintf("%s/%s not set; HTTPS ingest listener disabled (pending #47 enrolment)", envIngestTLSCert, envIngestTLSKey))
-	case ingestCert == "" || ingestKey == "":
-		ingestLog.Error(fmt.Sprintf("both %s and %s must be set together", envIngestTLSCert, envIngestTLSKey))
-		os.Exit(1)
-	default:
-		configLog.Info(fmt.Sprintf("%s=%s", envIngestTLSCert, ingestCert))
-		configLog.Info(fmt.Sprintf("%s=%s", envIngestTLSKey, ingestKey))
-		ingestAddr := os.Getenv(envIngestAddr)
-		if ingestAddr == "" {
-			ingestAddr = defaultIngestAddr
-		}
+	ingestAddr := os.Getenv(envIngestAddr)
+	if ingestAddr == "" {
+		ingestLog.Info(fmt.Sprintf("%s not set; HTTPS ingest listener disabled", envIngestAddr))
+	} else {
 		configLog.Info(fmt.Sprintf("%s=%s", envIngestAddr, ingestAddr))
-		srv, err := ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), ingestCert, ingestKey)
+
+		caDir := os.Getenv(envCADir)
+		if caDir == "" {
+			caDir = defaultCADir
+		}
+		configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
+
+		// Checked before Load so the boot inventory below can say
+		// whether this run created the CA or reused one already on
+		// disk -- Load itself doesn't report which, since both paths
+		// return the same *ca.CA either way.
+		caExisted := false
+		if _, err := os.Stat(filepath.Join(caDir, "ca.pem")); err == nil {
+			caExisted = true
+		}
+
+		birdcageCA, err := ca.Load(caDir, nil)
 		if err != nil {
-			// Fail-closed, loudly, before any socket binds (issue #32:
-			// "TLS certificate or key unloadable -> the ingest listener
-			// refuses to start").
-			ingestLog.Error(err.Error())
+			// Fail-closed, loudly, before any socket binds -- the same
+			// posture issue #32 required of an unloadable cert/key,
+			// now applied to the CA directory instead.
+			ingestLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
 			os.Exit(1)
 		}
-		ingestServer = srv
+		action := "created"
+		if caExisted {
+			action = "loaded"
+		}
+		// The pin is public -- it's the value the enrolment command
+		// (a later slice) hands a canary operator to verify against --
+		// but the CA key itself is never logged, here or anywhere else.
+		ingestLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", action, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
+
+		hosts := []string{"localhost", "127.0.0.1"}
+		if advertiseHost := os.Getenv(envAdvertiseHost); advertiseHost != "" {
+			configLog.Info(fmt.Sprintf("%s=%s", envAdvertiseHost, advertiseHost))
+			hosts = append([]string{advertiseHost}, hosts...)
+		}
+
+		getCert := birdcageCA.ServerCertificateSource(hosts, ingestServingTTL, ingestRenewBefore, nil)
+		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), getCert)
 	}
 
 	// Every service below runs concurrently, and all are watched to

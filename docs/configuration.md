@@ -99,10 +99,39 @@ happen until the proxy stops buffering it.
 ## Other environment variables
 
 See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_HTTP_ADDR`
-and `BIRDCAGE_INGEST_ADDR` / `BIRDCAGE_INGEST_TLS_CERT` /
-`BIRDCAGE_INGEST_TLS_KEY` (issue #32's HTTPS canary ingest listener),
-which set the ingestion and dashboard listen addresses and carry their
+and `BIRDCAGE_INGEST_ADDR` (issue #32's HTTPS canary ingest listener),
+which set the dashboard and ingestion listen addresses and carry their
 own network-exposure guidance.
+
+### `BIRDCAGE_CA_DIR`
+
+Where birdcage keeps its own certificate authority (issue #47 slice 1),
+used to mint the ingest listener's serving certificate. Default
+`/var/lib/birdcage/ca` -- inside the Dockerfile's existing
+`/var/lib/birdcage` volume, so a container operator gets a CA that
+survives a restart with no Dockerfile change.
+
+The directory must already exist, mode `0700`, owned by the birdcage
+process; birdcage refuses to start rather than create or loosen it. The
+first time it finds no CA there, it generates one and writes exactly two
+files: `ca-key.pem` (mode `0600`) and `ca.pem` (mode `0644`, the public
+certificate). Every later start reuses that same CA. This replaces the
+former `BIRDCAGE_INGEST_TLS_CERT` / `BIRDCAGE_INGEST_TLS_KEY` settings,
+which took an operator-supplied cert/key pair on disk: as of #47 slice 1
+(#62 owner decision), the CA key above is the *only* private key
+birdcage ever writes to a file -- the listener's own serving certificate
+is minted fresh in memory on every start and renewed the same way, never
+touching disk.
+
+### `BIRDCAGE_ADVERTISE_HOST`
+
+The hostname or IP a canary's agent (#48) reaches this birdcage instance
+on, for the ingest listener. Added as a SAN on the CA-minted serving
+certificate, alongside `localhost` and `127.0.0.1` (always included), so
+a canary connecting to that address passes certificate verification.
+Unset is fine for same-host testing, where `localhost`/`127.0.0.1`
+already cover it, but a canary reaching birdcage over the network needs
+this set to the address it actually dials.
 
 ### `BIRDCAGE_INTERNAL_RANGES`
 
