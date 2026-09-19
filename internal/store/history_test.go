@@ -241,19 +241,6 @@ func TestSummarizeStatePeriodsClipsToWindow(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
-func TestParseHistoryRange(t *testing.T) {
-	d, err := ParseHistoryRange("")
-	if err != nil {
-		t.Fatalf("ParseHistoryRange(\"\"): %v", err)
-	}
-	if d != 24*time.Hour {
-		t.Errorf("ParseHistoryRange(\"\") = %v, want the 24h default", d)
-	}
-	if _, err := ParseHistoryRange("14d"); err == nil {
-		t.Error(`ParseHistoryRange("14d") = nil error, want one: the alert ranges are deliberately not history ranges`)
-	}
-}
-
 // TestApplyHealthStateActiveStates is issue #56's reason for touching
 // health.go at all: the whole set of active states, worst first, with
 // Status still naming only the head of it.

@@ -60,11 +60,11 @@ func TestHandleHistoryReturnsPeriodsAndSummary(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
 	}
-	if resp.Range != "24h" {
-		t.Errorf("range = %q, want the 24h default", resp.Range)
+	if resp.Range != "14d" {
+		t.Errorf("range = %q, want the 14d default (store.DefaultRange, same as GET /api/canaries)", resp.Range)
 	}
-	if !resp.Until.Equal(now) || !resp.Since.Equal(now.Add(-24*time.Hour)) {
-		t.Errorf("window = %v..%v, want %v..%v", resp.Since, resp.Until, now.Add(-24*time.Hour), now)
+	if !resp.Until.Equal(now) || !resp.Since.Equal(now.Add(-14*24*time.Hour)) {
+		t.Errorf("window = %v..%v, want %v..%v", resp.Since, resp.Until, now.Add(-14*24*time.Hour), now)
 	}
 	if len(resp.Periods) != 2 {
 		t.Fatalf("got %d periods, want 2: %+v", len(resp.Periods), resp.Periods)
@@ -123,13 +123,13 @@ func TestHandleHistoryRejectsUnknownRange(t *testing.T) {
 	database := openTempDB(t)
 	h := newHandler(database, time.Now, nil)
 
-	for _, bad := range []string{"14d", "15m", "forever"} {
+	for _, bad := range []string{"7d", "30d", "forever"} {
 		rec := getHistory(t, h, "?range="+bad)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("range=%s: status = %d, want 400; body=%s", bad, rec.Code, rec.Body.String())
 		}
 	}
-	for _, good := range []string{"24h", "7d", "30d"} {
+	for _, good := range []string{"15m", "1h", "24h", "14d", "90d"} {
 		rec := getHistory(t, h, "?range="+good)
 		if rec.Code != http.StatusOK {
 			t.Errorf("range=%s: status = %d, want 200; body=%s", good, rec.Code, rec.Body.String())

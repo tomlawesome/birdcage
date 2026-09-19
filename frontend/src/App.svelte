@@ -12,7 +12,6 @@
   // tick, alongside those three rather than inside their Promise.all --
   // see the `history` state below for why.
   import { fetchCanaries, fetchHistory, fetchTrace, fetchVisitors } from './lib/api'
-  import { historyRangeFor } from './lib/history/model'
   import type { HistoryResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
@@ -79,7 +78,7 @@
       // a range we've since left" check as the three reads below, so the
       // history section refreshes on the poll and on a pushed event
       // exactly as the rest of the page does.
-      const historyLoad = fetchHistory(historyRangeFor(range))
+      const historyLoad = fetchHistory(range)
         .then((h) => {
           if (range !== activeRange) return
           history = h

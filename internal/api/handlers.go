@@ -244,11 +244,14 @@ type historyResponse struct {
 	Summary []store.StateSummary `json:"summary"`
 }
 
-// handleHistory serves GET /api/history?range=<24h|7d|30d>&canary=<id>,
-// defaulting to store.DefaultHistoryRange when range is omitted and
-// rejecting any other value with 400, exactly like handleCanaries. An
-// unknown canary id is not an error: it matches no periods, the same as
-// a canary that has nothing to report.
+// handleHistory serves GET /api/history?range=<Range>&canary=<id>,
+// defaulting to store.DefaultRange when range is omitted and rejecting
+// any other value with 400, exactly like handleCanaries -- the same
+// five ranges the dashboard's picker offers, not a separate set: the
+// section used to keep its own 24h/7d/30d list, which meant it could
+// show a different window than the range chip said (issue #56 follow-up).
+// An unknown canary id is not an error: it matches no periods, the
+// same as a canary that has nothing to report.
 //
 // Canary names travel through this handler as plain JSON strings. They
 // are attacker-influenced text -- whoever names a canary chooses them --
@@ -259,13 +262,13 @@ type historyResponse struct {
 func (h *handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rangeParam := q.Get("range")
-	window, err := store.ParseHistoryRange(rangeParam)
+	window, err := store.ParseRange(rangeParam)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "range must be one of 24h, 7d, 30d")
+		writeError(w, http.StatusBadRequest, "range must be one of 15m, 1h, 24h, 14d, 90d")
 		return
 	}
 	if rangeParam == "" {
-		rangeParam = store.DefaultHistoryRange
+		rangeParam = store.DefaultRange
 	}
 
 	until := h.now().UTC()

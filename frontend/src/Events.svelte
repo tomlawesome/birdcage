@@ -30,10 +30,17 @@
   // Issue #56 inserted the state history section between the tiles and
   // here, so this moved down from 604 to clear it: the history section
   // starts at y=560 (History.svelte's TOP) and, for the small fleets
-  // the fixtures use (up to a tile row's worth of canaries), runs to
+  // the fixtures use (up to a tile row's worth of canaries), ran to
   // about y=665 -- the same ~27px gap the tiles already leave above
   // this heading, carried past the new section instead of into it.
-  const ROWS_TOP = 718
+  //
+  // Issue #56 follow-up: a row's summary can now wrap onto a second
+  // line (History.svelte's .sum), so a fleet with a lot to say grows
+  // taller than that. The 'history' dev fixture (?scene=history) is the
+  // tallest case there is to measure against -- three rows, two of them
+  // two lines -- and it runs to about y=695; this moved down again
+  // (718 -> 749) to keep the same ~27px gap below that.
+  const ROWS_TOP = 749
   const ROW_H = 70
   let silentOnly = $derived(visitors.length === 0 && silentCanaries.length > 0)
   let headingTop = $derived(silentOnly ? ROWS_TOP + 10 : ROWS_TOP - 26)
@@ -61,7 +68,7 @@
   {/each}
 {/if}
 
-<div class="legend" style:top="1026px">
+<div class="legend" style:top="1057px">
   <span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span>
   <span><span class="gap"></span>a drop is silence</span>
   <span

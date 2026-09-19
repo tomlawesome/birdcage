@@ -12,14 +12,7 @@
 // unreachable lazy chunks (Vite code-splits every dynamic import
 // regardless of reachability), but no production request ever fetches
 // them.
-import type {
-  CanariesResponse,
-  HistoryRange,
-  HistoryResponse,
-  Range,
-  TraceResponse,
-  VisitorsResponse,
-} from './types'
+import type { CanariesResponse, HistoryResponse, Range, TraceResponse, VisitorsResponse } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -101,12 +94,13 @@ export async function fetchTrace(range: Range = '14d'): Promise<TraceResponse> {
   return getJSON<TraceResponse>(`/api/trace?range=${range}`)
 }
 
-/** GET /api/history (issue #56), optionally narrowed to one canary. Its
- * ranges are the endpoint's own three, not the dashboard's five -- the
- * caller maps a chip with lib/history/model.ts's historyRangeFor.
- * A scene fixture without a history block answers as a fleet with
- * nothing recorded yet rather than failing the section. */
-export async function fetchHistory(range: HistoryRange = '7d', canary?: string): Promise<HistoryResponse> {
+/** GET /api/history (issue #56), optionally narrowed to one canary. Takes
+ * the dashboard's own Range straight through -- the endpoint used to
+ * keep a separate, smaller set of windows, which let the range picker
+ * and the history section disagree about what was on screen (issue #56
+ * follow-up). A scene fixture without a history block answers as a
+ * fleet with nothing recorded yet rather than failing the section. */
+export async function fetchHistory(range: Range = '14d', canary?: string): Promise<HistoryResponse> {
   const scene = fixtureScene()
   if (scene) {
     const fixture = await loadFixture(scene)
