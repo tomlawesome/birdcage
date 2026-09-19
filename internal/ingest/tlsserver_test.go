@@ -23,7 +23,7 @@ func newTestCA(t *testing.T) *ca.CA {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatalf("mkdir CA dir: %v", err)
 	}
-	c, err := ca.Load(dir, nil)
+	c, _, err := ca.Load(dir, nil)
 	if err != nil {
 		t.Fatalf("ca.Load: %v", err)
 	}

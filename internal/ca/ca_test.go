@@ -25,7 +25,7 @@ func newTestDir(t *testing.T) string {
 func TestLoadGeneratesCAWithCorrectFileModes(t *testing.T) {
 	dir := newTestDir(t)
 
-	c, err := Load(dir, nil)
+	c, _, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -56,13 +56,19 @@ func TestLoadGeneratesCAWithCorrectFileModes(t *testing.T) {
 func TestLoadReusesExistingCA(t *testing.T) {
 	dir := newTestDir(t)
 
-	first, err := Load(dir, nil)
+	first, created, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("first Load: %v", err)
 	}
-	second, err := Load(dir, nil)
+	if !created {
+		t.Error("first Load reported created=false, want true")
+	}
+	second, created, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("second Load: %v", err)
+	}
+	if created {
+		t.Error("second Load reported created=true, want false")
 	}
 
 	if first.Pin() != second.Pin() {
@@ -76,22 +82,37 @@ func TestLoadRefusesWrongDirMode(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	if _, err := Load(dir, nil); err == nil {
+	if _, _, err := Load(dir, nil); err == nil {
 		t.Fatal("Load with 0755 dir returned nil error, want an error")
 	}
 }
 
-func TestLoadRefusesMissingDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "does-not-exist")
+func TestLoadCreatesMissingDirMode0700(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ca")
 
-	if _, err := Load(dir, nil); err == nil {
-		t.Fatal("Load with missing dir returned nil error, want an error")
+	if _, _, err := Load(dir, nil); err != nil {
+		t.Fatalf("Load with missing dir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat created dir: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("created dir mode = %04o, want 0700", perm)
+	}
+}
+
+func TestLoadRefusesMissingParent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "no-parent", "ca")
+
+	if _, _, err := Load(dir, nil); err == nil {
+		t.Fatal("Load with missing parent returned nil error, want an error")
 	}
 }
 
 func TestIssueServerLeafVerifiesAgainstPool(t *testing.T) {
 	dir := newTestDir(t)
-	c, err := Load(dir, nil)
+	c, _, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -123,7 +144,7 @@ func TestIssueServerLeafVerifiesAgainstPool(t *testing.T) {
 
 func TestIssueServerLeafFailsWithoutCAPool(t *testing.T) {
 	dir := newTestDir(t)
-	c, err := Load(dir, nil)
+	c, _, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -145,7 +166,7 @@ func TestIssueServerLeafFailsWithoutCAPool(t *testing.T) {
 
 func TestServerCertificateSourceRenewsAfterRenewalWindow(t *testing.T) {
 	dir := newTestDir(t)
-	c, err := Load(dir, nil)
+	c, _, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -183,7 +204,7 @@ func TestServerCertificateSourceRenewsAfterRenewalWindow(t *testing.T) {
 
 func TestIssueClientReturnsClientAuthCertificate(t *testing.T) {
 	dir := newTestDir(t)
-	c, err := Load(dir, nil)
+	c, _, err := Load(dir, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
