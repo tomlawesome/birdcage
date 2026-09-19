@@ -46,7 +46,13 @@ go build ./...
 needs to compile against a fresh clone — never commit a real build there.
 
 For day-to-day frontend work, run the dev server against a real backend on
-`:8080` (`go run ./cmd/birdcage`):
+loopback `:8080` -- the dashboard refuses to start as plain HTTP on
+anything else (issue #63, see [SECURITY.md](SECURITY.md#network-exposure)),
+so a local run needs `BIRDCAGE_HTTP_ADDR` set explicitly:
+
+```
+BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/birdcage
+```
 
 ```
 cd frontend && npm run dev

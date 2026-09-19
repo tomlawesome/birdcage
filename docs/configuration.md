@@ -70,18 +70,67 @@ pg_restore --clean --if-exists --dbname="postgres://user:pass@host:5432/dbname" 
 
 Stop birdcage before restoring so it isn't writing to the database mid-restore.
 
+## Dashboard TLS
+
+Issue #63, owner decision: "we must never allow the GUI to run without
+https in some form." `BIRDCAGE_HTTP_ADDR` (default `:8080`), together
+with `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY`, must describe
+exactly one of three modes, or birdcage refuses to start -- it never
+raises a plaintext listener reachable off loopback, and the default
+address alone (no certificate) is one of the refusing combinations, not
+a silent loopback fallback.
+
+1. **Operator-supplied certificate.** Set both `BIRDCAGE_HTTP_TLS_CERT`
+   and `BIRDCAGE_HTTP_TLS_KEY` to PEM file paths (both or neither -- one
+   alone is a startup error). birdcage serves HTTPS on
+   `BIRDCAGE_HTTP_ADDR`, TLS 1.3 minimum, HTTP/1.1 only -- the same
+   floor as the canary ingest listener. The pair is reloaded from disk
+   whenever either file's mtime changes, checked on every handshake, so
+   renewing a certificate in place (a certbot hook, for example) takes
+   effect on the next connection with no restart; if a reload fails
+   (caught mid-write) birdcage keeps serving the last good pair and logs
+   one warning per failed change, not per handshake.
+
+   ```
+   docker run \
+     -v /etc/letsencrypt/live/birdcage.example.com:/tls:ro \
+     -e BIRDCAGE_HTTP_ADDR=:8080 \
+     -e BIRDCAGE_HTTP_TLS_CERT=/tls/fullchain.pem \
+     -e BIRDCAGE_HTTP_TLS_KEY=/tls/privkey.pem \
+     -p 8080:8080 \
+     birdcage
+   ```
+
+2. **Plain HTTP bound strictly to loopback.** No certificate configured,
+   and `BIRDCAGE_HTTP_ADDR`'s host is `127.0.0.1`, `::1` or `localhost`
+   (e.g. `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`), or a unix socket written
+   `unix:///path/to.sock` (created mode `0660`; a stale file from an
+   unclean shutdown is removed automatically). This is for a reverse
+   proxy that terminates TLS itself and reaches birdcage over loopback
+   or a shared volume -- see the nginx example below.
+
+3. **ACME** -- automatic certificate issuance/renewal -- is not
+   implemented yet (a dependency decision the owner has not made).
+
+Anything else -- an empty host (the documented default
+`BIRDCAGE_HTTP_ADDR=:8080`), `0.0.0.0`, or any other non-loopback host,
+with no certificate configured -- refuses to start with one message
+naming all three modes and both TLS variables.
+
 ## Reverse proxy: `/api/stream` and buffering
 
-`GET /api/stream` (issue #44) is a server-sent-events connection birdcage
-holds open and writes to as alerts arrive, so the dashboard updates
-within a second instead of waiting for its 30s poll. birdcage already
-sends `Cache-Control: no-cache` and `X-Accel-Buffering: no` on this
-response, but if you put birdcage behind nginx (or another reverse
-proxy) with response buffering on -- nginx's default -- the proxy can
-still hold every event in its own buffer until it fills, which silently
-delays the stream by however long that takes to happen rather than
-failing anything you'd notice. Confirm your proxy honors
-`X-Accel-Buffering`, or disable buffering for this location explicitly:
+If you're using mode 2 above (plain HTTP on loopback, `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`)
+behind nginx or another TLS-terminating reverse proxy, there's one more
+thing to check. `GET /api/stream` (issue #44) is a server-sent-events
+connection birdcage holds open and writes to as alerts arrive, so the
+dashboard updates within a second instead of waiting for its 30s poll.
+birdcage already sends `Cache-Control: no-cache` and
+`X-Accel-Buffering: no` on this response, but a proxy with response
+buffering on -- nginx's default -- can still hold every event in its own
+buffer until it fills, which silently delays the stream by however long
+that takes to happen rather than failing anything you'd notice. Confirm
+your proxy honors `X-Accel-Buffering`, or disable buffering for this
+location explicitly:
 
 ```
 location /api/stream {
@@ -98,10 +147,18 @@ happen until the proxy stops buffering it.
 
 ## Other environment variables
 
-See [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_HTTP_ADDR`
-and `BIRDCAGE_INGEST_ADDR` (issue #32's HTTPS canary ingest listener),
-which set the dashboard and ingestion listen addresses and carry their
-own network-exposure guidance.
+See ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
+`BIRDCAGE_HTTP_TLS_CERT` and `BIRDCAGE_HTTP_TLS_KEY`, and
+[SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_INGEST_ADDR`
+(issue #32's HTTPS canary ingest listener) and its own network-exposure
+guidance.
+
+### `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY`
+
+The dashboard's operator-supplied certificate and key, PEM file paths --
+mode 1 of ["Dashboard TLS"](#dashboard-tls) above. Both or neither; one
+alone is a startup error. Reloaded automatically whenever either file's
+mtime changes.
 
 ### `BIRDCAGE_CA_DIR`
 
