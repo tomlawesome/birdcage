@@ -117,6 +117,28 @@ This section is rewritten route-by-route when #8 lands.
   rather than worked around deliberately: a self-monitoring heartbeat
   inside the same process would be a feature that appears to cover the
   gap and does not.
+- **The approval mailbox credential reads one mailbox, and birdcage is
+  only the courier.** `BIRDCAGE_APPROVAL_IMAP_*` (see
+  [docs/configuration.md](docs/configuration.md#approval-mailbox)) gives
+  birdcage read access to one IMAP folder over fully verified TLS, with
+  no plaintext mode and no skip-verify switch; prefer the password file
+  over the environment variable, as with outbound mail. What that
+  credential can do if it leaks is read the administrator's approval
+  replies — it cannot send mail, and it cannot approve anything. Whoever
+  holds it still cannot authorise an upgrade, because the approval is
+  the administrator's own DKIM signature and only their mail provider
+  can make one. Birdcage stores the reply byte for byte and carries it;
+  every agent runs the same check for itself
+  (`internal/agent/approval`), against DNS, on those bytes: exactly one
+  valid signature from the pinned address's own domain, no `l=` tag
+  leaving part of the body unsigned, `From`/`Subject`/`Date`/
+  `Message-ID` all inside what was signed, the subject carrying the
+  request's reference, the date inside its window, and the Message-ID
+  never accepted before. So a birdcage that has been taken over can
+  withhold an approval or invent one; it cannot make an invented one
+  verify. `birdcage approval check <file.eml>` runs those same rules by
+  hand, which is how an operator confirms their provider's signing works
+  before they depend on it.
 
 ## Output escaping
 
