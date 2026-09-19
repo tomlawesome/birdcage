@@ -138,6 +138,31 @@ func (in *Intake) webhookHandler(body []byte) error {
 	return nil
 }
 
+// SubmitPortscanEvent is the third road into the queue (#65): a port
+// scan this agent detected itself, from the raw capture socket in
+// internal/agent/portscan, rather than one OpenCanary reported.
+//
+// It mints the id exactly as the webhook road does -- SHA-256 of the
+// emitted bytes, verbatim, never re-serialised -- so an id computed here
+// is the same kind of value, in the same format, as one computed on
+// either of the other two roads, and Push's deduplication works across
+// all three without knowing which produced a given event.
+//
+// Like the webhook road, and unlike the log road, it appends no ledger
+// entry (#48 decision 3: "only the log road advances the acknowledged
+// position"). The ledger maps event ids to positions in OpenCanary's log
+// file; this event was never in that file, so it has no position to
+// record, and giving it one would stall the acknowledged frontier on an
+// entry that can never resolve.
+func (in *Intake) SubmitPortscanEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that

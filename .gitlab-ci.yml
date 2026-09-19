@@ -252,13 +252,21 @@ test:image:mockingbird:
       -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
+    # --cap-add NET_RAW is the capability the port-scan detector needs
+    # (#65). It has no effect alongside --security-opt no-new-privileges,
+    # which makes the kernel ignore the binary's file capability, so this
+    # job's container reports port-scan detection off. That is deliberate:
+    # this job exists to prove nothing in the image runs as root, and
+    # relaxing its hardening to exercise a different feature would cost
+    # more than it proves. The capability itself is proved by the image
+    # test in #65 and by the unit tests in internal/agent/portscan.
     - >-
       docker run --detach --name "$APP" --init
       --sysctl net.ipv4.ip_unprivileged_port_start=0
       --volume "$APP-state:/var/lib/mockingbird"
       --tmpfs /var/log/opencanary:rw,noexec,nosuid,size=64m,uid=65532,gid=65532
       --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
-      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges
       --pids-limit 64 --memory 256m --cpus 0.5
       --env MOCKINGBIRD_BIRDCAGE_URL=https://127.0.0.1:1
       "$APP"

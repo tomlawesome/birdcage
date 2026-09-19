@@ -49,6 +49,7 @@ long the token is valid. It looks like this (values differ every time):
 ```
 docker run -d --name mockingbird --restart unless-stopped --init \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+  --cap-add NET_RAW \
   -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \
   -e MOCKINGBIRD_BIRDCAGE_URL=https://203.0.113.10:8444 \
   -e MOCKINGBIRD_CA_PIN=<64 hex characters -- the CA's SHA-256 pin> \
@@ -56,6 +57,16 @@ docker run -d --name mockingbird --restart unless-stopped --init \
   mockingbird:latest
 token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 ```
+
+`--cap-add NET_RAW` is what lets the canary notice being scanned: the
+agent opens one raw socket inside the container to see connection
+attempts aimed at ports none of its emulated services answer on, which
+is the only way it can report a port sweep (OpenCanary's own port-scan
+module needs firewall rules and a root process, and this container has
+neither). Leave the flag off and everything else still works -- every
+hit on an emulated service is still reported -- but a sweep of closed
+ports goes unseen, and the agent says so in one line at startup:
+`port-scan detection is OFF`.
 
 The two `-v` flags are not optional. `mockingbird-state` holds the
 canary's credentials and its place in the log; `mockingbird-log` holds
@@ -132,3 +143,57 @@ Lists every enrolment session -- id, name, lane, state, when it was
 minted, its deadlines -- without ever printing a token or a hash. Useful
 for confirming a session was actually contacted, or for seeing one expire
 after being forgotten.
+
+## Tuning port-scan detection
+
+These settings belong in `docs/configuration.md` with the rest of the
+canary's environment variables; they are here for now because that file
+was being edited elsewhere when this landed, and should move across when
+both changes have settled.
+
+All three are optional. Set them the same way as the variables in the
+`docker run` block above (`-e NAME=value`).
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `MOCKINGBIRD_PORTSCAN` | on | Set to `0` to turn port-scan detection off entirely. Any other value, including unset, leaves it on. |
+| `MOCKINGBIRD_PORTSCAN_IGNORE_PORTS` | empty | Comma-separated extra ports to treat as yours, on top of the ones OpenCanary is configured to answer on. For something else sharing the container's network, or a monitoring probe that would otherwise look like a sweep. |
+| `MOCKINGBIRD_OPENCANARY_CONF` | `/etc/opencanaryd/opencanary.conf` | Where to read OpenCanary's configuration from. Only change this if you bind-mount your own configuration somewhere else. |
+
+The agent reads the OpenCanary configuration once at startup to work out
+which ports it is answering on, so enabling or disabling a service in
+that file also changes what counts as a scan -- you do not have to keep
+a second list in step.
+
+### What counts as a scan
+
+Five different ports that nothing answers on, touched by the same source
+within thirty seconds. That produces one alert; while the scan
+continues, at most one more per minute from the same source. The canary
+is built to be flooded, so it reports the fact of a sweep rather than
+one alert per packet.
+
+### What it does not see
+
+- **A scan of only the ports your canary answers on.** Those are hits on
+  the emulated services and are reported as such, not as a scan.
+- **A fragmented scan.** The agent reads the first fragment of a packet
+  and ignores continuations, because reassembling fragments would mean
+  holding unbounded state on the one box built to attract attacks.
+- **IPv6.** Today it watches IPv4 only.
+- **Anything outside the container's own network.** The socket sees the
+  container's interfaces and nothing else.
+
+### If you also use `--security-opt no-new-privileges`
+
+You cannot have both. `no-new-privileges` tells the kernel to ignore
+file capabilities, and the file capability on the agent binary is
+exactly how a process running as an ordinary user gets `NET_RAW` without
+the container ever being root. Docker does not hand the capability to a
+non-root process any other way. Pick one:
+
+- **Keep `--cap-add NET_RAW`, drop `no-new-privileges`** -- the default,
+  and what the printed command does. The container still drops every
+  other capability, still runs as uid 65532, and still has no shell.
+- **Keep `no-new-privileges`, drop `--cap-add NET_RAW`** -- port-scan
+  detection is off, and the agent logs one line saying so at startup.

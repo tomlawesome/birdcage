@@ -59,6 +59,30 @@ func IDFromWebhookBody(body []byte) (id string, message []byte, err error) {
 	return hashHex(message), message, nil
 }
 
+// IDFromEmittedMessage computes the event id from message bytes this
+// agent emitted itself -- today only internal/agent/portscan's
+// locally-detected port-scan events (issue #65), the third road into the
+// queue alongside the webhook and the log tail.
+//
+// It is the same hash over the same kind of bytes the other two roads
+// produce: the emitted JSON object, verbatim. There is no '{' to locate
+// and no wrapper to unwrap, because the caller built the object and
+// hands over exactly the bytes it will queue -- so the id, the queued
+// payload and the alert's stored raw value all agree, which is the
+// property the other two roads' comments are protecting. The same
+// MaxLogLineBytes cap applies: an event this agent generates itself
+// should never approach it, and one that does is a bug worth refusing
+// rather than queueing.
+func IDFromEmittedMessage(message []byte) (string, error) {
+	if len(message) > MaxLogLineBytes {
+		return "", fmt.Errorf("emitted message of %d bytes exceeds the %d-byte cap", len(message), MaxLogLineBytes)
+	}
+	if len(message) == 0 {
+		return "", errors.New("emitted message is empty")
+	}
+	return hashHex(message), nil
+}
+
 // hashHex returns the lowercase hex SHA-256 digest of b -- the event id
 // format issue #32 already validates on the way in
 // (internal/ingest/batch.go's eventIDPattern: "exactly 64 lowercase hex

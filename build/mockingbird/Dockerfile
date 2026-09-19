@@ -45,6 +45,28 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/mockingbird ./cmd/mockingbird
+# cap_net_raw, and nothing else, for the port-scan detector (#65): the
+# agent opens one AF_PACKET socket in the container's own network
+# namespace so it can see SYNs aimed at ports no OpenCanary module
+# answers on. OpenCanary's own portscan module cannot do this here --
+# it reads iptables LOG lines out of /var/log/kern.log, which needs
+# iptables-legacy rules and a root process to install them, neither of
+# which this image has or should gain.
+#
+# A *file* capability, not a container-wide one: +ep means the binary
+# gets it on exec regardless of the uid running it, so the runtime stays
+# uid 65532 with no shell and no root, and the capability is attached to
+# the one executable that needs it rather than to everything in the
+# container. The operator still passes --cap-add NET_RAW, because a file
+# capability can only grant what the container's bounding set already
+# permits; without it the socket call returns EPERM, the agent logs one
+# WARN and runs on with detection off.
+#
+# libcap is installed only in this build stage and never reaches the
+# runtime image.
+RUN apk add --no-cache libcap \
+    && setcap cap_net_raw+ep /out/mockingbird \
+    && getcap /out/mockingbird
 # Directories the runtime user must own, made here because distroless
 # has no mkdir: the agent's state (token, certificates, acknowledged log
 # position -- #68 says these outlive the container, so both are volume
