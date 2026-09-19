@@ -28,6 +28,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
+	"github.com/tomlawesome/birdcage/internal/tlsconfig"
 	"github.com/tomlawesome/birdcage/web"
 )
 
@@ -45,7 +46,22 @@ const (
 	// unset -- see docs/configuration.md.
 	envDatabaseURL = "DATABASE_URL"
 	envDBPath      = "BIRDCAGE_DB_PATH"
-	envHTTPAddr    = "BIRDCAGE_HTTP_ADDR"
+	// envHTTPAddr, together with envHTTPTLSCert/envHTTPTLSKey below,
+	// picks which of issue #63's three permitted modes the dashboard
+	// HTTP listener runs in -- see internal/tlsconfig.Select, called
+	// below. Never a fourth mode, and never a plaintext listener
+	// reachable off loopback: an address with no certificate configured
+	// and a non-loopback (or empty) host, including the default below,
+	// refuses to start rather than binding one.
+	envHTTPAddr = "BIRDCAGE_HTTP_ADDR"
+	// envHTTPTLSCert/envHTTPTLSKey name an operator-supplied PEM
+	// certificate and key for the dashboard listener (issue #63's
+	// ModeCert) -- both or neither; one alone is a startup error. Their
+	// files are reloaded whenever either's mtime changes (see
+	// internal/tlsconfig.CertReloader), so renewing a certificate in
+	// place needs no restart.
+	envHTTPTLSCert = "BIRDCAGE_HTTP_TLS_CERT"
+	envHTTPTLSKey  = "BIRDCAGE_HTTP_TLS_KEY"
 	// envInternalRanges names extra CIDR blocks GET /api/visitors and GET
 	// /api/trace's "inside" kind rule (issue #35) treats as internal,
 	// beyond the always-internal defaults (RFC 1918, IPv6 ULA,
@@ -230,6 +246,24 @@ func main() {
 	}
 	configLog.Info(fmt.Sprintf("%s=%s", envHTTPAddr, httpAddr))
 
+	httpTLSCert := os.Getenv(envHTTPTLSCert)
+	httpTLSKey := os.Getenv(envHTTPTLSKey)
+	if httpTLSCert != "" {
+		configLog.Info(fmt.Sprintf("%s=%s", envHTTPTLSCert, httpTLSCert))
+	}
+	if httpTLSKey != "" {
+		configLog.Info(fmt.Sprintf("%s=%s", envHTTPTLSKey, httpTLSKey))
+	}
+
+	// Issue #63: decide, before anything else starts, which of the
+	// three permitted modes the dashboard listener runs in -- or refuse
+	// outright. Never a plaintext listener reachable off loopback.
+	httpSelection, err := tlsconfig.Select(httpAddr, httpTLSCert, httpTLSKey)
+	if err != nil {
+		httpLog.Error(err.Error())
+		os.Exit(1)
+	}
+
 	// DATABASE_URL, when set, picks the engine (including Postgres);
 	// unset, dbPath (BIRDCAGE_DB_PATH or its default) is passed through
 	// as a bare path, which db.Open treats as SQLite -- the same
@@ -296,7 +330,6 @@ func main() {
 	}
 
 	httpServer := &http.Server{
-		Addr:              httpAddr,
 		Handler:           rootMux,
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		// Routes Go's own internal server diagnostics (TLS handshake
@@ -306,6 +339,29 @@ func main() {
 		// stderr lines being the one exception (mikroview's
 		// main.go:1997 does the same).
 		ErrorLog: slog.NewLogLogger(httpLog.Handler(), slog.LevelWarn),
+	}
+
+	// Issue #63: wire the mode httpSelection picked above. httpUnixPath
+	// is read by the serve/shutdown goroutines below; it stays empty
+	// outside ModePlainUnixSocket.
+	var httpUnixPath string
+	switch httpSelection.Mode {
+	case tlsconfig.ModeCert:
+		httpReloader, err := tlsconfig.NewCertReloader(httpTLSCert, httpTLSKey, httpLog)
+		if err != nil {
+			httpLog.Error(fmt.Sprintf("load dashboard TLS certificate: %v", err))
+			os.Exit(1)
+		}
+		httpServer.Addr = httpSelection.Addr
+		httpServer.TLSConfig = tlsconfig.HardenedTLSConfig(httpReloader.GetCertificate)
+		httpServer.Protocols = tlsconfig.HTTP1Only()
+		httpLog.Info(fmt.Sprintf("dashboard TLS mode: operator-supplied certificate (cert=%s key=%s)", httpTLSCert, httpTLSKey))
+	case tlsconfig.ModePlainLoopbackTCP:
+		httpServer.Addr = httpSelection.Addr
+		httpLog.Info("dashboard TLS mode: plain HTTP bound to loopback")
+	case tlsconfig.ModePlainUnixSocket:
+		httpUnixPath = httpSelection.UnixPath
+		httpLog.Info(fmt.Sprintf("dashboard TLS mode: plain HTTP on unix socket %s", httpUnixPath))
 	}
 
 	// The ingest listener (issue #32) and the enrolment listener (issue
@@ -415,8 +471,25 @@ func main() {
 	results := make(chan serviceResult, serviceCount)
 
 	go func() {
-		httpLog.Info(fmt.Sprintf("serving dashboard HTTP API on %s", httpAddr))
-		err := httpServer.ListenAndServe()
+		var err error
+		switch httpSelection.Mode {
+		case tlsconfig.ModeCert:
+			httpLog.Info(fmt.Sprintf("serving dashboard HTTPS on %s", httpServer.Addr))
+			// Cert/key are already loaded into httpServer.TLSConfig
+			// above (tlsconfig.NewCertReloader), so both arguments
+			// here are empty, matching ingest.NewTLSServer's callers.
+			err = httpServer.ListenAndServeTLS("", "")
+		case tlsconfig.ModePlainUnixSocket:
+			httpLog.Info(fmt.Sprintf("serving dashboard HTTP on unix socket %s", httpUnixPath))
+			var ln net.Listener
+			ln, err = tlsconfig.UnixListener(httpUnixPath)
+			if err == nil {
+				err = httpServer.Serve(ln)
+			}
+		default: // ModePlainLoopbackTCP
+			httpLog.Info(fmt.Sprintf("serving dashboard HTTP on %s", httpServer.Addr))
+			err = httpServer.ListenAndServe()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			// The expected return from Shutdown below, not a failure.
 			err = nil
@@ -430,6 +503,16 @@ func main() {
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			httpLog.Warn(fmt.Sprintf("shutdown: %v", err))
+		}
+		if httpUnixPath != "" {
+			// net.UnixListener.Close (invoked by Shutdown above) already
+			// unlinks the socket file it created; this is belt and
+			// braces for a listener that for whatever reason didn't,
+			// tolerating "already gone" the same way ca.go's own cleanup
+			// does elsewhere.
+			if err := os.Remove(httpUnixPath); err != nil && !os.IsNotExist(err) {
+				httpLog.Warn(fmt.Sprintf("remove unix socket %s: %v", httpUnixPath, err))
+			}
 		}
 	}()
 

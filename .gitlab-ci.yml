@@ -202,6 +202,7 @@ test:image:birdcage:
     - docker build --file build/birdcage/Dockerfile --tag "$APP" .
     - >-
       docker run --detach --name "$APP"
+      --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
       --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m
       --tmpfs /var/lib/birdcage:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
       --cap-drop ALL --security-opt no-new-privileges

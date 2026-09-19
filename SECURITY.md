@@ -137,11 +137,30 @@ only at the point that text is displayed, per surface:
   contact and expired within five minutes regardless -- a copy yields a
   dead credential and a loud audit entry -- so clear the history line if
   you like, but nothing live is recoverable from it.
-- **Dashboard HTTP — TCP, default `:8080`** (override with
-  `BIRDCAGE_HTTP_ADDR`). No authentication yet --
-  [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
-  (ADR-0003) -- so bind it to loopback or a trusted LAN only until then.
-  Every route below has the same gap:
+- **Dashboard HTTPS — never plain HTTP across a network** (issue #63,
+  owner decision: "we must never allow the GUI to run without https in
+  some form"). `BIRDCAGE_HTTP_ADDR` (default `:8080`) together with
+  `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY` picks exactly one of
+  three modes, decided once at startup by `internal/tlsconfig.Select`:
+  (1) **operator-supplied certificate** -- both TLS variables set to PEM
+  file paths, serves HTTPS on `BIRDCAGE_HTTP_ADDR` with the same TLS 1.3
+  floor and HTTP/1.1-only posture as the canary ingest listener above,
+  and reloads the pair whenever either file's mtime changes so a
+  renewal needs no restart; (2) **plain HTTP bound strictly to
+  loopback** -- no certificate configured and `BIRDCAGE_HTTP_ADDR`'s host
+  is `127.0.0.1`, `::1` or `localhost`, or a unix socket
+  (`unix:///path/to.sock`), for a reverse proxy in the same network
+  namespace or sharing a volume; (3) **ACME** -- not implemented yet (a
+  dependency decision the owner has not made). Anything else -- no
+  certificate and a non-loopback or empty host, including the documented
+  default `:8080` -- refuses to start with one message naming all three
+  modes; it never raises a plaintext listener reachable off loopback.
+  See [docs/configuration.md](docs/configuration.md#dashboard-tls).
+
+  No authentication yet -- [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
+  (ADR-0003) -- so whichever mode above is in use, treat it as reachable
+  by anyone who can reach the listener. Every route below has the same
+  gap:
 
   | Route            | Method | Auth                          |
   | ---------------- | ------ | ------------------------------ |
@@ -167,8 +186,11 @@ only at the point that text is displayed, per surface:
 
 ## Recommended deployment hardening
 
-- Bind birdcage's HTTP port to a loopback or trusted-LAN-only interface,
-  not every interface.
+- Terminate the dashboard with a real certificate
+  (`BIRDCAGE_HTTP_TLS_CERT`/`BIRDCAGE_HTTP_TLS_KEY`) whenever it is
+  reached across a network, or keep it strictly loopback-bound and put a
+  TLS-terminating reverse proxy in front (issue #63) -- birdcage refuses
+  to start rather than leave this to the operator to remember.
 - Put it behind a VPN (e.g. WireGuard/Tailscale) if you need to reach it
   from outside that LAN -- there is no login screen to stop anyone who
   reaches it in v1.
