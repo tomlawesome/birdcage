@@ -199,12 +199,28 @@ func Verify(ctx context.Context, raw []byte, rules Rules) (Approval, error) {
 		return Approval{}, fmt.Errorf("approval: the message is from %s, but approvals are only accepted from %s", from.Address, pinned.Address)
 	}
 
+	// Subject and Date get the same count check as From, and for the
+	// same reason: a signature covers the bottom-most instance of a
+	// header it names (RFC 6376 section 5.4.2) while net/mail's Get
+	// returns the top-most. Anything holding a validly signed message
+	// can prepend a second one, leaving the signature intact and
+	// showing the reader a value nobody signed. Birdcage carries these
+	// bytes, and ADR-0007 is written on the assumption birdcage is
+	// hacked -- so for Subject that would rewrite which request was
+	// approved, and for Date it would make an approval from any time in
+	// the past look fresh.
+	if n := len(msg.Header["Subject"]); n != 1 {
+		return Approval{}, fmt.Errorf("approval: the message has %d Subject headers; exactly one is allowed", n)
+	}
 	subject := msg.Header.Get("Subject")
 	token := Token(rules.Reference)
 	if !subjectCarries(subject, token) {
 		return Approval{}, fmt.Errorf("approval: the subject does not contain %s (it is %q)", token, subject)
 	}
 
+	if n := len(msg.Header["Date"]); n != 1 {
+		return Approval{}, fmt.Errorf("approval: the message has %d Date headers; exactly one is allowed", n)
+	}
 	date, err := msg.Header.Date()
 	if err != nil {
 		return Approval{}, fmt.Errorf("approval: the Date header could not be read: %w", err)

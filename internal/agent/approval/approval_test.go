@@ -603,3 +603,42 @@ func TestRFC6376AppendixAExample(t *testing.T) {
 		t.Error("verifySignature accepted a parent-domain signature for football.example.com")
 	}
 }
+
+// A signature covers the bottom-most instance of each header it names
+// (RFC 6376 section 5.4.2), but net/mail's Get returns the top-most. So
+// anything holding a validly signed message -- birdcage itself, which
+// couriers the raw bytes, is the threat ADR-0007 is written against --
+// can prepend a second Subject or Date and leave the signature intact.
+// The signature still verifies; the agent reads the injected value.
+//
+// For Subject that rewrites which request was approved, which is the
+// whole binding between an admin's reply and one action. For Date it
+// makes an approval from any time in the past look fresh.
+func prepend(raw []byte, line string) []byte {
+	return append([]byte(line+"\r\n"), raw...)
+}
+
+func TestVerifyRejectsAnInjectedSubject(t *testing.T) {
+	now := fixedNow(t)
+	key := rsaTestKey(t)
+	raw := sign(t, baseMessage(now), key, testDomain, testSelector, nil)
+
+	// Signed for testReference; presented as approving another request.
+	attacked := prepend(raw, "Subject: Re: [birdcage some-other-request] upgrade")
+
+	r := rules(now, key)
+	r.Reference = "some-other-request"
+	mustReject(t, attacked, r, "Subject headers")
+}
+
+func TestVerifyRejectsAnInjectedDate(t *testing.T) {
+	now := fixedNow(t)
+	key := rsaTestKey(t)
+	old := now.Add(-365 * 24 * time.Hour)
+	raw := sign(t, baseMessage(old), key, testDomain, testSelector, nil)
+
+	// A year-old approval, dressed up as one sent a moment ago.
+	attacked := prepend(raw, "Date: "+now.Format(time.RFC1123Z))
+
+	mustReject(t, attacked, rules(now, key), "Date headers")
+}
