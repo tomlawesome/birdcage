@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -36,18 +35,18 @@ const (
 // CVE class for free), TLS 1.3 floor, and every pre-auth timeout set
 // (above).
 //
-// certFile/keyFile are loaded once, here, rather than left to
-// ListenAndServeTLS to load at Serve time: an unloadable certificate or
-// key must fail the caller loudly before anything binds a socket --
-// issue #32's fail-closed rule, "the ingest listener refuses to start;
-// no plaintext fallback". A caller that gets a non-nil error must not
-// start any listener, plaintext or otherwise.
-func NewTLSServer(addr string, handler http.Handler, certFile, keyFile string) (*http.Server, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("ingest: load TLS certificate/key: %w", err)
-	}
-
+// getCertificate supplies the serving certificate per handshake --
+// since #47 slice 1, internal/ca.CA.ServerCertificateSource, which mints
+// and renews it in memory, rather than a certFile/keyFile pair loaded
+// from disk (issue #32's original placeholder, retired by #62's "Drop
+// them"). Any fail-closed startup check belongs to whatever produced
+// getCertificate (internal/ca.Load, called by the caller before this
+// function) -- there is nothing left for NewTLSServer itself to fail on.
+//
+// No client certificate is required yet -- ClientAuth defaults to
+// tls.NoClientCert. mTLS (verifying a canary's own client certificate
+// against the CA's pool) is a later slice; Refs #47.
+func NewTLSServer(addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *http.Server {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true) // HTTP/2 and unencrypted HTTP/2 both left false
 
@@ -55,8 +54,8 @@ func NewTLSServer(addr string, handler http.Handler, certFile, keyFile string) (
 		Addr:    addr,
 		Handler: handler,
 		TLSConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS13,
-			Certificates: []tls.Certificate{cert},
+			MinVersion:     tls.VersionTLS13,
+			GetCertificate: getCertificate,
 		},
 		Protocols:         protocols,
 		ReadHeaderTimeout: ingestReadHeaderTimeout,
@@ -64,5 +63,5 @@ func NewTLSServer(addr string, handler http.Handler, certFile, keyFile string) (
 		WriteTimeout:      ingestWriteTimeout,
 		IdleTimeout:       ingestIdleTimeout,
 		MaxHeaderBytes:    ingestMaxHeaderBytes,
-	}, nil
+	}
 }
