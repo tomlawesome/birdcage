@@ -27,7 +27,13 @@
       .map((r) => r.row),
   )
 
-  const ROWS_TOP = 604
+  // Issue #56 inserted the state history section between the tiles and
+  // here, so this moved down from 604 to clear it: the history section
+  // starts at y=560 (History.svelte's TOP) and, for the small fleets
+  // the fixtures use (up to a tile row's worth of canaries), runs to
+  // about y=665 -- the same ~27px gap the tiles already leave above
+  // this heading, carried past the new section instead of into it.
+  const ROWS_TOP = 718
   const ROW_H = 70
   let silentOnly = $derived(visitors.length === 0 && silentCanaries.length > 0)
   let headingTop = $derived(silentOnly ? ROWS_TOP + 10 : ROWS_TOP - 26)
@@ -55,7 +61,7 @@
   {/each}
 {/if}
 
-<div class="legend" style:top="912px">
+<div class="legend" style:top="1026px">
   <span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span>
   <span><span class="gap"></span>a drop is silence</span>
   <span

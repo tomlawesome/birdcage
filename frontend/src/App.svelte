@@ -8,14 +8,19 @@
   // whenever activeRange changes and every 30 s -- and lib/loader.ts's
   // pure state machine decides loading/error/ready/stale from the
   // outcome; Band, Tiles and Events take their data as props and fetch
-  // nothing themselves.
-  import { fetchCanaries, fetchTrace, fetchVisitors } from './lib/api'
+  // nothing themselves. Issue #56 adds the state history on the same
+  // tick, alongside those three rather than inside their Promise.all --
+  // see the `history` state below for why.
+  import { fetchCanaries, fetchHistory, fetchTrace, fetchVisitors } from './lib/api'
+  import { historyRangeFor } from './lib/history/model'
+  import type { HistoryResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
   import { initialLoaderState, onFetchError, onFetchSuccess, type LoaderState } from './lib/loader'
   import Band from './lib/band/Band.svelte'
   import Tiles from './Tiles.svelte'
   import Events from './Events.svelte'
+  import History from './History.svelte'
 
   const RANGES = ['15m', '1h', '24h', '14d', '90d'] as const
   type RangeKey = (typeof RANGES)[number]
@@ -37,6 +42,15 @@
   const REFRESH_MS = 30_000
 
   let loaderState: LoaderState = $state(initialLoaderState)
+
+  // Issue #56's fourth read. Kept out of the Promise.all below on
+  // purpose: the state history is a section of the page, not the page,
+  // so a history outage draws its own line and leaves the tiles, the
+  // band and the events exactly as they were -- where a failed canaries
+  // or trace read still stales the whole dashboard, because nothing on
+  // it would be true without them.
+  let history: HistoryResponse | null = $state(null)
+  let historyFailed = $state(false)
 
   // triggerRefresh always points at the current effect run's `load`
   // below, so issue #44's stream subscription can ask for an immediate
@@ -61,12 +75,26 @@
     const load = async () => {
       if (inFlight) return
       inFlight = true
+      // Same tick, same in-flight guard and the same "drop a response for
+      // a range we've since left" check as the three reads below, so the
+      // history section refreshes on the poll and on a pushed event
+      // exactly as the rest of the page does.
+      const historyLoad = fetchHistory(historyRangeFor(range))
+        .then((h) => {
+          if (range !== activeRange) return
+          history = h
+          historyFailed = false
+        })
+        .catch(() => {
+          if (range === activeRange) historyFailed = true
+        })
       try {
         const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
         if (range === activeRange) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
       } catch {
         if (range === activeRange) loaderState = onFetchError(loaderState)
       } finally {
+        await historyLoad
         inFlight = false
       }
     }
@@ -216,6 +244,7 @@
       </div>
       <Band {trace} />
       <Tiles {canaries} {trace} range={activeRange} />
+      <History {history} failed={historyFailed} range={activeRange} />
       <Events {canaries} {visitors} {trace} range={activeRange} />
     {/if}
   </main>

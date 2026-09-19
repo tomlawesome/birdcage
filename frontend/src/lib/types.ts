@@ -106,3 +106,57 @@ export interface TraceResponse {
   canaries: TraceCanary[]
   last_hit: LastHit | null
 }
+
+/** GET /api/history's own range chips (issue #56) -- deliberately fewer
+ * than the dashboard's five: the endpoint keeps three windows, and
+ * lib/history/model.ts maps each chip to the nearest one. */
+export type HistoryRange = '24h' | '7d' | '30d'
+
+/** What a canary's history remembers: CanaryStatus's five unhealthy
+ * states, plus 'unobserved' -- birdcage itself was not watching, which
+ * is neither a fault of the canary's nor a clean bill of health. */
+export type HistoryState =
+  | 'token_conflict'
+  | 'silent'
+  | 'not_delivering'
+  | 'throttled'
+  | 'rotation_stalled'
+  | 'unobserved'
+
+/** Why a period ended: the state cleared, a quiet period covered it, or
+ * birdcage stopped watching. null while the period is still open. */
+export type HistoryEndReason = 'cleared' | 'quiet_period' | 'unobserved'
+
+/** One unbroken run of a state (issue #56). `ended_at` null means the
+ * period is still open and runs to the response's `until`; flap_count
+ * above 1 counts re-entries within ten minutes, collapsed into this one
+ * span rather than drawn as a row of slivers. */
+export interface HistoryPeriod {
+  canary_id: string
+  canary_name: string
+  state: HistoryState
+  started_at: string
+  ended_at: string | null
+  flap_count: number
+  end_reason: HistoryEndReason | null
+}
+
+/** Per canary and state, the window's totals -- a row's one-line summary
+ * is written from these, never counted off the periods (a period clipped
+ * by the window edge would otherwise be counted at the wrong length). */
+export interface HistorySummary {
+  canary_id: string
+  canary_name: string
+  state: HistoryState
+  count: number
+  longest_s: number
+  total_s: number
+}
+
+export interface HistoryResponse {
+  range: HistoryRange
+  since: string
+  until: string
+  periods: HistoryPeriod[]
+  summary: HistorySummary[]
+}
