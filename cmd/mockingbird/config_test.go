@@ -7,13 +7,16 @@ import (
 	"testing"
 )
 
-// writeStateDir creates a valid state directory (CA/client cert/key
-// present and readable) and returns its path, for tests that only care
-// about the environment-variable side of loadConfig.
+// writeStateDir creates a valid, already-enrolled state directory (every
+// file enrolStateFiles names, present and readable) and returns its path,
+// for tests that only care about the environment-variable side of
+// loadConfig -- a state directory missing any of these now reads as
+// incomplete enrolment (#47, ensureEnrolled in enrol.go), not merely a
+// startup file-read failure.
 func writeStateDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{caFileName, clientCertFileName, clientKeyFileName} {
+	for _, name := range enrolStateFiles {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("placeholder"), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
