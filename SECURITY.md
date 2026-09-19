@@ -101,6 +101,16 @@ only at the point that text is displayed, per surface:
   [docs/configuration.md](docs/configuration.md#birdcage_ca_dir) for
   `BIRDCAGE_CA_DIR` and `BIRDCAGE_ADVERTISE_HOST`. Full threat model,
   rotation, and rate limits: issue #32.
+
+  **Mutual TLS (issue #47 slice 3).** The bearer token alone is no longer
+  enough: every connection must also present a client certificate issued
+  by birdcage's own CA, and that certificate's subject must name the same
+  canary the bearer token resolved to. A missing certificate is refused
+  at the TLS handshake, before any request is read; a certificate for the
+  wrong canary passes the handshake but is refused with the same 401 and
+  an `ingest.client_cert_mismatch` audit entry. The enrolment listener
+  (below) does not require one -- a canary has no certificate to present
+  until `POST /enrol/provision` issues its first one.
 - **Dashboard HTTP — TCP, default `:8080`** (override with
   `BIRDCAGE_HTTP_ADDR`). No authentication yet --
   [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)

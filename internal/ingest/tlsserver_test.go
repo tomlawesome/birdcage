@@ -39,13 +39,16 @@ func TestNewTLSServerPinsHTTP1AndTLS13AndTimeouts(t *testing.T) {
 	c := newTestCA(t)
 	getCert := c.ServerCertificateSource([]string{"127.0.0.1"}, time.Hour, 10*time.Minute, nil)
 
-	srv := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), getCert)
+	srv := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), getCert, nil)
 
 	if srv.TLSConfig == nil || srv.TLSConfig.MinVersion != tls.VersionTLS13 {
 		t.Errorf("TLSConfig.MinVersion = %v, want tls.VersionTLS13", srv.TLSConfig)
 	}
 	if srv.TLSConfig.GetCertificate == nil {
 		t.Error("TLSConfig.GetCertificate is nil")
+	}
+	if srv.TLSConfig.ClientAuth != tls.NoClientCert {
+		t.Errorf("ClientAuth = %v, want tls.NoClientCert when clientCAs is nil", srv.TLSConfig.ClientAuth)
 	}
 	if srv.Protocols == nil || !srv.Protocols.HTTP1() {
 		t.Error("Protocols does not enable HTTP/1.1")
@@ -59,6 +62,24 @@ func TestNewTLSServerPinsHTTP1AndTLS13AndTimeouts(t *testing.T) {
 	}
 	if srv.MaxHeaderBytes == 0 {
 		t.Error("MaxHeaderBytes unset")
+	}
+}
+
+// TestNewTLSServerWithClientCAsRequiresClientCert is issue #47 slice 3's
+// wiring check: a non-nil clientCAs sets RequireAndVerifyClientCert
+// against that exact pool, rather than merely "some" client auth.
+func TestNewTLSServerWithClientCAsRequiresClientCert(t *testing.T) {
+	c := newTestCA(t)
+	getCert := c.ServerCertificateSource([]string{"127.0.0.1"}, time.Hour, 10*time.Minute, nil)
+	pool := c.Pool()
+
+	srv := NewTLSServer("127.0.0.1:0", http.NotFoundHandler(), getCert, pool)
+
+	if srv.TLSConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Errorf("ClientAuth = %v, want tls.RequireAndVerifyClientCert when clientCAs is non-nil", srv.TLSConfig.ClientAuth)
+	}
+	if srv.TLSConfig.ClientCAs != pool {
+		t.Error("ClientCAs is not the pool passed in")
 	}
 }
 
@@ -83,7 +104,7 @@ func TestNewTLSServerServesAgainstCAPool(t *testing.T) {
 	getCert := c.ServerCertificateSource([]string{host}, time.Hour, 10*time.Minute, nil)
 	srv := NewTLSServer(ln.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), getCert)
+	}), getCert, nil)
 
 	go srv.ServeTLS(ln, "", "")
 	defer srv.Close()

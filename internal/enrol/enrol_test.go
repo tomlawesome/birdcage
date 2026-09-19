@@ -71,13 +71,13 @@ func TestHandleHelloContactedReturnsSecretAndCAAndAddresses(t *testing.T) {
 		testCA := newTestCA(t)
 
 		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		raw, _, err := store.MintEnrolmentSession(context.Background(), database, mintedAt)
+		raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
 
 		now := mintedAt.Add(1 * time.Minute)
-		h := NewHandler(database, testCA, func() time.Time { return now }, nil)
+		h := NewHandler(database, testCA, "https://canary.example:8443", func() time.Time { return now }, nil)
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(raw))
@@ -106,6 +106,9 @@ func TestHandleHelloContactedReturnsSecretAndCAAndAddresses(t *testing.T) {
 		if resp.ReleaseAddress != "#releases" {
 			t.Errorf("ReleaseAddress = %q, want %q", resp.ReleaseAddress, "#releases")
 		}
+		if resp.IngestURL != "https://canary.example:8443" {
+			t.Errorf("IngestURL = %q, want %q", resp.IngestURL, "https://canary.example:8443")
+		}
 
 		// The presented token cannot be reused for a second secret.
 		rec2 := httptest.NewRecorder()
@@ -129,27 +132,27 @@ func TestHandleHelloRefusalsAreByteIdentical(t *testing.T) {
 		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		// Unknown: a token never minted at all.
-		hUnknown := NewHandler(database, testCA, func() time.Time { return mintedAt }, nil)
+		hUnknown := NewHandler(database, testCA, "https://canary.example:8443", func() time.Time { return mintedAt }, nil)
 		recUnknown := httptest.NewRecorder()
 		hUnknown.ServeHTTP(recUnknown, httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody("never-minted")))
 
 		// Expired: minted, never contacted, presented after its deadline.
-		expiredRaw, _, err := store.MintEnrolmentSession(context.Background(), database, mintedAt)
+		expiredRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession (expired fixture): %v", err)
 		}
 		afterDeadline := mintedAt.Add(10 * time.Minute)
-		hExpired := NewHandler(database, testCA, func() time.Time { return afterDeadline }, nil)
+		hExpired := NewHandler(database, testCA, "https://canary.example:8443", func() time.Time { return afterDeadline }, nil)
 		recExpired := httptest.NewRecorder()
 		hExpired.ServeHTTP(recExpired, httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(expiredRaw)))
 
 		// Reused: minted, contacted once, presented a second time.
-		reusedRaw, _, err := store.MintEnrolmentSession(context.Background(), database, mintedAt)
+		reusedRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession (reused fixture): %v", err)
 		}
 		contactAt := mintedAt.Add(1 * time.Minute)
-		hFirst := NewHandler(database, testCA, func() time.Time { return contactAt }, nil)
+		hFirst := NewHandler(database, testCA, "https://canary.example:8443", func() time.Time { return contactAt }, nil)
 		hFirst.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(reusedRaw)))
 		recReused := httptest.NewRecorder()
 		hFirst.ServeHTTP(recReused, httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(reusedRaw)))
@@ -186,13 +189,13 @@ func TestHandleHelloReusedWritesAuditEntryNamingSessionNeverToken(t *testing.T) 
 		testCA := newTestCA(t)
 
 		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		raw, minted, err := store.MintEnrolmentSession(context.Background(), database, mintedAt)
+		raw, minted, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
 
 		contactAt := mintedAt.Add(1 * time.Minute)
-		h := NewHandler(database, testCA, func() time.Time { return contactAt }, nil)
+		h := NewHandler(database, testCA, "https://canary.example:8443", func() time.Time { return contactAt }, nil)
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(raw)))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(raw)))
 
@@ -231,7 +234,7 @@ func TestHandleHelloReusedWritesAuditEntryNamingSessionNeverToken(t *testing.T) 
 func TestHandleHelloMalformedBody(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		testCA := newTestCA(t)
-		h := NewHandler(database, testCA, nil, nil)
+		h := NewHandler(database, testCA, "", nil, nil)
 
 		t.Run("not JSON", func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -269,7 +272,7 @@ func TestHandleHelloMalformedBody(t *testing.T) {
 func TestHandleHelloServesOnlyPostEnrolHello(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		testCA := newTestCA(t)
-		h := NewHandler(database, testCA, nil, nil)
+		h := NewHandler(database, testCA, "", nil, nil)
 
 		// A GET to the same path falls through to the "/" catch-all
 		// (notFoundJSON) rather than a 405, matching internal/ingest's

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -347,10 +348,32 @@ func main() {
 		// but the CA key itself is never logged, here or anywhere else.
 		ingestLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", action, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
 
+		advertiseHost := os.Getenv(envAdvertiseHost)
 		hosts := []string{"localhost", "127.0.0.1"}
-		if advertiseHost := os.Getenv(envAdvertiseHost); advertiseHost != "" {
+		if advertiseHost != "" {
 			configLog.Info(fmt.Sprintf("%s=%s", envAdvertiseHost, advertiseHost))
 			hosts = append([]string{advertiseHost}, hosts...)
+		}
+
+		// ingestURL is POST /enrol/hello's new "ingest_url" field (issue
+		// #47 slice 3): where a provisioned canary's agent posts to.
+		// Built from the same advertiseHost as the serving certificate's
+		// SANs, and BIRDCAGE_INGEST_ADDR's own port -- never the enrol
+		// listener's port, since that is not where a provisioned canary
+		// ever sends anything. Left empty (with a boot warning) when
+		// BIRDCAGE_ADVERTISE_HOST is unset: the listeners still start --
+		// same-host testing needs no advertised address -- but there is
+		// no address to hand a real canary either.
+		var ingestURL string
+		if advertiseHost == "" {
+			enrolLog.Warn(fmt.Sprintf("%s is not set; POST /enrol/hello's ingest_url will be empty", envAdvertiseHost))
+		} else {
+			_, ingestPort, err := net.SplitHostPort(ingestAddr)
+			if err != nil {
+				ingestLog.Error(fmt.Sprintf("%s=%q is not a valid address: %v", envIngestAddr, ingestAddr, err))
+				os.Exit(1)
+			}
+			ingestURL = fmt.Sprintf("https://%s:%s", advertiseHost, ingestPort)
 		}
 
 		// Shared by both listeners below, deliberately: issue #47 slice
@@ -360,14 +383,18 @@ func main() {
 		// of that than constructing a second, separately-configured
 		// source that has to be kept in sync by hand.
 		getCert := birdcageCA.ServerCertificateSource(hosts, ingestServingTTL, ingestRenewBefore, nil)
-		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), getCert)
+		// clientCAs: the ingest listener requires a client certificate
+		// birdcageCA issued (issue #47 slice 3's mutual TLS); the
+		// enrolment listener below passes nil -- a canary has no
+		// certificate to present before it is provisioned.
+		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), getCert, birdcageCA.Pool())
 
 		enrolAddr := os.Getenv(envEnrolAddr)
 		if enrolAddr == "" {
 			enrolAddr = defaultEnrolAddr
 		}
 		configLog.Info(fmt.Sprintf("%s=%s", envEnrolAddr, enrolAddr))
-		enrolServer = ingest.NewTLSServer(enrolAddr, enrol.NewHandler(database, birdcageCA, nil, enrolLog), getCert)
+		enrolServer = ingest.NewTLSServer(enrolAddr, enrol.NewHandler(database, birdcageCA, ingestURL, nil, enrolLog), getCert, nil)
 	}
 
 	// Every service below runs concurrently, and all are watched to

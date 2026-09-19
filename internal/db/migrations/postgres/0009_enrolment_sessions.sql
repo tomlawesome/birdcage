@@ -13,6 +13,12 @@
 -- MintEnrolmentSession) -- the raw value is shown once at mint and never
 -- stored.
 --
+-- canary_name and lane are `birdcage canary enrol --name/--lane`'s two
+-- required flags (issue #47 slice 3), captured at mint time and carried
+-- on the session until a later slice's provisioning step (store.Provision)
+-- reads them to build the canaries row -- the operator names the canary
+-- before it exists, not after.
+--
 -- first_contact_deadline is created_at + 5 minutes: a deploy token not
 -- presented to POST /enrol/hello by then can never succeed (state moves
 -- to "expired" on the next attempt). burned_at is set the moment first
@@ -48,6 +54,8 @@
 CREATE TABLE IF NOT EXISTS enrolment_sessions (
     id                      TEXT PRIMARY KEY,
     token_hash              TEXT NOT NULL,
+    canary_name             TEXT NOT NULL,
+    lane                    TEXT NOT NULL,
     created_at              TEXT NOT NULL,
     first_contact_deadline  TEXT NOT NULL,
     burned_at               TEXT,
