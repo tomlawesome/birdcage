@@ -38,8 +38,9 @@ describe('the status strip mail item (#55)', () => {
       NOW,
     )
     expect(line).toEqual({
-      text: 'mail failing since 3 h — could not send the…',
+      text: 'mail failing since 3 h',
       cls: 'crit',
+      detail: 'could not send the token_conflict alert: TLS connect to smtp.example.net:465: connection refused',
     })
   })
 
@@ -59,7 +60,8 @@ describe('the status strip mail item (#55)', () => {
       NOW,
     )
     expect(line?.cls).toBe('crit')
-    expect(line?.text).toBe('mail failing since 30 m — nope')
+    expect(line?.text).toBe('mail failing since 30 m')
+    expect(line?.detail).toBe('nope')
   })
 })
 
@@ -68,12 +70,8 @@ describe('shortReason', () => {
     expect(shortReason('connection refused')).toBe('connection refused')
   })
 
-  it('flattens line breaks so the strip stays one row', () => {
+  it('flattens line breaks so the hover reads as one line', () => {
     expect(shortReason('two\nlines  here')).toBe('two lines here')
-  })
-
-  it('cuts a long reason at a word boundary', () => {
-    expect(shortReason('could not send the token_conflict alert: connection refused')).toBe('could not send the…')
   })
 
   it('has something to say when the server gave no reason', () => {

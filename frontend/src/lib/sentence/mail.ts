@@ -19,45 +19,37 @@ export interface MailLine {
   text: string
   /** An existing status-strip class: 'dim' muted, 'crit' the alarm. */
   cls: 'dim' | 'crit'
+  /** Hover text only. The strip has no room for a reason beside the
+   *  token-conflict item, so the failure detail lives here, not in text. */
+  detail?: string
 }
-
-/** How much of an SMTP error the strip will carry. Short because this
- * sits in a fixed-width row beside the rest of the status, and because
- * the whole error is on GET /api/mail for anything that wants it. */
-const MAX_REASON = 32
 
 function secondsBetween(from: string, now: string): number {
   return Math.max(0, Math.floor((new Date(now).getTime() - new Date(from).getTime()) / 1000))
 }
 
-/** The tail of "mail failing since 3 h — <short reason>": one line, no
- * longer than MAX_REASON, cut at a word boundary where there is one.
+/** The hover text behind "mail failing since 3 h": the whole SMTP
+ * error, flattened to one line. It is not in the strip text itself --
+ * beside a token-conflict item the row has no room and it truncated to
+ * an ellipsis, which told the operator nothing.
  *
  * The text comes from an SMTP server, so it is not birdcage's own
- * string. Svelte's text interpolation escapes it at render like every
- * other value the API returns (SECURITY.md, "Output escaping"); the
- * only thing done here is flattening line breaks, which would otherwise
- * break the strip's layout rather than anything worse. */
+ * string. Svelte escapes it in the title attribute like every other
+ * value the API returns (SECURITY.md, "Output escaping"). */
 export function shortReason(lastError: string | null): string {
   if (!lastError) return 'no reason given'
   const flat = lastError.replace(/\s+/g, ' ').trim()
-  if (flat === '') return 'no reason given'
-  if (flat.length <= MAX_REASON) return flat
-  const cut = flat.slice(0, MAX_REASON)
-  const lastSpace = cut.lastIndexOf(' ')
-  return `${(lastSpace > MAX_REASON / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
+  return flat === '' ? 'no reason given' : flat
 }
 
-/** The strip's mail item, or null before the first /api/mail response
- * has landed -- the strip simply has one fewer item until then, rather
- * than claiming a state it does not know yet. */
 export function mailLine(mail: MailStatus | null, now: string): MailLine | null {
   if (!mail) return null
   if (!mail.configured) return { text: 'mail off', cls: 'dim' }
   if (mail.failing_since) {
     return {
-      text: `mail failing since ${durationCoarse(secondsBetween(mail.failing_since, now))} — ${shortReason(mail.last_error)}`,
+      text: `mail failing since ${durationCoarse(secondsBetween(mail.failing_since, now))}`,
       cls: 'crit',
+      detail: shortReason(mail.last_error),
     }
   }
   if (mail.last_sent_at) {
