@@ -21,7 +21,9 @@ func probeFTP(ctx context.Context, address string, port int, marker string) erro
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	drainBriefly(conn, greetingBudget)
 	_, err = conn.Write([]byte("USER " + marker + "\r\n"))
@@ -39,7 +41,9 @@ func probeTelnet(ctx context.Context, address string, port int, marker string) e
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	drainBriefly(conn, greetingBudget)
 	_, err = conn.Write([]byte(marker + "\r\n"))

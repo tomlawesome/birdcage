@@ -94,7 +94,7 @@ func TestNewTLSServerServesAgainstCAPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
 	host, _, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
@@ -106,8 +106,10 @@ func TestNewTLSServerServesAgainstCAPool(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}), getCert, nil)
 
-	go srv.ServeTLS(ln, "", "")
-	defer srv.Close()
+	go func() {
+		_ = srv.ServeTLS(ln, "", "") // returns http.ErrServerClosed on the teardown Close below; nothing to act on
+	}()
+	defer func() { _ = srv.Close() }() // test teardown; nothing left to act on a close error
 
 	url := "https://" + ln.Addr().String() + "/"
 
@@ -121,7 +123,7 @@ func TestNewTLSServerServesAgainstCAPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET with trusted pool: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close() // test teardown; nothing left to act on a close error
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}

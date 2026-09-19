@@ -238,16 +238,25 @@ func writeFileExcl(path string, data []byte, perm os.FileMode) (err error) {
 	tmpPath := tmp.Name()
 	defer func() {
 		if err != nil {
-			os.Remove(tmpPath)
+			// Best-effort cleanup of a temp file we're already abandoning
+			// because of the error above; a failed Remove here doesn't
+			// change that error, just leaves a stray .tmp-* file behind.
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if err = tmp.Chmod(perm); err != nil {
-		tmp.Close()
+		// Chmod already failed, so this is the error we return; a Close
+		// error here would only be about unflushed data, and Chmod
+		// failing means we never wrote any, so it has nothing to add.
+		_ = tmp.Close()
 		return err
 	}
 	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
+		// Write already failed, so that's the error we return; a Close
+		// error would be about the same unflushed-data condition Write
+		// just reported, so it's redundant, not additional information.
+		_ = tmp.Close()
 		return err
 	}
 	if err = tmp.Close(); err != nil {

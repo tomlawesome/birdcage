@@ -17,7 +17,9 @@ func probeSNMP(ctx context.Context, address string, port int, marker string) err
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	// sysDescr.0: 1.3.6.1.2.1.1.1.0, BER-encoded (first two arcs
 	// combined as 1*40+3=43=0x2B, remaining arcs each fit one byte).
@@ -52,7 +54,9 @@ func probeTFTP(ctx context.Context, address string, port int, marker string) err
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	packet := concat(
 		[]byte{0x00, 0x01}, // opcode 1: RRQ
@@ -75,7 +79,9 @@ func probeSIP(ctx context.Context, address string, port int, marker string) erro
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Deferred cleanup after this probe's single write; a failed close
+	// here can't change whether the probe itself succeeded.
+	defer func() { _ = conn.Close() }()
 
 	target := fmt.Sprintf("%s:%d", address, port)
 	req := "OPTIONS sip:" + target + " SIP/2.0\r\n" +

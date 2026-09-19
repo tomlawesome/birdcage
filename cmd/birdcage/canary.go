@@ -307,7 +307,7 @@ func runCanaryEnrol(args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf(usage)
+		return errors.New(usage)
 	}
 	if *name == "" || *lane == "" {
 		return fmt.Errorf("%s: both flags are required", usage)
@@ -388,7 +388,9 @@ func runCanaryEnrol(args []string) error {
 	// never attacker- or even operator-influenced, so neither is
 	// escaped -- the same distinction runCanaryMint draws between
 	// canaryID and tok.ID/raw.
-	printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image)
+	if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+		return fmt.Errorf("print docker run command: %w", err)
+	}
 	fmt.Printf("token valid for 5 minutes (until %s); single use\n", session.FirstContactDeadline.Format(time.RFC3339))
 
 	return nil
@@ -408,9 +410,13 @@ func runCanaryEnrol(args []string) error {
 // random hex -- never attacker- or even operator-influenced, so neither
 // is escaped, the same distinction runCanaryMint draws between canaryID
 // and tok.ID/raw.
-func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) {
-	fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped --init \\\n")
-	fmt.Fprintf(w, "  --sysctl net.ipv4.ip_unprivileged_port_start=0 \\\n")
+func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
+	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped --init \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  --sysctl net.ipv4.ip_unprivileged_port_start=0 \\\n"); err != nil {
+		return err
+	}
 	// --cap-add NET_RAW (#65): the agent watches for port scans with one
 	// raw socket in the container's own network namespace, because
 	// OpenCanary's own portscan module needs iptables-legacy and root,
@@ -420,12 +426,23 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	// canary still reports every hit on an emulated service -- it just
 	// cannot see somebody sweeping the ports nothing answers on, and
 	// says so in one line at startup.
-	fmt.Fprintf(w, "  --cap-add NET_RAW \\\n")
-	fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \\\n")
-	fmt.Fprintf(w, "  -e MOCKINGBIRD_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort)
-	fmt.Fprintf(w, "  -e MOCKINGBIRD_CA_PIN=%s \\\n", pin)
-	fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token)
-	fmt.Fprintf(w, "  %s\n", term.Escape(image))
+	if _, err := fmt.Fprintf(w, "  --cap-add NET_RAW \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_CA_PIN=%s \\\n", pin); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
+	return err
 }
 
 // requireEnrolAddresses reads #54's two settings and fails with a clear,

@@ -24,7 +24,7 @@ func TestDialTCP_Connects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dialTCP: %v", err)
 	}
-	conn.Close()
+	_ = conn.Close() // test teardown; nothing left to act on a close error
 }
 
 func TestDialTCP_RefusedConnectionIsAnError(t *testing.T) {
@@ -34,7 +34,7 @@ func TestDialTCP_RefusedConnectionIsAnError(t *testing.T) {
 	}
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	ln.Close() // nothing listens here now
+	_ = ln.Close() // nothing listens here now
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -48,15 +48,15 @@ func TestDrainBriefly_ConsumesWhateverArrivesFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer c.Close()
-		c.Write([]byte("220 greeting\r\n"))
+		defer func() { _ = c.Close() }()           // test teardown; nothing left to act on a close error
+		_, _ = c.Write([]byte("220 greeting\r\n")) // fixture write; a failure surfaces as a hang/timeout in the test below
 	}()
 
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
@@ -68,7 +68,7 @@ func TestDrainBriefly_ConsumesWhateverArrivesFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dialTCP: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // test teardown; nothing left to act on a close error
 
 	// Should return promptly once the greeting arrives, well inside the
 	// budget, and must not consume the write deadline dialTCP set.

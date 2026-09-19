@@ -36,7 +36,7 @@ func TestProbeSSH_PlantsMarkerAsUsernameAndTreatsRejectionAsSuccess(t *testing.T
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
 	done := make(chan struct{})
 	go func() {
@@ -45,7 +45,7 @@ func TestProbeSSH_PlantsMarkerAsUsernameAndTreatsRejectionAsSuccess(t *testing.T
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }() // test teardown; nothing left to act on a close error
 		// An auth failure is the expected outcome; the server
 		// connection itself never completes past that.
 		_, _, _, _ = ssh.NewServerConn(c, serverCfg)
@@ -73,7 +73,7 @@ func TestProbeSSH_DialFailureIsAnError(t *testing.T) {
 	}
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	ln.Close()
+	_ = ln.Close() // nothing listens here now
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

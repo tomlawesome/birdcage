@@ -92,7 +92,7 @@ func handshakeCommonName(t *testing.T, addr string) string {
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // test teardown; nothing left to act on a close error
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
 		t.Fatalf("dial %s: no certificate presented", addr)
@@ -116,7 +116,7 @@ func TestCertReloaderReloadsOnMTimeChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
 	tlsConfig := HardenedTLSConfig(reloader.GetCertificate)
 	server := &tls.Config{MinVersion: tlsConfig.MinVersion, GetCertificate: tlsConfig.GetCertificate}
@@ -127,8 +127,8 @@ func TestCertReloaderReloadsOnMTimeChange(t *testing.T) {
 				return
 			}
 			go func() {
-				defer conn.Close()
-				tls.Server(conn, server).Handshake()
+				defer func() { _ = conn.Close() }()      // test teardown; nothing left to act on a close error
+				_ = tls.Server(conn, server).Handshake() // server side of the test handshake; failures surface as a client-side timeout/error below
 			}()
 		}
 	}()

@@ -38,7 +38,7 @@ func TestUnixListenerServesAndCleansUp(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"alerts":0}`))
+		_, _ = w.Write([]byte(`{"alerts":0}`)) // test handler; a failure surfaces as a mismatch in the client's response assertions below
 	})
 	server := &http.Server{Handler: mux}
 
@@ -59,7 +59,7 @@ func TestUnixListenerServesAndCleansUp(t *testing.T) {
 		t.Fatalf("GET /api/stats over unix socket: %v", err)
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close() // test teardown; nothing left to act on a close error
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
@@ -103,11 +103,11 @@ func TestUnixListenerRemovesStaleSocket(t *testing.T) {
 	}
 	// Simulate an unclean shutdown: the listener is dropped without
 	// closing, and the socket file is left behind.
-	ln1.Close()
+	_ = ln1.Close() // test teardown; nothing left to act on a close error
 
 	ln2, err := UnixListener(sockPath)
 	if err != nil {
 		t.Fatalf("second UnixListener (stale socket): %v", err)
 	}
-	defer ln2.Close()
+	defer func() { _ = ln2.Close() }() // test teardown; nothing left to act on a close error
 }

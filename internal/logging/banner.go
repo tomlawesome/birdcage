@@ -169,7 +169,10 @@ func PrintBanner() {
 	}
 	b.WriteString(rule(bannerBottomRule))
 
-	fmt.Fprintln(os.Stdout, b.String())
+	// Decorative boot banner; if stdout can't be written to, the process
+	// has bigger problems than this line, and there's nothing useful to
+	// do about it here.
+	_, _ = fmt.Fprintln(os.Stdout, b.String())
 }
 
 // colorGlyphs colours each rune of line by its entry in glyphColors,

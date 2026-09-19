@@ -15,7 +15,9 @@ import (
 // than with a diff nobody reads.
 func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 	var out strings.Builder
-	printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest")
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest"); err != nil {
+		t.Fatalf("printEnrolRunCommand: %v", err)
+	}
 	got := out.String()
 
 	required := []struct {
@@ -53,7 +55,9 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 // same rule every other command in cmd/birdcage follows.
 func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	var out strings.Builder
-	printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name")
+	if err := printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name"); err != nil {
+		t.Fatalf("printEnrolRunCommand: %v", err)
+	}
 	got := out.String()
 
 	if strings.ContainsRune(got, 0x1b) {
