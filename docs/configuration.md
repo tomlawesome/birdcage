@@ -135,6 +135,37 @@ Unset is fine for same-host testing, where `localhost`/`127.0.0.1`
 already cover it, but a canary reaching birdcage over the network needs
 this set to the address it actually dials.
 
+### `BIRDCAGE_ENROL_ADDR`
+
+Issue #47 slice 1b's HTTPS enrolment listener -- `POST /enrol/hello`,
+the one place a freshly minted deploy token (`birdcage canary enrol`,
+see [docs/enrolment.md](enrolment.md)) is ever accepted. Default `:8444`.
+It is not a separate on/off switch: this listener starts whenever
+`BIRDCAGE_INGEST_ADDR` is set, since enrolment exists only to hand a
+canary the credentials it then uses on the ingest listener -- the two
+are one feature. It shares the ingest listener's CA-minted serving
+certificate (same SANs, from `BIRDCAGE_ADVERTISE_HOST` and
+`BIRDCAGE_CA_DIR` above, same 24h lifetime/6h renewal).
+
+### Enrolment settings: `admin_approval_address` / `release_address`
+
+Issue #54's two addresses, stored as settings (`birdcage settings set
+admin_approval_address <value>` / `birdcage settings set release_address
+<value>`, see #46's settings CLI) rather than environment variables,
+since an operator may reasonably change either without a redeploy. Both
+must be set before `birdcage canary enrol` will mint a session -- it
+fails with a clear error naming the `settings set` command otherwise.
+`POST /enrol/hello`'s success response carries both, so a freshly
+enrolled canary's operator knows where an admin approval and a release
+each go.
+
+### `MOCKINGBIRD_IMAGE`
+
+Overrides the image name `birdcage canary enrol` prints in its `docker
+run` command. Default `mockingbird:latest` -- birdcage doesn't publish
+this image anywhere yet (issue #69), so until then an operator builds
+and tags it by hand and points this at whatever they called it.
+
 ### `BIRDCAGE_INTERNAL_RANGES`
 
 `GET /api/visitors` and `GET /api/trace` (issue #35) classify a source as

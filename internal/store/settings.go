@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -58,6 +59,18 @@ const (
 	// the CLI and the dashboard write the one row a future scheduler
 	// reads, rather than that scheduler inventing its own copy.
 	SettingRotationSchedule SettingKey = "rotation_schedule"
+	// SettingAdminApprovalAddress and SettingReleaseAddress are issue
+	// #54's two addresses, carried in POST /enrol/hello's first-contact
+	// response (issue #47 slice 1b, "The flow" step 3) so a freshly
+	// enrolled canary's operator knows where an admin approval and a
+	// release both go. Free-text strings (a mailing address, a chat
+	// channel, whatever #54 settles on -- this slice only carries the
+	// value, it doesn't interpret it), empty by default: `birdcage
+	// canary enrol` refuses to mint a session until both are set (see
+	// cmd/birdcage/canary.go), naming the `birdcage settings set`
+	// command an operator needs to run first.
+	SettingAdminApprovalAddress SettingKey = "admin_approval_address"
+	SettingReleaseAddress       SettingKey = "release_address"
 )
 
 // orderedSettingKeys is settingDefs' key order for anything that lists
@@ -68,6 +81,8 @@ var orderedSettingKeys = []SettingKey{
 	SettingSelfTestSchedule,
 	SettingSelfTestUseRotationSchedule,
 	SettingRotationSchedule,
+	SettingAdminApprovalAddress,
+	SettingReleaseAddress,
 }
 
 // SettingKeys returns every known setting key, in a stable order. The
@@ -103,6 +118,8 @@ var settingDefs = map[SettingKey]settingDef{
 	SettingSelfTestSchedule:            {validate: validateSettingScheduleTime, defaultValue: "00:00"},
 	SettingSelfTestUseRotationSchedule: {validate: validateSettingBool, defaultValue: "true"},
 	SettingRotationSchedule:            {validate: validateSettingScheduleTime, defaultValue: "00:00"},
+	SettingAdminApprovalAddress:        {validate: validateSettingAddress, defaultValue: ""},
+	SettingReleaseAddress:              {validate: validateSettingAddress, defaultValue: ""},
 }
 
 // scheduleTimePattern matches a strict, zero-padded 24-hour "HH:MM", e.g.
@@ -126,6 +143,27 @@ func validateSettingBool(value string) error {
 func validateSettingScheduleTime(value string) error {
 	if !scheduleTimePattern.MatchString(value) {
 		return fmt.Errorf(`must be a 24-hour UTC time as "HH:MM" (e.g. "03:00"), got %q`, value)
+	}
+	return nil
+}
+
+// controlCharPattern matches any ASCII control character (0x00-0x1F,
+// 0x7F) -- Go's RE2-flavoured regexp supports the POSIX "[[:cntrl:]]"
+// class directly, so this needs no per-codepoint enumeration.
+var controlCharPattern = regexp.MustCompile(`[[:cntrl:]]`)
+
+// validateSettingAddress accepts SettingAdminApprovalAddress and
+// SettingReleaseAddress: a non-empty (after trimming whitespace) string
+// with no control characters. It doesn't otherwise constrain the value
+// -- issue #54 settles what these addresses actually look like (a
+// mailing address, a chat channel, ...); this slice only carries
+// whatever #54 decides.
+func validateSettingAddress(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if controlCharPattern.MatchString(value) {
+		return fmt.Errorf("must not contain control characters")
 	}
 	return nil
 }
