@@ -246,7 +246,7 @@
          and its existing classes -- muted for "off" and "ok", the alarm
          class only when mail has actually stopped working, since
          nothing else on this page would go red about that. -->
-    {#if mailStatus}<span class={mailStatus.cls}>{mailStatus.text}</span>{/if}
+    {#if mailStatus}<span class={mailStatus.cls} title={mailStatus.detail}>{mailStatus.text}</span>{/if}
     <span class="who">tom (admin)</span>
   </div>
 
