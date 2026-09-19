@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/enrol"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
+	"github.com/tomlawesome/birdcage/internal/startcheck"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
 	"github.com/tomlawesome/birdcage/internal/tlsconfig"
@@ -262,6 +264,26 @@ func main() {
 	if err != nil {
 		httpLog.Error(err.Error())
 		os.Exit(1)
+	}
+
+	// Issue #70: prove the data directory and any configured TLS
+	// certificate/key are actually usable by this uid before any
+	// listener binds or the database opens -- never a fallback, never a
+	// retry. The CA directory (internal/ca.Load) already fails closed
+	// the same way; this covers the two paths that don't yet.
+	if err := startcheck.WritableDir(filepath.Dir(dbPath)); err != nil {
+		dbLog.Error(err.Error())
+		os.Exit(1)
+	}
+	if httpSelection.Mode == tlsconfig.ModeCert {
+		if err := startcheck.ReadableFile(httpTLSCert); err != nil {
+			httpLog.Error(err.Error())
+			os.Exit(1)
+		}
+		if err := startcheck.ReadableFile(httpTLSKey); err != nil {
+			httpLog.Error(err.Error())
+			os.Exit(1)
+		}
 	}
 
 	// DATABASE_URL, when set, picks the engine (including Postgres);

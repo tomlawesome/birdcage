@@ -117,6 +117,35 @@ Anything else -- an empty host (the documented default
 with no certificate configured -- refuses to start with one message
 naming all three modes and both TLS variables.
 
+## Running as a different user
+
+Issue #70: before anything else, birdcage checks that the data directory
+(the parent of `BIRDCAGE_DB_PATH`) is writable, and that any configured
+`BIRDCAGE_HTTP_TLS_CERT`/`BIRDCAGE_HTTP_TLS_KEY` are readable, by the uid
+and gid it is actually running as. If not, it exits immediately with one
+message naming the path, that uid and gid, and the fix -- never a
+fallback, never a retry, and never a confusing failure later from
+`db.Open` or `tls.LoadX509KeyPair` instead.
+
+The Birdcage container runs as uid:gid `1000:1000`. There is no
+`PUID`/`PGID` environment variable to change that: the runtime image is
+distroless (no shell, no package manager -- see
+`build/birdcage/Dockerfile`), and it never runs as root, so there is
+nothing for such a variable to hand off to at startup. Two ways to match
+it up with a mounted volume or certificate:
+
+- **Run as yourself**, so whatever you mount in is already readable:
+  `docker run --user $(id -u):$(id -g) ...`.
+- **Match the default uid**, so the volume or certificate is readable by
+  1000:1000 without changing how the container runs:
+  `chown 1000:1000 /path/to/volume-or-cert`.
+
+Mockingbird's container runs as uid:gid `65532:65532` (distroless's own
+`nonroot`, not 1000 -- see `build/mockingbird/Dockerfile`'s comment for
+why) and needs the same treatment for its two volumes,
+`/var/lib/mockingbird` and `/var/log/opencanary`: either `chown
+65532:65532` them, or run the container with `--user 65532:65532`.
+
 ## Reverse proxy: `/api/stream` and buffering
 
 If you're using mode 2 above (plain HTTP on loopback, `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`)
