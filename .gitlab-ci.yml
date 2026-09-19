@@ -227,7 +227,7 @@ test:image:birdcage:
 
 # The agent fails closed without a token and client certificate in its
 # state directory, so the job mints throwaway ones into a named volume
-# (never into the repository) and points BIRDCAGE_AGENT_URL at a closed
+# (never into the repository) and points MOCKINGBIRD_BIRDCAGE_URL at a closed
 # port: what is under test is that the image starts as uid 65532, binds
 # the honeypot ports, and answers an FTP client. The loopback path from
 # OpenCanary to the agent is #48's end-to-end test, not this job's.
@@ -259,7 +259,7 @@ test:image:mockingbird:
       --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
       --read-only --cap-drop ALL --security-opt no-new-privileges
       --pids-limit 64 --memory 256m --cpus 0.5
-      --env BIRDCAGE_AGENT_URL=https://127.0.0.1:1
+      --env MOCKINGBIRD_BIRDCAGE_URL=https://127.0.0.1:1
       "$APP"
     - |
       for attempt in $(seq 1 30); do

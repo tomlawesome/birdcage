@@ -39,7 +39,7 @@ func TestLoadConfigMissingEnvVar(t *testing.T) {
 
 	_, err := loadConfig()
 	if err == nil {
-		t.Fatal("loadConfig succeeded with BIRDCAGE_AGENT_LISTEN unset")
+		t.Fatal("loadConfig succeeded with MOCKINGBIRD_LISTEN unset")
 	}
 	if !strings.Contains(err.Error(), envListen) {
 		t.Fatalf("err = %q, want it to name %s", err, envListen)

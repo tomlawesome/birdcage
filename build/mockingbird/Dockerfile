@@ -13,7 +13,7 @@
 #     docker run --init --sysctl net.ipv4.ip_unprivileged_port_start=0 \
 #       -v mockingbird-state:/var/lib/mockingbird \
 #       -v mockingbird-log:/var/log/opencanary \
-#       -e BIRDCAGE_AGENT_URL=https://birdcage.example:8443 mockingbird
+#       -e MOCKINGBIRD_BIRDCAGE_URL=https://birdcage.example:8443 mockingbird
 #
 # --sysctl: OpenCanary listens on 21, 22, 23, 80 and friends. Upstream
 # starts as root and has twistd drop to nobody after binding; here
@@ -70,9 +70,9 @@ USER 65532:65532
 ENV PYTHONPATH=/opt/opencanary \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    BIRDCAGE_AGENT_STATE_DIR=/var/lib/mockingbird \
-    BIRDCAGE_AGENT_LOG_PATH=/var/log/opencanary/opencanary.log \
-    BIRDCAGE_AGENT_LISTEN=127.0.0.1:9919
+    MOCKINGBIRD_STATE_DIR=/var/lib/mockingbird \
+    MOCKINGBIRD_LOG_PATH=/var/log/opencanary/opencanary.log \
+    MOCKINGBIRD_LISTEN=127.0.0.1:9919
 VOLUME ["/var/lib/mockingbird", "/var/log/opencanary"]
 # The services opencanary.conf enables by default. There is no EXPOSE for
 # the agent's receiver: it is loopback-only by design.

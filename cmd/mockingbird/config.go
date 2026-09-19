@@ -16,21 +16,21 @@ const (
 	// envBirdcageURL is birdcage's ingest origin, dialled exactly by
 	// internal/agent/client -- no proxy, no redirect (#48 "What the
 	// research changed" #1).
-	envBirdcageURL = "BIRDCAGE_AGENT_URL"
+	envBirdcageURL = "MOCKINGBIRD_BIRDCAGE_URL"
 	// envStateDir is the 0700 directory #47 provisions on the canary,
 	// holding the enrolment-written CA certificate and mTLS client
 	// certificate/key, and the agent-written token and acknowledged
 	// position files (#48 decision 6).
-	envStateDir = "BIRDCAGE_AGENT_STATE_DIR"
+	envStateDir = "MOCKINGBIRD_STATE_DIR"
 	// envLogPath is OpenCanary's log file -- read by the tailer a later
 	// slice adds. Carried through configuration now so that slice is
 	// purely additive.
-	envLogPath = "BIRDCAGE_AGENT_LOG_PATH"
+	envLogPath = "MOCKINGBIRD_LOG_PATH"
 	// envListen is the loopback address the receiver a later slice adds
 	// binds. The concrete port is #47's to pin, since it writes
 	// OpenCanary's webhook URL to match; loopback-only is enforced where
 	// the receiver actually binds, not duplicated here.
-	envListen = "BIRDCAGE_AGENT_LISTEN"
+	envListen = "MOCKINGBIRD_LISTEN"
 )
 
 // File names inside StateDir. Fixed, not configurable -- #48 decision 6:
