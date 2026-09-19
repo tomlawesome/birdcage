@@ -64,14 +64,34 @@ func newTestClient(t *testing.T, ts *httptest.Server) *Client {
 // configured to trust it -- so drift between this package's wire types
 // and internal/ingest's own fails a test here rather than only showing
 // up against a real deployment.
+//
+// The server requires a client certificate (issue #47 slice 3: the
+// ingest listener runs ClientAuth: RequireAndVerifyClientCert, and
+// requireBearerToken binds the certificate's CommonName to the token's
+// canary), so the Client presents one for testCanaryID -- the canary
+// every test in this package mints its tokens for.
 func newIngestServer(t *testing.T, database *db.DB) (*Client, *httptest.Server) {
 	t.Helper()
+	clientCert, clientKey := selfSignedKeyPair(t, testCanaryID)
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(clientCert) {
+		t.Fatal("failed to add generated client cert to pool")
+	}
 	handler := ingest.NewHandler(database, nil)
 	ts := httptest.NewUnstartedServer(handler)
+	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
 	ts.StartTLS()
 	t.Cleanup(ts.Close)
-	return newTestClient(t, ts), ts
+	c, err := New(Config{BaseURL: ts.URL, CACert: certPEM(t, ts), ClientCert: clientCert, ClientKey: clientKey})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c, ts
 }
+
+// testCanaryID is the one canary this package's real-ingest tests
+// enrol, mint tokens for, and present a client certificate as.
+const testCanaryID = "canary-a"
 
 func ctx() context.Context {
 	return context.Background()
