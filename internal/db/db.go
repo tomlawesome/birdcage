@@ -104,6 +104,16 @@ func (t *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *sq
 	return t.Tx.QueryRowContext(ctx, t.rebind(query), args...)
 }
 
+// QueryContext rebinds exactly as the two methods above do. The embedded
+// *sql.Tx has a QueryContext of its own, which does NOT rebind -- a
+// multi-row read inside a transaction had to be shadowed here or it
+// would send "?" placeholders straight to Postgres (issue #56's
+// per-tick reconcile reads every open state period inside its own
+// transaction).
+func (t *Tx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return t.Tx.QueryContext(ctx, t.rebind(query), args...)
+}
+
 func (t *Tx) rebind(query string) string {
 	if t.engine != Postgres {
 		return query
