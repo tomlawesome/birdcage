@@ -230,6 +230,63 @@ func (h *handler) handleVisitors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// historyResponse is GET /api/history's body (issue #56): the window it
+// was asked for, every state period overlapping that window, and the
+// per-canary per-state totals over it. store.StatePeriod and
+// store.StateSummary already carry their own JSON shapes, so this
+// envelope adds only the window they all refer to -- without which
+// "total_s: 1500" says nothing.
+type historyResponse struct {
+	Range   string               `json:"range"`
+	Since   time.Time            `json:"since"`
+	Until   time.Time            `json:"until"`
+	Periods []store.StatePeriod  `json:"periods"`
+	Summary []store.StateSummary `json:"summary"`
+}
+
+// handleHistory serves GET /api/history?range=<24h|7d|30d>&canary=<id>,
+// defaulting to store.DefaultHistoryRange when range is omitted and
+// rejecting any other value with 400, exactly like handleCanaries. An
+// unknown canary id is not an error: it matches no periods, the same as
+// a canary that has nothing to report.
+//
+// Canary names travel through this handler as plain JSON strings. They
+// are attacker-influenced text -- whoever names a canary chooses them --
+// and encoding/json escapes them for transport; making them safe to
+// *display* is the frontend's job at the point it renders them
+// (SECURITY.md, "Output escaping"), not this handler's to pre-empt by
+// stripping or rewriting what an operator typed.
+func (h *handler) handleHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rangeParam := q.Get("range")
+	window, err := store.ParseHistoryRange(rangeParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "range must be one of 24h, 7d, 30d")
+		return
+	}
+	if rangeParam == "" {
+		rangeParam = store.DefaultHistoryRange
+	}
+
+	until := h.now().UTC()
+	since := until.Add(-window)
+
+	periods, err := store.ListStatePeriods(r.Context(), h.db, since, until, q.Get("canary"))
+	if err != nil {
+		log.Printf("api: list state periods: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, historyResponse{
+		Range:   rangeParam,
+		Since:   since,
+		Until:   until,
+		Periods: periods,
+		Summary: store.SummarizeStatePeriods(periods, since, until),
+	})
+}
+
 // handleTrace serves GET /api/trace?range=<Range>. store.Trace already
 // carries exactly TraceResponse's shape (frontend/src/lib/types.ts), so
 // there is no wrapper struct to build here, unlike handleVisitors'
