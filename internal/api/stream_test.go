@@ -23,7 +23,7 @@ import (
 func TestStreamDeliversAlertWithinASecond(t *testing.T) {
 	database := openTempDB(t)
 	hub := stream.NewHub()
-	h := NewHandlerWithHub(database, nil, hub)
+	h := NewHandlerWithHub(database, nil, hub, false)
 
 	srv := httptest.NewServer(h)
 	defer srv.Close()
@@ -114,7 +114,7 @@ func TestStreamDeliversAlertWithinASecond(t *testing.T) {
 func TestStreamRejectsWhenHubAtCapacity(t *testing.T) {
 	database := openTempDB(t)
 	hub := stream.NewHub()
-	h := NewHandlerWithHub(database, nil, hub)
+	h := NewHandlerWithHub(database, nil, hub, false)
 
 	// Fill the hub directly (cheaper and more deterministic than opening
 	// 256 real HTTP connections) -- handleStream's only interaction with

@@ -28,6 +28,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/history"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
+	"github.com/tomlawesome/birdcage/internal/mail"
 	"github.com/tomlawesome/birdcage/internal/startcheck"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
@@ -296,6 +297,14 @@ func main() {
 		}
 	}
 
+	// Issue #55: outbound mail is all-or-nothing and is settled here,
+	// before the database opens and long before any listener binds --
+	// including reading the password file, so an unreadable or empty
+	// one refuses to start with startcheck's own message rather than
+	// surfacing much later inside a failed send.
+	mailLog := logging.New("mail")
+	mailConfig, mailEnabled := loadMailConfig(mailLog)
+
 	// DATABASE_URL, when set, picks the engine (including Postgres);
 	// unset, dbPath (BIRDCAGE_DB_PATH or its default) is passed through
 	// as a bare path, which db.Open treats as SQLite -- the same
@@ -337,8 +346,26 @@ func main() {
 	// the edge of a span, while exiting would take the whole service
 	// down over bookkeeping. Every failure is logged at ERROR and the
 	// loop carries on.
+	// Issue #55's sender, and the hook that feeds it. Both are nil when
+	// mail is not configured: internal/mail's methods are nil-safe, so
+	// the tick below runs unconditionally and does nothing, and the
+	// recorder is built with no hook at all rather than one that checks
+	// a flag on every state change.
+	//
+	// The hook runs inside the recorder's own transaction, so the alert
+	// and the state period that caused it commit together or not at
+	// all.
+	var mailSender *mail.Sender
+	var conflictHook history.TokenConflictHook
+	if mailEnabled {
+		mailSender = mail.New(database, mailConfig, mailLog)
+		conflictHook = func(hookCtx context.Context, tx *db.Tx, canaryID, canaryName string, at time.Time) error {
+			return mailSender.EnqueueTokenConflict(hookCtx, tx, canaryID, canaryName, at)
+		}
+	}
+
 	historyLog := logging.New("history")
-	stateRecorder := history.New(database)
+	stateRecorder := history.NewWithTokenConflictHook(database, conflictHook)
 	if err := stateRecorder.Start(ctx, time.Now().UTC()); err != nil {
 		historyLog.Error(fmt.Sprintf("start canary state recorder: %v", err))
 	}
@@ -353,8 +380,24 @@ func main() {
 				// ctx.Err() == nil keeps a tick canceled by shutdown
 				// itself out of the log: that is the signal arriving
 				// mid-tick, not a failure worth reporting.
-				if err := stateRecorder.Tick(ctx, tick.UTC()); err != nil && ctx.Err() == nil {
+				now := tick.UTC()
+				if err := stateRecorder.Tick(ctx, now); err != nil && ctx.Err() == nil {
 					historyLog.Error(fmt.Sprintf("record canary state history: %v", err))
+				}
+				// Issue #55's outbound mail drains on the same loop,
+				// immediately after the recorder rather than on a
+				// ticker of its own: the recorder is what writes an
+				// alert into the outbox, so sending in the same pass
+				// means a token conflict is mailed on the tick that
+				// noticed it rather than on whichever tick happened to
+				// come next. Nil when mail is off, and a no-op then.
+				//
+				// A failure here is logged and the loop carries on, for
+				// the same reason a failed history tick does: this
+				// binary exists to run the dashboard and the ingest
+				// listener, and neither reads this table.
+				if err := mailSender.Tick(ctx, now); err != nil && ctx.Err() == nil {
+					mailLog.Error(fmt.Sprintf("send queued mail: %v", err))
 				}
 			}
 		}
@@ -383,7 +426,7 @@ func main() {
 	// (#36), embedded into this binary by web/embed.go with an SPA
 	// fallback to index.html so a client-side route survives a refresh.
 	rootMux := http.NewServeMux()
-	rootMux.Handle("/api/", api.NewHandlerWithHub(database, internalRanges, hub))
+	rootMux.Handle("/api/", api.NewHandlerWithHub(database, internalRanges, hub, mailEnabled))
 	if uiHandler, err := web.Handler(); err != nil {
 		httpLog.Warn(fmt.Sprintf("frontend: %v (serving API only)", err))
 	} else {

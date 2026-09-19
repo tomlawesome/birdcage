@@ -290,6 +290,44 @@ func (h *handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// mailResponse is GET /api/mail's body (issue #55): whether outbound
+// mail is configured at all, and how the sending itself is going.
+// store.MailStatus already carries its own JSON shape, so this envelope
+// adds only the one fact that is not in the database -- an empty outbox
+// looks the same whether mail is switched off or has simply had nothing
+// to say, and the dashboard needs to tell "mail off" from "mail ok".
+//
+// Nothing here is a credential or derived from one: no host, no
+// username, no address. An operator can see that mail is configured and
+// whether it is working; they read their own configuration for the
+// rest.
+type mailResponse struct {
+	Configured bool `json:"configured"`
+	store.MailStatus
+}
+
+// handleMail serves GET /api/mail. It reports the state of the outbox
+// whether or not mail is currently configured: rows left behind by a
+// configuration that has since been removed are still owed, and hiding
+// them would make a disabled mailer look like a drained one.
+//
+// last_error is the stored text for the oldest failing message, which
+// internal/mail has already scrubbed of the credential before writing
+// it (Sender.scrub). It is the one field on this endpoint that carries
+// text birdcage did not compose entirely itself -- an SMTP server's own
+// rejection -- so the frontend renders it through Svelte's text
+// interpolation like every other value (SECURITY.md, "Output
+// escaping").
+func (h *handler) handleMail(w http.ResponseWriter, r *http.Request) {
+	status, err := store.GetMailStatus(r.Context(), h.db)
+	if err != nil {
+		log.Printf("api: get mail status: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, mailResponse{Configured: h.mailConfigured, MailStatus: status})
+}
+
 // handleTrace serves GET /api/trace?range=<Range>. store.Trace already
 // carries exactly TraceResponse's shape (frontend/src/lib/types.ts), so
 // there is no wrapper struct to build here, unlike handleVisitors'

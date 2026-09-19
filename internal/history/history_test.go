@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -358,6 +359,139 @@ func TestTickPropagatesDatabaseErrors(t *testing.T) {
 		}
 		if err := r.Tick(context.Background(), t0.Add(time.Minute)); err == nil {
 			t.Fatal("Tick with the table dropped = nil error, want the failure propagated")
+		}
+	})
+}
+
+// hookCall is one firing of issue #55's token-conflict hook.
+type hookCall struct {
+	canaryID   string
+	canaryName string
+	at         time.Time
+}
+
+// recordingHook collects every call, so a test can assert on what the
+// recorder passed and on how often.
+func recordingHook(calls *[]hookCall) TokenConflictHook {
+	return func(_ context.Context, _ *db.Tx, canaryID, canaryName string, at time.Time) error {
+		*calls = append(*calls, hookCall{canaryID, canaryName, at})
+		return nil
+	}
+}
+
+// TestTokenConflictHookFiresOnOpenAndReopen is issue #55's trigger. A
+// conflict that opens a span fires it; a conflict that re-enters inside
+// the collapse window, which continues the existing span rather than
+// opening another, fires it too -- the collapse bounds row count, it
+// does not decide what is worth telling anybody about. A span that is
+// simply still open fires nothing.
+func TestTokenConflictHookFiresOnOpenAndReopen(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "canary-1", "canary one", t0)
+		signal(t, database, "ingest.token_conflict", "canary-1", t0)
+
+		var calls []hookCall
+		r := NewWithTokenConflictHook(database, recordingHook(&calls))
+
+		// Opened.
+		tick(t, r, t0)
+		if len(calls) != 1 {
+			t.Fatalf("the hook fired %d times on the opening tick, want 1", len(calls))
+		}
+		if calls[0].canaryID != "canary-1" || calls[0].canaryName != "canary one" {
+			t.Errorf("the hook was passed %+v, want the canary's id and name", calls[0])
+		}
+		if !calls[0].at.Equal(t0) {
+			t.Errorf("the hook was passed %s, want the tick's own time %s", calls[0].at, t0)
+		}
+
+		// Still open: nothing new happened, so nothing fires.
+		t1 := t0.Add(time.Minute)
+		beat(t, database, "canary-1", t1)
+		tick(t, r, t1)
+		if len(calls) != 1 {
+			t.Fatalf("the hook fired again while the span was simply still open (%d calls)", len(calls))
+		}
+
+		// Cleared, then re-entered inside the collapse window: the span
+		// is reopened rather than duplicated, and the hook fires.
+		t2 := t0.Add(25 * time.Hour)
+		beat(t, database, "canary-1", t2)
+		tick(t, r, t2)
+		if len(calls) != 1 {
+			t.Fatalf("the hook fired on a tick that closed a span (%d calls)", len(calls))
+		}
+
+		t3 := t2.Add(time.Minute)
+		signal(t, database, "ingest.token_conflict", "canary-1", t3)
+		beat(t, database, "canary-1", t3)
+		tick(t, r, t3)
+		if len(calls) != 2 {
+			t.Fatalf("the hook fired %d times, want 2 (the reopen must fire it)", len(calls))
+		}
+		if got := periods(t, database, "canary-1"); len(got) != 1 {
+			t.Errorf("the reopen inserted a second span: %+v", got)
+		}
+	})
+}
+
+// Only token_conflict has a hook. Every other state the recorder opens
+// leaves it alone.
+func TestTokenConflictHookIgnoresOtherStates(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "canary-1", "one", t0)
+		signal(t, database, "ingest.rate_limited", "canary-1", t0)
+
+		var calls []hookCall
+		r := NewWithTokenConflictHook(database, recordingHook(&calls))
+		tick(t, r, t0)
+
+		if got := periods(t, database, "canary-1"); len(got) != 1 || got[0].State != string(store.StateThrottled) {
+			t.Fatalf("expected one throttled span, got %+v", got)
+		}
+		if len(calls) != 0 {
+			t.Errorf("the hook fired %d times for a throttled canary, want 0", len(calls))
+		}
+	})
+}
+
+// A failing hook rolls the whole tick back. The alert and the span it
+// is about commit together or not at all -- an alert about a period
+// birdcage has no record of would be as wrong as a period with no alert.
+func TestTokenConflictHookFailureRollsTheTickBack(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "canary-1", "one", t0)
+		signal(t, database, "ingest.token_conflict", "canary-1", t0)
+
+		r := NewWithTokenConflictHook(database, func(context.Context, *db.Tx, string, string, time.Time) error {
+			return errHookFailed
+		})
+		if err := r.Tick(context.Background(), t0); err == nil {
+			t.Fatal("Tick = nil with a failing hook, want the failure propagated")
+		}
+		if got := periods(t, database, "canary-1"); len(got) != 0 {
+			t.Errorf("the span survived a rolled-back tick: %+v", got)
+		}
+	})
+}
+
+var errHookFailed = errors.New("the hook said no")
+
+// A nil hook is the "mail is off" case, and is exactly the recorder as
+// it behaved before issue #55.
+func TestNilHookIsTheOldBehaviour(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "canary-1", "one", t0)
+		signal(t, database, "ingest.token_conflict", "canary-1", t0)
+
+		r := NewWithTokenConflictHook(database, nil)
+		tick(t, r, t0)
+		if got := periods(t, database, "canary-1"); len(got) != 1 {
+			t.Errorf("expected one span with a nil hook, got %+v", got)
 		}
 	})
 }

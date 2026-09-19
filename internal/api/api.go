@@ -33,6 +33,13 @@ type handler struct {
 	now            func() time.Time
 	internalRanges []*net.IPNet
 	hub            *stream.Hub
+	// mailConfigured is whether cmd/birdcage found a complete outbound
+	// mail configuration at boot (issue #55). It is the one thing GET
+	// /api/mail cannot read out of the database: an outbox with nothing
+	// in it looks identical whether mail is switched off or simply has
+	// had nothing to say. The credential itself never reaches this
+	// package -- only the fact that there is one.
+	mailConfigured bool
 }
 
 // NewHandler wires the dashboard API behind the requireAuth seam #8
@@ -45,25 +52,34 @@ type handler struct {
 // Use NewHandlerWithHub instead when a caller needs to publish to the
 // same hub GET /api/stream serves from.
 func NewHandler(database *db.DB, internalRanges []*net.IPNet) http.Handler {
-	return NewHandlerWithHub(database, internalRanges, stream.NewHub())
+	return NewHandlerWithHub(database, internalRanges, stream.NewHub(), false)
 }
 
 // NewHandlerWithHub is NewHandler with an explicit stream.Hub, for a
 // caller (issue #32's future ingest endpoint, or a test) that needs to
 // publish alerts to the exact hub GET /api/stream is subscribed to.
-func NewHandlerWithHub(database *db.DB, internalRanges []*net.IPNet, hub *stream.Hub) http.Handler {
-	return newHandlerWithHub(database, time.Now, internalRanges, hub)
+// mailConfigured is issue #55's boot-time answer to "is there anywhere
+// for an alert to go" -- see handler.mailConfigured.
+func NewHandlerWithHub(database *db.DB, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool) http.Handler {
+	return newHandlerWithHub(database, time.Now, internalRanges, hub, mailConfigured)
 }
 
-// newHandler is newHandlerWithHub with a hub of its own -- every
-// existing test in this package builds a handler with this, and none of
-// them care about streaming, so they're untouched by issue #44.
+// newHandler is newHandlerWithHub with a hub of its own and mail off --
+// every existing test in this package builds a handler with this, and
+// none of them care about streaming or mail, so they're untouched by
+// issues #44 and #55.
 func newHandler(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) http.Handler {
-	return newHandlerWithHub(database, now, internalRanges, stream.NewHub())
+	return newHandlerWithHub(database, now, internalRanges, stream.NewHub(), false)
 }
 
-func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub) http.Handler {
-	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub}
+// newHandlerWithMail is newHandler with issue #55's flag, for the tests
+// that exercise GET /api/mail in both of its states.
+func newHandlerWithMail(database *db.DB, now func() time.Time, mailConfigured bool) http.Handler {
+	return newHandlerWithHub(database, now, nil, stream.NewHub(), mailConfigured)
+}
+
+func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool) http.Handler {
+	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub, mailConfigured: mailConfigured}
 	protected := requireAuth(dashboardRoutes(h))
 
 	// Each known route is registered individually (rather than mounting
@@ -84,13 +100,15 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	mux.Handle("/api/trace", protected)
 	mux.Handle("/api/stream", protected)
 	mux.Handle("/api/history", protected)
+	mux.Handle("/api/mail", protected)
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
 
-// dashboardRoutes registers birdcage's entire dashboard API -- eight GET
-// routes (including /api/stream, issue #44, and /api/history, issue #56)
-// and one POST (/api/heartbeat) -- and nothing else. Mirrors mikroview's
+// dashboardRoutes registers birdcage's entire dashboard API -- nine GET
+// routes (including /api/stream, issue #44, /api/history, issue #56,
+// and /api/mail, issue #55) and one POST (/api/heartbeat) -- and
+// nothing else. Mirrors mikroview's
 // readOnlyRoutes (internal/api/auth.go there): a caller dispatched to
 // this mux is structurally unable to reach anything but these routes,
 // because nothing else is ever registered on it. That property is what
@@ -107,6 +125,7 @@ func dashboardRoutes(h *handler) *http.ServeMux {
 	mux.HandleFunc("GET /api/trace", h.handleTrace)
 	mux.HandleFunc("GET /api/stream", h.handleStream)
 	mux.HandleFunc("GET /api/history", h.handleHistory)
+	mux.HandleFunc("GET /api/mail", h.handleMail)
 	return mux
 }
 
