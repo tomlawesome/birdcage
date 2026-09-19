@@ -271,15 +271,40 @@ test:image:mockingbird:
       --env MOCKINGBIRD_BIRDCAGE_URL=https://127.0.0.1:1
       "$APP"
     - |
+      # The `sleep 2` is the point (#77). BusyBox nc shuts the socket
+      # down for writing the moment its stdin ends, and can exit without
+      # draining what the server already sent -- so `printf | nc` races
+      # the server's replies rather than waiting for them. It won that
+      # race on a workstation and lost it 26 times running on this
+      # runner, where the container is held to half a CPU: OpenCanary
+      # logged an authentication for nearly every attempt, proving it had
+      # sent its 220 greeting, while the check reported no answer at all.
+      # Holding stdin open until the replies arrive is what makes this a
+      # readiness check rather than a timing measurement.
+      #
+      # Still assert the banner, not just that the port accepts a
+      # connection: this job exists to prove OpenCanary is serving FTP,
+      # and a bare connect would pass against a socket with nothing
+      # behind it.
       for attempt in $(seq 1 30); do
-        if docker run --rm --network "container:$APP" alpine:3.24 \
-             sh -c 'printf "USER x\r\nPASS y\r\nQUIT\r\n" | nc -w 3 127.0.0.1 21' | grep -q '^220 '; then
+        reply=$(docker run --rm --network "container:$APP" alpine:3.24 \
+                  sh -c '{ printf "USER x\r\nPASS y\r\nQUIT\r\n"; sleep 2; } | nc -w 5 127.0.0.1 21' || true)
+        if printf '%s' "$reply" | grep -q '^220 '; then
           echo "FTP answered on attempt $attempt"
           break
         fi
         sleep 1
         if [ "$attempt" = 30 ]; then
-          echo "FTP never answered; container log follows"
+          # Say which half failed. "Never answered" sent the last
+          # investigation to the honeypot, which was working the whole
+          # time; the check was what broke.
+          if [ -n "$reply" ]; then
+            echo "FTP replied but never sent a 220 greeting. Last reply:"
+            printf '%s\n' "$reply"
+          else
+            echo "FTP sent nothing at all -- no connection, or no reply within the timeout."
+          fi
+          echo "container log follows"
           docker logs "$APP"
           exit 1
         fi
