@@ -12,7 +12,14 @@
 // unreachable lazy chunks (Vite code-splits every dynamic import
 // regardless of reachability), but no production request ever fetches
 // them.
-import type { CanariesResponse, Range, TraceResponse, VisitorsResponse } from './types'
+import type {
+  CanariesResponse,
+  HistoryRange,
+  HistoryResponse,
+  Range,
+  TraceResponse,
+  VisitorsResponse,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -28,11 +35,15 @@ interface Fixture {
   canaries: CanariesResponse
   visitors: VisitorsResponse
   trace: TraceResponse
+  /** Only the 'history' scene carries one (issue #56): the older scenes
+   * predate the endpoint, and a scene without history reads as a fleet
+   * with nothing recorded yet, which is a state the section draws. */
+  history?: HistoryResponse
 }
 
-type SceneName = 'quiet' | 'silent' | 'night' | 'alerts'
+type SceneName = 'quiet' | 'silent' | 'night' | 'alerts' | 'history'
 
-const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts']
+const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts', 'history']
 
 // Static imports (not a dynamic fetch of the JSON file) so a production
 // build's tree-shaking can drop them entirely once the import.meta.env.DEV
@@ -47,6 +58,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/night.json')) as unknown as Fixture
     case 'alerts':
       return (await import('../dev/fixtures/alerts.json')) as unknown as Fixture
+    case 'history':
+      return (await import('../dev/fixtures/history.json')) as unknown as Fixture
   }
 }
 
@@ -86,4 +99,19 @@ export async function fetchTrace(range: Range = '14d'): Promise<TraceResponse> {
   const scene = fixtureScene()
   if (scene) return (await loadFixture(scene)).trace
   return getJSON<TraceResponse>(`/api/trace?range=${range}`)
+}
+
+/** GET /api/history (issue #56), optionally narrowed to one canary. Its
+ * ranges are the endpoint's own three, not the dashboard's five -- the
+ * caller maps a chip with lib/history/model.ts's historyRangeFor.
+ * A scene fixture without a history block answers as a fleet with
+ * nothing recorded yet rather than failing the section. */
+export async function fetchHistory(range: HistoryRange = '7d', canary?: string): Promise<HistoryResponse> {
+  const scene = fixtureScene()
+  if (scene) {
+    const fixture = await loadFixture(scene)
+    return fixture.history ?? { range, since: fixture.trace.now, until: fixture.trace.now, periods: [], summary: [] }
+  }
+  const canaryParam = canary ? `&canary=${encodeURIComponent(canary)}` : ''
+  return getJSON<HistoryResponse>(`/api/history?range=${range}${canaryParam}`)
 }
