@@ -22,6 +22,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/enrol"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -82,10 +83,23 @@ const (
 	// are covered, which is enough for same-host testing but not for a
 	// real canary on another box.
 	envAdvertiseHost = "BIRDCAGE_ADVERTISE_HOST"
+	// envEnrolAddr configures issue #47 slice 1b's HTTPS enrolment
+	// listener -- POST /enrol/hello (internal/enrol), the one place a
+	// freshly minted deploy token (`birdcage canary enrol`) is ever
+	// accepted. It is its own listener, never sharing a mux with ingest
+	// or the dashboard (design note decision 1). Enabled whenever
+	// envIngestAddr is set, not by a toggle of its own: the two are one
+	// feature (enrolment hands a canary the credentials it then uses on
+	// the ingest listener), so there is no configuration in which one
+	// runs without the other. Uses the same CA-minted serving
+	// certificate (same SANs, same TTL/renewal) as the ingest listener
+	// -- see the shared getCert closure in main below.
+	envEnrolAddr = "BIRDCAGE_ENROL_ADDR"
 
-	defaultDBPath   = "birdcage.db"
-	defaultHTTPAddr = ":8080"
-	defaultCADir    = "/var/lib/birdcage/ca"
+	defaultDBPath    = "birdcage.db"
+	defaultHTTPAddr  = ":8080"
+	defaultCADir     = "/var/lib/birdcage/ca"
+	defaultEnrolAddr = ":8444"
 
 	// ingestServingTTL/ingestRenewBefore are internal/ca.CA.
 	// ServerCertificateSource's lifetime for the ingest listener's
@@ -127,11 +141,12 @@ func main() {
 	// `birdcage canary ...` (cmd/birdcage/canary.go) are standalone CLI
 	// subcommands -- `add` a dev/testing convenience predating enrollment
 	// (#34's "Not in this slice"), `mint`/`list`/`revoke` issue #32 item
-	// 9's canary token management -- that exit immediately rather than
-	// starting the HTTP/ingest services below.
+	// 9's canary token management, `enrol` issue #47 slice 1b's deploy-
+	// token mint -- that exit immediately rather than starting the
+	// HTTP/ingest services below.
 	if len(os.Args) > 1 && os.Args[1] == "canary" {
 		if len(os.Args) < 3 {
-			canaryLog.Error("usage: birdcage canary <add|mint|list|revoke> ...")
+			canaryLog.Error("usage: birdcage canary <add|mint|list|revoke|enrol> ...")
 			os.Exit(1)
 		}
 		var err error
@@ -144,8 +159,10 @@ func main() {
 			err = runCanaryList(os.Args[3:])
 		case "revoke":
 			err = runCanaryRevoke(os.Args[3:])
+		case "enrol":
+			err = runCanaryEnrol(os.Args[3:])
 		default:
-			canaryLog.Error(fmt.Sprintf("unknown canary subcommand %q (want add, mint, list or revoke)", os.Args[2]))
+			canaryLog.Error(fmt.Sprintf("unknown canary subcommand %q (want add, mint, list, revoke or enrol)", os.Args[2]))
 			os.Exit(1)
 		}
 		if err != nil {
@@ -195,6 +212,7 @@ func main() {
 	dbLog := logging.New("db")
 	httpLog := logging.New("http")
 	ingestLog := logging.New("ingest")
+	enrolLog := logging.New("enrol")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -289,18 +307,20 @@ func main() {
 		ErrorLog: slog.NewLogLogger(httpLog.Handler(), slog.LevelWarn),
 	}
 
-	// The ingest listener (issue #32) is only started when
-	// BIRDCAGE_INGEST_ADDR is set -- see envIngestAddr's doc comment
-	// above for why that alone now gates it. Once set, birdcage loads
-	// (or, on a fresh CA directory, generates) its own CA and mints the
-	// listener's serving certificate from it -- #47 slice 1, #62 "Drop
-	// them": an unloadable or wrongly-permissioned CA directory fails
-	// startup loudly, before any socket binds, the same fail-closed
-	// posture issue #32 required of the cert/key files this replaces.
-	var ingestServer *http.Server
+	// The ingest listener (issue #32) and the enrolment listener (issue
+	// #47 slice 1b, envEnrolAddr) are only started when
+	// BIRDCAGE_INGEST_ADDR is set -- see envIngestAddr's and
+	// envEnrolAddr's doc comments above for why one setting gates both.
+	// Once set, birdcage loads (or, on a fresh CA directory, generates)
+	// its own CA and mints both listeners' serving certificates from it
+	// -- #47 slice 1, #62 "Drop them": an unloadable or
+	// wrongly-permissioned CA directory fails startup loudly, before any
+	// socket binds, the same fail-closed posture issue #32 required of
+	// the cert/key files this replaces.
+	var ingestServer, enrolServer *http.Server
 	ingestAddr := os.Getenv(envIngestAddr)
 	if ingestAddr == "" {
-		ingestLog.Info(fmt.Sprintf("%s not set; HTTPS ingest listener disabled", envIngestAddr))
+		ingestLog.Info(fmt.Sprintf("%s not set; HTTPS ingest and enrolment listeners disabled", envIngestAddr))
 	} else {
 		configLog.Info(fmt.Sprintf("%s=%s", envIngestAddr, ingestAddr))
 
@@ -333,8 +353,21 @@ func main() {
 			hosts = append([]string{advertiseHost}, hosts...)
 		}
 
+		// Shared by both listeners below, deliberately: issue #47 slice
+		// 1b's spec is "same SANs as ingest, same 24h/6h" for the
+		// enrolment listener's own serving certificate, and passing this
+		// one closure to both NewTLSServer calls is a stronger guarantee
+		// of that than constructing a second, separately-configured
+		// source that has to be kept in sync by hand.
 		getCert := birdcageCA.ServerCertificateSource(hosts, ingestServingTTL, ingestRenewBefore, nil)
 		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), getCert)
+
+		enrolAddr := os.Getenv(envEnrolAddr)
+		if enrolAddr == "" {
+			enrolAddr = defaultEnrolAddr
+		}
+		configLog.Info(fmt.Sprintf("%s=%s", envEnrolAddr, enrolAddr))
+		enrolServer = ingest.NewTLSServer(enrolAddr, enrol.NewHandler(database, birdcageCA, nil, enrolLog), getCert)
 	}
 
 	// Every service below runs concurrently, and all are watched to
@@ -347,6 +380,9 @@ func main() {
 	// leave main blocked forever waiting on the rest.
 	serviceCount := 1
 	if ingestServer != nil {
+		serviceCount++
+	}
+	if enrolServer != nil {
 		serviceCount++
 	}
 	results := make(chan serviceResult, serviceCount)
@@ -388,6 +424,28 @@ func main() {
 			defer cancel()
 			if err := ingestServer.Shutdown(shutdownCtx); err != nil {
 				ingestLog.Warn(fmt.Sprintf("shutdown: %v", err))
+			}
+		}()
+	}
+
+	if enrolServer != nil {
+		go func() {
+			enrolLog.Info(fmt.Sprintf("serving HTTPS enrolment listener on %s", enrolServer.Addr))
+			// Cert/key are already loaded into enrolServer.TLSConfig by
+			// ingest.NewTLSServer, so both arguments here are empty.
+			err := enrolServer.ListenAndServeTLS("", "")
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			results <- serviceResult{"enrol server", err}
+		}()
+
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+			defer cancel()
+			if err := enrolServer.Shutdown(shutdownCtx); err != nil {
+				enrolLog.Warn(fmt.Sprintf("shutdown: %v", err))
 			}
 		}()
 	}
