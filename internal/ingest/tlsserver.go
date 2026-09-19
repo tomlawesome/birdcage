@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"time"
 )
@@ -43,20 +44,35 @@ const (
 // getCertificate (internal/ca.Load, called by the caller before this
 // function) -- there is nothing left for NewTLSServer itself to fail on.
 //
-// No client certificate is required yet -- ClientAuth defaults to
-// tls.NoClientCert. mTLS (verifying a canary's own client certificate
-// against the CA's pool) is a later slice; Refs #47.
-func NewTLSServer(addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *http.Server {
+// clientCAs gates mutual TLS (issue #47 slice 3): nil means no client
+// certificate is requested at all (ClientAuth stays tls.NoClientCert),
+// the enrolment listener's own case -- a canary has no certificate to
+// present before it is provisioned. Non-nil sets ClientAuth to
+// tls.RequireAndVerifyClientCert against that pool, the ingest
+// listener's case (cmd/birdcage/main.go passes birdcageCA.Pool()): every
+// connection must present a certificate this CA issued, verified at the
+// handshake, before any request is even read. The bearer token remains
+// the authoritative identity check either way -- requireBearerToken
+// (auth.go) additionally requires the certificate's CommonName to name
+// the same canary the token resolved to, layering the two rather than
+// replacing one with the other.
+func NewTLSServer(addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error), clientCAs *x509.CertPool) *http.Server {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true) // HTTP/2 and unencrypted HTTP/2 both left false
 
+	tlsConfig := &tls.Config{
+		MinVersion:     tls.VersionTLS13,
+		GetCertificate: getCertificate,
+	}
+	if clientCAs != nil {
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsConfig.ClientCAs = clientCAs
+	}
+
 	return &http.Server{
-		Addr:    addr,
-		Handler: handler,
-		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS13,
-			GetCertificate: getCertificate,
-		},
+		Addr:              addr,
+		Handler:           handler,
+		TLSConfig:         tlsConfig,
 		Protocols:         protocols,
 		ReadHeaderTimeout: ingestReadHeaderTimeout,
 		ReadTimeout:       ingestReadTimeout,

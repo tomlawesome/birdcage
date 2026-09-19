@@ -1,9 +1,13 @@
 # Enrolling a canary
 
-Issue #47 slice 1b's flow for turning a fresh box into a canary: birdcage
-mints a one-time deploy token, you paste one command on the canary host,
-and the canary uses that token to introduce itself to birdcage exactly
-once.
+Issue #47's flow for turning a fresh box into a canary: birdcage mints a
+one-time deploy token, you paste one command on the canary host, and the
+canary uses that token to introduce itself to birdcage exactly once
+(`POST /enrol/hello`), then exchanges the enrolment secret that call
+hands back for its actual credentials -- a bearer token and a client
+certificate -- via `POST /enrol/provision` (slice 3). Both steps happen
+automatically inside the canary's agent; there is nothing else to run by
+hand.
 
 ## Before the first canary
 
@@ -32,10 +36,11 @@ in birdcage's own environment before starting it.
 
 ## Enrolling a canary
 
-On the machine running birdcage:
+On the machine running birdcage, name the canary and the lane it belongs
+to -- both are required:
 
 ```
-birdcage canary enrol
+birdcage canary enrol --name office-nas --lane front-door
 ```
 
 This prints a `docker run` command and one line underneath it saying how
@@ -55,8 +60,28 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 Copy the whole `docker run` block and paste it into a shell on the box
 you want to turn into a canary. That's it -- the canary's agent
 (mockingbird) takes it from there: it dials birdcage at the address and
-pin given, presents the deploy token once, and gets back everything it
-needs to keep going.
+pin given, presents the deploy token once (`POST /enrol/hello`), and gets
+back an enrolment secret, birdcage's CA certificate, and `ingest_url` --
+where it will post events once it has real credentials.
+
+## What provisioning hands the canary
+
+The agent immediately spends that enrolment secret at `POST
+/enrol/provision`, within the 30-minute window `POST /enrol/hello`
+granted. On success it gets, in one response, shown exactly once:
+
+- a **bearer token** for `POST /ingest/events` and the rest of the
+  ingest listener's routes;
+- a **client certificate and private key**, issued by birdcage's own CA
+  (`(*ca.CA).IssueClient`), whose subject names this canary -- the
+  ingest listener now requires one on every connection, matching the
+  bearer token (see
+  [SECURITY.md](../SECURITY.md#network-exposure));
+- the **heartbeat interval** it should use.
+
+Nothing about this step needs an operator's attention -- it happens
+automatically, seconds after the `docker run` command starts the
+container.
 
 ## Why the token is single-use and five minutes
 
@@ -94,7 +119,7 @@ connected.
 birdcage canary enrol --status
 ```
 
-Lists every enrolment session -- id, state, when it was minted, its
-deadlines -- without ever printing a token or a hash. Useful for
-confirming a session was actually contacted, or for seeing one expire
+Lists every enrolment session -- id, name, lane, state, when it was
+minted, its deadlines -- without ever printing a token or a hash. Useful
+for confirming a session was actually contacted, or for seeing one expire
 after being forgotten.

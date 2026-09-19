@@ -125,6 +125,13 @@ birdcage ever writes to a file -- the listener's own serving certificate
 is minted fresh in memory on every start and renewed the same way, never
 touching disk.
 
+As of #47 slice 3, this same CA also issues each canary's client
+certificate at `POST /enrol/provision` time (`(*ca.CA).IssueClient`,
+never written to disk either) and verifies it on every ingest
+connection: the ingest listener requires one, matching the bearer
+token's canary -- see
+[SECURITY.md#network-exposure](../SECURITY.md#network-exposure).
+
 ### `BIRDCAGE_ADVERTISE_HOST`
 
 The hostname or IP a canary's agent (#48) reaches this birdcage instance
@@ -137,15 +144,25 @@ this set to the address it actually dials.
 
 ### `BIRDCAGE_ENROL_ADDR`
 
-Issue #47 slice 1b's HTTPS enrolment listener -- `POST /enrol/hello`,
-the one place a freshly minted deploy token (`birdcage canary enrol`,
-see [docs/enrolment.md](enrolment.md)) is ever accepted. Default `:8444`.
+Issue #47's HTTPS enrolment listener -- `POST /enrol/hello` (slice 1b)
+and `POST /enrol/provision` (slice 3), the only two places a freshly
+minted deploy token or enrolment secret (`birdcage canary enrol`, see
+[docs/enrolment.md](enrolment.md)) are ever accepted. Default `:8444`.
 It is not a separate on/off switch: this listener starts whenever
 `BIRDCAGE_INGEST_ADDR` is set, since enrolment exists only to hand a
 canary the credentials it then uses on the ingest listener -- the two
 are one feature. It shares the ingest listener's CA-minted serving
 certificate (same SANs, from `BIRDCAGE_ADVERTISE_HOST` and
-`BIRDCAGE_CA_DIR` above, same 24h lifetime/6h renewal).
+`BIRDCAGE_CA_DIR` above, same 24h lifetime/6h renewal), but -- unlike the
+ingest listener -- never requires a client certificate of its own
+callers: a canary has none until `POST /enrol/provision` issues its
+first.
+
+`POST /enrol/hello`'s response also carries `ingest_url` (slice 3):
+`https://BIRDCAGE_ADVERTISE_HOST:<port of BIRDCAGE_INGEST_ADDR>`, where a
+provisioned canary's agent should post. Empty when
+`BIRDCAGE_ADVERTISE_HOST` is unset -- birdcage logs a boot warning naming
+it, but still starts both listeners.
 
 ### Enrolment settings: `admin_approval_address` / `release_address`
 

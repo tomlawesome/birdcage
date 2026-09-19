@@ -156,7 +156,13 @@ func portsDisplay(raw string) string {
 // DefaultHeartbeatIntervalS; c.EnrolledAt must be set by the caller
 // (time.Now().UTC() in practice) since InsertCanary does not default it,
 // matching internal/audit.Append's stance on CreatedAt.
-func InsertCanary(ctx context.Context, database *db.DB, c Canary) error {
+//
+// database is db.Conn, not *db.DB (issue #47 slice 3): store.Provision
+// calls this from inside its own transaction, the same reason
+// MintCanaryToken and audit.Append already take the narrower interface.
+// Every existing caller passes a *db.DB, which satisfies db.Conn
+// unchanged.
+func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	interval := c.HeartbeatIntervalS
 	if interval <= 0 {
 		interval = DefaultHeartbeatIntervalS

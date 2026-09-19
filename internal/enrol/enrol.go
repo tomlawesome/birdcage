@@ -1,14 +1,17 @@
-// Package enrol implements issue #47 slice 1b's first-contact endpoint:
-// POST /enrol/hello, the one and only place a freshly minted deploy
-// token (internal/store's MintEnrolmentSession, `birdcage canary enrol`)
-// is ever accepted. This is deliberately its own submux, on its own
-// listener -- design note decision 1: "A separate enrolment_sessions
-// table and a separate endpoint mux, never the canary_tokens model" --
-// so cmd/birdcage/main.go serves it from its own *http.Server, never
-// mounted alongside, or reachable from, the ingest submux's bearer-token
-// routes (internal/ingest) or the dashboard's requireAuth seam
-// (internal/api), the same structural isolation internal/ingest's own
-// package doc claims for itself.
+// Package enrol implements issue #47's enrolment flow: POST /enrol/hello
+// (slice 1b), the one and only place a freshly minted deploy token
+// (internal/store's MintEnrolmentSession, `birdcage canary enrol`) is
+// ever accepted, and POST /enrol/provision (slice 3), where a contacted
+// session's enrolment secret becomes a live canary identity -- a bearer
+// token and a client certificate for the ingest listener's mutual TLS.
+// This is deliberately its own submux, on its own listener -- design
+// note decision 1: "A separate enrolment_sessions table and a separate
+// endpoint mux, never the canary_tokens model" -- so cmd/birdcage/main.go
+// serves it from its own *http.Server, never mounted alongside, or
+// reachable from, the ingest submux's bearer-token routes
+// (internal/ingest) or the dashboard's requireAuth seam (internal/api),
+// the same structural isolation internal/ingest's own package doc claims
+// for itself.
 package enrol
 
 import (
@@ -45,22 +48,28 @@ const maxHelloBodyBytes = 1024
 // as internal/ingest's own handlers do (see e.g. rotate.go's mint-plus-
 // audit transaction).
 type handler struct {
-	db     *db.DB
-	ca     *ca.CA
-	now    func() time.Time
-	logger *slog.Logger
+	db        *db.DB
+	ca        *ca.CA
+	ingestURL string
+	now       func() time.Time
+	logger    *slog.Logger
 }
 
-// NewHandler returns the enrolment submux: POST /enrol/hello, and
-// nothing else. now nil means time.Now; logger nil means slog.Default().
-func NewHandler(database *db.DB, birdcageCA *ca.CA, now func() time.Time, logger *slog.Logger) http.Handler {
+// NewHandler returns the enrolment submux: POST /enrol/hello and POST
+// /enrol/provision, and nothing else. ingestURL is POST /enrol/hello's
+// new "ingest_url" field (issue #47 slice 3) -- cmd/birdcage/main.go
+// builds it from BIRDCAGE_ADVERTISE_HOST and BIRDCAGE_INGEST_ADDR's
+// port; an empty string means BIRDCAGE_ADVERTISE_HOST was unset, and is
+// passed straight through to the response the same way. now nil means
+// time.Now; logger nil means slog.Default().
+func NewHandler(database *db.DB, birdcageCA *ca.CA, ingestURL string, now func() time.Time, logger *slog.Logger) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &handler{db: database, ca: birdcageCA, now: now, logger: logger}
+	h := &handler{db: database, ca: birdcageCA, ingestURL: ingestURL, now: now, logger: logger}
 
 	// No rate limiting by source address yet. internal/ingest's own
 	// limiterRegistry is keyed on the authenticated canary id -- an
@@ -70,6 +79,7 @@ func NewHandler(database *db.DB, birdcageCA *ca.CA, now func() time.Time, logger
 	// Refs #47 (a later slice).
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /enrol/hello", h.handleHello)
+	mux.HandleFunc("POST /enrol/provision", h.handleProvision)
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }
@@ -89,6 +99,12 @@ type helloResponse struct {
 	WindowDeadline       string `json:"window_deadline"`
 	AdminApprovalAddress string `json:"admin_approval_address"`
 	ReleaseAddress       string `json:"release_address"`
+	// IngestURL is issue #47 slice 3's addition: where this canary's
+	// agent posts to once it holds a bearer token and client
+	// certificate -- https://BIRDCAGE_ADVERTISE_HOST:<port of
+	// BIRDCAGE_INGEST_ADDR>. Empty when BIRDCAGE_ADVERTISE_HOST is
+	// unset (main.go logs a boot warning naming it in that case).
+	IngestURL string `json:"ingest_url"`
 }
 
 // refusedBody is the fixed, byte-identical response every refusal
@@ -189,6 +205,7 @@ func (h *handler) respondContacted(w http.ResponseWriter, r *http.Request, secre
 		WindowDeadline:       windowDeadline.UTC().Format(time.RFC3339),
 		AdminApprovalAddress: adminApprovalAddress,
 		ReleaseAddress:       releaseAddress,
+		IngestURL:            h.ingestURL,
 	})
 }
 

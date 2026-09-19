@@ -60,6 +60,8 @@ const (
 // stance on the raw bearer token.
 type EnrolmentSession struct {
 	ID                   string
+	Name                 string
+	Lane                 string
 	CreatedAt            time.Time
 	FirstContactDeadline time.Time
 	BurnedAt             *time.Time
@@ -78,9 +80,19 @@ var ErrEnrolmentSessionNotFound = errors.New("store: enrolment session not found
 // recover it afterwards. now must be set by the caller (e.g.
 // time.Now().UTC()), matching MintCanaryToken's stance on its own
 // createdAt.
-func MintEnrolmentSession(ctx context.Context, database db.Conn, now time.Time) (raw string, session EnrolmentSession, err error) {
+//
+// name and lane are `birdcage canary enrol --name/--lane`'s two required
+// flags (issue #47 slice 3): carried on the session from mint time so a
+// later Provision call has them to hand to InsertCanary without asking
+// the operator again. Both must be non-empty -- the CLI already requires
+// them, but this is where the row itself is written, so it is the one
+// place that guarantee actually holds.
+func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, now time.Time) (raw string, session EnrolmentSession, err error) {
 	if now.IsZero() {
 		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: now is zero; callers must set it")
+	}
+	if name == "" || lane == "" {
+		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: name and lane are required")
 	}
 	id, err := randomHex(enrolmentSessionIDBytes)
 	if err != nil {
@@ -95,14 +107,16 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, now time.Time) 
 	deadline := createdAt.Add(enrolmentFirstContactWindow)
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO enrolment_sessions (id, token_hash, created_at, first_contact_deadline, state)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, HashToken(raw), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
+		INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, created_at, first_contact_deadline, state)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, HashToken(raw), name, lane, createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
 	if err != nil {
 		return "", EnrolmentSession{}, fmt.Errorf("insert enrolment session: %w", err)
 	}
 	return raw, EnrolmentSession{
 		ID:                   id,
+		Name:                 name,
+		Lane:                 lane,
 		CreatedAt:            createdAt,
 		FirstContactDeadline: deadline,
 		State:                EnrolmentStateMinted,
@@ -279,7 +293,7 @@ func FirstContact(ctx context.Context, database *db.DB, tokenHash string, now ti
 // by mistake.
 func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSession, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
 		FROM enrolment_sessions
 		ORDER BY created_at`)
 	if err != nil {
@@ -305,9 +319,27 @@ func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSes
 // row via conn, so FirstContact can run it inside its own transaction.
 func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
 		FROM enrolment_sessions
 		WHERE token_hash = ?`, tokenHash)
+	return scanEnrolmentSession(row)
+}
+
+// scanEnrolmentSessionBySecretHash resolves secretHash to its
+// EnrolmentSession row, but only a row currently in state "contacted" --
+// the state Provision (provision.go) requires before it will provision
+// anything. Folding the state filter into the WHERE
+// clause, rather than checking it after the fact, means a row that
+// exists but is in any other state (already provisioned, expired, or a
+// stale hash left over from an invariant violation) is indistinguishable
+// from no row at all: both return ErrEnrolmentSessionNotFound, which is
+// exactly the "unknown secret" outcome design note decision 2's replay
+// case wants.
+func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretHash string) (EnrolmentSession, error) {
+	row := conn.QueryRowContext(ctx, `
+		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		FROM enrolment_sessions
+		WHERE enrolment_secret_hash = ? AND state = ?`, secretHash, string(EnrolmentStateContacted))
 	return scanEnrolmentSession(row)
 }
 
@@ -324,7 +356,7 @@ func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 		burnedAt, windowDeadl *string
 		canaryID              *string
 	)
-	if err := row.Scan(&s.ID, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID); err != nil {
+	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return EnrolmentSession{}, ErrEnrolmentSessionNotFound
 		}
