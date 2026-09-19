@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -311,16 +310,7 @@ func main() {
 		}
 		configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
 
-		// Checked before Load so the boot inventory below can say
-		// whether this run created the CA or reused one already on
-		// disk -- Load itself doesn't report which, since both paths
-		// return the same *ca.CA either way.
-		caExisted := false
-		if _, err := os.Stat(filepath.Join(caDir, "ca.pem")); err == nil {
-			caExisted = true
-		}
-
-		birdcageCA, err := ca.Load(caDir, nil)
+		birdcageCA, caCreated, err := ca.Load(caDir, nil)
 		if err != nil {
 			// Fail-closed, loudly, before any socket binds -- the same
 			// posture issue #32 required of an unloadable cert/key,
@@ -328,9 +318,9 @@ func main() {
 			ingestLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
 			os.Exit(1)
 		}
-		action := "created"
-		if caExisted {
-			action = "loaded"
+		action := "loaded"
+		if caCreated {
+			action = "created"
 		}
 		// The pin is public -- it's the value the enrolment command
 		// (a later slice) hands a canary operator to verify against --

@@ -75,21 +75,29 @@ type CA struct {
 // self-signed CA certificate and persists both before returning --
 // every later Load against the same dir reuses that CA (same Pin).
 //
-// dir must already exist and be mode 0700, owned by the calling
-// process; Load never creates or loosens it, since a directory it
-// didn't create itself might be shared with another user or process,
-// and this is the one place in birdcage a private key touches disk.
+// If dir is absent Load creates it, mode 0700, so a fresh volume (the
+// container's default /var/lib/birdcage/ca) works on first start. If it
+// exists it must already be mode 0700 and owned by the calling process:
+// Load never loosens a directory it did not create, since one it found
+// might be shared with another user or process, and this is the one
+// place in birdcage a private key touches disk.
+//
+// created reports whether this call generated the CA, so the boot log
+// can say "created" or "loaded" without knowing the file layout.
 //
 // now is injected rather than calling time.Now directly so a test can
 // drive the generated certificate's NotBefore/NotAfter without an real
 // clock; nil means time.Now.
-func Load(dir string, now func() time.Time) (*CA, error) {
+func Load(dir string, now func() time.Time) (c *CA, created bool, err error) {
 	if now == nil {
 		now = time.Now
 	}
 
+	if err := os.Mkdir(dir, dirPerm); err != nil && !os.IsExist(err) {
+		return nil, false, fmt.Errorf("ca: create %s: %w", dir, err)
+	}
 	if err := checkDir(dir); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	keyPath := filepath.Join(dir, caKeyFileName)
@@ -100,25 +108,27 @@ func Load(dir string, now func() time.Time) (*CA, error) {
 
 	switch {
 	case keyErr == nil && certErr == nil:
-		return parseCA(keyPEM, certPEM)
+		c, err = parseCA(keyPEM, certPEM)
+		return c, false, err
 	case os.IsNotExist(keyErr) && os.IsNotExist(certErr):
-		return generateCA(dir, now())
+		c, err = generateCA(dir, now())
+		return c, err == nil, err
 	default:
 		// Exactly one of the two present (or a read error that isn't
 		// "missing") is never treated as "generate a fresh one" -- that
 		// would silently orphan or overwrite whichever file did exist.
 		if keyErr != nil && !os.IsNotExist(keyErr) {
-			return nil, fmt.Errorf("ca: read %s: %w", keyPath, keyErr)
+			return nil, false, fmt.Errorf("ca: read %s: %w", keyPath, keyErr)
 		}
 		if certErr != nil && !os.IsNotExist(certErr) {
-			return nil, fmt.Errorf("ca: read %s: %w", certPath, certErr)
+			return nil, false, fmt.Errorf("ca: read %s: %w", certPath, certErr)
 		}
-		return nil, fmt.Errorf("ca: %s has only one of %s/%s -- refusing to guess which is stale", dir, caKeyFileName, caCertFileName)
+		return nil, false, fmt.Errorf("ca: %s has only one of %s/%s -- refusing to guess which is stale", dir, caKeyFileName, caCertFileName)
 	}
 }
 
-// checkDir enforces Load's "must already exist, mode 0700, owned by the
-// calling process" precondition.
+// checkDir enforces Load's "mode 0700, owned by the calling process"
+// precondition on a directory that already existed.
 func checkDir(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {

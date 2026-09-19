@@ -111,8 +111,10 @@ used to mint the ingest listener's serving certificate. Default
 `/var/lib/birdcage` volume, so a container operator gets a CA that
 survives a restart with no Dockerfile change.
 
-The directory must already exist, mode `0700`, owned by the birdcage
-process; birdcage refuses to start rather than create or loosen it. The
+If the directory is missing birdcage creates it, mode `0700` (its parent
+must exist -- on the container that is the volume). If it already exists
+it must be mode `0700` and owned by the birdcage process; birdcage
+refuses to start rather than loosen a directory it did not create. The
 first time it finds no CA there, it generates one and writes exactly two
 files: `ca-key.pem` (mode `0600`) and `ca.pem` (mode `0644`, the public
 certificate). Every later start reuses that same CA. This replaces the
