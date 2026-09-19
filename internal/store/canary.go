@@ -83,6 +83,16 @@ type Canary struct {
 	RotationStalledEscalated bool   `json:"rotation_stalled_escalated,omitempty"`
 	TokenConflictForS        *int64 `json:"token_conflict_for_s,omitempty"`
 
+	// ActiveStates is every state active on this canary right now,
+	// worst first by healthStateRank -- the whole set Status names only
+	// the head of. Issue #56's history needs all of it: a canary that
+	// is silent and token-conflicted at once spent that time in two
+	// states, and recording only the worst would lose the other one
+	// exactly while they overlapped. Empty precisely when Status is
+	// "ok" (no state active is what "ok" means), so it is omitted from
+	// the JSON then, like the detail fields above.
+	ActiveStates []string `json:"active_states,omitempty"`
+
 	Hits int64 `json:"hits"`
 }
 

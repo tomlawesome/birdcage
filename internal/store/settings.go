@@ -71,6 +71,17 @@ const (
 	// command an operator needs to run first.
 	SettingAdminApprovalAddress SettingKey = "admin_approval_address"
 	SettingReleaseAddress       SettingKey = "release_address"
+	// SettingHistoryLastTick is the last time internal/history's state
+	// recorder completed a tick (RFC3339Nano UTC), written by the
+	// recorder itself rather than by an operator -- issue #56. It is
+	// bookkeeping, not a preference: on the next start, the gap between
+	// it and now is the span birdcage was not watching, which is
+	// recorded as an "unobserved" state period rather than left looking
+	// healthy. It lives here, alongside the operator's own settings,
+	// because settings is already the one small key/value table with a
+	// validated, closed key set -- a second table for one row would be
+	// a second convention. Empty by default: never ticked.
+	SettingHistoryLastTick SettingKey = "history_last_tick"
 )
 
 // orderedSettingKeys is settingDefs' key order for anything that lists
@@ -83,6 +94,7 @@ var orderedSettingKeys = []SettingKey{
 	SettingRotationSchedule,
 	SettingAdminApprovalAddress,
 	SettingReleaseAddress,
+	SettingHistoryLastTick,
 }
 
 // SettingKeys returns every known setting key, in a stable order. The
@@ -120,6 +132,7 @@ var settingDefs = map[SettingKey]settingDef{
 	SettingRotationSchedule:            {validate: validateSettingScheduleTime, defaultValue: "00:00"},
 	SettingAdminApprovalAddress:        {validate: validateSettingAddress, defaultValue: ""},
 	SettingReleaseAddress:              {validate: validateSettingAddress, defaultValue: ""},
+	SettingHistoryLastTick:             {validate: validateSettingTimestamp, defaultValue: ""},
 }
 
 // scheduleTimePattern matches a strict, zero-padded 24-hour "HH:MM", e.g.
@@ -164,6 +177,18 @@ func validateSettingAddress(value string) error {
 	}
 	if controlCharPattern.MatchString(value) {
 		return fmt.Errorf("must not contain control characters")
+	}
+	return nil
+}
+
+// validateSettingTimestamp accepts an RFC3339Nano UTC timestamp, the one
+// layout every timestamp in this schema is written in (receivedAtLayout).
+// The empty string is rejected like any other unparseable value -- "never
+// ticked" is the stored row's absence, read back as the key's empty
+// default, never a written empty value.
+func validateSettingTimestamp(value string) error {
+	if _, err := time.Parse(receivedAtLayout, value); err != nil {
+		return fmt.Errorf("must be an RFC3339 timestamp (e.g. %q), got %q", "2026-01-02T15:04:05Z", value)
 	}
 	return nil
 }
