@@ -509,6 +509,18 @@ test:image:mockingbird:
     # build:images produced, so the bytes that answer these checks are the
     # bytes release:push publishes.
     - docker tag "$MOCKINGBIRD_BUILD_IMAGE" "$APP"
+    # #97, matching test:image:birdcage's own check (#90): the stamping is
+    # proved here rather than at a release nobody can retry. An image whose
+    # VERSION argument is silently ignored still starts and still serves,
+    # so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - docker volume create "$APP-state" >/dev/null
     - >-
       docker run --rm --volume "$APP-state:/s" alpine:3.24 sh -c '
@@ -1138,11 +1150,11 @@ release:promote:
     - |
       set -eu
       commit="$(cat .release-commit)"
-      # --expect-stamp only for birdcage: it is the one image with a
-      # `version` command to ask. Giving mockingbird one, so the same proof
-      # covers both, is #97.
+      # --expect-stamp for both images (#97): each now has a `version`
+      # command to ask, so promotion proves the released bytes carry the
+      # released version for birdcage and mockingbird alike.
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit")"
-      mockingbird_digest="$(scripts/promote-release.sh "$GHCR_MOCKINGBIRD_REPO" "$commit")"
+      mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_MOCKINGBIRD_REPO" "$commit")"
       # `latest` moves on every release, pre-release or not. Whether a
       # beta is the right thing to run is the decision of whoever pulls it,
       # not this pipeline's.
