@@ -12,34 +12,70 @@ refuses a config that does not match the shape described here.
 ## What the measurements said
 
 The premise worth testing was that the live journeys are what make the
-gate slow. Pipeline 1330 on `dev` (commit `97fbb17b`) says they are not.
-Run times, in seconds:
+gate slow. Two pipelines say they are not. Run times in seconds, 1330
+on `dev` and 1334 on merge request !43:
 
-| lint            |     | test                  |     | e2e                        |    |
-| --------------- | --- | --------------------- | --- | -------------------------- | -- |
-| `lint:go`       | 168 | `test:go`             | 233 | `e2e:enrol-and-hit`        | 58 |
-| `lint:licences` |  51 | `test:frontend`       | 109 | `e2e:enrol-and-hit:postgres` | 60 |
-| `lint:ci`       |  19 | `test:smoke`          | 105 | `e2e:smb`                  | 53 |
-| `lint:agent-deps` | 11 | `test:image:mockingbird` | 31 | `e2e:dashboard-own-ca`   | 40 |
-|                 |     | `test:image:birdcage` |  15 | `e2e:snmp`                 | 34 |
+| job | 1330 | 1334 |
+| --- | --- | --- |
+| `test:go` | 233 | 218 |
+| `lint:go` | 168 | 206 |
+| `test:smoke` | 105 | 128 |
+| `test:frontend` | 109 | 121 |
+| `e2e:enrol-and-hit` | 58 | 129 |
+| `e2e:enrol-and-hit:postgres` | 60 | 64 |
+| `e2e:smb` | 53 | 59 |
+| `e2e:dashboard-own-ca` | 40 | 33 |
+| `e2e:snmp` | 34 | 37 |
+| **all five journeys** | **245** | **323** |
+| whole pipeline, work across both lanes | ~1000 | ~1300 |
 
-All five journeys together run in 245 seconds -- less than `test:go`
-alone. Dropping every one of them from the merge-request gate would not
-have made that pipeline finish sooner, because they do not sit on its
-critical path.
+Note the spread: the same job varies by a third between two runs, and
+in 1334 the five journeys together cost more than `test:go` did. Any
+claim resting on a single run is worth less than it looks, which is why
+two are given here.
 
-What does sit on it is lane contention and job ordering. The runner
-lanes are narrow (`big` runs one job at a time, `light` about three), so
-queueing, not work, is most of the wall clock: that pipeline took 788
-seconds end to end to do 977 seconds of work across two lanes. And
-`test:frontend` had no `needs:` key, so it waited for the whole `lint`
-stage -- 168 seconds of `lint:go` -- before starting, and `test:smoke`
-waits on its artifacts in turn. The longest chain in the pipeline was
-therefore scheduled last.
+What holds across both is the proportion. The live journeys are about a
+quarter of the pipeline's total work, and they run on the `big` lane,
+which nothing else uses -- so dropping them frees capacity that the long
+chain on the `light` lane cannot use anyway. A quarter of the runner
+budget to prove the product actually detects an intruder is
+proportionate, and this is the only stage that proves it at all.
 
 So the answer to "which journeys should move off the merge-request
-gate" is **none of them**. The saving is in ordering, and it is larger
-than anything moving a journey could buy.
+gate" is **none of them**. Run times are stable enough to conclude
+that much: they measure work, not waiting.
+
+Wall clock is a different matter, and it is worth being careful here.
+`test:frontend` had no `needs:` key, so it waited for the whole `lint`
+stage before starting, and `test:smoke` waits on its artifacts in turn
+-- the longest chain in the pipeline, scheduled last. It has been given
+`needs: []`, because it consumes nothing any lint job produces and a
+dependency that is not real can only cost time.
+
+**No figure is claimed for that saving.** The first attempt to measure
+one did not survive checking. Across the last fourteen pipelines, wall
+clock for essentially the same gate ranged from 330 to 1620 seconds:
+
+| pipeline | wall |
+| --- | --- |
+| 1297 `dev` | 330 s |
+| 1302 MR !39 | 367 s |
+| 1328 MR !42 | 409 s |
+| 1330 `dev` | 790 s |
+| 1334 MR !43 | 1620 s |
+
+The runner is shared with every other project on this host, so a single
+pipeline's wall clock mostly measures what else was running at the time.
+The spread between two identical gates is larger than any ordering
+change could plausibly buy, which means one pipeline cannot show the
+effect of one -- 1334 above is this very change, and it was the slowest
+of the fourteen because the host was busy.
+
+So: `needs: []` on `test:frontend` is correct on its own terms, and
+unquantified on purpose. Anyone wanting the real number needs many runs
+compared like for like, or per-job queue time tracked over time -- not a
+before-and-after pair. Do not quote a saving from one pipeline; that is
+the mistake this paragraph exists to prevent.
 
 ## Hop 1 -- every merge request, and `dev`
 
