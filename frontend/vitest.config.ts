@@ -44,6 +44,29 @@ export default defineConfig({
       // without parsing the table.
       reporter: ['text', 'cobertura', 'json-summary'],
       reportsDirectory: './coverage',
+      // A ratchet, not a target (#74). The owner's policy is a 70-85%
+      // band everywhere, deliberately not higher -- "we must be sensible
+      // and not chase the dragon", 2026-09-20.
+      //
+      // These numbers are today's measurement rounded down, NOT 70.
+      // Setting the band as the threshold would turn the build red on
+      // code nobody touched, and a check that is red on arrival is a
+      // check people switch off -- the same failure mode
+      // scripts/ci-e2e-guard.py exists to prevent.
+      //
+      // So: coverage cannot fall, and each floor is RAISED as its gap
+      // closes. Never lowered. Branches at 60 is the known debt and the
+      // one that matters most here -- a branch is a decision the
+      // dashboard makes about what to tell the operator, and the
+      // safety-critical standards (DO-178C, IEC 61508) ask for decision
+      // coverage rather than a line percentage. Raising that one to 70
+      // is the next piece of work, not a number to set now.
+      thresholds: {
+        statements: 73,
+        branches: 60,
+        functions: 77,
+        lines: 81,
+      },
     },
   },
 })

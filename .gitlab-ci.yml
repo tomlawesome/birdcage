@@ -148,11 +148,15 @@ test:frontend:
   stage: test
   image: node:22-trixie
   <<: *gate
-  # This job needs nothing any lint job produces, but with no needs: key it
-  # waited for the whole lint stage anyway -- 168 seconds of lint:go in
-  # pipeline 1330 -- before starting, and test:smoke then waited on its
-  # artifacts in turn. That was the longest chain in the pipeline,
-  # scheduled to start last; docs/ci-hops.md has the measurement.
+  # This job needs nothing any lint job produces, but with no needs: key
+  # it waited for the whole lint stage anyway before starting, and
+  # test:smoke then waited on its artifacts in turn -- the longest chain
+  # in the pipeline, scheduled to start last. No saving is claimed for
+  # this: the runner is shared with every other project on this host and
+  # wall clock for the same gate ranges from 263 to 1620 seconds, so one
+  # pipeline cannot show the effect. See docs/ci-hops.md, which explains
+  # why quoting a figure from a single run is a mistake. The dependency
+  # was simply never real.
   needs: []
   cache:
     key:
@@ -163,17 +167,38 @@ test:frontend:
   script:
     - cd frontend
     - npm ci
+    # Licence gate for the npm tree (#92). It lives here, rather than in
+    # lint:licences with its Go counterpart, because it needs an
+    # installed node_modules and this is the only job that has one --
+    # a separate job would pay a second `npm ci` on every merge request
+    # to check the same tree. It runs before the tests so a licence
+    # problem is reported without waiting for them. node:22-trixie ships
+    # python3 (3.13.5, verified), which the checker needs.
+    - ../scripts/licence-check-npm.sh
     - npm run check
-    - npm test
+    # Coverage, not a bare test run (#74). The thresholds in
+    # vitest.config.ts are a ratchet at today's numbers, so this fails if
+    # coverage falls. Proved to fail: forcing the branch threshold to 95
+    # exits 1 with "Coverage for branches (60.41%) does not meet global
+    # threshold".
+    - npm run test:coverage
     - npx playwright install --with-deps chromium
     - mkdir -p ~/.config/fontconfig && cp scripts/compare-fonts.conf ~/.config/fontconfig/fonts.conf && fc-cache -f
     - fc-match sans-serif && fc-match monospace
     - npm run compare:band
     - npm run compare:below-band
     - npm run build
+  # Surfaces the total in the job list, and feeds GitLab the per-line
+  # cobertura report so coverage shows on the merge request diff rather
+  # than only in this log.
+  coverage: '/All files\s*\|\s*([\d.]+)/'
   artifacts:
     paths:
       - frontend/dist/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: frontend/coverage/cobertura-coverage.xml
     expire_in: 1 day
     when: always
 
