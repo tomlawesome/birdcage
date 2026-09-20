@@ -16,3 +16,9 @@ birdcage.db
 # Local `go build` outputs at the repository root; CI and the Dockerfiles build them elsewhere.
 /birdcage
 /mockingbird
+
+# Coverage output (frontend/npm run test:coverage, #74). Reports are
+# produced per run and read from the job log or the merge request; a
+# committed copy would only ever be stale.
+frontend/coverage/
+coverage.out
