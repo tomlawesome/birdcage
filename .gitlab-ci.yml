@@ -415,6 +415,43 @@ e2e:enrol-and-hit:postgres:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #78 journey 3 (#46's front half): a real smbclient against a
+# real smbd with the full_audit VFS module, over the real chain proved
+# on 2026-09-20 -- OpenCanary parsing that audit line and the agent
+# forwarding it to birdcage. build/e2e-samba is a CI-only image (ADR-0008:
+# Samba never goes near build/mockingbird/Dockerfile); scripts/e2e/smb-stack.sh
+# is the extra infrastructure only this journey needs, started here
+# rather than by `stack.sh up`, so the other two journeys above stay as
+# fast as they were.
+e2e:smb:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds two extra images (the second canary's Mockingbird tag is
+  # already built by stack.sh up, but the Samba image is its own build)
+  # and runs a Samba server plus a second canary alongside the base
+  # stack's four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-stack.sh up)"
+    - scripts/e2e/smb.sh
+  after_script:
+    # smb-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/smb-stack.sh down
+    - scripts/e2e/stack.sh down
+
 # Issue #63's new default: no operator certificate configured at all,
 # so birdcage mints the dashboard's HTTPS certificate from its own CA
 # instead of refusing to start. Its own stack run (E2E_DASHBOARD_MODE),
