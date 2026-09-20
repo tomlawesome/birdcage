@@ -55,19 +55,24 @@ export default defineConfig({
       // scripts/ci-e2e-guard.py exists to prevent.
       //
       // So: coverage cannot fall, and each floor is RAISED as its gap
-      // closes. Never lowered. Branches at 60 is the known debt and the
-      // one that matters most here -- a branch is a decision the
-      // dashboard makes about what to tell the operator, and the
-      // safety-critical standards (DO-178C, IEC 61508) ask for decision
-      // coverage rather than a line percentage. Raising that one to 70
-      // is the next piece of work, not a number to set now.
-      // Raised 2026-09-20 from 73/60/77/81 after ports.ts and
-      // eventRow.ts gained real tests -- the ratchet working as intended.
+      // closes. Never lowered. Branches is still the number that matters
+      // most here -- a branch is a decision the dashboard makes about
+      // what to tell the operator, and the safety-critical standards
+      // (DO-178C, IEC 61508) ask for decision coverage rather than a
+      // line percentage -- so it stays the laggard by design, not an
+      // oversight.
+      // Raised 2026-09-20 from 77/65/80/87 after History.svelte and
+      // Events.svelte gained tests for their own display decisions
+      // (which of failed/empty/rows renders, badge counts, open/clipped
+      // spans, the quiet-line swap, bold/coloured/plain segments, quiet
+      // action pills) and the events feed's merge-and-sort order was
+      // pulled out to lib/sentence/eventRow.ts's buildEventRows and
+      // tested there directly -- the ratchet working as intended.
       thresholds: {
-        statements: 77,
-        branches: 65,
-        functions: 80,
-        lines: 87,
+        statements: 85,
+        branches: 70,
+        functions: 91,
+        lines: 90,
       },
     },
   },
