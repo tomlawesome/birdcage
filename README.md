@@ -73,3 +73,23 @@ frontend embedded as above, then run `BIRDCAGE_BIN=../birdcage npm run
 smoke` from `frontend/` -- it starts that binary against the seeded
 database on a free port and checks a real browser sees the sweep
 sentence and four tiles.
+
+## Licence
+
+Birdcage is source-available, not open source. See [LICENSE](LICENSE).
+
+**A person or a charity may run it, free of charge, as supplied.** That is the
+whole permission: install it, run it, keep a backup. Configuring it is not
+modifying it.
+
+Nobody may modify it, build on it, or pass it to anyone else. Third-party
+components inside it keep their own licences, several of which allow more than
+this one does — those terms are not restricted by this one.
+
+Not permitted at all for a company, including one that only runs it on its own
+network and sells nothing; for a government; or for anything funded by the
+state, such as a state school or hospital. An independently funded school that
+is a registered charity is covered by the charity permission.
+
+Licences to use it commercially, or to modify or redistribute it, are
+available. Ask.
