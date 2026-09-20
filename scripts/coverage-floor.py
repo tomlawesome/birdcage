@@ -52,7 +52,24 @@ import os
 import sys
 
 TARGET_BAND = (70, 85)
-RATCHET_SLACK = 2
+
+# How far a package may drift above its floor before this job asks for the
+# floor to be raised. Set deliberately loose.
+#
+# The ratchet only works if the floors track reality, so drift has to be
+# caught. But the action that causes drift is somebody adding tests, and a
+# check that fails the build for improving coverage teaches people to stop
+# improving coverage -- or to switch the check off, which is the failure
+# mode scripts/ci-e2e-guard.py exists to prevent. A tight value here
+# punishes the good move: on a small package a single new test moves the
+# percentage several points at once.
+#
+# Five points is the compromise: small improvements land without ceremony,
+# and a package that has genuinely pulled ahead still gets its floor
+# raised rather than quietly keeping a floor nobody has looked at in
+# months. Raise this if it turns out to nag; do not remove it, or the
+# floors rot and the ratchet becomes decoration.
+RATCHET_SLACK = 5
 
 
 def fail(code, message):

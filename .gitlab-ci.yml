@@ -227,7 +227,21 @@ test:go:
         sleep 1
       done
       [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
-    - go test ./... -race
+    # -coverprofile alongside -race so one run does both (#74). The
+    # floors in supply-chain/coverage-floors.yml are a ratchet at
+    # measured values, not the owner's 70-85% band: a threshold set at
+    # the band would be red on code nobody touched. Go reports statement
+    # coverage only -- it has no branch coverage -- so the branch floor
+    # in the policy applies to the frontend alone.
+    #
+    # This run sets BIRDCAGE_TEST_DATABASE_URL, so internal/db is
+    # measured against real Postgres here and reads higher than it does
+    # on a workstation, where the same tests fall back to SQLite.
+    # golang:1.27 ships python3 (3.13.5, verified), which the checker
+    # needs.
+    - go test ./... -race -coverprofile=coverage.out
+    - go tool cover -func=coverage.out | tail -1
+    - python3 scripts/coverage-floor.py coverage.out
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
