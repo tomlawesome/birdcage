@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 """Enforce per-package Go coverage floors, and ratchet them upward.
 
-This checks STATEMENT coverage only. Go's own tooling (`go test -cover`,
-`go tool cover`) has no branch-coverage mode -- every percentage it can
-produce, and every percentage in supply-chain/coverage-floors.yml, is "how
-many statements ran at least once", not "how many branches of a condition
-were exercised". The 70-85% band in the owner's policy (issue #74,
-2026-09-20) is read against that number because it is the only number this
-toolchain can give.
+This checks STATEMENT coverage: every percentage here and in
+supply-chain/coverage-floors.yml is "how many statements ran at least
+once". That is the only number Go's own tooling produces.
+
+Do not read that as "branches are invisible" -- it is narrower than it
+sounds, and the difference matters when deciding what this file does not
+protect. An untaken branch IS caught, because a body that never runs is
+uncovered statements: a function whose true path is never taken reports
+66.7%, not 100%.
+
+What statement coverage cannot see is a compound condition. `if a && b`
+reports 100% having only ever run (true, true) and (false, true): `b` was
+never independently decisive, and no number says so. That is the gap
+MC/DC exists to close, and the reason DO-178C and IEC 61508 ask for it at
+their highest levels rather than asking for a percentage.
+
+Both claims above were tested against the real toolchain, not assumed.
+
+So the owner's 70-85% band (issue #74, 2026-09-20) is read against
+statements here, and the branch floor in that policy is set on the
+frontend, where vitest reports branches directly.
 
 Per-package percentages are computed by attributing each block in the Go
 coverage profile to the directory of its source file (the package), and
