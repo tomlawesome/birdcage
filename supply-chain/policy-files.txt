@@ -22,3 +22,19 @@ scripts/licence-check-npm.py
 supply-chain/licence-policy.yml
 scripts/agent-deps-check.sh
 supply-chain/policy-files.txt
+
+# The release path (#90). Everything below decides whether a built artefact
+# may be published, or judges one that already has been, so a change to any
+# of it is a change to the rules a digest was validated under -- which is
+# exactly what this digest exists to notice. Evidence minted before such a
+# change stops verifying, and that is the intended behaviour: a digest
+# validated under one set of rules must not ship under another.
+scripts/ci-release-guard.py
+scripts/policy-version.sh
+scripts/release-version.sh
+scripts/ensure-cosign.sh
+scripts/attest-tested-image.sh
+scripts/verify-validation-evidence.sh
+scripts/publish-image.sh
+scripts/publish-channel.sh
+scripts/promote-release.sh
