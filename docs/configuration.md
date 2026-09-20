@@ -14,12 +14,31 @@ both on every change.
 | --- | --- | --- |
 | unset | SQLite | Falls back to `BIRDCAGE_DB_PATH` (default `birdcage.db`, in the working directory) -- the pre-Postgres default, unchanged. |
 | `sqlite:PATH` | SQLite | Opens the file at `PATH`. |
-| `postgres://user:pass@host:5432/dbname` | Postgres | Also accepts the `postgresql://` scheme. Add `?sslmode=disable` for a local/loopback Postgres without TLS; use `sslmode=require` or stronger once it isn't. |
+| `postgres://user:pass@host:5432/dbname?sslmode=verify-full` | Postgres | Also accepts the `postgresql://` scheme. `sslmode=verify-full` is mandatory -- see below. |
 
 Whichever engine is selected, birdcage creates its own schema (the `alerts`
 and `audit_log` tables) on first start -- there is nothing to run by hand
 beyond having an empty database and a user with permission to create tables
 in it.
+
+**A Postgres `DATABASE_URL` must set `sslmode=verify-full`, or birdcage
+refuses to start** ([issue #84](https://gitlab.tomlawson.io/ai/birdcage/-/issues/84)).
+That database holds every canary's bearer-token hash, the CA, enrolment
+sessions and the whole alert history, so a connection to it that could run
+unencrypted -- or encrypt without checking which server it actually reached
+-- is treated as a plain read of the product's secrets by anything on the
+path. `verify-full` is the only one of pgx's five `sslmode` values that
+both requires TLS and checks the server's certificate against the hostname
+in the URL; `require` and `verify-ca` encrypt without that hostname check,
+and `disable`/`allow`/`prefer` can fall back to a plaintext connection.
+Birdcage refuses all four, with no override -- this is a fixed policy, not
+a per-deployment choice. The refusal happens at start-up, before any
+listener binds, and names `sslmode=verify-full` as the fix.
+
+If the server's certificate isn't issued by a CA your system already
+trusts (the common case for a private or self-hosted Postgres), add
+`sslrootcert=/path/to/ca.pem` pointing at the CA that issued it --
+`verify-full` needs that to verify the chain, not just to encrypt.
 
 **Treat a Postgres `DATABASE_URL` as a credential.** It carries a password in
 plain text, the same as the CrowdSec/RouterOS service-account credentials
