@@ -28,7 +28,8 @@ COPY --from=frontend /src/frontend/dist ./web/dist
 # modernc.org/sqlite is pure Go, so CGO can stay off and the binary is
 # genuinely static -- which is what lets the runtime stage be distroless
 # static rather than base.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/birdcage ./cmd/birdcage
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/birdcage ./cmd/birdcage
 # The SQLite file defaults under here (BIRDCAGE_DB_PATH below). Created
 # in this stage because distroless has no shell to mkdir with, and
 # copied in owned by the runtime user: Docker seeds a fresh named volume

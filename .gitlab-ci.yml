@@ -286,7 +286,21 @@ test:image:birdcage:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: birdcage-test-$CI_JOB_ID
   script:
-    - docker build --file build/birdcage/Dockerfile --tag "$APP" .
+    - >-
+      docker build --build-arg VERSION="ci-$CI_COMMIT_SHORT_SHA"
+      --file build/birdcage/Dockerfile --tag "$APP" .
+    # #90: the release job stamps the tag into the binary and compares it
+    # back, so the stamping itself is proved here rather than at a release
+    # nobody can retry. An image whose VERSION argument is silently ignored
+    # still starts and still serves, so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="ci-$CI_COMMIT_SHORT_SHA"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - >-
       docker run --detach --name "$APP"
       --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
