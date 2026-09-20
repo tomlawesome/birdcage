@@ -22,7 +22,7 @@ the split is ever quietly undone:
 | `release:push` | pushes the anchor tag `sha-<commit>`, then pulls the digest back and refuses unless it is the image that was tested | a registry credential |
 | `release:attest` | mints the validation evidence over that digest | the signing key, and nothing else |
 | `release:preview` | verifies the evidence, then gives the digest the `preview` name | a registry credential |
-| `release:promote` | verifies again, then moves the tested digest to `v<version>` | a registry credential |
+| `release:promote` | the manual button; verifies again, then moves the tested digest to `v<version>` | a registry credential |
 
 An attacker who takes the signing runner gets a key but no push path. One
 who takes the publishing credential gets a push path but cannot mint
@@ -45,6 +45,52 @@ refuses a tag that does not match `VERSION` — rather than being its source.
 
 Bumping the version is therefore an ordinary reviewed commit.
 
+A forgotten bump fails early rather than at the cut: `release:push`
+refuses, before publishing anything, if the registry already carries
+`v<version>`. So the first `preview` merge after a release fails until
+`VERSION` moves. That is the discipline working — a preview build stamped
+with a version that has already shipped is claiming candidacy for a
+release that has closed.
+
+### Pre-release suffixes
+
+`-beta` and its successors are editorial. No automation adds, advances or
+removes one, because nothing in the pipeline knows whether a claim about
+maturity is true.
+
+- Successors are dot-separated, so semver orders them correctly: `-beta`,
+  then `-beta.2`, then `-rc.1` if wanted, then the bare version. Never
+  `-beta2`.
+- A version whose cut failed after anything carried its name is burnt.
+  Take the next suffix rather than reusing it — `promote-release.sh`
+  refuses to repoint an existing version tag anyway, so reuse fails
+  closed; this is just saying do not fight it.
+- `0.1.0-beta` is a double hedge, deliberately: `0.x` says the interfaces
+  may move, `-beta` says this particular cut is a trial. The commit that
+  drops the suffix is the statement that the second is no longer meant.
+
+## There is no `latest` tag
+
+Nothing publishes one, and that is a decision rather than an oversight
+(#99).
+
+`latest` is Docker's default tag, so publishing it would make a bare
+`docker pull` silently succeed and silently move between versions. The
+grammar here is the opposite: a version tag is an immutable promise, and
+identity is the digest. Pre-1.0 it would also hand out betas by default.
+
+Nothing needs it. The one place the product names an image — the
+`docker run` line `birdcage canary enrol` prints — should pin the
+server's own stamped version when that is wired to GHCR (#69), because a
+server that names its matching canary exactly is better than one that
+says "whatever is newest".
+
+So `docker pull ghcr.io/tomlawesome/birdcage` with no tag fails, and every
+document that names an image names a version. If a moving "current
+release" pointer is ever genuinely wanted, it is a channel tag moved by
+`release:promote` through the existing `publish-channel.sh` — and it gets
+a name that admits it moves.
+
 ## Cutting a release
 
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
@@ -53,24 +99,25 @@ Bumping the version is therefore an ordinary reviewed commit.
 2. Do the production-like manual test on `preview`. That test is the point
    of the hop, not a formality.
 3. `preview` -> `main` by merge request.
-4. **The owner pushes the annotated tag.** This is what authorises the
-   release — there is no approval button in the pipeline, by design.
+4. **Press the button.** On `main`'s pipeline, play the manual
+   `release:promote` job. That press is what authorises the release.
 
-   ```sh
-   git switch main && git pull
-   git tag -a v0.1.0-beta -m 'birdcage v0.1.0-beta'
-   git push gitlab v0.1.0-beta
-   ```
-
-   The tag's pipeline runs `release:promote`, which refuses unless the tag
-   matches `VERSION`, the commit has an anchor from a validated build, the
+   It refuses unless the commit has an anchor from a validated build, the
    evidence still verifies, the birdcage image reports the right stamp, and
-   `v0.1.0-beta` does not already exist in the registry. Then it moves the
-   tested digest onto the version tag and `release:gitlab` writes the
-   release note.
+   the registry does not already carry this version. Then it moves the
+   tested digest onto the version tag, and `release:gitlab` creates the
+   annotated tag and the release note from `VERSION`.
+
+   The tag is an output, not an input — you do not type a version
+   anywhere, and there is no local checkout to get wrong.
 5. **Countersign, on GitHub.** Run the "Countersign a released digest"
-   workflow once per image, giving the digest and the commit. It verifies
-   the key-based evidence first and signs keyless only if that passes.
+   workflow once, giving both digests and the commit. It verifies the
+   key-based evidence for each image and signs keyless only if that passes.
+
+Two buttons for a complete release: one on GitLab, one on GitHub. The
+second cannot be folded into the first without giving away what it is
+for — a second signer that fires from the same trigger as the first stops
+nothing.
 6. Back-merge after each promotion, or the next one reports `BEHIND`.
 
 Evidence expires after seven days, so step 1 to step 4 has to happen inside
@@ -221,6 +268,17 @@ or so across `scripts/*.test.sh`, every refusal ground covered — but every
 one of them stubs the registry, so no call has ever been made to a real
 GHCR. In particular, the functions that resolve a tag to a digest have
 never seen a registry's actual output.
+
+Two things in particular to watch on the first cut:
+
+- Whether `release-cli`, acting with `CI_JOB_TOKEN`, can create a
+  protected `v*` tag on this CE instance. If it cannot, the fallback is
+  the tag-push flow this replaced — you push the annotated tag by hand and
+  the rest is unchanged.
+- What `release:gitlab` does on a `main` pipeline where nobody presses the
+  button. It should end up skipped once the pipeline finishes, since the
+  job it needs was never played. If it instead sits pending and holds the
+  pipeline open, give it its own `when: manual` and press both.
 
 Per AGENTS.md, a release path that has never run is not a release path. The
 first `preview` merge after the setup above is the run that proves it, and

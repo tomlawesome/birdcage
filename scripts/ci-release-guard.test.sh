@@ -157,6 +157,59 @@ sign:
   script:
     - scripts/attest-tested-image.sh" "sign: allow_failure is true"
 
+# #99: the single button that cuts a release is a manual job, and GitLab
+# makes manual jobs allow_failure by default. Allowed there, and only
+# there -- and checked in both places the two keys can sit, because the
+# shape this project actually uses puts them inside `rules:`, where a
+# job-level-only check would never have looked.
+expect 0 "a manual release job may be allow_failure (job level)" "stages: [build, test, release]
+sign:
+  stage: release
+  tags: [birdcage-signing]
+  interruptible: false
+  script:
+    - scripts/attest-tested-image.sh
+promote:
+  stage: release
+  interruptible: false
+  when: manual
+  allow_failure: true
+  script:
+    - scripts/promote-release.sh"
+
+expect 0 "a manual release job may be allow_failure (inside rules)" "stages: [build, test, release]
+sign:
+  stage: release
+  tags: [birdcage-signing]
+  interruptible: false
+  script:
+    - scripts/attest-tested-image.sh
+promote:
+  stage: release
+  interruptible: false
+  rules:
+    - if: '\$CI_COMMIT_BRANCH == \"main\"'
+      when: manual
+      allow_failure: true
+  script:
+    - scripts/promote-release.sh"
+
+expect 1 "allow_failure inside rules without when: manual is caught" "stages: [build, test, release]
+sign:
+  stage: release
+  tags: [birdcage-signing]
+  interruptible: false
+  script:
+    - scripts/attest-tested-image.sh
+promote:
+  stage: release
+  interruptible: false
+  rules:
+    - if: '\$CI_COMMIT_BRANCH == \"main\"'
+      allow_failure: true
+  script:
+    - scripts/promote-release.sh" "promote: allow_failure is true in rules[0]"
+
 # A dot-prefixed template is never run on its own, so its shape cannot
 # violate anything -- only real jobs are judged.
 expect 0 "a dot-prefixed template is not judged" ".template: &template

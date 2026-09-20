@@ -27,8 +27,21 @@ What it refuses, and why each one matters:
   - a `release`-stage job that is not `interruptible: false` -- a
     cancelled release can leave a pushed digest with no evidence, or a
     validated digest with no name;
-  - a `release`-stage job with `allow_failure: true` -- a release step
-    allowed to fail is not a gate.
+  - a `release`-stage job with `allow_failure: true` that is not also
+    `when: manual` -- a release step allowed to fail is not a gate.
+
+    The manual exception is #99's: the single button that cuts a release
+    is a manual job, GitLab makes manual jobs allow_failure by default,
+    and forcing it false would leave every `main` pipeline reading
+    "blocked" forever waiting for a release nobody intends to cut yet.
+    The failure this rule exists to prevent -- a release step going
+    quietly green after failing -- cannot happen to a job a human is
+    watching, because they just pressed it.
+
+    Both places are checked, because `allow_failure` and `when` can sit
+    at the top of a job or inside an entry of its `rules:`, and a rule
+    that only looked at the first would be silently blind to the shape
+    this project actually uses.
 
 The stage name and the job set are read from the CI config itself, not
 copied here, so the guard cannot drift from what it guards.
@@ -69,6 +82,25 @@ def load(path):
         print(f"ci-release-guard: {path} is not a mapping", file=sys.stderr)
         raise SystemExit(2)
     return doc
+
+
+def allow_failure_settings(body):
+    """Every place this job decides allow_failure, with the `when` beside it.
+
+    GitLab lets both keys sit at the top of a job or inside an entry of
+    its `rules:`, and the two are read together -- `allow_failure: true`
+    means something different next to `when: manual` than it does alone.
+    Yielding (description, allow_failure, when) for each place keeps the
+    caller from having to know that, and keeps the message able to say
+    which place it found.
+    """
+    yield "on the job", body.get("allow_failure"), body.get("when")
+    rules = body.get("rules")
+    if isinstance(rules, list):
+        for index, rule in enumerate(rules):
+            if isinstance(rule, dict):
+                yield (f"in rules[{index}]", rule.get("allow_failure"),
+                       rule.get("when"))
 
 
 def jobs_in_stage(doc, stage):
@@ -206,10 +238,13 @@ def check(path):
                 f"{name}: is not `interruptible: false`. A cancelled "
                 f"release can leave a pushed digest with no evidence, or "
                 f"a validated digest with no name.")
-        if body.get("allow_failure") is True:
-            problems.append(
-                f"{name}: allow_failure is true. A release step allowed "
-                f"to fail is not a gate.")
+        for where, allow_failure, when in allow_failure_settings(body):
+            if allow_failure is True and when != "manual":
+                problems.append(
+                    f"{name}: allow_failure is true {where} without "
+                    f"`when: manual`. A release step allowed to fail is "
+                    f"not a gate; the one exception is the manual button "
+                    f"that cuts a release, which a human is watching.")
 
     if problems:
         print("ci-release-guard: the release stage does not hold the "

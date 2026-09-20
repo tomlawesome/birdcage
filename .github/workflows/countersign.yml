@@ -30,19 +30,16 @@ name: Countersign a released digest
 on:
   workflow_dispatch:
     inputs:
-      image:
-        description: Which image to countersign
+      birdcage_digest:
+        description: The birdcage digest to countersign, sha256:<64 hex>
         required: true
-        type: choice
-        options:
-          - birdcage
-          - mockingbird
-      digest:
-        description: The digest to countersign, sha256:<64 hex>
+        type: string
+      mockingbird_digest:
+        description: The mockingbird digest to countersign, sha256:<64 hex>
         required: true
         type: string
       commit:
-        description: The 40-hex commit the digest was built from
+        description: The 40-hex commit both digests were built from
         required: true
         type: string
 
@@ -53,7 +50,7 @@ concurrency:
   # Two countersignings of the same digest at once would race for the same
   # signature slot in the registry; one at a time, and never cancelled
   # halfway.
-  group: countersign-${{ inputs.image }}-${{ inputs.digest }}
+  group: countersign-${{ inputs.commit }}
   cancel-in-progress: false
 
 jobs:
@@ -77,7 +74,8 @@ jobs:
 
       - name: Validate the inputs
         env:
-          DIGEST: ${{ inputs.digest }}
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
           COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
@@ -85,8 +83,12 @@ jobs:
           # registry call: a malformed digest would otherwise come back as
           # "not found", which reads like a missing image rather than a
           # typo.
-          printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
-            || { echo "digest is not sha256:<64 hex>: $DIGEST"; exit 1; }
+          for d in "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN"; do
+            printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+              || { echo "digest is not sha256:<64 hex>: $d"; exit 1; }
+          done
+          [ "$BIRDCAGE_DIGEST_IN" != "$MOCKINGBIRD_DIGEST_IN" ] \
+            || { echo "both digests are the same -- the two images cannot share one"; exit 1; }
           printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
             || { echo "commit is not 40 lowercase hex characters: $COMMIT"; exit 1; }
 
@@ -99,24 +101,12 @@ jobs:
           echo "${{ github.token }}" | docker login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
 
-      - name: Verify the key-based validation evidence
+      - name: Verify the evidence, then countersign, one image at a time
         env:
-          BIRDCAGE_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
-          BIRDCAGE_DIGEST: ${{ inputs.digest }}
-          BIRDCAGE_COMMIT: ${{ inputs.commit }}
-        run: |
-          set -euo pipefail
-          # Refuses with a distinct exit code per ground -- 10 mismatch,
-          # 11 missing, 12 ambiguous, 13 expired -- and this workflow simply
-          # stops there. Nothing below runs if this step fails, which is the
-          # entire point of the ordering: the second signer never signs
-          # something the first signer did not vouch for.
-          scripts/verify-validation-evidence.sh
-
-      - name: Sign the digest, keyless
-        env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
-          DIGEST: ${{ inputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
+          COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
           # The same pinned cosign the GitLab side uses: one place it is
@@ -124,22 +114,40 @@ jobs:
           # signer can never be running different binaries.
           cosign_dir="$(mktemp -d)"
           cosign_bin="$(scripts/ensure-cosign.sh "$cosign_dir")"
-          # Signs the DIGEST, never a tag: a tag can be repointed between
-          # signing and verifying, and that substitution is what all of this
-          # exists to make impossible.
-          "$cosign_bin" sign --yes "${IMAGE}@${DIGEST}"
+          # Both images in one run, because a release is both images: two
+          # dispatches invite the second to be forgotten, leaving half a
+          # release countersigned and nothing saying which half.
+          for pair in "birdcage|$BIRDCAGE_DIGEST_IN" "mockingbird|$MOCKINGBIRD_DIGEST_IN"; do
+            name="${pair%|*}"
+            digest="${pair#*|}"
+            image="ghcr.io/${OWNER}/${name}"
+            echo "::group::$name"
+            # Refuses with a distinct exit code per ground -- 10 mismatch,
+            # 11 missing, 12 ambiguous, 13 expired -- and `set -e` stops
+            # the whole run there. That ordering is the entire point: the
+            # second signer never signs what the first did not vouch for.
+            BIRDCAGE_IMAGE="$image" BIRDCAGE_DIGEST="$digest" BIRDCAGE_COMMIT="$COMMIT" \
+              scripts/verify-validation-evidence.sh
+            # Signs the DIGEST, never a tag: a tag can be repointed between
+            # signing and verifying, and that substitution is what all of
+            # this exists to make impossible.
+            "$cosign_bin" sign --yes "${image}@${digest}"
+            echo "::endgroup::"
+          done
 
       - name: Say what was signed
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
-          DIGEST: ${{ inputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
         run: |
           {
             echo "### Countersigned"
             echo
-            echo "\`${IMAGE}@${DIGEST}\`"
+            echo "- \`ghcr.io/${OWNER}/birdcage@${BIRDCAGE_DIGEST_IN}\`"
+            echo "- \`ghcr.io/${OWNER}/mockingbird@${MOCKINGBIRD_DIGEST_IN}\`"
             echo
-            echo "The key-based validation evidence verified first, then this"
-            echo "digest was signed keyless. The keyless signature is in the"
-            echo "public transparency log."
+            echo "The key-based validation evidence verified first, then each"
+            echo "digest was signed keyless. Both signatures are in the public"
+            echo "transparency log."
           } >> "$GITHUB_STEP_SUMMARY"

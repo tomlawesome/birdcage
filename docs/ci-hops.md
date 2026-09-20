@@ -132,8 +132,8 @@ recorded here because `.gitlab-ci.yml` and this file move together.
 | `release:push` | push to `preview` | publishes the anchor `sha-<commit>` and proves the registry holds what was tested |
 | `release:attest` | push to `preview` | mints the validation evidence. The only job that may sign, fenced by the `birdcage-signing` runner |
 | `release:preview` | push to `preview` | verifies that evidence, then creates the `preview` tag |
-| `release:promote` | a `v*` tag | verifies again, then moves the tested digest to the version tag |
-| `release:gitlab` | a `v*` tag | the GitLab release note |
+| `release:promote` | `main`, manual | the single button that cuts a release: verifies again, then moves the tested digest to the version tag |
+| `release:gitlab` | `main`, after the button | creates the annotated tag and the release note from `VERSION` |
 
 `release:push` deliberately has no `needs:`, which is what makes it wait
 for every job in every earlier stage. A list of jobs there would be a

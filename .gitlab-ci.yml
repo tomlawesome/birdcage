@@ -807,11 +807,15 @@ e2e:dashboard-own-ca:postgres:
 #                    rebuilds, refuses an existing version tag, and refuses
 #                    unless the evidence still stands.
 #
-# WHAT AUTHORISES A RELEASE. Not a button in this pipeline (#90 rules that
-# out): the owner pushes the annotated `v*` tag, and that push is the
-# instruction. `release:promote` then validates it rather than trusting it --
-# the tag must match the tracked VERSION file, the commit must have an
-# anchor from a validated build, and the evidence must verify.
+# WHAT AUTHORISES A RELEASE (#99). One manual job on `main`, and the press
+# is the instruction. It is not the approval click #90 rules out: that rule
+# keeps human judgement from standing between evidence and publication,
+# and every judging job on `preview` stays automatic. `release:promote`
+# then validates rather than trusts -- the commit must carry an anchor from
+# a validated build, the evidence must verify, the image must report the
+# version, and the registry must not already hold it. The tag is created
+# from VERSION afterwards, so there is nothing to type and nothing to
+# mistype.
 #
 # WHAT THE EVIDENCE DOES AND DOES NOT SAY. It binds a digest to a commit and
 # to the policy version that judged it. The image checks and the live
@@ -853,6 +857,17 @@ release:push:
     - |
       set -eu
       mkdir -p .birdcage-release
+      # Refuse before publishing anything if this version has already been
+      # released (#99). The check belongs here, not at promotion: a preview
+      # build stamped with a version that has already shipped is claiming
+      # candidacy for a release that has closed, and catching that days
+      # later at the cut means days of preview builds nobody can release.
+      released="$(scripts/release-version.sh --tag)"
+      if docker buildx imagetools inspect "${GHCR_BIRDCAGE_REPO}:${released}" >/dev/null 2>&1; then
+        echo "${GHCR_BIRDCAGE_REPO}:${released} already exists -- $released has been released."
+        echo "Bump VERSION before merging anything else to preview."
+        exit 1
+      fi
       anchor="sha-${CI_COMMIT_SHA}"
       # Only the anchor is pushed here. It is immutable by construction (a
       # commit sha names one build) and it is never what a user pulls: the
@@ -954,8 +969,23 @@ release:preview:
           scripts/publish-channel.sh "$repo" "$digest" preview
       done
 
-# Promotion. Triggered by the owner pushing an annotated `v*` tag on `main`;
-# nothing here decides that a release should happen.
+# Promotion. One manual job on `main` -- the single button that cuts a
+# release (#99). Nothing here decides that a release should happen: the
+# press is the owner's instruction, and everything the button then does is
+# a refusal or a registry-side copy.
+#
+# This is not the approval click #90 rules out. That rule keeps human
+# judgement from standing between evidence and publication, pretending to
+# be evidence: every judging job on `preview` stays automatic and the
+# evidence is minted without anyone's say-so. Authorisation was always
+# human -- it used to be three typed git commands, and a button is the same
+# instruction with fewer things to mistype. It runs on the pipeline of the
+# exact `main` commit shown in the UI, so it cannot pick the wrong commit
+# or invent a version, and GitLab records who pressed it.
+#
+# The tag is an OUTPUT, not an input: release:gitlab below creates it from
+# VERSION once the digest has actually moved. So there is no tag to check
+# against VERSION here -- that failure mode is removed rather than guarded.
 #
 # Which commit's build is being released: the tag names a commit on `main`,
 # and the anchor was pushed for the commit on `preview`. If `main` fast-
@@ -969,8 +999,19 @@ release:promote:
   image: docker:29-cli
   interruptible: false
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
-  needs: []
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+      # A manual job is allow_failure by default, and forcing it false
+      # would leave every `main` pipeline reading "blocked" forever waiting
+      # for a release nobody intends to cut yet. Safe here for the reason
+      # scripts/ci-release-guard.py names: the silent-green failure that
+      # rule prevents cannot happen to a job a human is watching, because
+      # they just pressed it.
+      allow_failure: true
+  # No `needs:` here either, for release:push's reason: without one the
+  # button does not become playable until every job in every earlier stage
+  # of `main`'s own pipeline has passed. Cutting a release while the gate
+  # on `main` is red should not be one click away.
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     # The second parent has to be reachable for the fallback above.
@@ -979,14 +1020,6 @@ release:promote:
   script:
     - apk add --no-cache git >/dev/null
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
-    - |
-      set -eu
-      want="$(scripts/release-version.sh --tag)"
-      if [ "$CI_COMMIT_TAG" != "$want" ]; then
-        echo "tag $CI_COMMIT_TAG does not match the tracked VERSION ($want)."
-        echo "The version is a reviewed commit, not something a tag may decide: bump VERSION first."
-        exit 1
-      fi
     - |
       set -eu
       head="$(git rev-parse HEAD)"
@@ -1012,32 +1045,58 @@ release:promote:
       # covers both, is #97.
       scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit"
       scripts/promote-release.sh "$GHCR_MOCKINGBIRD_REPO" "$commit"
+      # The tag release:gitlab will create, decided here so one job reads
+      # VERSION and the other cannot disagree with it.
+      {
+        echo "RELEASE_TAG=$(scripts/release-version.sh --tag)"
+        echo "RELEASE_COMMIT=$commit"
+      } > promotion.env
+      cat promotion.env
+  artifacts:
+    reports:
+      dotenv: promotion.env
+    expire_in: 90 days
 
-# The GitLab Release object for the tag the owner pushed. Separate job
-# because the `release:` keyword needs release-cli in the image, and because
-# it must not be able to run unless the promotion above succeeded: a release
-# note pointing at images that were never promoted is worse than none.
+# The annotated tag and the release note, created together once the digest
+# has actually moved. The order matters: promote first, name second. If
+# promotion refuses, nothing anywhere carries the version's name; if this
+# job fails after a good promotion it can be retried on its own, without
+# re-promoting, so a version is never burnt by a half-finished cut.
+#
+# release-cli creates the tag from `ref` using CI_JOB_TOKEN, which acts
+# with the permissions of whoever pressed the button -- so a protected `v*`
+# tag is created when the owner cuts the release and refused when someone
+# without that right tries.
+#
+# Separate job because the `release:` keyword needs release-cli in the
+# image, and because it must not be able to run unless the promotion
+# succeeded: a release note pointing at images that were never promoted is
+# worse than none.
 release:gitlab:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   interruptible: false
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
   needs:
     - job: release:promote
+      artifacts: true
   script:
-    - echo "creating the GitLab release for $CI_COMMIT_TAG"
+    - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
   release:
-    tag_name: $CI_COMMIT_TAG
-    name: $CI_COMMIT_TAG
+    tag_name: $RELEASE_TAG
+    tag_message: birdcage $RELEASE_TAG
+    ref: $CI_COMMIT_SHA
+    name: $RELEASE_TAG
     description: |
       Images published by digest, promoted from the build `preview` tested:
 
-      - `$GHCR_BIRDCAGE_REPO:$CI_COMMIT_TAG`
-      - `$GHCR_MOCKINGBIRD_REPO:$CI_COMMIT_TAG`
+      - `$GHCR_BIRDCAGE_REPO:$RELEASE_TAG`
+      - `$GHCR_MOCKINGBIRD_REPO:$RELEASE_TAG`
 
       Verify before you run either of them -- docs/releasing.md has the
-      commands.
+      commands. Both carry a key-based validation attestation; the keyless
+      countersignature is added by hand on GitHub after the cut.
 
 sync:mirror-to-github:
   stage: sync
