@@ -68,6 +68,14 @@ LOG_VOL="$E2E_PREFIX-log"
 # let remove them: it only ever deletes an image tag beginning with
 # E2E_PREFIX, so pointing this at an image you built yourself
 # (E2E_BIRDCAGE_IMAGE=birdcage:local) never deletes it.
+#
+# `up` also treats a set override differently from the default (#98):
+# CI sets these to the tags build:images already built from this exact
+# commit, so the journey tests those bytes rather than a second build of
+# the same source. build_image below skips building when the tag already
+# exists either way, but only dies loudly on a miss when one of these was
+# set -- a workstation with neither set still builds from scratch, which
+# is the only way to debug a red job with no pipeline to hand it images.
 BIRDCAGE_IMAGE="${E2E_BIRDCAGE_IMAGE:-$E2E_PREFIX-birdcage-image}"
 MOCKINGBIRD_IMAGE="${E2E_MOCKINGBIRD_IMAGE:-$E2E_PREFIX-mockingbird-image}"
 # Always this harness's own build, never overridable the way the two
@@ -144,10 +152,20 @@ build_helper_image() {
     | docker build --quiet --tag "$HELPER_IMAGE" - >/dev/null
 }
 
-build_image() { # build_image <tag> <dockerfile>
+build_image() { # build_image <tag> <dockerfile> <override-var-name-or-empty>
   if docker image inspect "$1" >/dev/null 2>&1; then
     log "using existing image $1"
     return 0
+  fi
+  # $3 is only non-empty when the tag came from E2E_BIRDCAGE_IMAGE or
+  # E2E_MOCKINGBIRD_IMAGE (#98): those name an image CI already built
+  # from this exact commit (build:images), so a miss there is not "build
+  # one" but "the thing that was supposed to exist is not there" -- a CI
+  # wiring bug, not a reason to test different bytes than the job
+  # claims to. Silently building a substitute is the failure this issue
+  # removes: a journey that does that is testing a build nobody judged.
+  if [ -n "$3" ]; then
+    die "$3=$1 names no local image -- it should have been built by build:images and handed to this job; refusing rather than building a different one"
   fi
   log "building $1 from $2 (this takes a few minutes the first time)"
   docker build --file "$REPO_ROOT/$2" --tag "$1" "$REPO_ROOT" >/dev/null \
@@ -462,8 +480,8 @@ up() {
   command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
   down >/dev/null 2>&1 || true
 
-  build_image "$BIRDCAGE_IMAGE" build/birdcage/Dockerfile
-  build_image "$MOCKINGBIRD_IMAGE" build/mockingbird/Dockerfile
+  build_image "$BIRDCAGE_IMAGE" build/birdcage/Dockerfile "${E2E_BIRDCAGE_IMAGE:+E2E_BIRDCAGE_IMAGE}"
+  build_image "$MOCKINGBIRD_IMAGE" build/mockingbird/Dockerfile "${E2E_MOCKINGBIRD_IMAGE:+E2E_MOCKINGBIRD_IMAGE}"
   build_helper_image
 
   docker network create "$NET" >/dev/null || die "creating network $NET failed"

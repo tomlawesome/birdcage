@@ -615,6 +615,13 @@ test:image:mockingbird:
 #     scripts/e2e/stack.sh logs
 #     scripts/e2e/stack.sh down
 #
+# With neither override set, `up` builds both images from scratch, same
+# as always -- a workstation debugging a red job has no build:images run
+# to hand it images. In CI (#98), E2E_BIRDCAGE_IMAGE and
+# E2E_MOCKINGBIRD_IMAGE below point stack.sh at the tags build:images
+# already built, so the journey tests those bytes instead of building a
+# second copy of the same source.
+#
 # Adding a journey (#79 port scan, #80 mail, #81 dashboard) is a job of
 # the same four lines with a different script name; the stack it needs
 # is already stood up by stack.sh.
@@ -628,13 +635,20 @@ e2e:enrol-and-hit:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -654,14 +668,21 @@ e2e:enrol-and-hit:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -687,15 +708,22 @@ e2e:smb:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds two extra images (the second canary's Mockingbird tag is
-  # already built by stack.sh up, but the Samba image is its own build)
-  # and runs a Samba server plus a second canary alongside the base
-  # stack's four containers.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -723,14 +751,21 @@ e2e:dashboard-own-ca:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -753,13 +788,20 @@ e2e:snmp:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -804,16 +846,23 @@ e2e:smb:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds two extra images (the second canary's Mockingbird tag is
-  # already built by stack.sh up, but the Samba image is its own build)
-  # and runs a Samba server plus a second canary alongside the base
-  # stack's four containers.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -838,14 +887,21 @@ e2e:snmp:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -864,15 +920,22 @@ e2e:dashboard-own-ca:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-pg-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -929,12 +992,11 @@ e2e:dashboard-own-ca:postgres:
 #
 # WHAT THE EVIDENCE DOES AND DOES NOT SAY. It binds a digest to a commit and
 # to the policy version that judged it. The image checks and the live
-# journeys ran on that commit; the `test:image:*` jobs ran on these exact
-# bytes (build:images), while the `e2e:*` journeys still build their own
-# copies of the same source through scripts/e2e/stack.sh. Feeding the
-# journeys the built image too is worth doing and is not done here -- see
-# docs/releasing.md, which states this limit rather than letting the word
-# "validated" imply more than it earns.
+# journeys ran on that commit; the `test:image:*` jobs and, since #98, the
+# `e2e:*` journeys that use scripts/e2e/stack.sh all run on these exact
+# bytes (build:images) -- see docs/releasing.md for the one job that is
+# still its own build and why. That is what makes "validated" mean the
+# bytes that ship, not a second build of the same source.
 # ---------------------------------------------------------------------------
 
 # Every release job needs the same two things: a shell the scripts are
