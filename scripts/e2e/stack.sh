@@ -86,6 +86,17 @@ E2E_BACKEND="${E2E_BACKEND:-sqlite}"
 CANARY_NAME="${E2E_CANARY_NAME:-e2e-canary}"
 CANARY_LANE="${E2E_CANARY_LANE:-e2e}"
 
+# E2E_DASHBOARD_MODE picks which of issue #63's dashboard TLS modes the
+# stack runs: "cert" (the default -- an operator-supplied certificate
+# from a throwaway CA, generate_tls below) or "own-ca" (no dashboard
+# certificate configured at all, so birdcage mints its own from its own
+# CA -- the new default this issue adds; see
+# scripts/e2e/dashboard-own-ca.sh). Existing journeys ask for "cert"
+# unchanged, matching the comment above about why: an operator
+# certificate is the one mode a real deployment must not be missing
+# coverage for either.
+E2E_DASHBOARD_MODE="${E2E_DASHBOARD_MODE:-cert}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 log() { echo "stack: $*" >&2; }
@@ -213,6 +224,31 @@ start_birdcage() {
   if [ -n "${E2E_DATABASE_URL:-}" ]; then
     db_env=(--env "DATABASE_URL=$E2E_DATABASE_URL")
   fi
+
+  # dashboard_env picks the two dashboard TLS modes this harness
+  # exercises: "cert" points BIRDCAGE_HTTP_TLS_CERT/_KEY at the
+  # throwaway CA's leaf (generate_tls above); "own-ca" sets neither, so
+  # birdcage falls to issue #63's new default and mints its own leaf
+  # from BIRDCAGE_CA_DIR -- BIRDCAGE_DASHBOARD_HOST names this
+  # container so the leaf's SAN actually covers the name a journey
+  # connects to, the same reason BIRDCAGE_ADVERTISE_HOST is set for the
+  # ingest listener below.
+  local dashboard_env=()
+  case "$E2E_DASHBOARD_MODE" in
+    own-ca)
+      dashboard_env=(--env "BIRDCAGE_DASHBOARD_HOST=$BIRDCAGE")
+      ;;
+    cert)
+      dashboard_env=(
+        --env BIRDCAGE_HTTP_TLS_CERT=/tls/server.pem
+        --env BIRDCAGE_HTTP_TLS_KEY=/tls/server-key.pem
+      )
+      ;;
+    *)
+      die "unknown E2E_DASHBOARD_MODE=$E2E_DASHBOARD_MODE (want cert or own-ca)"
+      ;;
+  esac
+
   docker run --detach --name "$BIRDCAGE" --network "$NET" \
     --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
     --cap-drop ALL --security-opt no-new-privileges \
@@ -220,17 +256,34 @@ start_birdcage() {
     --volume "$DATA_VOL:/var/lib/birdcage" \
     --volume "$TLS_VOL:/tls:ro" \
     --env BIRDCAGE_HTTP_ADDR=:8080 \
-    --env BIRDCAGE_HTTP_TLS_CERT=/tls/server.pem \
-    --env BIRDCAGE_HTTP_TLS_KEY=/tls/server-key.pem \
+    "${dashboard_env[@]}" \
     --env BIRDCAGE_INGEST_ADDR=:8443 \
     --env BIRDCAGE_ENROL_ADDR=:8444 \
     --env BIRDCAGE_ADVERTISE_HOST="$BIRDCAGE" \
     "${db_env[@]}" \
     "$BIRDCAGE_IMAGE" >/dev/null || die "starting $BIRDCAGE failed"
 
+  # own-ca mode has no throwaway dashboard CA to trust against -- wait
+  # for birdcage to write its own CA certificate (generated at process
+  # start, well before the dashboard listener binds) and use that
+  # instead. copy_birdcage_ca is safe to call again later in `up`; it
+  # just re-copies the same file.
+  local dashboard_cacert=/tls/dashboard-ca.pem
+  if [ "$E2E_DASHBOARD_MODE" = own-ca ]; then
+    local ca_attempt
+    for ca_attempt in $(seq 1 60); do
+      if helper "test -f /data/ca/ca.pem" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    copy_birdcage_ca
+    dashboard_cacert=/work/birdcage-ca.pem
+  fi
+
   local attempt
   for attempt in $(seq 1 60); do
-    if helper "curl -sS --cacert /tls/dashboard-ca.pem https://$BIRDCAGE:8080/api/alerts" 2>/dev/null | grep -q '"alerts"'; then
+    if helper "curl -sS --cacert $dashboard_cacert https://$BIRDCAGE:8080/api/alerts" 2>/dev/null | grep -q '"alerts"'; then
       log "dashboard answered over TLS on attempt $attempt"
       return 0
     fi
@@ -387,6 +440,7 @@ export E2E_NET=$NET
 export E2E_BIRDCAGE=$BIRDCAGE
 export E2E_CANARY=$CANARY
 export E2E_BACKEND=$E2E_BACKEND
+export E2E_DASHBOARD_MODE=$E2E_DASHBOARD_MODE
 export E2E_CANARY_ID=$CANARY_ID
 export E2E_CANARY_NAME=$CANARY_NAME
 export E2E_CANARY_LANE=$CANARY_LANE

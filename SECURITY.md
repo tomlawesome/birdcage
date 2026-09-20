@@ -245,21 +245,37 @@ only at the point that text is displayed, per surface:
 - **Dashboard HTTPS — never plain HTTP across a network** (issue #63,
   owner decision: "we must never allow the GUI to run without https in
   some form"). `BIRDCAGE_HTTP_ADDR` (default `:8080`) together with
-  `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY` picks exactly one of
-  three modes, decided once at startup by `internal/tlsconfig.Select`:
+  `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY` picks one of four
+  modes, decided once at startup by `internal/tlsconfig.Select`:
   (1) **operator-supplied certificate** -- both TLS variables set to PEM
   file paths, serves HTTPS on `BIRDCAGE_HTTP_ADDR` with the same TLS 1.3
   floor and HTTP/1.1-only posture as the canary ingest listener above,
   and reloads the pair whenever either file's mtime changes so a
-  renewal needs no restart; (2) **plain HTTP bound strictly to
-  loopback** -- no certificate configured and `BIRDCAGE_HTTP_ADDR`'s host
-  is `127.0.0.1`, `::1` or `localhost`, or a unix socket
-  (`unix:///path/to.sock`), for a reverse proxy in the same network
-  namespace or sharing a volume; (3) **ACME** -- not implemented yet (a
-  dependency decision the owner has not made). Anything else -- no
-  certificate and a non-loopback or empty host, including the documented
-  default `:8080` -- refuses to start with one message naming all three
-  modes; it never raises a plaintext listener reachable off loopback.
+  renewal needs no restart; (2) **a certificate birdcage mints itself,
+  from its own CA** -- the default whenever no certificate is configured
+  and the host isn't loopback, including the documented default `:8080`
+  (owner decision, 2026-09-20: "We serve a certificate generated from
+  birdcage's CA, specifically for the front end unless a user provides
+  their own"). The leaf's SANs are `BIRDCAGE_DASHBOARD_HOST` verbatim
+  when set, or else this machine's hostname, every non-loopback
+  interface IP, and `localhost`/`127.0.0.1`/`::1` -- logged at startup so
+  an operator seeing a browser warning can see exactly what the
+  certificate covers without guessing. A browser warns until the
+  operator installs birdcage's CA (`BIRDCAGE_CA_DIR/ca.pem`; the pin
+  logged at startup, `(*ca.CA).Pin()`, is the value to confirm it
+  against) -- an install that stays in the clear beats one that never
+  happens; (3) **plain HTTP bound strictly to loopback** -- no
+  certificate configured and `BIRDCAGE_HTTP_ADDR`'s host is `127.0.0.1`,
+  `::1` or `localhost`, or a unix socket (`unix:///path/to.sock`), for a
+  reverse proxy in the same network namespace or sharing a volume; kept
+  deliberately (owner decision, 2026-09-20) because the line held here
+  is "no plaintext over a network", not "no plaintext at all", and
+  neither this mode nor the unix socket can put plaintext on one. ACME
+  was considered and dropped (owner decision, 2026-09-20): it needs a
+  third-party Go module this project has not approved, in service of a
+  convenience -- external TLS termination -- that was never the point.
+  An address that doesn't parse at all (no port, or a non-absolute
+  `unix://` path) refuses to start rather than guessing.
   See [docs/configuration.md](docs/configuration.md#dashboard-tls).
 
   No authentication yet -- [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
@@ -291,11 +307,13 @@ only at the point that text is displayed, per surface:
 
 ## Recommended deployment hardening
 
-- Terminate the dashboard with a real certificate
-  (`BIRDCAGE_HTTP_TLS_CERT`/`BIRDCAGE_HTTP_TLS_KEY`) whenever it is
-  reached across a network, or keep it strictly loopback-bound and put a
-  TLS-terminating reverse proxy in front (issue #63) -- birdcage refuses
-  to start rather than leave this to the operator to remember.
+- Install birdcage's CA certificate (`BIRDCAGE_CA_DIR/ca.pem`) in your
+  browser's trust store, or supply your own certificate
+  (`BIRDCAGE_HTTP_TLS_CERT`/`BIRDCAGE_HTTP_TLS_KEY`) if your organisation
+  already has a certificate policy -- either way the dashboard is HTTPS
+  by default now (issue #63), so there is nothing to remember to
+  configure to avoid plain HTTP; the only choice left is which
+  certificate a browser trusts.
 - Put it behind a VPN (e.g. WireGuard/Tailscale) if you need to reach it
   from outside that LAN -- there is no login screen to stop anyone who
   reaches it in v1.

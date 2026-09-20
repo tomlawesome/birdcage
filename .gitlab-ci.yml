@@ -452,6 +452,35 @@ e2e:smb:
     - scripts/e2e/smb-stack.sh down
     - scripts/e2e/stack.sh down
 
+# Issue #63's new default: no operator certificate configured at all,
+# so birdcage mints the dashboard's HTTPS certificate from its own CA
+# instead of refusing to start. Its own stack run (E2E_DASHBOARD_MODE),
+# separate from e2e:enrol-and-hit above, which deliberately keeps
+# exercising the operator-certificate mode -- see
+# scripts/e2e/dashboard-own-ca.sh's own comment for why this isn't a
+# third line added to that job instead.
+e2e:dashboard-own-ca:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-dash-$CI_JOB_ID
+    E2E_DASHBOARD_MODE: own-ca
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/dashboard-own-ca.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
 # ---------------------------------------------------------------------------
 # SYNC -- mirror the three delivery branches to GitHub after a merge.
 # `needs: []`: the mirror reflects the branch, not the pipeline. Never
