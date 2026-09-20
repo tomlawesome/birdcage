@@ -114,6 +114,21 @@ lint:licences:
   script:
     - scripts/licence-check.sh
 
+# The pip counterpart (#95): before this, nothing gated the Python
+# packages installed into the mockingbird image at all. python:3.13-slim-
+# trixie, not a generic Python image, because that is exactly the base
+# build/mockingbird/Dockerfile's honeypot stage installs onto, so what
+# this job sees is what actually ships. Its own tests are
+# scripts/licence-check-python.test.sh, run here too, same reasoning as
+# lint:ci's guard tests.
+lint:licences-python:
+  stage: lint
+  image: python:3.13-slim-trixie
+  <<: [*gate, *git_safe]
+  script:
+    - scripts/licence-check-python.test.sh
+    - scripts/licence-check-python.sh
+
 # The agent ships in the Mockingbird container, on the machine the product
 # expects to be attacked. No birdcage server package may reach it --
 # ADR-0008 decision 4.

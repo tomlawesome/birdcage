@@ -87,3 +87,85 @@ allow-npm-licenses:
   - BlueOak-1.0.0
   # Public-domain dedication; no obligations at all.
   - CC0-1.0
+
+# Licence policy for the pip packages installed into the mockingbird
+# image, read by scripts/licence-check-python.py (called via
+# scripts/licence-check-python.sh). A separate key from the two above for
+# the same reason they are separate from each other: each script's
+# extraction is a plain prefix match on its own key, and the keys must
+# never collide.
+#
+# Covers build/mockingbird/requirements.txt -- everything pip installs
+# into the distroless mockingbird image (build/mockingbird/Dockerfile).
+# Before #95 this was the one ecosystem nothing gated at all.
+#
+# Same house rule as the two lists above: only the licences actually in
+# use, not a general list of acceptable ones. A dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a
+# reviewed change, not a silent pass.
+#
+# Scanned build/mockingbird/requirements.txt on 2026-09-20 (#95) by
+# actually installing it (`pip install --require-hashes --target`, same
+# as the Dockerfile) and reading every installed package's own metadata:
+# 36 packages, 33 declaring a permissive licence in one of the three
+# forms licence-check-python.py reads (License-Expression, a Classifier,
+# or the old free-text License: field). These are exactly those 33
+# packages' licences. The same legal licence often appears as more than
+# one literal string across packages -- e.g. plain "MIT" from one
+# package's License-Expression and "MIT License" from another's
+# Classifier -- and a package passes on any one of its own candidate
+# strings matching, so not every entry below is needed by every
+# MIT-licensed package; the comments say which packages need which.
+#
+# The other three found in that scan are deliberately NOT here:
+#   - hpfeeds==3.0.0 (pulled in by opencanary) declares "License: GPL" on
+#     PyPI, which does not say which GPL version. Its own bundled LICENSE
+#     file (inside the wheel, hpfeeds-3.0.0.dist-info/LICENSE) is the
+#     full text of the GNU General Public License, version 3. It is not
+#     a build tool: it is installed into the image the project ships.
+#     Whether that is acceptable is not this policy file's call (#95),
+#     so it stays failing the gate rather than being added here to make
+#     the gate pass.
+#   - setuptools==78.1.1 and ordereddict==1.1 declare no licence at all in
+#     any of the three forms (only a License-File pointer to a bundled
+#     file, no License:, Classifier, or License-Expression field) --
+#     "no licence field" to this checker, same as npm's.
+allow-python-licenses:
+  - MIT
+  # attrs, charset-normalizer, urllib3 (License-Expression); constantly,
+  # hyperlink, redis, service-identity, six (their raw License: field).
+  - MIT License
+  # The Classifier form of the same licence -- needed by automat (whose
+  # raw License: field is literally "Copyright (c) 2014") and by
+  # incremental, jinja2, twisted (no raw License: field at all).
+  - MIT-0
+  # cffi. Same permissive MIT-minus-attribution licence already allowed
+  # for npm above.
+  - Apache Software License
+  # The Classifier form of Apache-2.0 -- needed by bcrypt, ntlmlib,
+  # pyopenssl and requests, whose own raw License: fields disagree on
+  # wording ("Apache License, Version 2.0", "Apache 2.0", "Apache-2.0").
+  - BSD-3-Clause
+  # gitpython, idna, markupsafe, pycparser, smmap; also one alternative
+  # of cryptography's "Apache-2.0 OR BSD-3-Clause" License-Expression.
+  # Already allowed for Go above.
+  - BSD-2-Clause
+  # pyasn1; also one alternative of packaging's "Apache-2.0 OR
+  # BSD-2-Clause" License-Expression.
+  - BSD License
+  # The Classifier form of a BSD licence -- gitdb, jinja2, pyasn1-modules,
+  # smmap.
+  - BSD
+  # opencanary, passlib, pyasn1-modules's raw License: field: plain "BSD"
+  # with no clause count given. passlib ships no bundled LICENSE file to
+  # check the text against, so this trusts the metadata field, same as
+  # every other entry here sourced from a raw License: field.
+  - MPL-2.0
+  # certifi. Same licence and reasoning as the MPL-2.0 entry above.
+  - PSF-2.0
+  # typing-extensions. Python Software Foundation License, permissive.
+  - ZPL 2.1
+  # zope-interface. Zope Public License 2.1: permissive BSD-style terms
+  # (checked against the bundled LICENSE.txt -- attribution and a
+  # no-endorsement clause, nothing reciprocal), FSF-certified as
+  # GPL-compatible.

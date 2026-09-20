@@ -19,6 +19,8 @@ supply-chain/coverage-floors.yml
 scripts/licence-check.sh
 scripts/licence-check-npm.sh
 scripts/licence-check-npm.py
+scripts/licence-check-python.sh
+scripts/licence-check-python.py
 supply-chain/licence-policy.yml
 scripts/agent-deps-check.sh
 supply-chain/policy-files.txt
