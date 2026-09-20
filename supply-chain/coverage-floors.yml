@@ -37,12 +37,12 @@
 #     test:go does. Without it, tests fall back to SQLite and internal/db's
 #     Postgres-only paths never run, reading far LOWER than CI (44% locally
 #     vs. 67% against real Postgres).
-#   - internal/startcheck has a second, unrelated gotcha: its tests skip the
-#     permission-refusal cases (skipIfRoot) when running as uid 0, and
-#     test:go's `golang:1.27` image runs as root with no `--user` set, while a
-#     workstation shell normally does not. That alone reads HIGHER off-CI:
-#     91% as an ordinary non-root user vs. 87.0% (86.96%, so a floor of 86)
-#     as root, Postgres unchanged either way.
+#   - internal/startcheck used to have a second gotcha, fixed by #93: its
+#     permission-refusal tests skip themselves as uid 0 (skipIfRoot), and
+#     test:go ran as root, so they never ran in CI and the package read
+#     LOWER there than on a workstation. test:go now drops to a non-root
+#     user for the test run itself, so the two conditions agree again and
+#     CI is the higher of the two figures rather than the lower.
 #
 # Reproduce both conditions together before regenerating any floor here:
 #
@@ -136,12 +136,13 @@ floors:
   internal/mailbox: 86
   internal/opencanary: 100
   internal/selftest: 96
-  internal/startcheck: 86   # 86.96% measured as root (see header) -- go
-                             # test's own 1-decimal display rounds this to
-                             # 87.0%, but the exact value is just under 87,
-                             # so the floor is 86. Was floored at 91 from a
-                             # non-root local run where skipIfRoot's
-                             # permission-refusal tests ran.
+  internal/startcheck: 86   # Deliberately NOT raised in the same commit as
+                             # #93's non-root fix. The refusal tests now run
+                             # in CI, so the real figure is higher -- but
+                             # every number in this file must come from a
+                             # CI run, not a workstation, and that run has
+                             # not happened yet. Raised in its own commit
+                             # once the pipeline reports the measurement.
   internal/store: 78
   internal/stream: 100
   internal/term: 100

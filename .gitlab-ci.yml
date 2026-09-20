@@ -294,9 +294,39 @@ test:go:
     # on a workstation, where the same tests fall back to SQLite.
     # golang:1.27 ships python3 (3.13.5, verified), which the checker
     # needs.
-    - go test ./... -race -coverprofile=coverage.out
-    - go tool cover -func=coverage.out | tail -1
-    - python3 scripts/coverage-floor.py coverage.out
+    # #93: run the suite as a NON-ROOT user. internal/startcheck proves
+    # birdcage refuses to start on unsafe file permissions, and those
+    # tests skip themselves as uid 0 -- correctly, because root ignores
+    # the mode bits they set, so the refusal would "pass" without ever
+    # being exercised. This image runs as root, so until now those two
+    # tests ran only on whoever happened to run the suite locally. A
+    # check that looks enforced and is not is the thing AGENTS.md's live
+    # testing rule exists to prevent.
+    #
+    # Root is still needed for the setup above -- apt-get, and capturing
+    # the server certificate -- so only the test run drops privileges.
+    # The caches go to a tester-owned directory rather than the image's
+    # root-owned /go/pkg/mod, because `go test` writes a lock there when
+    # it resolves modules and would fail as a non-root user. Downloading
+    # the modules again costs seconds and go.sum still verifies them.
+    - |
+      set -eu
+      useradd --create-home --uid 1001 tester
+      install -d -o tester -g tester /tmp/gotest
+      # tester has to read the certificate the URL below names.
+      chmod 0644 /tmp/postgres-ca.pem
+    - >-
+      su tester -c "cd '$CI_PROJECT_DIR' &&
+      HOME=/home/tester
+      GOCACHE=/tmp/gotest/cache
+      GOMODCACHE=/tmp/gotest/mod
+      GOFLAGS='$GOFLAGS'
+      BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
+      go test ./... -race -coverprofile=/tmp/gotest/coverage.out"
+    # Read back as root: the profile is tester-owned but world-readable,
+    # and nothing below writes to it.
+    - go tool cover -func=/tmp/gotest/coverage.out | tail -1
+    - python3 scripts/coverage-floor.py /tmp/gotest/coverage.out
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
