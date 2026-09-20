@@ -36,10 +36,11 @@ variables:
     - if: $CI_COMMIT_BRANCH == "preview"
     - if: $CI_COMMIT_BRANCH == "main"
 
-# The higher bar (#91, docs/ci-hops.md): the same jobs run again, entering
+# The higher bar (#91, docs/ci-hops.md): extra jobs, run only when entering
 # and sitting on `preview` and `main`, where a Postgres-only regression is
 # worth catching before -- and after -- the promotion lands. Nothing here
-# replaces the gate above; it is additive.
+# replaces the gate above, and nothing was moved out of it; the gate's own
+# jobs still run at these hops too, because `*gate` names them as well.
 .higher_bar: &higher_bar
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"

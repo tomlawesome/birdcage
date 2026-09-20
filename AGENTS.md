@@ -79,6 +79,12 @@ point is that a change cannot reach `dev` without the live checks
 having run. The project already refuses a merge unless the pipeline
 succeeds.
 
+`preview` and `main` carry a higher bar than `dev`, not the same one
+(#91): the journeys above run again there against Postgres. Which check
+sits at which hop, and why, is `docs/ci-hops.md` -- read it before
+changing `.gitlab-ci.yml`, because `lint:ci` enforces that shape and
+refuses an `e2e` job whose rules match neither hop's anchor.
+
 So a change to enrolment, credentials, the ingest path, the images or
 anything else in that list lands with its journey in the same merge
 request -- not a follow-up issue.
