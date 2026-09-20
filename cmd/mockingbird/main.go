@@ -9,11 +9,11 @@
 // path -- the loopback receiver, the log tailer, the memory queue, the
 // acknowledged-position ledger and the sender that ties them together
 // -- and the command poll/runner into the process skeleton the previous
-// slice built. Nine long-lived goroutines share one cancellation
-// context and one TokenStore: the receiver, the log road (tailer plus
-// its eviction-recovery restart), the sender, the heartbeat, the
-// command poll, the command runner, token rotation, (#69) the
-// OpenCanary child supervisor, and (#65) the port-scan road.
+// slice built. Ten long-lived goroutines share one cancellation context
+// and one TokenStore: the receiver, the log road (tailer plus its
+// eviction-recovery restart), the sender, the heartbeat, the command
+// poll, the command runner, token rotation, (#69) the OpenCanary child
+// supervisor, (#65) the port-scan road, and (#88) the snmp road.
 //
 // The port-scan road (#65) is the third way an event reaches the queue,
 // alongside the webhook receiver and the log tailer, and the only one
@@ -23,6 +23,12 @@
 // somebody sweeps ports nothing is listening on. It needs CAP_NET_RAW
 // and nothing else; a run without it logs one WARN and carries on with
 // detection off. See portscan.go.
+//
+// The snmp road (#88) is the fourth: internal/agent/snmp is a plain UDP
+// listener on port 161 that decodes SNMP v1/v2c requests itself and
+// never answers. OpenCanary's own snmp module stays disabled -- it
+// needs scapy, which #85 keeps out of this image -- so this is our own
+// reader, not a wrapper around theirs. See snmp.go.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -150,7 +156,16 @@ func main() {
 	detector, inventory := newPortscanRoad(cfg, in, portscanLog)
 	portscanLog.Info(inventory.line())
 
-	wg.Add(7)
+	// The snmp road (#88): the UDP socket is opened here for the same
+	// reason -- an operator whose port is unexpectedly privileged (see
+	// snmp.go) sees one WARN at startup rather than whenever the
+	// goroutine gets scheduled. A nil detector means the road is
+	// disabled or the bind failed, and runSNMPRoad is then a no-op.
+	snmpLog := logging.New("snmp")
+	snmpDetector, snmpInv := newSNMPRoad(in, snmpLog)
+	snmpLog.Info(snmpInv.line())
+
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		runSenderLoop(ctx, c, ts, in, pacer)
@@ -180,6 +195,10 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runPortscanRoad(ctx, detector, portscanLog)
+	}()
+	go func() {
+		defer wg.Done()
+		runSNMPRoad(ctx, snmpDetector, snmpLog)
 	}()
 
 	// OpenCanary as mockingbird's child process (#69): the receiver above

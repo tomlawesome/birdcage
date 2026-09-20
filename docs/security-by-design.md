@@ -105,3 +105,17 @@ version, an inflated CVSS score, and a "check this" that turned out to be
 already correct in our code. Each was caught by checking.
 
 Where a fix is made, a test proves the flaw existed first.
+
+## Bait is never real data
+
+Owner decision, 2026-09-20: a lure must be worthless if it is taken —
+otherwise a successful attacker gets something real and the canary
+stops being an alarm and becomes the breach. This rules out pointing a
+canary at an operator's existing file server, share or dataset, in any
+form.
+
+Owner's words, for the record: *"never acceptable because that's real
+user data as bait."*
+
+See #87 (the SMB lure) and #66 (planted bait) for what this looks like
+applied.

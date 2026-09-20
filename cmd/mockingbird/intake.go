@@ -163,6 +163,26 @@ func (in *Intake) SubmitPortscanEvent(message []byte) error {
 	return nil
 }
 
+// SubmitSNMPEvent is the fourth road into the queue (#88): an SNMP
+// v1/v2c request internal/agent/snmp read and decoded itself, rather
+// than one OpenCanary reported -- its own snmp module stays disabled
+// (build/mockingbird/opencanary.conf, "snmp.enabled": false) because it
+// needs scapy, which #85 keeps out of this image.
+//
+// Same id scheme as the webhook and port-scan roads -- SHA-256 of the
+// emitted bytes, verbatim -- so Push's deduplication works across all
+// four roads without knowing which produced a given event. Like the
+// port-scan road, it appends no ledger entry: this event was never a
+// line in OpenCanary's log file, so it has no log position to record.
+func (in *Intake) SubmitSNMPEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that

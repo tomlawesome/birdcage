@@ -481,6 +481,35 @@ e2e:dashboard-own-ca:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #88: a real snmpget against the agent's own SNMP listener
+# (internal/agent/snmp -- a plain UDP reader, no OpenCanary module and
+# no scapy behind it, see #85) produces a real alert in birdcage. The
+# base stack's canary already runs this listener by default, so unlike
+# e2e:smb this needs no second canary -- only a client that can speak
+# SNMP, which scripts/e2e/snmp.sh builds and removes itself
+# (build/e2e-snmp), the same way this job's siblings above build and
+# remove their own images.
+e2e:snmp:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/snmp.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
 # ---------------------------------------------------------------------------
 # SYNC -- mirror the three delivery branches to GitHub after a merge.
 # `needs: []`: the mirror reflects the branch, not the pipeline. Never
