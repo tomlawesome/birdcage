@@ -1,0 +1,24 @@
+# The files that decide whether a built artefact is fit to publish: the CI
+# pipeline definition and every check script and threshold file it calls to
+# gate a release. scripts/policy-version.sh hashes exactly this set into one
+# digest, so a release process can stamp that digest onto an artefact and
+# later prove the artefact was validated under the rules live at build time
+# -- not rules that have since been loosened. A digest validated under one
+# set of rules must not be able to ship under a different set.
+#
+# This file is on its own list on purpose: editing which files count as
+# policy is itself a policy change, and must move the digest like any other.
+#
+# One repo-relative path per line. Blank lines and lines starting with #
+# are ignored.
+
+.gitlab-ci.yml
+scripts/ci-e2e-guard.py
+scripts/coverage-floor.py
+supply-chain/coverage-floors.yml
+scripts/licence-check.sh
+scripts/licence-check-npm.sh
+scripts/licence-check-npm.py
+supply-chain/licence-policy.yml
+scripts/agent-deps-check.sh
+supply-chain/policy-files.txt
