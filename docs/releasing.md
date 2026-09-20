@@ -151,14 +151,17 @@ two independent compromises on two hosts.
 The evidence binds a digest to a commit and to the policy version that
 judged it. Read plainly, "this digest passed the full bar" is true of the
 image checks — `build:images` builds both images once and `test:image:*`
-tests those exact bytes — and **not yet** true of the live journeys: the
-`e2e:*` jobs still build their own copies of the same source through
-`scripts/e2e/stack.sh`.
+tests those exact bytes — and, since #98, true of the live journeys too:
+the `e2e:*` jobs that call `scripts/e2e/stack.sh` point it at the same
+tags via `E2E_BIRDCAGE_IMAGE`/`E2E_MOCKINGBIRD_IMAGE`, and `stack.sh`
+refuses rather than quietly building a substitute if either override
+names an image that is not there.
 
-Same Dockerfiles, same commit, but not the same bytes. Feeding the journeys
-the already-built images is worth doing and is not done here; until it is,
-this paragraph is what stops the word "validated" implying more than it has
-earned.
+The one job this does not cover is `e2e:postgres-requires-tls`: it builds
+its own single image directly, without `stack.sh`, to watch a start-up
+refusal fire before any stack exists to point images at. It proves a
+different thing than the other journeys — a check, not a running
+deployment — so it is not part of the claim this section makes.
 
 ## Setup the owner does once
 
