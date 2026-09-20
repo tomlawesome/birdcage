@@ -74,11 +74,9 @@ Stop birdcage before restoring so it isn't writing to the database mid-restore.
 
 Issue #63, owner decision: "we must never allow the GUI to run without
 https in some form." `BIRDCAGE_HTTP_ADDR` (default `:8080`), together
-with `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY`, must describe
-exactly one of three modes, or birdcage refuses to start -- it never
-raises a plaintext listener reachable off loopback, and the default
-address alone (no certificate) is one of the refusing combinations, not
-a silent loopback fallback.
+with `BIRDCAGE_HTTP_TLS_CERT` / `BIRDCAGE_HTTP_TLS_KEY`, decides which of
+four modes birdcage runs, or refuses to start -- it never raises a
+plaintext listener reachable off loopback, and there is no fifth mode.
 
 1. **Operator-supplied certificate.** Set both `BIRDCAGE_HTTP_TLS_CERT`
    and `BIRDCAGE_HTTP_TLS_KEY` to PEM file paths (both or neither -- one
@@ -101,21 +99,76 @@ a silent loopback fallback.
      birdcage
    ```
 
-2. **Plain HTTP bound strictly to loopback.** No certificate configured,
+2. **A certificate birdcage mints itself, from its own CA.** The
+   default: no certificate configured, and `BIRDCAGE_HTTP_ADDR`'s host is
+   anything other than loopback -- including the documented default
+   `:8080`, `0.0.0.0`, a real hostname or a LAN IP. birdcage mints a leaf
+   certificate for the dashboard from the same CA `BIRDCAGE_CA_DIR`
+   builds for the canary ingest listener (owner decision, 2026-09-20:
+   "We serve a certificate generated from birdcage's CA, specifically
+   for the front end unless a user provides their own"), and serves
+   HTTPS with it, same TLS 1.3 floor and HTTP/1.1-only posture as mode 1.
+
+   Because birdcage's CA isn't in any browser's trust store, the first
+   visit warns. Two ways to make that warning go away, and only one of
+   them fixes it rather than working around it:
+
+   - **Install birdcage's CA certificate** in the browser or OS trust
+     store (`birdcage.pem`, at `BIRDCAGE_CA_DIR/ca.pem` inside the data
+     volume) -- then every certificate this CA issues is trusted, on
+     every machine you install it on, until it's replaced. birdcage logs
+     the CA's pin (SHA-256 of the certificate) at startup so you can
+     confirm you're installing the right one:
+     `dashboard TLS mode: certificate minted from birdcage's own CA
+     (pin=...), covering: ...`.
+   - **Click through the warning.** Works, but trains you to click
+     through a warning on the one screen where that habit is most
+     costly.
+
+   **Which names the certificate covers matters**: a certificate for the
+   wrong name warns even after the CA is installed. Set
+   `BIRDCAGE_DASHBOARD_HOST` to a comma-separated list of the
+   hostnames and/or IP addresses you actually browse to, and birdcage
+   uses exactly those, nothing guessed:
+
+   ```
+   docker run \
+     -e BIRDCAGE_DASHBOARD_HOST=birdcage.lan,192.168.11.30 \
+     -p 8080:8080 \
+     birdcage
+   ```
+
+   Leave it unset and birdcage guesses: this machine's hostname, every
+   non-loopback IP address on any interface, and
+   `localhost`/`127.0.0.1`/`::1`. That covers the common case of
+   browsing to the LAN IP from another machine on the same network
+   without any configuration, but a guess is still a guess -- if the
+   dashboard is reachable by a name the guess doesn't include (a DNS
+   name pointed at it, a second NIC), set `BIRDCAGE_DASHBOARD_HOST`
+   explicitly. The startup log line above names exactly what the guess
+   covers.
+
+3. **Plain HTTP bound strictly to loopback.** No certificate configured,
    and `BIRDCAGE_HTTP_ADDR`'s host is `127.0.0.1`, `::1` or `localhost`
    (e.g. `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`), or a unix socket written
    `unix:///path/to.sock` (created mode `0660`; a stale file from an
    unclean shutdown is removed automatically). This is for a reverse
    proxy that terminates TLS itself and reaches birdcage over loopback
-   or a shared volume -- see the nginx example below.
+   or a shared volume -- see the nginx example below. Kept deliberately
+   (owner decision, 2026-09-20) alongside mode 2: the line the product
+   holds is "no plaintext over a network", not "no plaintext at all",
+   and a listener that can't be reached off the box or outside a shared
+   volume is already on the right side of that line.
 
-3. **ACME** -- automatic certificate issuance/renewal -- is not
-   implemented yet (a dependency decision the owner has not made).
+ACME (automatic certificate issuance/renewal) was considered and ruled
+out (owner decision, 2026-09-20): it would need a third-party Go module
+this project has not approved, for a convenience (external TLS
+termination) that isn't the point -- the point is that the dashboard is
+never served over plain HTTP, and mode 2 already guarantees that with
+nothing birdcage doesn't already build for itself.
 
-Anything else -- an empty host (the documented default
-`BIRDCAGE_HTTP_ADDR=:8080`), `0.0.0.0`, or any other non-loopback host,
-with no certificate configured -- refuses to start with one message
-naming all three modes and both TLS variables.
+An address that isn't valid at all -- no port, or a `unix://` path that
+isn't absolute -- refuses to start rather than guessing what was meant.
 
 ## Running as a different user
 
@@ -148,7 +201,7 @@ why) and needs the same treatment for its two volumes,
 
 ## Reverse proxy: `/api/stream` and buffering
 
-If you're using mode 2 above (plain HTTP on loopback, `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`)
+If you're using mode 3 above (plain HTTP on loopback, `BIRDCAGE_HTTP_ADDR=127.0.0.1:8080`)
 behind nginx or another TLS-terminating reverse proxy, there's one more
 thing to check. `GET /api/stream` (issue #44) is a server-sent-events
 connection birdcage holds open and writes to as alerts arrive, so the
@@ -433,7 +486,8 @@ compromised birdcage cannot quietly point approvals somewhere else.
 
 See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
 variables, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
-`BIRDCAGE_HTTP_TLS_CERT` and `BIRDCAGE_HTTP_TLS_KEY`, and
+`BIRDCAGE_HTTP_TLS_CERT`, `BIRDCAGE_HTTP_TLS_KEY` and
+`BIRDCAGE_DASHBOARD_HOST`, and
 [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_INGEST_ADDR`
 (issue #32's HTTPS canary ingest listener) and its own network-exposure
 guidance.
@@ -444,6 +498,15 @@ The dashboard's operator-supplied certificate and key, PEM file paths --
 mode 1 of ["Dashboard TLS"](#dashboard-tls) above. Both or neither; one
 alone is a startup error. Reloaded automatically whenever either file's
 mtime changes.
+
+### `BIRDCAGE_DASHBOARD_HOST`
+
+Comma-separated hostnames and/or IP addresses the dashboard's own-CA
+certificate covers -- mode 2 of ["Dashboard TLS"](#dashboard-tls) above.
+Ignored by every other mode. Unset means birdcage guesses (this
+machine's hostname, every non-loopback IP address on any interface, and
+`localhost`/`127.0.0.1`/`::1`); set it explicitly whenever the dashboard
+is reached by a name the guess wouldn't include.
 
 ### `BIRDCAGE_CA_DIR`
 

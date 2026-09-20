@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,21 +53,32 @@ const (
 	envDatabaseURL = "DATABASE_URL"
 	envDBPath      = "BIRDCAGE_DB_PATH"
 	// envHTTPAddr, together with envHTTPTLSCert/envHTTPTLSKey below,
-	// picks which of issue #63's three permitted modes the dashboard
+	// picks which of issue #63's four permitted modes the dashboard
 	// HTTP listener runs in -- see internal/tlsconfig.Select, called
-	// below. Never a fourth mode, and never a plaintext listener
-	// reachable off loopback: an address with no certificate configured
-	// and a non-loopback (or empty) host, including the default below,
-	// refuses to start rather than binding one.
+	// below. Never a fifth mode, and never a plaintext listener reachable
+	// off loopback: an address with no certificate configured and a
+	// non-loopback (or empty) host, including the default below, now
+	// gets a certificate birdcage mints from its own CA (ModeMintedCert)
+	// rather than refusing or falling back to plaintext.
 	envHTTPAddr = "BIRDCAGE_HTTP_ADDR"
 	// envHTTPTLSCert/envHTTPTLSKey name an operator-supplied PEM
 	// certificate and key for the dashboard listener (issue #63's
 	// ModeCert) -- both or neither; one alone is a startup error. Their
 	// files are reloaded whenever either's mtime changes (see
 	// internal/tlsconfig.CertReloader), so renewing a certificate in
-	// place needs no restart.
+	// place needs no restart. When neither is set, ModeMintedCert below
+	// takes over instead of refusing.
 	envHTTPTLSCert = "BIRDCAGE_HTTP_TLS_CERT"
 	envHTTPTLSKey  = "BIRDCAGE_HTTP_TLS_KEY"
+	// envDashboardHost names the hostnames and/or IP addresses (comma
+	// separated) issue #63's ModeMintedCert mints the dashboard's leaf
+	// certificate for -- see internal/tlsconfig.DashboardHosts. Unset
+	// means birdcage guesses: this machine's hostname, every
+	// non-loopback IP address on any interface, and
+	// localhost/127.0.0.1/::1 -- an operator commonly browses to the
+	// dashboard by LAN IP from another machine, so IP SANs are not
+	// optional. Ignored by every other mode.
+	envDashboardHost = "BIRDCAGE_DASHBOARD_HOST"
 	// envInternalRanges names extra CIDR blocks GET /api/visitors and GET
 	// /api/trace's "inside" kind rule (issue #35) treats as internal,
 	// beyond the always-internal defaults (RFC 1918, IPv6 ULA,
@@ -131,6 +143,16 @@ const (
 	// handshake never races it.
 	ingestServingTTL  = 24 * time.Hour
 	ingestRenewBefore = 6 * time.Hour
+
+	// dashboardServingTTL/dashboardRenewBefore are the dashboard's own
+	// ModeMintedCert leaf's lifetime -- same values as the ingest
+	// listener's for the same reason (a short TTL on a leaf that is
+	// never written to disk costs nothing and bounds how long a leaked
+	// one matters), kept as separate constants because the two
+	// listeners' lifetimes have no reason to be tied together going
+	// forward.
+	dashboardServingTTL  = 24 * time.Hour
+	dashboardRenewBefore = 6 * time.Hour
 
 	// httpReadHeaderTimeout bounds how long the HTTP server waits for a
 	// client to finish sending request headers, so a slow or stalled
@@ -270,6 +292,7 @@ func main() {
 	configLog := logging.New("config")
 	dbLog := logging.New("db")
 	httpLog := logging.New("http")
+	caLog := logging.New("ca")
 	ingestLog := logging.New("ingest")
 	enrolLog := logging.New("enrol")
 
@@ -298,8 +321,9 @@ func main() {
 	}
 
 	// Issue #63: decide, before anything else starts, which of the
-	// three permitted modes the dashboard listener runs in -- or refuse
-	// outright. Never a plaintext listener reachable off loopback.
+	// four permitted modes the dashboard listener runs in -- or refuse
+	// outright when the address itself is unusable. Never a plaintext
+	// listener reachable off loopback.
 	httpSelection, err := tlsconfig.Select(httpAddr, httpTLSCert, httpTLSKey)
 	if err != nil {
 		httpLog.Error(err.Error())
@@ -325,6 +349,40 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// birdcage's own CA (internal/ca) is loaded here, unconditionally and
+	// before any listener binds or the database opens, because two
+	// independent things need it: the dashboard's ModeMintedCert (issue
+	// #63, this block) whenever no operator certificate is configured,
+	// and the ingest/enrolment listeners (issue #47/#62) whenever
+	// BIRDCAGE_INGEST_ADDR is set. Loading it once here -- rather than
+	// only inside the "ingest is on" branch further down, which is where
+	// it used to live and where the dashboard's own-CA mode could not
+	// reach it -- means neither caller loads it twice, and an unloadable
+	// or wrongly-permissioned CA directory fails startup loudly before
+	// either the dashboard or the ingest listener binds, matching #62's
+	// and #70's existing fail-closed posture.
+	caDir := os.Getenv(envCADir)
+	if caDir == "" {
+		caDir = defaultCADir
+	}
+	configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
+
+	birdcageCA, caCreated, err := ca.Load(caDir, nil)
+	if err != nil {
+		caLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
+		os.Exit(1)
+	}
+	caAction := "loaded"
+	if caCreated {
+		caAction = "created"
+	}
+	// The pin is public -- it's the value the enrolment command hands a
+	// canary operator to verify against, and the value an operator
+	// pastes into their browser's trust store for the dashboard's
+	// ModeMintedCert -- but the CA key itself is never logged, here or
+	// anywhere else.
+	caLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", caAction, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
 
 	// Issue #55: outbound mail is all-or-nothing and is settled here,
 	// before the database opens and long before any listener binds --
@@ -536,6 +594,34 @@ func main() {
 		httpServer.TLSConfig = tlsconfig.HardenedTLSConfig(httpReloader.GetCertificate)
 		httpServer.Protocols = tlsconfig.HTTP1Only()
 		httpLog.Info(fmt.Sprintf("dashboard TLS mode: operator-supplied certificate (cert=%s key=%s)", httpTLSCert, httpTLSKey))
+	case tlsconfig.ModeMintedCert:
+		dashboardHostEnv := os.Getenv(envDashboardHost)
+		if dashboardHostEnv != "" {
+			configLog.Info(fmt.Sprintf("%s=%s", envDashboardHost, dashboardHostEnv))
+		}
+		dashboardHosts, err := tlsconfig.DashboardHosts(dashboardHostEnv)
+		if err != nil {
+			if dashboardHosts == nil {
+				// Only the explicit-and-empty case (BIRDCAGE_DASHBOARD_HOST
+				// set to nothing usable) returns no hosts at all -- that is
+				// a configuration mistake, not something to guess past.
+				httpLog.Error(err.Error())
+				os.Exit(1)
+			}
+			// Best-effort case: enumerating this machine's interfaces
+			// failed, but the loopback trio (and the hostname, if that
+			// much worked) is still usable -- continue, having logged why
+			// an operator might see fewer SANs than expected.
+			httpLog.Warn(fmt.Sprintf("could not list every network interface for the dashboard certificate, continuing with fewer names: %v", err))
+		}
+		httpServer.Addr = httpSelection.Addr
+		httpServer.TLSConfig = tlsconfig.HardenedTLSConfig(birdcageCA.ServerCertificateSource(dashboardHosts, dashboardServingTTL, dashboardRenewBefore, nil))
+		httpServer.Protocols = tlsconfig.HTTP1Only()
+		// Named explicitly, per host, so an operator who hits a browser
+		// warning can see from this line alone whether it's because a
+		// name they expect is missing, without guessing -- and the pin
+		// they need to install the CA and make the warning go away.
+		httpLog.Info(fmt.Sprintf("dashboard TLS mode: certificate minted from birdcage's own CA (pin=%s), covering: %s -- install the CA to stop the browser warning, see docs/configuration.md#dashboard-tls", birdcageCA.Pin(), strings.Join(dashboardHosts, ", ")))
 	case tlsconfig.ModePlainLoopbackTCP:
 		httpServer.Addr = httpSelection.Addr
 		httpLog.Info("dashboard TLS mode: plain HTTP bound to loopback")
@@ -548,41 +634,15 @@ func main() {
 	// #47 slice 1b, envEnrolAddr) are only started when
 	// BIRDCAGE_INGEST_ADDR is set -- see envIngestAddr's and
 	// envEnrolAddr's doc comments above for why one setting gates both.
-	// Once set, birdcage loads (or, on a fresh CA directory, generates)
-	// its own CA and mints both listeners' serving certificates from it
-	// -- #47 slice 1, #62 "Drop them": an unloadable or
-	// wrongly-permissioned CA directory fails startup loudly, before any
-	// socket binds, the same fail-closed posture issue #32 required of
-	// the cert/key files this replaces.
+	// Once set, both listeners mint their serving certificates from
+	// birdcageCA, loaded unconditionally above (alongside the dashboard's
+	// own ModeMintedCert case) -- #47 slice 1, #62 "Drop them".
 	var ingestServer, enrolServer *http.Server
 	ingestAddr := os.Getenv(envIngestAddr)
 	if ingestAddr == "" {
 		ingestLog.Info(fmt.Sprintf("%s not set; HTTPS ingest and enrolment listeners disabled", envIngestAddr))
 	} else {
 		configLog.Info(fmt.Sprintf("%s=%s", envIngestAddr, ingestAddr))
-
-		caDir := os.Getenv(envCADir)
-		if caDir == "" {
-			caDir = defaultCADir
-		}
-		configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
-
-		birdcageCA, caCreated, err := ca.Load(caDir, nil)
-		if err != nil {
-			// Fail-closed, loudly, before any socket binds -- the same
-			// posture issue #32 required of an unloadable cert/key,
-			// now applied to the CA directory instead.
-			ingestLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
-			os.Exit(1)
-		}
-		action := "loaded"
-		if caCreated {
-			action = "created"
-		}
-		// The pin is public -- it's the value the enrolment command
-		// (a later slice) hands a canary operator to verify against --
-		// but the CA key itself is never logged, here or anywhere else.
-		ingestLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", action, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
 
 		advertiseHost := os.Getenv(envAdvertiseHost)
 		hosts := []string{"localhost", "127.0.0.1"}
@@ -653,11 +713,13 @@ func main() {
 	go func() {
 		var err error
 		switch httpSelection.Mode {
-		case tlsconfig.ModeCert:
+		case tlsconfig.ModeCert, tlsconfig.ModeMintedCert:
 			httpLog.Info(fmt.Sprintf("serving dashboard HTTPS on %s", httpServer.Addr))
-			// Cert/key are already loaded into httpServer.TLSConfig
-			// above (tlsconfig.NewCertReloader), so both arguments
-			// here are empty, matching ingest.NewTLSServer's callers.
+			// The certificate source is already loaded into
+			// httpServer.TLSConfig above (tlsconfig.NewCertReloader for
+			// ModeCert, birdcageCA.ServerCertificateSource for
+			// ModeMintedCert), so both arguments here are empty, matching
+			// ingest.NewTLSServer's callers.
 			err = httpServer.ListenAndServeTLS("", "")
 		case tlsconfig.ModePlainUnixSocket:
 			httpLog.Info(fmt.Sprintf("serving dashboard HTTP on unix socket %s", httpUnixPath))
