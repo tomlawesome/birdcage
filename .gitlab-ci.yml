@@ -17,6 +17,7 @@
 stages:
   - lint
   - test
+  - e2e
   - sync
 
 default:
@@ -92,6 +93,26 @@ lint:licences:
 # The agent ships in the Mockingbird container, on the machine the product
 # expects to be attacked. No birdcage server package may reach it --
 # ADR-0008 decision 4.
+# ---------------------------------------------------------------------------
+# The live checks in AGENTS.md ("Live testing is not optional") are only
+# worth having if they cannot be quietly switched off. This job is that
+# rule as a red pipeline: it refuses an e2e stage that is missing, empty,
+# allowed to fail, manual, or ruled out of merge requests. Its own tests
+# are scripts/ci-e2e-guard.test.sh, run here too -- a guard nobody tests
+# guards nothing.
+# ---------------------------------------------------------------------------
+lint:ci:
+  stage: lint
+  image: python:3.13-alpine
+  <<: *dev_or_mr
+  needs: []
+  before_script:
+    - apk add --no-cache bash >/dev/null
+    - pip install --quiet pyyaml
+  script:
+    - python3 scripts/ci-e2e-guard.py
+    - scripts/ci-e2e-guard.test.sh
+
 lint:agent-deps:
   stage: lint
   image: golang:1.27
@@ -319,6 +340,80 @@ test:image:mockingbird:
     - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
     - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
     - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
+# E2E -- the real stack, deployed and exercised (#78). Where the two
+# test:image:* jobs above prove each image starts and stays unprivileged
+# on its own, this stage puts them together: birdcage serving real TLS,
+# a canary enrolled by the very `docker run` command the product printed,
+# and a real hit travelling from OpenCanary to the dashboard's API.
+# AGENTS.md's "Live testing is not optional" is what this stage is for.
+#
+# Everything lives in scripts/e2e/ rather than here, so the same run
+# happens on a workstation -- which is how anyone debugs a red job:
+#
+#     eval "$(scripts/e2e/stack.sh up)"
+#     scripts/e2e/enrol-and-hit.sh
+#     scripts/e2e/stack.sh logs
+#     scripts/e2e/stack.sh down
+#
+# Adding a journey (#79 port scan, #80 mail, #81 dashboard) is a job of
+# the same four lines with a different script name; the stack it needs
+# is already stood up by stack.sh.
+#
+# E2E_PREFIX names every container, volume, network and image tag the
+# run creates, so parallel pipelines never collide -- the same reason
+# the test:image:* jobs above carry $CI_JOB_ID -- and so after_script
+# can clean up a job that failed or was cancelled. Nothing is left
+# behind either way.
+e2e:enrol-and-hit:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/enrol-and-hit.sh
+    - scripts/e2e/refusals.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journeys against the other engine birdcage ships. Separate
+# job rather than a matrix entry so a Postgres-only failure is named as
+# one in the pipeline, and so the SQLite run -- the common case -- is
+# not held up behind the slower one.
+e2e:enrol-and-hit:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *dev_or_mr
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/enrol-and-hit.sh
+    - scripts/e2e/refusals.sh
+  after_script:
+    - scripts/e2e/stack.sh down
 
 # ---------------------------------------------------------------------------
 # SYNC -- mirror the three delivery branches to GitHub after a merge.
