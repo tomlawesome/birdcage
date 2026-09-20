@@ -44,7 +44,7 @@ Findings are reproduced before being acted on — including findings from
 automated research, which has in practice produced wrong version numbers
 and inflated severity scores.
 
-## Approved third-party Go modules
+## Approved third-party modules
 
 The global rule (dependencies-and-data skill) is: no third-party module
 without the owner's explicit approval. Approved for this project, with the
@@ -58,7 +58,18 @@ issue that records the decision:
 - `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
   for the owner's review on #73.
 
+Frontend (`frontend/package.json`), dev-only, never shipped:
+
+- `@vitest/coverage-v8` -- the coverage plugin of the test runner the
+  project already uses, by the same team (vitest-dev) and peer-pinned to
+  the exact vitest version, so not a new third party to trust. MIT.
+  Owner, 2026-09-20: *"it's not really a third party. It's a plugin by
+  the exact same team."* #74.
+
 Anything else goes to the owner first, on the issue, with provenance.
+
+Note that `scripts/licence-check.sh` gates Go modules only, by design --
+nothing checks npm dependency licences.
 
 ## Live testing is not optional
 

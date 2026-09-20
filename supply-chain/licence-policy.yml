@@ -33,3 +33,57 @@ allow-licenses:
   - MIT
 
 allow-dependencies-licenses: []
+
+# Licence policy for the npm packages under frontend/node_modules, read by
+# scripts/licence-check-npm.py (called via scripts/licence-check-npm.sh).
+# Deliberately a separate key from allow-licenses above: that key is
+# matched by a literal `^allow-licenses:` in licence-check.sh's awk, and
+# this key must never collide with it.
+#
+# The frontend has no runtime `dependencies` -- all direct entries are
+# devDependencies -- but Svelte compiles its runtime helpers into the
+# built bundle regardless, so this list covers the whole installed tree,
+# not just what a `dependencies`-only reading would call shipped.
+#
+# Same house rule as the Go list above: only the licences actually in
+# use, not a general list of acceptable ones. A dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a
+# reviewed change, not a silent pass (owner decision, 2026-09-05).
+#
+# Scanned frontend/node_modules on 2026-09-20 -- 135 packages, every one
+# declaring a licence, none missing. These are exactly that scan's nine
+# licences; a reason is recorded for each one that is not plain MIT.
+allow-npm-licenses:
+  - MIT
+  # Standard permissive licence, same family as MIT/BSD; no obligations
+  # beyond attribution.
+  - Apache-2.0
+  # lightningcss, lightningcss-linux-x64-gnu, lightningcss-linux-x64-musl
+  # (all 1.33.0), dev-only, not referenced in frontend/vite.config.ts.
+  # MPL-2.0 is file-level reciprocal, so what matters is whether any of
+  # lightningcss's own code reaches the built bundle. Checked directly:
+  # built frontend/dist with `npm run build`, then grepped dist/ for
+  # "lightningcss" and for "mozilla public license"/"MPL-2.0". The only
+  # hit was the CSS custom-property names --lightningcss-light and
+  # --lightningcss-dark inside dist/assets/index-*.css -- a naming
+  # convention lightningcss's light-dark() transform emits into the
+  # project's own generated CSS, not any of lightningcss's source, and no
+  # MPL/Mozilla notice appears anywhere in dist/. Lightningcss is a
+  # build-time CSS transformer; what it emits is the project's CSS, and
+  # we do not modify lightningcss itself, so its reciprocal obligation
+  # never triggers.
+  - MPL-2.0
+  # Permissive, functionally identical to MIT with older wording.
+  - ISC
+  # Permissive BSD family, no obligations beyond attribution.
+  - BSD-2-Clause
+  # MIT with the attribution clause removed; strictly more permissive
+  # than MIT.
+  - MIT-0
+  # Permissive BSD family; already allowed for Go deps above.
+  - BSD-3-Clause
+  # lru-cache@11.5.2. OSI-approved permissive licence, plain-language
+  # attribution-only terms.
+  - BlueOak-1.0.0
+  # Public-domain dedication; no obligations at all.
+  - CC0-1.0
