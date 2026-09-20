@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 // TestEnrolRunCommandCarriesEveryRequiredFlag pins the `docker run`
@@ -65,5 +69,102 @@ func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	}
 	if strings.ContainsRune(got, 0x07) {
 		t.Errorf("a bell character reached the terminal unescaped:\n%q", got)
+	}
+}
+
+// TestRequireEnrolAddressesRefusesUntilBothAreSet is issue #47 slice
+// 1b item 3, "enrolment refuses to mint until both are set", proved
+// directly against requireEnrolAddresses rather than through the whole
+// `canary enrol` flow (which also needs a CA directory and an
+// advertise host set -- unrelated to this check). Both the "neither
+// set" and "only one set" refusals are covered, since a `||` that had
+// drifted into a `&&` would still refuse the "neither" case correctly
+// and only be caught by the "only one" case.
+func TestRequireEnrolAddressesRefusesUntilBothAreSet(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	ctx := context.Background()
+
+	if err := requireEnrolAddresses(ctx, database); err == nil {
+		t.Fatal("requireEnrolAddresses succeeded with neither address set")
+	}
+
+	if _, err := captureStdout(t, func() error {
+		return runSettingsSet([]string{string(store.SettingAdminApprovalAddress), "admin@example.net"})
+	}); err != nil {
+		t.Fatalf("set %s: %v", store.SettingAdminApprovalAddress, err)
+	}
+	if err := requireEnrolAddresses(ctx, database); err == nil {
+		t.Fatal("requireEnrolAddresses succeeded with only admin_approval_address set")
+	} else if !strings.Contains(err.Error(), string(store.SettingAdminApprovalAddress)) || !strings.Contains(err.Error(), string(store.SettingReleaseAddress)) {
+		t.Errorf("error %q does not name both settings the operator needs to set", err.Error())
+	}
+
+	if _, err := captureStdout(t, func() error {
+		return runSettingsSet([]string{string(store.SettingReleaseAddress), "release@example.net"})
+	}); err != nil {
+		t.Fatalf("set %s: %v", store.SettingReleaseAddress, err)
+	}
+	if err := requireEnrolAddresses(ctx, database); err != nil {
+		t.Fatalf("requireEnrolAddresses failed with both addresses set: %v", err)
+	}
+}
+
+// TestCanaryEnrolStatusNeverPrintsATokenHash is runCanaryEnrolStatus's
+// own doc comment, checked rather than assumed: it says the printed
+// line carries id/state/timestamps only, never a hash, "since
+// EnrolmentSession itself carries neither token_hash nor
+// enrolment_secret_hash". This mints a real session (so there is a real
+// hash in the database that could leak) and asserts it on the actual
+// stored value -- store.HashToken(raw), the same hash
+// MintEnrolmentSession writes to enrolment_sessions.token_hash -- not a
+// guessed string.
+func TestCanaryEnrolStatusNeverPrintsATokenHash(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+
+	ctx := context.Background()
+	raw, session, err := store.MintEnrolmentSession(ctx, database, "enrol-status-test", "lane-a", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("store.MintEnrolmentSession: %v", err)
+	}
+	hash := store.HashToken(raw)
+
+	out, err := captureStdout(t, func() error { return runCanaryEnrolStatus() })
+	if err != nil {
+		t.Fatalf("runCanaryEnrolStatus: %v", err)
+	}
+
+	if strings.Contains(out, raw) {
+		t.Fatalf("enrol --status output contains the raw deploy token: %q", out)
+	}
+	if strings.Contains(out, hash) {
+		t.Fatalf("enrol --status output contains the token's hash: %q", out)
+	}
+	if !strings.Contains(out, session.ID) || !strings.Contains(out, "enrol-status-test") {
+		t.Fatalf("enrol --status output = %q, want it to mention the session id and name", out)
+	}
+}
+
+// TestCanaryEnrolStatusReportsNoSessions covers the empty-database
+// message, so a future change to it is a deliberate edit rather than an
+// accident nobody noticed.
+func TestCanaryEnrolStatusReportsNoSessions(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+
+	out, err := captureStdout(t, func() error { return runCanaryEnrolStatus() })
+	if err != nil {
+		t.Fatalf("runCanaryEnrolStatus: %v", err)
+	}
+	if !strings.Contains(out, "no enrolment sessions") {
+		t.Errorf("enrol --status output on an empty database = %q, want it to say so", out)
 	}
 }
