@@ -15,13 +15,26 @@ What it refuses, and why each one matters:
   - an `e2e` job with `when: manual` or `when: never` -- a check
     somebody has to remember to press is not a check;
   - an `e2e` job whose rules never match a merge request -- the same
-    thing by a longer route.
+    thing by a longer route;
+  - an `e2e` job whose rules are not exactly the `.gate` or the
+    `.higher_bar` anchor -- docs/ci-hops.md says which checks run at
+    which hop, and a hand-written `if:` that looks close enough is how
+    that arrangement decays without anyone editing this file;
+  - no `e2e` job at the `.higher_bar` hop -- `preview` would then carry
+    the same bar as `dev`, and "the higher bar" would be a sentence in
+    a document rather than a pipeline shape;
+  - no `e2e` job at the `.gate` hop -- the merge-request gate would
+    have no live checks of its own left in it.
 
 Weakening the live checks is then a visible change to this file rather
 than a quiet line in a job definition.
 
 The stage name and the job prefix are read from the CI config itself,
-not copied here, so the guard cannot drift from what it guards.
+not copied here, so the guard cannot drift from what it guards. The
+same is true of the two anchors' rule lists: this file reads
+`doc['.gate']['rules']` and `doc['.higher_bar']['rules']` rather than
+copying their `if:` conditions, so a hop's rules can only be changed by
+editing them once, in the config itself.
 
 Usage: scripts/ci-e2e-guard.py [path-to-.gitlab-ci.yml]
 Exit codes: 0 fine; 1 a rule above is broken; 2 the file could not be
@@ -91,6 +104,20 @@ def rules_reach_merge_requests(body):
     return False
 
 
+def anchor_rules(doc, name):
+    """The `rules:` list of a top-level anchor, or None if it is unusable.
+
+    Anchors are expanded by the YAML loader, so `.gate` and `.higher_bar`
+    appear here as ordinary mappings -- read directly, the same as any
+    other job, rather than copied into this file.
+    """
+    body = doc.get(name)
+    if not isinstance(body, dict):
+        return None
+    rules = body.get("rules")
+    return rules if isinstance(rules, list) else None
+
+
 def check(path):
     doc = load(path)
     problems = []
@@ -125,6 +152,36 @@ def check(path):
                 f"{name}: its rules never match a merge request, so a "
                 f"change can reach dev without it having run.")
 
+    gate_rules = anchor_rules(doc, ".gate")
+    higher_bar_rules = anchor_rules(doc, ".higher_bar")
+    gate_class, higher_bar_class = [], []
+
+    if gate_rules is None or higher_bar_rules is None:
+        problems.append(
+            "the `.gate` and/or `.higher_bar` anchors are missing, or "
+            "have no `rules:` list, so the hop arrangement in "
+            "docs/ci-hops.md has no anchors left to enforce.")
+    elif jobs:
+        for name, body in sorted(jobs.items()):
+            rules = body.get("rules")
+            if rules == gate_rules:
+                gate_class.append(name)
+            elif rules == higher_bar_rules:
+                higher_bar_class.append(name)
+            else:
+                problems.append(
+                    f"{name}: its rules are an unrecognised shape -- "
+                    f"neither the `.gate` nor the `.higher_bar` anchor. "
+                    f"The guard refuses rather than guesses; see "
+                    f"docs/ci-hops.md.")
+        if not gate_class:
+            problems.append(
+                f"no `{STAGE}` job is at the `.gate` hop.")
+        if not higher_bar_class:
+            problems.append(
+                f"no `{STAGE}` job is at the `.higher_bar` hop, so "
+                f"`preview` would carry the same bar as `dev`.")
+
     if problems:
         print("ci-e2e-guard: the live checks can be skipped:\n",
               file=sys.stderr)
@@ -135,8 +192,9 @@ def check(path):
               "this guard deliberately and say why.", file=sys.stderr)
         return 1
 
-    print(f"ci-e2e-guard: {len(jobs)} job(s) in the `{STAGE}` stage, "
-          f"none skippable.")
+    print(f"ci-e2e-guard: {len(jobs)} job(s) in the `{STAGE}` stage, none "
+          f"skippable ({len(gate_class)} at .gate, {len(higher_bar_class)} "
+          f"at .higher_bar).")
     return 0
 
 

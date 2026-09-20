@@ -27,12 +27,27 @@ default:
 variables:
   GOFLAGS: "-mod=readonly"
 
-.dev_or_mr: &dev_or_mr
+.gate: &gate
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The higher bar (#91, docs/ci-hops.md): extra jobs, run only when entering
+# and sitting on `preview` and `main`, where a Postgres-only regression is
+# worth catching before -- and after -- the promotion lands. Nothing here
+# replaces the gate above, and nothing was moved out of it; the gate's own
+# jobs still run at these hops too, because `*gate` names them as well.
+.higher_bar: &higher_bar
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
 
 .git_safe: &git_safe
   before_script:
@@ -68,7 +83,7 @@ policy:promotion-hop:
 lint:go:
   stage: lint
   image: golang:1.27
-  <<: [*dev_or_mr, *git_safe]
+  <<: [*gate, *git_safe]
   script:
     - go build ./...
     - go vet ./...
@@ -86,7 +101,7 @@ lint:go:
 lint:licences:
   stage: lint
   image: golang:1.27
-  <<: [*dev_or_mr, *git_safe]
+  <<: [*gate, *git_safe]
   script:
     - scripts/licence-check.sh
 
@@ -104,7 +119,7 @@ lint:licences:
 lint:ci:
   stage: lint
   image: python:3.13-alpine
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   before_script:
     - apk add --no-cache bash >/dev/null
@@ -116,7 +131,7 @@ lint:ci:
 lint:agent-deps:
   stage: lint
   image: golang:1.27
-  <<: [*dev_or_mr, *git_safe]
+  <<: [*gate, *git_safe]
   script:
     - scripts/agent-deps-check.sh
 
@@ -132,7 +147,13 @@ lint:agent-deps:
 test:frontend:
   stage: test
   image: node:22-trixie
-  <<: *dev_or_mr
+  <<: *gate
+  # This job needs nothing any lint job produces, but with no needs: key it
+  # waited for the whole lint stage anyway -- 168 seconds of lint:go in
+  # pipeline 1330 -- before starting, and test:smoke then waited on its
+  # artifacts in turn. That was the longest chain in the pipeline,
+  # scheduled to start last; docs/ci-hops.md has the measurement.
+  needs: []
   cache:
     key:
       files:
@@ -162,7 +183,7 @@ test:frontend:
 test:go:
   stage: test
   image: golang:1.27
-  <<: [*dev_or_mr, *git_safe]
+  <<: [*gate, *git_safe]
   needs: []
   services:
     - name: postgres:17-alpine
@@ -190,7 +211,7 @@ test:go:
 test:smoke:
   stage: test
   image: node:22-trixie
-  <<: [*dev_or_mr, *git_safe]
+  <<: [*gate, *git_safe]
   needs:
     - job: test:frontend
       artifacts: true
@@ -214,7 +235,7 @@ test:smoke:
 test:image:birdcage:
   stage: test
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -256,7 +277,7 @@ test:image:birdcage:
 test:image:mockingbird:
   stage: test
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -369,7 +390,7 @@ test:image:mockingbird:
 e2e:enrol-and-hit:
   stage: e2e
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   # Builds both images and then runs four containers at once; the light
   # lane's 4 CPU / 6 GB is not enough headroom for that.
@@ -395,7 +416,7 @@ e2e:enrol-and-hit:
 e2e:enrol-and-hit:postgres:
   stage: e2e
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   # Builds both images and then runs four containers at once; the light
   # lane's 4 CPU / 6 GB is not enough headroom for that.
@@ -426,7 +447,7 @@ e2e:enrol-and-hit:postgres:
 e2e:smb:
   stage: e2e
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   # Builds two extra images (the second canary's Mockingbird tag is
   # already built by stack.sh up, but the Samba image is its own build)
@@ -462,7 +483,7 @@ e2e:smb:
 e2e:dashboard-own-ca:
   stage: e2e
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   # Builds both images and then runs four containers at once; the light
   # lane's 4 CPU / 6 GB is not enough headroom for that.
@@ -492,7 +513,7 @@ e2e:dashboard-own-ca:
 e2e:snmp:
   stage: e2e
   image: docker:29-cli
-  <<: *dev_or_mr
+  <<: *gate
   needs: []
   # Builds both images and then runs four containers at once; the light
   # lane's 4 CPU / 6 GB is not enough headroom for that.
@@ -507,6 +528,90 @@ e2e:snmp:
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request: a storage
+# engine difference here would show up in how the audit line was written,
+# not in how it was parsed, which is worth a release pipeline and not
+# worth every branch.
+e2e:smb:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  needs: []
+  # Builds two extra images (the second canary's Mockingbird tag is
+  # already built by stack.sh up, but the Samba image is its own build)
+  # and runs a Samba server plus a second canary alongside the base
+  # stack's four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-stack.sh up)"
+    - scripts/e2e/smb.sh
+  after_script:
+    # smb-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/smb-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request.
+e2e:snmp:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-snmp-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/snmp.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request.
+e2e:dashboard-own-ca:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  needs: []
+  # Builds both images and then runs four containers at once; the light
+  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-dash-pg-$CI_JOB_ID
+    E2E_DASHBOARD_MODE: own-ca
+    E2E_BACKEND: postgres
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/dashboard-own-ca.sh
   after_script:
     - scripts/e2e/stack.sh down
 
