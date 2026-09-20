@@ -350,39 +350,55 @@ func main() {
 		}
 	}
 
-	// birdcage's own CA (internal/ca) is loaded here, unconditionally and
-	// before any listener binds or the database opens, because two
-	// independent things need it: the dashboard's ModeMintedCert (issue
-	// #63, this block) whenever no operator certificate is configured,
-	// and the ingest/enrolment listeners (issue #47/#62) whenever
-	// BIRDCAGE_INGEST_ADDR is set. Loading it once here -- rather than
-	// only inside the "ingest is on" branch further down, which is where
-	// it used to live and where the dashboard's own-CA mode could not
-	// reach it -- means neither caller loads it twice, and an unloadable
-	// or wrongly-permissioned CA directory fails startup loudly before
-	// either the dashboard or the ingest listener binds, matching #62's
-	// and #70's existing fail-closed posture.
-	caDir := os.Getenv(envCADir)
-	if caDir == "" {
-		caDir = defaultCADir
-	}
-	configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
+	// birdcage's own CA (internal/ca) is loaded here -- once, before any
+	// listener binds or the database opens -- because two independent
+	// things need it: the dashboard's ModeMintedCert (issue #63)
+	// whenever no operator certificate is configured, and the
+	// ingest/enrolment listeners (issue #47/#62) whenever
+	// BIRDCAGE_INGEST_ADDR is set. It used to be loaded only inside the
+	// "ingest is on" branch further down, where the dashboard's own-CA
+	// mode could not reach it; loading it here means neither caller
+	// loads it twice.
+	//
+	// It is loaded only when one of those two actually needs it. A
+	// deployment serving the dashboard from an operator certificate (or
+	// on loopback/a unix socket behind its own proxy) with ingest off
+	// uses no CA at all, and must not be made to own one: loading
+	// unconditionally made birdcage demand a writable
+	// BIRDCAGE_CA_DIR from installations that never mint anything,
+	// which broke `npm run smoke` (pipeline 1320) and would have broken
+	// the same way for an operator on first upgrade.
+	//
+	// When it is needed, an unloadable or wrongly-permissioned CA
+	// directory still fails startup loudly before either listener
+	// binds, matching #62's and #70's existing fail-closed posture.
+	var birdcageCA *ca.CA
+	if caNeeded := httpSelection.Mode == tlsconfig.ModeMintedCert || os.Getenv(envIngestAddr) != ""; caNeeded {
+		caDir := os.Getenv(envCADir)
+		if caDir == "" {
+			caDir = defaultCADir
+		}
+		configLog.Info(fmt.Sprintf("%s=%s", envCADir, caDir))
 
-	birdcageCA, caCreated, err := ca.Load(caDir, nil)
-	if err != nil {
-		caLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
-		os.Exit(1)
+		var caCreated bool
+		birdcageCA, caCreated, err = ca.Load(caDir, nil)
+		if err != nil {
+			caLog.Error(fmt.Sprintf("load CA (%s=%q): %v", envCADir, caDir, err))
+			os.Exit(1)
+		}
+		caAction := "loaded"
+		if caCreated {
+			caAction = "created"
+		}
+		// The pin is public -- it's the value the enrolment command
+		// hands a canary operator to verify against, and the value an
+		// operator pastes into their browser's trust store for the
+		// dashboard's ModeMintedCert -- but the CA key itself is never
+		// logged, here or anywhere else.
+		caLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", caAction, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
+	} else {
+		caLog.Info("no CA needed: the dashboard uses an operator certificate or a local plain listener, and the ingest listener is off")
 	}
-	caAction := "loaded"
-	if caCreated {
-		caAction = "created"
-	}
-	// The pin is public -- it's the value the enrolment command hands a
-	// canary operator to verify against, and the value an operator
-	// pastes into their browser's trust store for the dashboard's
-	// ModeMintedCert -- but the CA key itself is never logged, here or
-	// anywhere else.
-	caLog.Info(fmt.Sprintf("%s CA at %s: pin=%s expiry=%s", caAction, caDir, birdcageCA.Pin(), birdcageCA.Expiry().Format(time.RFC3339)))
 
 	// Issue #55: outbound mail is all-or-nothing and is settled here,
 	// before the database opens and long before any listener binds --

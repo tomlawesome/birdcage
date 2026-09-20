@@ -511,10 +511,19 @@ is reached by a name the guess wouldn't include.
 ### `BIRDCAGE_CA_DIR`
 
 Where birdcage keeps its own certificate authority (issue #47 slice 1),
-used to mint the ingest listener's serving certificate. Default
+used to mint the ingest listener's serving certificate and, since #63,
+the dashboard's when no operator certificate is configured. Default
 `/var/lib/birdcage/ca` -- inside the Dockerfile's existing
 `/var/lib/birdcage` volume, so a container operator gets a CA that
 survives a restart with no Dockerfile change.
+
+**The CA is only loaded when something needs it.** A birdcage serving the
+dashboard from an operator certificate, or on loopback or a unix socket
+behind its own reverse proxy, with `BIRDCAGE_INGEST_ADDR` unset, mints
+nothing and never touches this directory -- it does not have to exist and
+is not created. Start the ingest listener, or let the dashboard fall to
+its minted-certificate default, and this directory becomes required on
+the terms below.
 
 If the directory is missing birdcage creates it, mode `0700` (its parent
 must exist -- on the container that is the volume). If it already exists
