@@ -1,0 +1,153 @@
+# The second signature (issue #90), and the only workflow here that is not
+# scanning: GitHub is a read-only mirror of the GitLab repository, and this
+# is the one thing the mirror does that GitLab cannot.
+#
+# WHY A SECOND SIGNER AT ALL. The first signature is key-based, minted on
+# the GitLab runner whose host holds the key. Whoever compromises that host
+# holds both the key and the push path, so a second signature made
+# automatically on the same trigger would stamp their image exactly as
+# readily as ours -- it would prove nothing. This one is started by hand by
+# the repository owner, so forging a release needs the runner host *and*
+# the owner's GitHub account: two independent compromises on two hosts.
+#
+# WHY KEYLESS HERE AND KEY-BASED THERE. Sigstore's Fulcio trusts an explicit
+# list of OIDC issuers with no wildcard, and a self-hosted GitLab is not on
+# it; GitHub Actions is. So keyless is available here and nowhere else in
+# this project. It buys something the key-based half cannot: every keyless
+# signature is recorded permanently in the public transparency log, so a
+# release the owner did not make is discoverable afterwards. A forged
+# key-based signature leaves no trace anywhere.
+#
+# WHAT IT REFUSES. It verifies the key-based validation evidence first,
+# with the committed public key, and signs nothing unless that evidence is
+# present, singular-or-agreeing, current and about this exact digest. The
+# refusal grounds and their exit codes are in
+# scripts/verify-validation-evidence.sh, which this workflow calls rather
+# than reimplementing.
+
+name: Countersign a released digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      birdcage_digest:
+        description: The birdcage digest to countersign, sha256:<64 hex>
+        required: true
+        type: string
+      mockingbird_digest:
+        description: The mockingbird digest to countersign, sha256:<64 hex>
+        required: true
+        type: string
+      commit:
+        description: The 40-hex commit both digests were built from
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two countersignings of the same digest at once would race for the same
+  # signature slot in the registry; one at a time, and never cancelled
+  # halfway.
+  group: countersign-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  countersign:
+    name: Verify the key-based evidence, then sign keyless
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The keyless half: this is what lets cosign get an OIDC token Fulcio
+      # will issue a short-lived certificate against.
+      id-token: write
+      # cosign stores the signature as an artifact beside the image, so it
+      # needs write access to the package itself. The image is pushed from
+      # GitLab with a PAT rather than by Actions, so the package must be
+      # linked to this repository for this permission to reach it -- see
+      # docs/releasing.md.
+      packages: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      - name: Validate the inputs
+        env:
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          # Typed by hand into a form, so checked before anything reaches a
+          # registry call: a malformed digest would otherwise come back as
+          # "not found", which reads like a missing image rather than a
+          # typo.
+          for d in "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN"; do
+            printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+              || { echo "digest is not sha256:<64 hex>: $d"; exit 1; }
+          done
+          [ "$BIRDCAGE_DIGEST_IN" != "$MOCKINGBIRD_DIGEST_IN" ] \
+            || { echo "both digests are the same -- the two images cannot share one"; exit 1; }
+          printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
+            || { echo "commit is not 40 lowercase hex characters: $COMMIT"; exit 1; }
+
+      - name: Log in to the registry
+        # The built-in token, not a new secret: the only write this workflow
+        # needs is to our own package, and GITHUB_TOKEN already carries it
+        # under `packages: write` above.
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Verify the evidence, then countersign, one image at a time
+        env:
+          OWNER: ${{ github.repository_owner }}
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          # The same pinned cosign the GitLab side uses: one place it is
+          # installed from, by version and checksum, so a verifier and a
+          # signer can never be running different binaries.
+          cosign_dir="$(mktemp -d)"
+          cosign_bin="$(scripts/ensure-cosign.sh "$cosign_dir")"
+          # Both images in one run, because a release is both images: two
+          # dispatches invite the second to be forgotten, leaving half a
+          # release countersigned and nothing saying which half.
+          for pair in "birdcage|$BIRDCAGE_DIGEST_IN" "mockingbird|$MOCKINGBIRD_DIGEST_IN"; do
+            name="${pair%|*}"
+            digest="${pair#*|}"
+            image="ghcr.io/${OWNER}/${name}"
+            echo "::group::$name"
+            # Refuses with a distinct exit code per ground -- 10 mismatch,
+            # 11 missing, 12 ambiguous, 13 expired -- and `set -e` stops
+            # the whole run there. That ordering is the entire point: the
+            # second signer never signs what the first did not vouch for.
+            BIRDCAGE_IMAGE="$image" BIRDCAGE_DIGEST="$digest" BIRDCAGE_COMMIT="$COMMIT" \
+              scripts/verify-validation-evidence.sh
+            # Signs the DIGEST, never a tag: a tag can be repointed between
+            # signing and verifying, and that substitution is what all of
+            # this exists to make impossible.
+            "$cosign_bin" sign --yes "${image}@${digest}"
+            echo "::endgroup::"
+          done
+
+      - name: Say what was signed
+        env:
+          OWNER: ${{ github.repository_owner }}
+          BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
+          MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
+        run: |
+          {
+            echo "### Countersigned"
+            echo
+            echo "- \`ghcr.io/${OWNER}/birdcage@${BIRDCAGE_DIGEST_IN}\`"
+            echo "- \`ghcr.io/${OWNER}/mockingbird@${MOCKINGBIRD_DIGEST_IN}\`"
+            echo
+            echo "The key-based validation evidence verified first, then each"
+            echo "digest was signed keyless. Both signatures are in the public"
+            echo "transparency log."
+          } >> "$GITHUB_STEP_SUMMARY"

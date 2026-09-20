@@ -18,6 +18,7 @@ stages:
   - lint
   - test
   - e2e
+  - release
   - sync
 
 default:
@@ -26,6 +27,14 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
+  # Where the two images are published (#90). Deliberately NOT named
+  # BIRDCAGE_IMAGE: that is the environment variable
+  # scripts/verify-validation-evidence.sh reads to know which repository it
+  # is judging, and a pipeline-wide value of that name would be inherited by
+  # every verifier call -- including the one checking the *other* image,
+  # which would then verify the wrong repository and still pass.
+  GHCR_BIRDCAGE_REPO: ghcr.io/tomlawesome/birdcage
+  GHCR_MOCKINGBIRD_REPO: ghcr.io/tomlawesome/mockingbird
 
 .gate: &gate
   rules:
@@ -127,6 +136,11 @@ lint:ci:
   script:
     - python3 scripts/ci-e2e-guard.py
     - scripts/ci-e2e-guard.test.sh
+    # The same idea for the release stage (#90): the split that keeps one
+    # job from both judging an artefact and shipping it is prose until
+    # something fails red when it is undone.
+    - python3 scripts/ci-release-guard.py
+    - scripts/ci-release-guard.test.sh
 
 lint:agent-deps:
   stage: lint
@@ -277,16 +291,112 @@ test:smoke:
 # host's rootless Docker socket, names carrying $CI_JOB_ID so parallel
 # pipelines never collide, and probes over --network container: rather
 # than --publish, which would race other jobs for host ports.
-test:image:birdcage:
+# ---------------------------------------------------------------------------
+# The images are built ONCE, here, and every later job uses those exact
+# bytes (#90). Before this job existed, `test:image:birdcage` built its own
+# copy and threw it away, so nothing that was tested could ever be the thing
+# that shipped -- a release would have pushed a second build of the same
+# source and called it validated. Now the image that answers the checks is
+# the image whose digest gets published.
+#
+# How the bytes reach the later jobs: every job here talks to the same
+# Docker daemon on the runner host (DOCKER_HOST below, as the existing jobs
+# already do), so an image built in this job is still in that daemon's store
+# for the rest of the pipeline. No `docker save` artifact is needed, which
+# matters because the mockingbird image is a few hundred megabytes and this
+# runs on every branch. The assumption -- one runner host, one daemon -- is
+# load-bearing, so it is not left implicit: this job records each image's
+# config ID, and `release:push` refuses to publish anything whose config ID
+# is not the one recorded here. A second runner host would make that check
+# fail loudly rather than publish an image nobody tested.
+#
+# The stamp is the release version, not a CI-only string, because the
+# version has to be in the bytes before the digest exists -- promotion moves
+# the tested digest to the version tag and never rebuilds. scripts/release-
+# version.sh is the only place that string is decided.
+build:images:
   stage: test
   image: docker:29-cli
   <<: *gate
   needs: []
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
+  before_script:
+    # bash for scripts/release-version.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # Build images from earlier pipelines are pruned here rather than in an
+    # after_script somewhere: a later job cannot know whether the pipeline
+    # still needs them, and a cancelled pipeline never reaches its cleanup
+    # at all. Matching on the name and excluding this pipeline's own tag is
+    # self-healing -- whatever was left behind goes on the next run.
+    - |
+      set -eu
+      for repo in birdcage-build mockingbird-build; do
+        docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
+          | grep -v ":${CI_PIPELINE_ID}$" \
+          | xargs -r docker image rm --force >/dev/null 2>&1 || true
+      done
+    - |
+      set -eu
+      stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"
+      echo "building both images as $stamp"
+      birdcage_image="birdcage-build:${CI_PIPELINE_ID}"
+      mockingbird_image="mockingbird-build:${CI_PIPELINE_ID}"
+      docker build --build-arg VERSION="$stamp" \
+        --file build/birdcage/Dockerfile --tag "$birdcage_image" .
+      docker build --build-arg VERSION="$stamp" \
+        --file build/mockingbird/Dockerfile --tag "$mockingbird_image" .
+      # The config ID is the identity later jobs check back against. It is
+      # not the registry digest -- that only exists once something is pushed
+      # -- but it is what makes "the image I tested" and "the image I am
+      # pushing" the same statement.
+      birdcage_id="$(docker image inspect --format '{{.Id}}' "$birdcage_image")"
+      mockingbird_id="$(docker image inspect --format '{{.Id}}' "$mockingbird_image")"
+      {
+        echo "BIRDCAGE_STAMP=$stamp"
+        echo "BIRDCAGE_BUILD_IMAGE=$birdcage_image"
+        echo "MOCKINGBIRD_BUILD_IMAGE=$mockingbird_image"
+        echo "BIRDCAGE_BUILD_ID=$birdcage_id"
+        echo "MOCKINGBIRD_BUILD_ID=$mockingbird_id"
+      } > release.env
+      cat release.env
+  artifacts:
+    # dotenv rather than files: these are five short strings every later job
+    # needs as variables, and none of them is worth a download.
+    reports:
+      dotenv: release.env
+    expire_in: 1 day
+
+test:image:birdcage:
+  stage: test
+  image: docker:29-cli
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
     APP: birdcage-test-$CI_JOB_ID
   script:
-    - docker build --file build/birdcage/Dockerfile --tag "$APP" .
+    # The image under test is the one build:images produced, not a fresh
+    # build of the same source -- see that job's header for why that
+    # distinction is the whole point. Tagged under this job's own name so
+    # the after_script below can clean up without touching the shared build
+    # tag the release jobs still need.
+    - docker tag "$BIRDCAGE_BUILD_IMAGE" "$APP"
+    # #90: the release job stamps the version into the binary and compares
+    # it back, so the stamping itself is proved here rather than at a
+    # release nobody can retry. An image whose VERSION argument is silently
+    # ignored still starts and still serves, so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - >-
       docker run --detach --name "$APP"
       --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
@@ -323,12 +433,17 @@ test:image:mockingbird:
   stage: test
   image: docker:29-cli
   <<: *gate
-  needs: []
+  needs:
+    - job: build:images
+      artifacts: true
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: mockingbird-test-$CI_JOB_ID
   script:
-    - docker build --file build/mockingbird/Dockerfile --tag "$APP" .
+    # As in test:image:birdcage: the image under test is the one
+    # build:images produced, so the bytes that answer these checks are the
+    # bytes release:push publishes.
+    - docker tag "$MOCKINGBIRD_BUILD_IMAGE" "$APP"
     - docker volume create "$APP-state" >/dev/null
     - >-
       docker run --rm --volume "$APP-state:/s" alpine:3.24 sh -c '
@@ -666,6 +781,337 @@ e2e:dashboard-own-ca:postgres:
 # --force: a non-fast-forward refusal means something wrote to GitHub's
 # copy and the branch has forked; reconcile by merge.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# RELEASE (#90) -- build once, judge, then ship what was judged.
+#
+# The house rule this stage exists to obey: NO JOB BOTH JUDGES AN ARTEFACT
+# AND SHIPS IT. So the work is split four ways, and scripts/ci-release-guard.py
+# fails the pipeline if the split is ever quietly undone:
+#
+#   release:push     publishes the immutable anchor tag `sha-<commit>` and
+#                    proves the registry now holds the bytes that were
+#                    tested. Holds a registry credential; holds no key.
+#   release:attest   mints the validation evidence over that digest. The
+#                    ONLY job that can sign, and the fence is the runner,
+#                    not this file: the `birdcage-signing` runner is
+#                    protected and locked to this project, and its host
+#                    mounts the owner-held key read-only. A job without the
+#                    tag never sees the key. This GitLab is CE, which has no
+#                    protected environments, so a CI/CD variable would be
+#                    readable by every job on a protected branch -- which is
+#                    why the key is not one.
+#   release:preview  verifies that evidence and only then gives the digest a
+#                    consumer-visible name. Verifying and signing are
+#                    different jobs by design.
+#   release:promote  moves the exact tested digest to the version tag. Never
+#                    rebuilds, refuses an existing version tag, and refuses
+#                    unless the evidence still stands.
+#
+# WHAT AUTHORISES A RELEASE (#99). One manual job on `main`, and the press
+# is the instruction. It is not the approval click #90 rules out: that rule
+# keeps human judgement from standing between evidence and publication,
+# and every judging job on `preview` stays automatic. `release:promote`
+# then validates rather than trusts -- the commit must carry an anchor from
+# a validated build, the evidence must verify, the image must report the
+# version, and the registry must not already hold it. The tag is created
+# from VERSION afterwards, so there is nothing to type and nothing to
+# mistype.
+#
+# WHAT THE EVIDENCE DOES AND DOES NOT SAY. It binds a digest to a commit and
+# to the policy version that judged it. The image checks and the live
+# journeys ran on that commit; the `test:image:*` jobs ran on these exact
+# bytes (build:images), while the `e2e:*` journeys still build their own
+# copies of the same source through scripts/e2e/stack.sh. Feeding the
+# journeys the built image too is worth doing and is not done here -- see
+# docs/releasing.md, which states this limit rather than letting the word
+# "validated" imply more than it earns.
+# ---------------------------------------------------------------------------
+
+# Every release job needs the same two things: a shell the scripts are
+# written for, and the registry credential. Nothing here is a key.
+.ghcr_login: &ghcr_login
+  before_script:
+    - apk add --no-cache bash curl >/dev/null
+    - test -n "$GHCR_TOKEN" || { echo "GHCR_TOKEN is not set -- is this ref protected?"; exit 1; }
+    - test -n "$GHCR_USER" || { echo "GHCR_USER is not set -- is this ref protected?"; exit 1; }
+    - echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+
+release:push:
+  stage: release
+  image: docker:29-cli
+  # A cancelled publish leaves a pushed digest with no evidence, or a commit
+  # that can never be released because its anchor half-exists. The next push
+  # must not cancel this one.
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  # No `needs:` on purpose. Without one, GitLab holds this job until every
+  # job in every earlier stage has succeeded -- which is exactly the bar for
+  # publishing -- and it still inherits build:images' dotenv. Listing jobs
+  # here would be a second copy of the gate, free to fall out of step with
+  # the real one.
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *ghcr_login
+  script:
+    - |
+      set -eu
+      mkdir -p .birdcage-release
+      # Refuse before publishing anything if this version has already been
+      # released (#99). The check belongs here, not at promotion: a preview
+      # build stamped with a version that has already shipped is claiming
+      # candidacy for a release that has closed, and catching that days
+      # later at the cut means days of preview builds nobody can release.
+      released="$(scripts/release-version.sh --tag)"
+      if docker buildx imagetools inspect "${GHCR_BIRDCAGE_REPO}:${released}" >/dev/null 2>&1; then
+        echo "${GHCR_BIRDCAGE_REPO}:${released} already exists -- $released has been released."
+        echo "Bump VERSION before merging anything else to preview."
+        exit 1
+      fi
+      anchor="sha-${CI_COMMIT_SHA}"
+      # Only the anchor is pushed here. It is immutable by construction (a
+      # commit sha names one build) and it is never what a user pulls: the
+      # channel name is release:preview's to create, after the evidence has
+      # been judged. The anchor exists at all because an untagged manifest
+      # is rubbish to a registry's garbage collector -- it can be deleted
+      # inside its own evidence window by routine maintenance.
+      docker tag "$BIRDCAGE_BUILD_IMAGE" "${GHCR_BIRDCAGE_REPO}:${anchor}"
+      docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${GHCR_MOCKINGBIRD_REPO}:${anchor}"
+      # The second argument is the config ID build:images recorded, so this
+      # refuses if what is in the local daemon is not what was tested --
+      # which is also what would happen if a second runner host ever meant
+      # "the same pipeline" no longer implied "the same daemon".
+      birdcage_digest="$(scripts/publish-image.sh "${GHCR_BIRDCAGE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
+      mockingbird_digest="$(scripts/publish-image.sh "${GHCR_MOCKINGBIRD_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
+      # Passed on as plain variables rather than parsed back out of JSON:
+      # docker:29-cli has no python and no jq, and a digest read wrongly is
+      # a digest published wrongly. GHCR_-prefixed on purpose -- a variable
+      # called BIRDCAGE_DIGEST would be inherited by every later job and
+      # silently answer for scripts/verify-validation-evidence.sh, which
+      # reads exactly that name.
+      {
+        echo "GHCR_BIRDCAGE_DIGEST=$birdcage_digest"
+        echo "GHCR_MOCKINGBIRD_DIGEST=$mockingbird_digest"
+      } > digests.env
+      cat digests.env
+      # The durable record of what this pipeline published, kept for 90
+      # days as the thing to read when asking "where did this digest come
+      # from" long after the dotenv has expired.
+      printf '%s\n' \
+        '{' \
+        "  \"commit\": \"${CI_COMMIT_SHA}\"," \
+        "  \"ref\": \"${CI_COMMIT_REF_NAME}\"," \
+        "  \"pipelineId\": \"${CI_PIPELINE_ID}\"," \
+        "  \"stamp\": \"${BIRDCAGE_STAMP}\"," \
+        '  "images": {' \
+        "    \"birdcage\": { \"repository\": \"${GHCR_BIRDCAGE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
+        "    \"mockingbird\": { \"repository\": \"${GHCR_MOCKINGBIRD_REPO}\", \"digest\": \"${mockingbird_digest}\" }" \
+        '  }' \
+        '}' > .birdcage-release/tested-images.json
+      cat .birdcage-release/tested-images.json
+  artifacts:
+    name: birdcage-tested-images
+    paths:
+      - .birdcage-release/tested-images.json
+    reports:
+      dotenv: digests.env
+    expire_in: 90 days
+    when: on_success
+
+# The only job that may sign. Deliberately tiny: the pinned cosign binary
+# and this repository's own scripts, and no image build, no test suite and
+# no publication anywhere near the key.
+#
+# No DOCKER_HOST and no daemon: `docker login` writes the credential file
+# without one, and cosign talks to the registry over HTTPS itself.
+release:attest:
+  stage: release
+  image: docker:29-cli
+  interruptible: false
+  tags: [birdcage-signing]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:push
+      artifacts: true
+  <<: *ghcr_login
+  script:
+    - |
+      set -eu
+      for pair in "${GHCR_BIRDCAGE_REPO}|${GHCR_BIRDCAGE_DIGEST}" "${GHCR_MOCKINGBIRD_REPO}|${GHCR_MOCKINGBIRD_DIGEST}"; do
+        repo="${pair%|*}"
+        digest="${pair#*|}"
+        echo "attesting $repo@$digest"
+        BIRDCAGE_SIGNING_DIR="${BIRDCAGE_SIGNING_DIR:-/etc/birdcage-signing}" \
+          scripts/attest-tested-image.sh "${repo}@${digest}" "$digest"
+      done
+
+release:preview:
+  stage: release
+  image: docker:29-cli
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:push
+      artifacts: true
+    - job: release:attest
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *ghcr_login
+  script:
+    - |
+      set -eu
+      for pair in "${GHCR_BIRDCAGE_REPO}|${GHCR_BIRDCAGE_DIGEST}" "${GHCR_MOCKINGBIRD_REPO}|${GHCR_MOCKINGBIRD_DIGEST}"; do
+        repo="${pair%|*}"
+        digest="${pair#*|}"
+        BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
+          scripts/publish-channel.sh "$repo" "$digest" preview
+      done
+
+# Promotion. One manual job on `main` -- the single button that cuts a
+# release (#99). Nothing here decides that a release should happen: the
+# press is the owner's instruction, and everything the button then does is
+# a refusal or a registry-side copy.
+#
+# This is not the approval click #90 rules out. That rule keeps human
+# judgement from standing between evidence and publication, pretending to
+# be evidence: every judging job on `preview` stays automatic and the
+# evidence is minted without anyone's say-so. Authorisation was always
+# human -- it used to be three typed git commands, and a button is the same
+# instruction with fewer things to mistype. It runs on the pipeline of the
+# exact `main` commit shown in the UI, so it cannot pick the wrong commit
+# or invent a version, and GitLab records who pressed it.
+#
+# The tag is an OUTPUT, not an input: release:gitlab below creates it from
+# VERSION once the digest has actually moved. So there is no tag to check
+# against VERSION here -- that failure mode is removed rather than guarded.
+#
+# Which commit's build is being released: the tag names a commit on `main`,
+# and the anchor was pushed for the commit on `preview`. If `main` fast-
+# forwarded they are the same commit; if the merge made a merge commit, the
+# preview head is its second parent. Both candidates are tried and the first
+# with an anchor wins -- and it is not a guess, because the evidence binds
+# the commit: promoting the wrong one fails the verifier rather than
+# shipping. Anything else refuses and says which two it looked at.
+release:promote:
+  stage: release
+  image: docker:29-cli
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+      # A manual job is allow_failure by default, and forcing it false
+      # would leave every `main` pipeline reading "blocked" forever waiting
+      # for a release nobody intends to cut yet. Safe here for the reason
+      # scripts/ci-release-guard.py names: the silent-green failure that
+      # rule prevents cannot happen to a job a human is watching, because
+      # they just pressed it.
+      allow_failure: true
+  # No `needs:` here either, for release:push's reason: without one the
+  # button does not become playable until every job in every earlier stage
+  # of `main`'s own pipeline has passed. Cutting a release while the gate
+  # on `main` is red should not be one click away.
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    # The second parent has to be reachable for the fallback above.
+    GIT_DEPTH: 0
+  <<: *ghcr_login
+  script:
+    - apk add --no-cache git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - |
+      set -eu
+      head="$(git rev-parse HEAD)"
+      second="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
+      for candidate in "$head" $second; do
+        if docker buildx imagetools inspect \
+             "${GHCR_BIRDCAGE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
+          echo "$candidate" > .release-commit
+          break
+        fi
+      done
+      if [ ! -s .release-commit ]; then
+        echo "no validated build was published for $head${second:+ or $second}."
+        echo "A release can only promote a digest that went through preview."
+        exit 1
+      fi
+      echo "promoting the build of $(cat .release-commit)"
+    - |
+      set -eu
+      commit="$(cat .release-commit)"
+      # --expect-stamp only for birdcage: it is the one image with a
+      # `version` command to ask. Giving mockingbird one, so the same proof
+      # covers both, is #97.
+      birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit")"
+      mockingbird_digest="$(scripts/promote-release.sh "$GHCR_MOCKINGBIRD_REPO" "$commit")"
+      # `latest` moves on every release, pre-release or not. Whether a
+      # beta is the right thing to run is the decision of whoever pulls it,
+      # not this pipeline's.
+      #
+      # What this pipeline is responsible for is narrower, and is met:
+      # `latest` cannot point at an unapproved build. It is moved through
+      # publish-channel.sh -- the same code that creates the `preview` tag
+      # -- which re-verifies the validation evidence before it moves any
+      # name at all. Nobody moves it by hand. A tag that moves is not a
+      # weaker promise when the moving is gated.
+      for pair in "${GHCR_BIRDCAGE_REPO}|${birdcage_digest}" "${GHCR_MOCKINGBIRD_REPO}|${mockingbird_digest}"; do
+        BIRDCAGE_COMMIT="$commit" \
+          scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
+      done
+      # The tag release:gitlab will create, decided here so one job reads
+      # VERSION and the other cannot disagree with it.
+      {
+        echo "RELEASE_TAG=$(scripts/release-version.sh --tag)"
+        echo "RELEASE_COMMIT=$commit"
+      } > promotion.env
+      cat promotion.env
+  artifacts:
+    reports:
+      dotenv: promotion.env
+    expire_in: 90 days
+
+# The annotated tag and the release note, created together once the digest
+# has actually moved. The order matters: promote first, name second. If
+# promotion refuses, nothing anywhere carries the version's name; if this
+# job fails after a good promotion it can be retried on its own, without
+# re-promoting, so a version is never burnt by a half-finished cut.
+#
+# release-cli creates the tag from `ref` using CI_JOB_TOKEN, which acts
+# with the permissions of whoever pressed the button -- so a protected `v*`
+# tag is created when the owner cuts the release and refused when someone
+# without that right tries.
+#
+# Separate job because the `release:` keyword needs release-cli in the
+# image, and because it must not be able to run unless the promotion
+# succeeded: a release note pointing at images that were never promoted is
+# worse than none.
+release:gitlab:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: release:promote
+      artifacts: true
+  script:
+    - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
+  release:
+    tag_name: $RELEASE_TAG
+    tag_message: birdcage $RELEASE_TAG
+    ref: $CI_COMMIT_SHA
+    name: $RELEASE_TAG
+    description: |
+      Images published by digest, promoted from the build `preview` tested:
+
+      - `$GHCR_BIRDCAGE_REPO:$RELEASE_TAG`
+      - `$GHCR_MOCKINGBIRD_REPO:$RELEASE_TAG`
+
+      Verify before you run either of them -- docs/releasing.md has the
+      commands. Both carry a key-based validation attestation; the keyless
+      countersignature is added by hand on GitHub after the cut.
+
 sync:mirror-to-github:
   stage: sync
   image: alpine:3.24

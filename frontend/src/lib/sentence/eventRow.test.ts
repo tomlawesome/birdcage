@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
+import { buildEventRows, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
 import { plainText } from './types'
 import type { Canary, Visitor, VisitorKind } from '../types'
 
@@ -170,6 +170,42 @@ describe('defaultActions: one action set per kind', () => {
     const v = visitor({ kind })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(row.actions).toEqual(expected)
+  })
+})
+
+describe('buildEventRows: Events.svelte\'s merge-and-sort decision (#74)', () => {
+  it('interleaves a dropped-out canary among visitor rows by its own timestamp, newest first', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const others = [canaries[1]]
+    const older = visitor({ kind: 'touch', last_at: '2026-09-12T21:00:00Z' })
+    const newer = visitor({ kind: 'inside', last_at: '2026-09-12T22:00:00Z' })
+    const rows = buildEventRows([silent, ...others], [older, newer], '2026-09-12T22:04:00Z')
+    // Newest first: the 22:00 visitor, then the 21:30 dropout, then the 21:00 visitor.
+    expect(rows.map((r) => r.key)).toEqual([
+      `${newer.source_ip}-inside-${newer.last_at}`,
+      `dropped-${silent.id}`,
+      `${older.source_ip}-touch-${older.last_at}`,
+    ])
+  })
+
+  it('a canary that has never sent a heartbeat sorts last, not first', () => {
+    const neverHeard: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: null }
+    const v = visitor({ kind: 'touch', last_at: '2026-09-12T21:00:00Z' })
+    const rows = buildEventRows([neverHeard, canaries[1]], [v], '2026-09-12T22:04:00Z')
+    expect(rows.map((r) => r.key)).toEqual([`${v.source_ip}-touch-${v.last_at}`, `dropped-${neverHeard.id}`])
+  })
+
+  it('no silent canaries: only visitor rows, no dropped-out row', () => {
+    const v = visitor({ kind: 'touch' })
+    const rows = buildEventRows(canaries, [v], '2026-09-12T22:04:00Z')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].cls).not.toBe('k-off')
+  })
+
+  it('no visitors: only dropped-out rows, one per silent canary', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const rows = buildEventRows([silent, canaries[1]], [], '2026-09-12T22:04:00Z')
+    expect(rows).toEqual([expect.objectContaining({ key: `dropped-${silent.id}`, cls: 'k-off' })])
   })
 })
 

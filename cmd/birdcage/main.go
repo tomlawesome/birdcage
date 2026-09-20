@@ -188,6 +188,17 @@ func main() {
 	// is about to paste must not be buried under it.
 	logging.SetLevel(os.Getenv(envLogLevel))
 
+	// `birdcage version` prints the stamped build version and exits. It
+	// comes first, and writes to stdout rather than the log, because the
+	// release job compares its output with the tag it built from: one
+	// line, no banner, no level prefix.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		if err := runVersion(os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	canaryLog := logging.New("canary")
 	settingsLog := logging.New("settings")
 

@@ -12,8 +12,11 @@ Outside pull requests are not accepted at all — see `CONTRIBUTING.md`.
 GitLab-first: `gitlab.tomlawson.io/ai/birdcage` (project id 51, default
 branch `dev`) holds branches, merge requests, issues and the gate
 (`.gitlab-ci.yml`). GitHub `tomlawesome/birdcage` is a read-only mirror
-that keeps CodeQL and dependency review only — no issues, no pull
-requests there. Local remote `gitlab` for the primary, `origin` for the
+that keeps CodeQL, dependency review, and the manual countersigning
+workflow (#90) — no issues, no pull requests there. Countersigning is the
+one thing the mirror does that GitLab cannot: Sigstore's trusted issuer
+list has no entry for a self-hosted GitLab, so keyless signing is only
+available on GitHub, and the owner starts it by hand after a release. Local remote `gitlab` for the primary, `origin` for the
 mirror; push and fetch with the `glab auth git-credential` helper form
 from the github-credentials skill. Issue numbers match across the two
 hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
@@ -68,8 +71,24 @@ Frontend (`frontend/package.json`), dev-only, never shipped:
 
 Anything else goes to the owner first, on the issue, with provenance.
 
-Note that `scripts/licence-check.sh` gates Go modules only, by design --
-nothing checks npm dependency licences.
+## Releasing
+
+`docs/releasing.md` is the procedure and the setup the owner has to do
+once. The shape in one line: build the images once, judge those exact
+bytes, sign the digest on a runner that holds the key and does nothing
+else, verify that signature before any name is put on the digest, and
+promote the tested digest rather than rebuilding it.
+
+Two rules hold the whole thing up, and `scripts/ci-release-guard.py`
+fails the pipeline when either is undone: **no job both judges an
+artefact and ships it**, and **exactly one job may sign**. The version
+lives in the tracked `VERSION` file and is read only through
+`scripts/release-version.sh`; nothing else computes a version or a build
+stamp.
+
+Licence gating by ecosystem: `scripts/licence-check.sh` covers Go modules,
+`scripts/licence-check-npm.sh` covers npm (#92). **Python is not gated at
+all** (#95), and a GPL package ships in the mockingbird image because of it.
 
 ## Live testing is not optional
 

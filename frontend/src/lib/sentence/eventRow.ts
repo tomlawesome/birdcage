@@ -171,6 +171,24 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+/** One row per silent canary and one per visitor (issue #38), interleaved
+ * newest-first by whichever timestamp is that row's own "when": a
+ * visitor's `last_at`, or a dropped-out canary's `last_heartbeat_at`.
+ * Extracted from Events.svelte (#74) so the merge-and-sort decision --
+ * which of two very different row kinds reads as more recent -- is
+ * testable without rendering. A canary that has never sent a heartbeat
+ * sorts to the very end ('' sorts lowest under `<`), rather than
+ * floating to the top or breaking the comparison. */
+export function buildEventRows(canaries: Canary[], visitors: Visitor[], now: string): EventRow[] {
+  const silentCanaries = canaries.filter((c) => c.status === 'silent')
+  return [
+    ...silentCanaries.map((c) => ({ row: computeDroppedOutRow(c), sortKey: c.last_heartbeat_at ?? '' })),
+    ...visitors.map((v) => ({ row: computeEventRow(v, canaries, now), sortKey: v.last_at })),
+  ]
+    .sort((a, b) => (a.sortKey < b.sortKey ? 1 : -1))
+    .map((r) => r.row)
+}
+
 export interface EventsHeading {
   segments: Segment[]
   showQuietLine: boolean

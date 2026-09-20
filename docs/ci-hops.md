@@ -120,6 +120,29 @@ again on the branch itself.
 request into `preview` from anything but `dev`, and into `main` from
 anything but `preview`.
 
+## Hop 3 -- publishing, on `preview` and on a `v*` tag
+
+Added by #90. These jobs are not checks and do not belong in the table
+above: they are what happens *after* the bar has been cleared. They are
+recorded here because `.gitlab-ci.yml` and this file move together.
+
+| job | when | what it is |
+| --- | --- | --- |
+| `build:images` | hop 1 -- every merge request and `dev` too | builds both images once, so `test:image:*` judges the bytes that later ship. Not a check itself; it is what makes the checks mean something. |
+| `release:push` | push to `preview` | publishes the anchor `sha-<commit>` and proves the registry holds what was tested |
+| `release:attest` | push to `preview` | mints the validation evidence. The only job that may sign, fenced by the `birdcage-signing` runner |
+| `release:preview` | push to `preview` | verifies that evidence, then creates the `preview` tag |
+| `release:promote` | `main`, manual | the single button that cuts a release: verifies again, then moves the tested digest to the version tag |
+| `release:gitlab` | `main`, after the button | creates the annotated tag and the release note from `VERSION` |
+
+`release:push` deliberately has no `needs:`, which is what makes it wait
+for every job in every earlier stage. A list of jobs there would be a
+second copy of the gate, free to drift from the real one.
+
+`scripts/ci-release-guard.py` enforces the shape -- one signer, tagged, and
+no job both judging and shipping -- and `lint:ci` runs it. The procedure
+and the owner's one-time setup are `docs/releasing.md`.
+
 ## What the guard enforces
 
 `scripts/ci-e2e-guard.py` already refused an `e2e` stage that was

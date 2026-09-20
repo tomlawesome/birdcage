@@ -22,3 +22,7 @@ birdcage.db
 # committed copy would only ever be stale.
 frontend/coverage/
 coverage.out
+
+# Python bytecode from running the guard scripts locally.
+__pycache__/
+*.pyc

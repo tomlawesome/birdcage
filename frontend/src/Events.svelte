@@ -10,7 +10,7 @@
   // loader (issue #39); no fetching here. "now" comes from trace.now,
   // never the browser clock or a visitor's own last_at.
   import type { Canary, Range, TraceResponse, Visitor } from './lib/types'
-  import { computeDroppedOutRow, computeEventRow, computeEventsHeading, QUIET_LINE, type EventRow } from './lib/sentence'
+  import { buildEventRows, computeEventsHeading, QUIET_LINE, type EventRow } from './lib/sentence'
 
   let { canaries, visitors, trace, range }: { canaries: Canary[]; visitors: Visitor[]; trace: TraceResponse; range: Range } =
     $props()
@@ -18,14 +18,9 @@
   let heading = $derived(computeEventsHeading(canaries, visitors, range))
   let silentCanaries = $derived(canaries.filter((c) => c.status === 'silent'))
   let now = $derived(trace.now)
-  let rows: EventRow[] = $derived(
-    [
-      ...silentCanaries.map((c) => ({ row: computeDroppedOutRow(c), sortKey: c.last_heartbeat_at ?? '' })),
-      ...visitors.map((v) => ({ row: computeEventRow(v, canaries, now), sortKey: v.last_at })),
-    ]
-      .sort((a, b) => (a.sortKey < b.sortKey ? 1 : -1))
-      .map((r) => r.row),
-  )
+  // The merge-and-sort decision itself lives in lib/sentence/eventRow.ts's
+  // buildEventRows (#74) -- testable without rendering this component.
+  let rows: EventRow[] = $derived(buildEventRows(canaries, visitors, now))
 
   // Issue #56 inserted the state history section between the tiles and
   // here, so this moved down from 604 to clear it: the history section
