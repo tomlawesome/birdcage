@@ -219,6 +219,21 @@ test:frontend:
 # Go tests against SQLite and a real Postgres (issue #7, ADR-0001):
 # BIRDCAGE_TEST_DATABASE_URL is what tells internal/db/dbtest the
 # Postgres is there; unset, those tests silently run SQLite-only.
+#
+# TLS since #84 (birdcage now refuses a weaker DATABASE_URL at
+# start-up -- internal/startcheck, not exercised by this job, but
+# BIRDCAGE_TEST_DATABASE_URL should not model a shape birdcage itself
+# refuses). The service's entrypoint is overridden to generate a
+# throwaway certificate before handing over to the stock entrypoint --
+# ported from mikroview's test:postgres job, which solved the same
+# problem first, the same way: no image build and no Docker inside this
+# job, since `services:` cannot build one.
+#
+# verify-full, not mikroview's require: this needs the actual chain, so
+# `before_script` below captures the certificate the server presents
+# over the network with openssl s_client and hands it to psql/pgx as
+# sslrootcert -- the certificate is its own CA (self-signed), so the
+# leaf the server sent back IS the root verify-full is told to trust.
 test:go:
   stage: test
   image: golang:1.27
@@ -227,13 +242,25 @@ test:go:
   services:
     - name: postgres:17-alpine
       alias: postgres
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          apk add --no-cache openssl >/dev/null
+          mkdir -p /certs
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+            -addext "subjectAltName=DNS:postgres" \
+            -keyout /certs/server.key -out /certs/server.crt
+          chown postgres:postgres /certs/server.crt /certs/server.key
+          chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+          exec docker-entrypoint.sh postgres -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
   variables:
     POSTGRES_PASSWORD: birdcage-ci
-    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable
+    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem
   script:
     # The runner only waits for the port, and Postgres listens briefly
     # during its own init before restarting; ask the server itself.
-    - apt-get -qq update && apt-get -qq install -y postgresql-client >/dev/null
+    - apt-get -qq update && apt-get -qq install -y postgresql-client openssl >/dev/null
     - |
       ready=0
       for attempt in $(seq 1 40); do
@@ -241,6 +268,14 @@ test:go:
         sleep 1
       done
       [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    # BIRDCAGE_TEST_DATABASE_URL's sslrootcert names this exact path --
+    # captured now, from the running server, rather than shared from the
+    # service container, which no volume or filesystem connects this
+    # job container to.
+    - |
+      openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+        | openssl x509 -outform pem > /tmp/postgres-ca.pem
+      [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
     # -coverprofile alongside -race so one run does both (#74). The
     # floors in supply-chain/coverage-floors.yml are a ratchet at
     # measured values, not the owner's 70-85% band: a threshold set at
@@ -587,8 +622,10 @@ e2e:enrol-and-hit:postgres:
     E2E_BACKEND: postgres
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
@@ -691,6 +728,31 @@ e2e:snmp:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #84's refusal, watched actually happen against the real binary
+# rather than only asserted in internal/startcheck's own unit tests: a
+# check nobody has watched fire is not evidence it actually gates
+# cmd/birdcage's start-up path. Builds and runs the shipped image
+# directly instead of going through stack.sh up -- the point is what
+# happens (or rather never happens) before that sequence's own
+# startcheck-then-listen ordering would ever reach "ready", so there is
+# no stack to stand up first. No Postgres server needed anywhere, real
+# or fake: PostgresRequiresVerifyFull only parses the URL, it never
+# dials (see scripts/e2e/postgres-requires-tls.sh).
+e2e:postgres-requires-tls:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-tls-refusal-$CI_JOB_ID
+  before_script:
+    # The script is bash (`set -eu`, case statements over multi-line
+    # output); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - scripts/e2e/postgres-requires-tls.sh
+
 # The same journey against the other engine birdcage ships, at the higher
 # bar (#91, docs/ci-hops.md) rather than every merge request: a storage
 # engine difference here would show up in how the audit line was written,
@@ -712,8 +774,10 @@ e2e:smb:postgres:
     E2E_BACKEND: postgres
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
@@ -742,8 +806,10 @@ e2e:snmp:postgres:
     E2E_BACKEND: postgres
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
@@ -767,8 +833,10 @@ e2e:dashboard-own-ca:postgres:
     E2E_BACKEND: postgres
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh

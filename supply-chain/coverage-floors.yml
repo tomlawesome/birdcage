@@ -46,14 +46,36 @@
 #
 # Reproduce both conditions together before regenerating any floor here:
 #
-#   docker run -d --rm --name covfloor-pg-$$ -e POSTGRES_PASSWORD=birdcage-ci \
-#     -p 127.0.0.1:<port>:5432 postgres:17-alpine
+#   docker network create covfloor-net-$$
+#   docker run -d --rm --name covfloor-pg-$$ --network covfloor-net-$$ \
+#     --network-alias postgres -e POSTGRES_PASSWORD=birdcage-ci \
+#     --entrypoint sh postgres:17-alpine -c '
+#       apk add --no-cache openssl >/dev/null
+#       mkdir -p /certs
+#       openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+#         -addext "subjectAltName=DNS:postgres" \
+#         -keyout /certs/server.key -out /certs/server.crt
+#       chown postgres:postgres /certs/server.crt /certs/server.key
+#       chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+#       exec docker-entrypoint.sh postgres -c ssl=on \
+#         -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key'
 #   # poll `docker exec <name> pg_isready -U postgres`, not just the port --
 #   # see test:go's own loop and its comment on why.
-#   docker network create covfloor-net-$$
-#   docker network connect --alias postgres covfloor-net-$$ covfloor-pg-$$
+#
+#   # BIRDCAGE_TEST_DATABASE_URL is sslmode=verify-full since #84 --
+#   # birdcage now refuses anything weaker at start-up, and this floor's
+#   # premise is matching test:go exactly, not a shape it would itself
+#   # reject. sslrootcert is captured from the running server, the same
+#   # way test:go's before_script does it: the certificate above is
+#   # self-signed, so the leaf the server presents back over the wire IS
+#   # the root verify-full is told to trust.
+#   docker run --rm --network covfloor-net-$$ -v "$PWD":/work postgres:17-alpine sh -c '
+#     apk add --no-cache openssl >/dev/null
+#     openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+#       | openssl x509 -outform pem > /tmp/covfloor-ca.pem
+#     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
 #   docker run --rm --network covfloor-net-$$ \
-#     -e BIRDCAGE_TEST_DATABASE_URL=postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable \
+#     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
 #     -v "$PWD":/work -w /work golang:1.27 \
 #     go test ./... -race -coverprofile=/work/coverage.out
 #

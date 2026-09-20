@@ -99,6 +99,7 @@ of it by this issue.
 | `e2e:smb` | The OpenCanary `full_audit` parse is brittle by nature -- a fixed-index read of a third-party log line. |
 | `e2e:dashboard-own-ca` | The minted-certificate default. TLS setup is easy to break and hard to notice. |
 | `e2e:snmp` | Our own UDP parser, not a third party's. Parser changes are source changes. |
+| `e2e:postgres-requires-tls` | #84's refusal, watched fire against the real binary. Needs no Postgres server, so it is cheap enough for every merge request. |
 
 ## Hop 2 -- entering and sitting on `preview` and `main`
 
