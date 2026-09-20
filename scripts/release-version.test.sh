@@ -96,19 +96,5 @@ assert_fails "--stamp with a too-short sha fails" --file "$f" --stamp "abc123"
 assert_fails "--stamp with uppercase hex fails" --file "$f" --stamp "$(printf 'D%.0s' $(seq 40))"
 assert_fails "--stamp with non-hex characters fails" --file "$f" --stamp "$(printf 'z%.0s' $(seq 40))"
 
-# --- --is-stable: which versions may move the `latest` tag --------------
-# `latest` conventionally means the latest STABLE release, so a
-# pre-release must never become the default anyone gets for asking for
-# nothing. Exit status is the whole answer here; there is no output.
-f="$(fixture stable-plain '1.2.3')"
-assert_output "" "--is-stable accepts a plain version" --file "$f" --is-stable
-f="$(fixture stable-zero '0.4.0')"
-assert_output "" "--is-stable accepts a 0.x version with no suffix" --file "$f" --is-stable
-
-f="$(fixture prerelease-beta '0.1.0-beta')"
-assert_fails "--is-stable refuses a pre-release" --file "$f" --is-stable
-f="$(fixture prerelease-dotted '0.1.0-rc.1')"
-assert_fails "--is-stable refuses a dotted pre-release" --file "$f" --is-stable
-
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

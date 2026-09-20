@@ -71,26 +71,16 @@ maturity is true.
 
 ## The `latest` tag
 
-Published, and only for a stable release. Owner decision, 2026-09-20,
-overturning part of #99, which had rejected it outright.
+Published, and moved on every release — pre-release or not. Whether a beta
+is the right thing to run is the decision of whoever pulls it, not this
+project's.
 
-Two things are true here and they are worth keeping apart.
-
-**It cannot point at an unapproved build.** `latest` is moved by
-`release:promote` through `scripts/publish-channel.sh` — the same code
-that creates the `preview` tag — which re-verifies the validation evidence
-before it moves any name at all. That is the property the whole design
-exists for: an approved build is never replaced by an unapproved one by
-mistake. A tag that moves does not weaken that, because the moving is
-gated. Nobody moves `latest` by hand.
-
-**It only ever names a stable release.** By convention `latest` means the
-latest *stable* version, not the latest anything, so a pre-release must
-not become the default someone gets for asking for nothing.
-`scripts/release-version.sh --is-stable` decides: a version with a
-pre-release suffix leaves `latest` where it is, and the promote job says
-so in its log. Until the first release without a `-beta`-style suffix,
-`latest` will therefore not exist at all.
+What the release path is responsible for is narrower: `latest` cannot
+point at an unapproved build. It is moved by `release:promote` through
+`scripts/publish-channel.sh` — the same code that creates the `preview`
+tag — which re-verifies the validation evidence before it moves any name
+at all. Nobody moves it by hand. A tag that moves is not a weaker promise
+when the moving is gated.
 
 Separately, and regardless of `latest`: the `docker run` line that
 `birdcage canary enrol` prints should pin the server's own stamped version

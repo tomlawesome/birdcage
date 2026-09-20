@@ -1045,29 +1045,20 @@ release:promote:
       # covers both, is #97.
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit")"
       mockingbird_digest="$(scripts/promote-release.sh "$GHCR_MOCKINGBIRD_REPO" "$commit")"
-      # `latest`, for stable releases only (owner, 2026-09-20, overturning
-      # part of #99). Two separate things are true and it is worth keeping
-      # them apart:
+      # `latest` moves on every release, pre-release or not. Whether a
+      # beta is the right thing to run is the decision of whoever pulls it,
+      # not this pipeline's.
       #
-      # It cannot point at an unapproved build. It is moved through
+      # What this pipeline is responsible for is narrower, and is met:
+      # `latest` cannot point at an unapproved build. It is moved through
       # publish-channel.sh -- the same code that creates the `preview` tag
       # -- which re-verifies the validation evidence before it moves any
-      # name at all. That is the property the whole design exists for: an
-      # approved build is never replaced by an unapproved one by mistake,
-      # and a moving tag does not weaken it, because the moving is gated.
-      #
-      # Separately, `latest` conventionally means the latest STABLE
-      # release, so a pre-release must not become the default anyone gets
-      # for asking for nothing. That is what the --is-stable check is for,
-      # and it is a claim about convention, not about safety.
-      if scripts/release-version.sh --is-stable; then
-        for pair in "${GHCR_BIRDCAGE_REPO}|${birdcage_digest}" "${GHCR_MOCKINGBIRD_REPO}|${mockingbird_digest}"; do
-          BIRDCAGE_COMMIT="$commit" \
-            scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
-        done
-      else
-        echo "$(scripts/release-version.sh) is a pre-release; leaving latest where it is."
-      fi
+      # name at all. Nobody moves it by hand. A tag that moves is not a
+      # weaker promise when the moving is gated.
+      for pair in "${GHCR_BIRDCAGE_REPO}|${birdcage_digest}" "${GHCR_MOCKINGBIRD_REPO}|${mockingbird_digest}"; do
+        BIRDCAGE_COMMIT="$commit" \
+          scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
+      done
       # The tag release:gitlab will create, decided here so one job reads
       # VERSION and the other cannot disagree with it.
       {
