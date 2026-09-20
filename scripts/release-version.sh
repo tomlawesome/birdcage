@@ -23,6 +23,8 @@
 #   scripts/release-version.sh                 print the version, e.g. 0.1.0-beta
 #   scripts/release-version.sh --stamp <sha>   print <version>+<first 8 of sha>
 #   scripts/release-version.sh --tag           print v<version>, the tag name
+#   scripts/release-version.sh --is-stable     exit 0 if this version has no
+#                                              pre-release suffix, 1 if it has
 #
 # Flags for tests only:
 #   --file PATH   read the version from PATH instead of the tracked VERSION
@@ -57,6 +59,10 @@ while [ $# -gt 0 ]; do
       mode="tag"
       shift
       ;;
+    --is-stable)
+      mode="is-stable"
+      shift
+      ;;
     *)
       fail "unknown argument: $1"
       ;;
@@ -85,6 +91,17 @@ fi
 case "$mode" in
   version) printf '%s\n' "$version" ;;
   tag)     printf 'v%s\n' "$version" ;;
+  is-stable)
+    # `latest` conventionally means the latest STABLE release, so the
+    # release path asks this before moving that tag: a pre-release must
+    # never become the default anyone gets for asking for nothing. Owner,
+    # 2026-09-20, overturning part of #99: the tag is published, but only
+    # for versions with no pre-release suffix.
+    case "$version" in
+      *-*) exit 1 ;;
+      *)   exit 0 ;;
+    esac
+    ;;
   stamp)
     printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$' \
       || fail "not a commit sha: '$commit' (expected 40 lowercase hex characters)"

@@ -69,27 +69,33 @@ maturity is true.
   may move, `-beta` says this particular cut is a trial. The commit that
   drops the suffix is the statement that the second is no longer meant.
 
-## There is no `latest` tag
+## The `latest` tag
 
-Nothing publishes one, and that is a decision rather than an oversight
-(#99).
+Published, and only for a stable release. Owner decision, 2026-09-20,
+overturning part of #99, which had rejected it outright.
 
-`latest` is Docker's default tag, so publishing it would make a bare
-`docker pull` silently succeed and silently move between versions. The
-grammar here is the opposite: a version tag is an immutable promise, and
-identity is the digest. Pre-1.0 it would also hand out betas by default.
+Two things are true here and they are worth keeping apart.
 
-Nothing needs it. The one place the product names an image — the
-`docker run` line `birdcage canary enrol` prints — should pin the
-server's own stamped version when that is wired to GHCR (#69), because a
-server that names its matching canary exactly is better than one that
-says "whatever is newest".
+**It cannot point at an unapproved build.** `latest` is moved by
+`release:promote` through `scripts/publish-channel.sh` — the same code
+that creates the `preview` tag — which re-verifies the validation evidence
+before it moves any name at all. That is the property the whole design
+exists for: an approved build is never replaced by an unapproved one by
+mistake. A tag that moves does not weaken that, because the moving is
+gated. Nobody moves `latest` by hand.
 
-So `docker pull ghcr.io/tomlawesome/birdcage` with no tag fails, and every
-document that names an image names a version. If a moving "current
-release" pointer is ever genuinely wanted, it is a channel tag moved by
-`release:promote` through the existing `publish-channel.sh` — and it gets
-a name that admits it moves.
+**It only ever names a stable release.** By convention `latest` means the
+latest *stable* version, not the latest anything, so a pre-release must
+not become the default someone gets for asking for nothing.
+`scripts/release-version.sh --is-stable` decides: a version with a
+pre-release suffix leaves `latest` where it is, and the promote job says
+so in its log. Until the first release without a `-beta`-style suffix,
+`latest` will therefore not exist at all.
+
+Separately, and regardless of `latest`: the `docker run` line that
+`birdcage canary enrol` prints should pin the server's own stamped version
+when that is wired to GHCR (#69). A canary has to match the server that
+issued it, so it names a version rather than a moving tag.
 
 ## Cutting a release
 
