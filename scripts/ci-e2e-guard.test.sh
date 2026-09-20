@@ -22,14 +22,32 @@ expect() {
   fi
 }
 
-good='stages: [test, e2e]
-e2e:enrol:
-  stage: e2e
+# Both hop anchors, in the shape .gitlab-ci.yml actually uses (a
+# `rules:` list the loader expands into the job via `<<:`). Every
+# fixture below that is meant to pass, or to fail for a reason other
+# than the anchors themselves, carries both of these so that reason is
+# the only one in play.
+anchors='.gate: &gate
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  script: [true]'
+    - if: $CI_COMMIT_BRANCH == "dev"
+.higher_bar: &higher_bar
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "preview"'
 
-expect 0 "a proper e2e stage passes" "$good"
+good="stages: [test, e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
+
+expect 0 "both anchors present, one job of each class, passes" "$good"
 
 expect 1 "the stage missing from stages: is caught" 'stages: [test]
 test:go:
@@ -41,51 +59,152 @@ test:go:
   stage: test
   script: [true]'
 
-expect 1 "allow_failure is caught" 'stages: [e2e]
+expect 1 "allow_failure is caught" "stages: [e2e]
+$anchors
 e2e:enrol:
   stage: e2e
   allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  script: [true]'
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
 
-expect 1 "when: manual is caught" 'stages: [e2e]
+expect 1 "when: manual is caught" "stages: [e2e]
+$anchors
 e2e:enrol:
   stage: e2e
   when: manual
-  script: [true]'
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
 
-expect 1 "rules that never reach a merge request are caught" 'stages: [e2e]
+expect 1 "rules that never reach a merge request are caught" "stages: [e2e]
+$anchors
 e2e:enrol:
   stage: e2e
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-  script: [true]'
-
-expect 1 "a rule matching merge requests only to refuse them is caught" 'stages: [e2e]
-e2e:enrol:
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+e2e:scheduled-only:
   stage: e2e
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\"
+  script: [true]"
+
+expect 1 "a rule matching merge requests only to refuse them is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+e2e:refused-on-mr:
+  stage: e2e
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
       when: never
-  script: [true]'
+  script: [true]"
 
-# A job with no rules at all runs everywhere, which is stricter than
-# required, not weaker -- it must not be reported.
-expect 0 "a job with no rules is fine" 'stages: [e2e]
+# A job with no rules at all used to run everywhere and be waved through
+# as stricter-than-required. Now that every e2e job's rules must be
+# exactly one of the two anchors (docs/ci-hops.md), that leniency is
+# gone: a job with no rules is a shape that matches neither anchor, and
+# the guard refuses it the same as any other unrecognised shape.
+expect 1 "a job with no rules is now an unrecognised shape" "stages: [e2e]
+$anchors
 e2e:enrol:
   stage: e2e
-  script: [true]'
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+e2e:no-rules:
+  stage: e2e
+  script: [true]"
+
+expect 1 "hand-written rules matching neither anchor are caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+e2e:hand-written:
+  stage: e2e
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
+    - if: \$CI_COMMIT_BRANCH == \"main\"
+  script: [true]"
+
+expect 1 ".higher_bar anchor missing is caught" "stages: [e2e]
+.gate: &gate
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
+    - if: \$CI_COMMIT_BRANCH == \"dev\"
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]"
+
+expect 1 ".gate anchor missing is caught" "stages: [e2e]
+.higher_bar: &higher_bar
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
+    - if: \$CI_COMMIT_BRANCH == \"preview\"
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
+
+expect 1 "every e2e job at .gate, none at .higher_bar, is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol2:
+  stage: e2e
+  <<: *gate
+  script: [true]"
+
+expect 1 "a .higher_bar job with no .gate job is caught" "stages: [e2e]
+$anchors
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
 
 # Templates are never run on their own, so their settings cannot skip
 # anything; only real jobs are judged.
-expect 0 "a dot-prefixed template is not judged" 'stages: [e2e]
+expect 0 "a dot-prefixed template is not judged" "stages: [e2e]
+$anchors
 .e2e_template:
   stage: e2e
   when: manual
 e2e:enrol:
   stage: e2e
-  script: [true]'
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]"
 
 expect 2 "an unreadable file fails red, not green" 'stages: [e2e
   this is not: valid yaml: at all'
