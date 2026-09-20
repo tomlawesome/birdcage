@@ -96,9 +96,12 @@ ENV PYTHONPATH=/opt/opencanary \
     MOCKINGBIRD_LOG_PATH=/var/log/opencanary/opencanary.log \
     MOCKINGBIRD_LISTEN=127.0.0.1:9919
 VOLUME ["/var/lib/mockingbird", "/var/log/opencanary"]
-# The services opencanary.conf enables by default. There is no EXPOSE for
-# the agent's receiver: it is loopback-only by design.
-EXPOSE 21/tcp 22/tcp 23/tcp 69/udp 80/tcp 1433/tcp 3306/tcp 3389/tcp 5060/udp 6379/tcp
+# The services opencanary.conf enables by default, plus 161/udp for the
+# agent's own SNMP road (#88) -- a plain Go UDP listener, no OpenCanary
+# module behind it (opencanary.conf keeps "snmp.enabled": false; see
+# internal/agent/snmp's package doc for why). There is no EXPOSE for the
+# agent's receiver: it is loopback-only by design.
+EXPOSE 21/tcp 22/tcp 23/tcp 69/udp 80/tcp 161/udp 1433/tcp 3306/tcp 3389/tcp 5060/udp 6379/tcp
 # The agent is PID 1's child (see --init above) and runs OpenCanary as
 # its own child from these arguments: twistd in the foreground, on the
 # .tac file pip installed beside it, with no pidfile (see run-twistd.py
