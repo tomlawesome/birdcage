@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/logging"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 // The one thing the boot inventory has to get right: it says where
@@ -151,6 +154,202 @@ func TestApprovalCheckUsage(t *testing.T) {
 		t.Error("runApprovalCheck accepted two arguments")
 	}
 }
+
+// approvalReply builds a raw .eml-shaped message with a Date close
+// enough to time.Now() to pass approvalHandler's one-hour
+// approvalMaxAge (unlike this file's unsignedReply constant, which is
+// dated for runApprovalCheck's much wider thirty-day checkMaxAge and
+// would otherwise be rejected here for being stale rather than for
+// whatever the test is actually trying to prove).
+func approvalReply(from, subject, messageID string) []byte {
+	date := time.Now().UTC().Format(time.RFC1123Z)
+	return []byte("From: " + from + "\r\n" +
+		"To: birdcage@example.net\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Date: " + date + "\r\n" +
+		"Message-ID: " + messageID + "\r\n" +
+		"\r\n" +
+		"Yes, go ahead.\r\n")
+}
+
+// approvalReplyNoMessageID is the same shape with no Message-ID header
+// at all, for TestApprovalHandlerIgnoresMessageWithNoMessageID.
+func approvalReplyNoMessageID(from, subject string) []byte {
+	date := time.Now().UTC().Format(time.RFC1123Z)
+	return []byte("From: " + from + "\r\n" +
+		"To: birdcage@example.net\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Date: " + date + "\r\n" +
+		"\r\n" +
+		"Yes, go ahead.\r\n")
+}
+
+// setAdminApprovalAddress is pinAdminAddress with a caller-chosen
+// address, for tests that need the pinned address to differ from (or
+// match) a specific message's From.
+func setAdminApprovalAddress(t *testing.T, address string) {
+	t.Helper()
+	if _, err := captureStdout(t, func() error {
+		return runSettingsSet([]string{string(store.SettingAdminApprovalAddress), address})
+	}); err != nil {
+		t.Fatalf("set %s: %v", store.SettingAdminApprovalAddress, err)
+	}
+}
+
+// TestApprovalHandlerRejectsWrongAddress is approvalHandler's first
+// job: a reply from anyone but the pinned administrator is rejected,
+// not merely ignored -- it is written to the approvals table as a
+// rejection, verified() false, with a reason naming the address that
+// was actually seen. The From/pinned-address check runs before any
+// DKIM lookup (internal/agent/approval.Verify checks From right after
+// parsing), so this needs no signature and no network access to prove.
+func TestApprovalHandlerRejectsWrongAddress(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	setAdminApprovalAddress(t, "right-admin@example.net")
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := approvalReply("Someone Else <attacker@evil.example.net>",
+		"Re: [birdcage u-wrong-addr] upgrade mockingbird", "<wrong-addr-1@example.net>")
+
+	if err := handler(context.Background(), raw); err != nil {
+		t.Fatalf("approvalHandler returned an error for a message that should be recorded as rejected, not error out: %v", err)
+	}
+
+	rec, err := store.ApprovalByReference(context.Background(), database, "u-wrong-addr")
+	if err != nil {
+		t.Fatalf("store.ApprovalByReference: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("no approval row was recorded for the wrong-address message")
+	}
+	if rec.Verified() {
+		t.Fatal("a message from the wrong address was recorded as verified")
+	}
+	if rec.RejectReason == nil || !strings.Contains(*rec.RejectReason, "attacker@evil.example.net") {
+		t.Errorf("RejectReason = %v, want it to name the address the message actually came from", rec.RejectReason)
+	}
+}
+
+// TestApprovalHandlerRejectsAndRecordsAnUnsignedMessageFromTheRightAddress
+// covers the other half of "rejected, and the outcome is recorded":
+// the From address matches the pinned administrator, but the message
+// carries no DKIM signature at all, so it is rejected for that reason
+// instead -- and still ends up as a row, not silently dropped.
+func TestApprovalHandlerRejectsAndRecordsAnUnsignedMessageFromTheRightAddress(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	setAdminApprovalAddress(t, "admin@example.net")
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := approvalReply("Birdcage Admin <admin@example.net>",
+		"Re: [birdcage u-unsigned] upgrade mockingbird", "<unsigned-1@example.net>")
+
+	if err := handler(context.Background(), raw); err != nil {
+		t.Fatalf("approvalHandler returned an error for a message that should be recorded as rejected, not error out: %v", err)
+	}
+
+	rec, err := store.ApprovalByReference(context.Background(), database, "u-unsigned")
+	if err != nil {
+		t.Fatalf("store.ApprovalByReference: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("no approval row was recorded for the unsigned message")
+	}
+	if rec.Verified() {
+		t.Fatal("an unsigned message was recorded as verified")
+	}
+	if rec.RejectReason == nil || !strings.Contains(*rec.RejectReason, "DKIM signature") {
+		t.Errorf("RejectReason = %v, want it to mention the missing DKIM signature", rec.RejectReason)
+	}
+	// A rejected message keeps the raw From header as it arrived
+	// (record.FromAddress is only overwritten with the parsed address
+	// on the verified path) -- still enough to show which header the
+	// rejection was actually about.
+	if rec.FromAddress != "Birdcage Admin <admin@example.net>" {
+		t.Errorf("FromAddress = %q, want the raw From header the message carried", rec.FromAddress)
+	}
+}
+
+// TestApprovalHandlerIgnoresMessageWithNoMessageID is the safety branch
+// approvalHandler's own comment describes: a message with no
+// Message-ID has nothing to key a replay check on, so it is logged and
+// dropped rather than stored under an empty key that a second, unrelated
+// message with no Message-ID of its own would collide with.
+func TestApprovalHandlerIgnoresMessageWithNoMessageID(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	setAdminApprovalAddress(t, "admin@example.net")
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := approvalReplyNoMessageID("Birdcage Admin <admin@example.net>",
+		"Re: [birdcage u-no-msgid] upgrade mockingbird")
+
+	if err := handler(context.Background(), raw); err != nil {
+		t.Fatalf("approvalHandler returned an error for a message with no Message-ID, want it silently ignored: %v", err)
+	}
+
+	rec, err := store.ApprovalByReference(context.Background(), database, "u-no-msgid")
+	if err != nil {
+		t.Fatalf("store.ApprovalByReference: %v", err)
+	}
+	if rec != nil {
+		t.Fatalf("a message with no Message-ID was recorded anyway: %+v", rec)
+	}
+}
+
+// TestApprovalHandlerReturnsAnErrorWhenRecordingFails is approvalHandler's
+// third outcome: a message that cannot be stored (here, because the
+// approvals table itself is gone) must return an error, so the mailbox
+// poll leaves it unread and owes it again next time -- rather than
+// silently treating a storage failure as "nothing to do".
+func TestApprovalHandlerReturnsAnErrorWhenRecordingFails(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	setAdminApprovalAddress(t, "admin@example.net")
+	if _, err := database.Exec(`DROP TABLE approvals`); err != nil {
+		t.Fatalf("drop approvals table: %v", err)
+	}
+	defer closeCanaryDB(database)
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := approvalReply("Birdcage Admin <admin@example.net>",
+		"Re: [birdcage u-store-fail] upgrade mockingbird", "<store-fail-1@example.net>")
+
+	if err := handler(context.Background(), raw); err == nil {
+		t.Fatal("approvalHandler succeeded despite the approvals table being gone, want an error")
+	}
+}
+
+// The "accepted" outcome -- a message whose DKIM signature actually
+// verifies -- is deliberately not covered here. approvalHandler wires
+// approval.Verify to net.LookupTXT directly (not an injectable
+// resolver, unlike internal/agent/approval's own tests, which stub
+// DNS), the same deliberate choice runApprovalCheck's doc comment
+// explains: "the whole point ... is to try a real provider's signature
+// against the key it actually published." Producing a real, valid DKIM
+// signature needs a private key whose public half is published in real
+// DNS for a domain this project controls, which does not exist as a
+// test fixture and should not be faked. internal/agent/approval's own
+// test suite (TestVerifyAcceptsRSASignedApproval etc.) already proves
+// Verify's accept path against stubbed DNS; what is untested is only
+// the wiring from approvalHandler to a real net.LookupTXT, which cannot
+// be exercised without a real signed message from a real domain.
 
 func pinAdminAddress(t *testing.T) {
 	t.Helper()

@@ -72,8 +72,15 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 29          # 29.6% measured. Main binary; RouterOS/CrowdSec
-                             # credential-wiring path is largely untested.
+  cmd/birdcage: 37          # 37.8% measured (was 29.6%): four previously
+                             # untested security-relevant functions gained
+                             # tests -- redactDatabaseURL (keeps database
+                             # credentials out of logs), requireEnrolAddresses,
+                             # runCanaryEnrolStatus (proves it never prints a
+                             # token hash) and approvalHandler's rejection and
+                             # store-failure paths.
+                             # Main binary; RouterOS/CrowdSec credential-wiring
+                             # path is still largely untested.
   cmd/mockingbird: 60       # 60.5% measured.
   internal/db: 67           # 67.6% measured against real Postgres (see
                              # header) -- was floored at 44 from a SQLite-only

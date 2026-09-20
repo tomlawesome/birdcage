@@ -61,11 +61,13 @@ export default defineConfig({
       // safety-critical standards (DO-178C, IEC 61508) ask for decision
       // coverage rather than a line percentage. Raising that one to 70
       // is the next piece of work, not a number to set now.
+      // Raised 2026-09-20 from 73/60/77/81 after ports.ts and
+      // eventRow.ts gained real tests -- the ratchet working as intended.
       thresholds: {
-        statements: 73,
-        branches: 60,
-        functions: 77,
-        lines: 81,
+        statements: 77,
+        branches: 65,
+        functions: 80,
+        lines: 87,
       },
     },
   },
