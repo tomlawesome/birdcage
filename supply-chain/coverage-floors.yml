@@ -17,7 +17,9 @@
 #     turn the build red over coverage nobody has touched.
 #   - a floor only ever goes UP, when a package's coverage genuinely improves.
 #     Never lower one to make a change pass -- if a change would require that,
-#     the change needs more tests, not a smaller floor.
+#     the change needs more tests, not a smaller floor. (internal/startcheck's
+#     floor moving down below is not that: it is a correction of a floor that
+#     was measured wrong in the first place -- see below.)
 #   - scripts/coverage-floor.py also fails a package sitting more than 2
 #     points ABOVE its floor: that is stale ratchet, not a passing check, and
 #     the fix is to raise the floor in this file to lock the gain in, not to
@@ -26,25 +28,56 @@
 #     it is done, and effort belongs on packages below 70%, not on pushing an
 #     87% package toward 100%.
 #
-# internal/db's number below is SQLite-only: this measurement did not set
-# BIRDCAGE_TEST_DATABASE_URL, which runs a second pass against real Postgres
-# in CI at a higher figure. The floor is deliberately pinned to the lower,
-# local number, because the ratchet must hold wherever this script runs, not
-# only in CI.
+# Pipeline 1341 failed test:go on exactly this file being measured wrong.
+# Floors must be measured under the same conditions .gitlab-ci.yml's test:go
+# job uses, not on a plain workstation `go test ./...`, and getting that wrong
+# moves numbers in BOTH directions:
+#
+#   - BIRDCAGE_TEST_DATABASE_URL must be set, against a real Postgres, the way
+#     test:go does. Without it, tests fall back to SQLite and internal/db's
+#     Postgres-only paths never run, reading far LOWER than CI (44% locally
+#     vs. 67% against real Postgres).
+#   - internal/startcheck has a second, unrelated gotcha: its tests skip the
+#     permission-refusal cases (skipIfRoot) when running as uid 0, and
+#     test:go's `golang:1.27` image runs as root with no `--user` set, while a
+#     workstation shell normally does not. That alone reads HIGHER off-CI:
+#     91% as an ordinary non-root user vs. 87.0% (86.96%, so a floor of 86)
+#     as root, Postgres unchanged either way.
+#
+# Reproduce both conditions together before regenerating any floor here:
+#
+#   docker run -d --rm --name covfloor-pg-$$ -e POSTGRES_PASSWORD=birdcage-ci \
+#     -p 127.0.0.1:<port>:5432 postgres:17-alpine
+#   # poll `docker exec <name> pg_isready -U postgres`, not just the port --
+#   # see test:go's own loop and its comment on why.
+#   docker network create covfloor-net-$$
+#   docker network connect --alias postgres covfloor-net-$$ covfloor-pg-$$
+#   docker run --rm --network covfloor-net-$$ \
+#     -e BIRDCAGE_TEST_DATABASE_URL=postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable \
+#     -v "$PWD":/work -w /work golang:1.27 \
+#     go test ./... -race -coverprofile=/work/coverage.out
+#
+# Read the per-package numbers straight off that `go test` output -- they
+# match coverage-floor.py's own computation to one decimal place (see the
+# script's docstring). Running this on the bare host as your own non-root uid
+# reintroduces both mistakes at once.
 #
 # scripts/coverage-floor.py also fails on any package present in the coverage
 # profile but missing from this file: a new package must get a floor added
 # here as a reviewed change, not slip in unmeasured.
 #
-# Measured 2026-09-20 from `go test ./... -coverprofile=/tmp/cover.out` on
-# this checkout (aa5c0fd).
+# Measured 2026-09-20 from `BIRDCAGE_TEST_DATABASE_URL=... go test ./...
+# -race -coverprofile=...` run as root inside `golang:1.27` against a real
+# postgres:17-alpine, matching test:go exactly, on this checkout (95f900b).
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
   cmd/birdcage: 29          # 29.6% measured. Main binary; RouterOS/CrowdSec
                              # credential-wiring path is largely untested.
-  cmd/mockingbird: 60       # 60.2% measured.
-  internal/db: 44           # 44.1% measured, SQLite-only here (see note above).
+  cmd/mockingbird: 60       # 60.5% measured.
+  internal/db: 67           # 67.6% measured against real Postgres (see
+                             # header) -- was floored at 44 from a SQLite-only
+                             # local run; still below the 70% band, but close.
 
   # --- no test files at all: floor 0, listed rather than silently absent ---
   cmd/seed-story: 0         # dev-data seeding CLI, not shipped; no _test.go.
@@ -74,7 +107,12 @@ floors:
   internal/mailbox: 86
   internal/opencanary: 100
   internal/selftest: 96
-  internal/startcheck: 91
+  internal/startcheck: 86   # 86.96% measured as root (see header) -- go
+                             # test's own 1-decimal display rounds this to
+                             # 87.0%, but the exact value is just under 87,
+                             # so the floor is 86. Was floored at 91 from a
+                             # non-root local run where skipIfRoot's
+                             # permission-refusal tests ran.
   internal/store: 78
   internal/stream: 100
   internal/term: 100
