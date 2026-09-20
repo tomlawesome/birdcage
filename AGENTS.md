@@ -68,8 +68,9 @@ Frontend (`frontend/package.json`), dev-only, never shipped:
 
 Anything else goes to the owner first, on the issue, with provenance.
 
-Note that `scripts/licence-check.sh` gates Go modules only, by design --
-nothing checks npm dependency licences.
+Licence gating by ecosystem: `scripts/licence-check.sh` covers Go modules,
+`scripts/licence-check-npm.sh` covers npm (#92). **Python is not gated at
+all** (#95), and a GPL package ships in the mockingbird image because of it.
 
 ## Live testing is not optional
 
