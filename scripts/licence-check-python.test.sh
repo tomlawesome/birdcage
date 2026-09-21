@@ -6,11 +6,13 @@
 # Deliberately fixture-only: unlike licence-check-npm.test.sh's "the real
 # thing must pass" case (frontend/node_modules is already installed and
 # already clean), running this checker against a real pip install would
-# need network access on every test run, and -- as of #95 -- would not
-# even pass: build/mockingbird/requirements.txt really does pull in a GPL
-# package (hpfeeds) and two with no declared licence at all (setuptools,
-# ordereddict). Proving the gate fires is exactly what these fixtures do,
-# without needing that real, currently-failing install.
+# need network access on every test run. build/mockingbird/requirements.txt
+# really does pull in a GPL package (hpfeeds) and two with no declared
+# licence at all (setuptools, ordereddict) -- all three pass for real, but
+# only via named exceptions in allow-python-package-licenses:, not because
+# their own metadata says something acceptable. Proving the gate fires,
+# and that a recorded exception overrides it, is exactly what these
+# fixtures do, without needing that real install on every run.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -35,6 +37,22 @@ expect() {
     echo "ok   $name"; pass=$((pass + 1))
   else
     echo "FAIL $name: exit $got, want $want"; echo "$out" | sed 's/^/       /'
+    fail=$((fail + 1))
+  fi
+}
+
+# expect_grep <want-exit> <name> <packages_dir> <policy_file> <must-contain>
+# Same as expect, but also requires the combined stdout+stderr to contain
+# a given substring -- for asserting not just pass/fail but that the
+# right thing was said (an exception named, a licence file path named).
+expect_grep() {
+  local want="$1" name="$2" pkgs="$3" pol="$4" needle="$5" got=0 out
+  out="$(PYTHON_PACKAGES_DIR="$pkgs" POLICY_FILE="$pol" "$checker" 2>&1)" || got=$?
+  if [ "$got" = "$want" ] && printf '%s' "$out" | grep -qF "$needle"; then
+    echo "ok   $name"; pass=$((pass + 1))
+  else
+    echo "FAIL $name: exit $got, want $want, or missing '$needle'"
+    echo "$out" | sed 's/^/       /'
     fail=$((fail + 1))
   fi
 }
@@ -164,6 +182,53 @@ expect 1 "an undecodable METADATA file is caught, not skipped" "$pkgs" "$good_po
 pkgs="$work/no-metadata-file/pkgs"
 mkdir -p "$pkgs/ghost-1.0.0.dist-info"
 expect 1 "a dist-info directory with no METADATA file is caught" "$pkgs" "$good_policy"
+
+# --- allow-python-package-licenses: named, version-pinned exceptions ---
+# Real-shaped: hpfeeds@3.0.0 declares GPL-3.0 and is accepted anyway,
+# under a recorded exception, exactly the shape #95 asked for.
+exception_policy="$work/exception-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+allow-python-package-licenses:
+  - evil@3.1.4 GPL-3.0-only' > "$exception_policy"
+
+pkgs="$work/exception-match/pkgs"
+mkpkg "$pkgs" foo-1.0.0 'Name: foo
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs" evil-3.1.4 'Name: evil
+Version: 3.1.4
+License-Expression: GPL-3.0'
+expect_grep 0 "a named exception makes an otherwise-refused package pass, and is named in the summary" \
+  "$pkgs" "$exception_policy" "evil@3.1.4 — GPL-3.0-only"
+
+pkgs="$work/exception-wrong-version/pkgs"
+mkpkg "$pkgs" foo-1.0.0 'Name: foo
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs" evil-3.1.5 'Name: evil
+Version: 3.1.5
+License-Expression: GPL-3.0'
+expect 1 "an exception recorded for a different version does not match; the new version is still refused" \
+  "$pkgs" "$exception_policy"
+
+pkgs="$work/stale-exception/pkgs"
+mkpkg "$pkgs" foo-1.0.0 'Name: foo
+Version: 1.0.0
+License-Expression: MIT'
+expect_grep 1 "a stale exception matching no installed package fails, distinctly" \
+  "$pkgs" "$exception_policy" "stale allow-python-package-licenses exception"
+
+# A "no licence field" offender also names any bundled licence file it
+# found, from a License-File: header or a LICENSE* file in the dist-info
+# directory -- so whoever writes the next exception knows where to look.
+pkgs="$work/no-licence-with-file/pkgs"
+mkpkg "$pkgs" mystery-0.1.0 'Name: mystery
+Version: 0.1.0
+License-File: LICENSE'
+printf 'MIT licence text\n' > "$pkgs/mystery-0.1.0.dist-info/LICENSE"
+expect_grep 1 "a package with no licence field names its bundled licence file's path" \
+  "$pkgs" "$good_policy" "bundled licence file(s): LICENSE"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
