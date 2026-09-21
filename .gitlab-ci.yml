@@ -121,10 +121,16 @@ lint:licences:
 # this job sees is what actually ships. Its own tests are
 # scripts/licence-check-python.test.sh, run here too, same reasoning as
 # lint:ci's guard tests.
+# No *git_safe here, unlike lint:licences above: that anchor's
+# before_script runs `git config`, and this image has no git in it at all
+# (pipeline 1421 failed with "git: command not found", exit 127). The job
+# does not need git either -- the runner's helper image does the checkout,
+# and neither the gate nor its tests shell out to git. lint:ci is the same
+# shape for the same reason, on a python image with *gate alone.
 lint:licences-python:
   stage: lint
   image: python:3.13-slim-trixie
-  <<: [*gate, *git_safe]
+  <<: *gate
   script:
     - scripts/licence-check-python.test.sh
     - scripts/licence-check-python.sh
