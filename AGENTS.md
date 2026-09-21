@@ -87,8 +87,16 @@ lives in the tracked `VERSION` file and is read only through
 stamp.
 
 Licence gating by ecosystem: `scripts/licence-check.sh` covers Go modules,
-`scripts/licence-check-npm.sh` covers npm (#92). **Python is not gated at
-all** (#95), and a GPL package ships in the mockingbird image because of it.
+`scripts/licence-check-npm.sh` covers npm (#92), and
+`scripts/licence-check-python.sh` covers the pip packages installed into
+the mockingbird image (#95). A package whose own metadata names a licence
+outside `supply-chain/licence-policy.yml`'s allow-list, or names none at
+all, fails the gate unless it has a named, version-pinned exception under
+that file's `allow-python-package-licenses:` key -- `hpfeeds@3.0.0`
+(GPLv3, owner-accepted for shipping), `setuptools@78.1.1` and
+`ordereddict@1.1` (undeclared, read from their own bundled MIT LICENSE
+files) are the three currently recorded. A version bump drops the
+exception and the gate fires again on the new version.
 
 ## Live testing is not optional
 

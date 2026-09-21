@@ -87,3 +87,123 @@ allow-npm-licenses:
   - BlueOak-1.0.0
   # Public-domain dedication; no obligations at all.
   - CC0-1.0
+
+# Licence policy for the pip packages installed into the mockingbird
+# image, read by scripts/licence-check-python.py (called via
+# scripts/licence-check-python.sh). A separate key from the two above for
+# the same reason they are separate from each other: each script's
+# extraction is a plain prefix match on its own key, and the keys must
+# never collide.
+#
+# Covers build/mockingbird/requirements.txt -- everything pip installs
+# into the distroless mockingbird image (build/mockingbird/Dockerfile).
+# Before #95 this was the one ecosystem nothing gated at all.
+#
+# Same house rule as the two lists above: only the licences actually in
+# use, not a general list of acceptable ones. A dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a
+# reviewed change, not a silent pass.
+#
+# Scanned build/mockingbird/requirements.txt on 2026-09-20 (#95) by
+# actually installing it (`pip install --require-hashes --target`, same
+# as the Dockerfile) and reading every installed package's own metadata:
+# 36 packages, 33 declaring a permissive licence in one of the three
+# forms licence-check-python.py reads (License-Expression, a Classifier,
+# or the old free-text License: field). These are exactly those 33
+# packages' licences. The same legal licence often appears as more than
+# one literal string across packages -- e.g. plain "MIT" from one
+# package's License-Expression and "MIT License" from another's
+# Classifier -- and a package passes on any one of its own candidate
+# strings matching, so not every entry below is needed by every
+# MIT-licensed package; the comments say which packages need which.
+#
+# The other three found in that scan are deliberately NOT on the list
+# above -- their own metadata does not declare an acceptable licence, or
+# does not declare one at all -- but are individually reviewed and
+# recorded below, under allow-python-package-licenses, instead:
+#   - hpfeeds==3.0.0, setuptools==78.1.1, ordereddict==1.1.
+allow-python-licenses:
+  - MIT
+  # attrs, charset-normalizer, urllib3 (License-Expression); constantly,
+  # hyperlink, redis, service-identity, six (their raw License: field).
+  - MIT License
+  # The Classifier form of the same licence -- needed by automat (whose
+  # raw License: field is literally "Copyright (c) 2014") and by
+  # incremental, jinja2, twisted (no raw License: field at all).
+  - MIT-0
+  # cffi. Same permissive MIT-minus-attribution licence already allowed
+  # for npm above.
+  - Apache Software License
+  # The Classifier form of Apache-2.0 -- needed by bcrypt, ntlmlib,
+  # pyopenssl and requests, whose own raw License: fields disagree on
+  # wording ("Apache License, Version 2.0", "Apache 2.0", "Apache-2.0").
+  - BSD-3-Clause
+  # gitpython, idna, markupsafe, pycparser, smmap; also one alternative
+  # of cryptography's "Apache-2.0 OR BSD-3-Clause" License-Expression.
+  # Already allowed for Go above.
+  - BSD-2-Clause
+  # pyasn1; also one alternative of packaging's "Apache-2.0 OR
+  # BSD-2-Clause" License-Expression.
+  - BSD License
+  # The Classifier form of a BSD licence -- gitdb, jinja2, pyasn1-modules,
+  # smmap.
+  - BSD
+  # opencanary, passlib, pyasn1-modules's raw License: field: plain "BSD"
+  # with no clause count given. passlib ships no bundled LICENSE file to
+  # check the text against, so this trusts the metadata field, same as
+  # every other entry here sourced from a raw License: field.
+  - MPL-2.0
+  # certifi. Same licence and reasoning as the MPL-2.0 entry above.
+  - PSF-2.0
+  # typing-extensions. Python Software Foundation License, permissive.
+  - ZPL 2.1
+  # zope-interface. Zope Public License 2.1: permissive BSD-style terms
+  # (checked against the bundled LICENSE.txt -- attribution and a
+  # no-endorsement clause, nothing reciprocal), FSF-certified as
+  # GPL-compatible.
+
+# Named, version-pinned exceptions for pip packages whose own metadata is
+# not something this checker can accept from the allow-python-licenses
+# list above -- either it names a licence not on that list, or it names
+# no licence at all. Each entry is reviewed and recorded individually,
+# never by adding its licence to the list above (which would accept it
+# for every package under that licence, not just the one reviewed).
+# Read by read_package_allow_list() in scripts/licence-check-python.py.
+# A separate key from the two allow-*-licenses keys above for the same
+# collision reason they are separate from each other -- see that
+# function's docstring for exactly which prefix each of the three gates
+# matches, and why none of them can mistake this key for its own.
+#
+# Format: one line per entry, "<name>@<version> <SPDX-id>", matching the
+# exact name@version this checker computes for an installed package. A
+# package passes as the recorded SPDX id regardless of what its own
+# metadata says or fails to say. Bumping the package's version stops the
+# entry matching -- intended, not a bug: the gate fires again on the new
+# version, and that version gets its own review rather than inheriting
+# this one. An entry matching no installed package is itself a failure
+# ("stale exception -- delete it"), so this list cannot silently
+# accumulate exceptions nobody needs any more.
+allow-python-package-licenses:
+  - hpfeeds@3.0.0 GPL-3.0-only
+  # Pulled in by opencanary==0.9.9, which pins it unconditionally --
+  # hpfeeds is not a build tool, it ships in the published mockingbird
+  # image. Its METADATA carries only "License: GPL", which does not say
+  # which version. Installed and read directly: the wheel bundles
+  # hpfeeds-3.0.0.dist-info/LICENSE, 674 lines, opening "GNU GENERAL
+  # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
+  # GPLv3 dependency in the image is the owner's call, not this policy
+  # file's; the owner has accepted it (#95).
+  - setuptools@78.1.1 MIT
+  # METADATA has no License:, no License-Expression:, and no
+  # "Classifier: License ::" line -- only a License-File: LICENSE
+  # pointer, "no licence field" to this checker with nothing to match
+  # against the list above. Installed and read directly:
+  # setuptools-78.1.1.dist-info/licenses/LICENSE is the verbatim MIT
+  # licence text.
+  - ordereddict@1.1 MIT
+  # Same shape as setuptools: PyPI's web API reports an MIT classifier,
+  # but the sdist itself does not carry it -- its PKG-INFO literally says
+  # "License: UNKNOWN" (this checker's other free-text placeholder, "no
+  # licence field" the same as an absent one) and setup.py declares no
+  # licence or classifiers at all. The sdist does bundle a LICENSE file,
+  # read directly: MIT, "Copyright (c) 2009 Raymond Hettinger".
