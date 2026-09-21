@@ -20,10 +20,12 @@
 #     the change needs more tests, not a smaller floor. (internal/startcheck's
 #     floor moving down below is not that: it is a correction of a floor that
 #     was measured wrong in the first place -- see below.)
-#   - scripts/coverage-floor.py also fails a package sitting more than 2
-#     points ABOVE its floor: that is stale ratchet, not a passing check, and
-#     the fix is to raise the floor in this file to lock the gain in, not to
-#     leave the extra headroom sitting there.
+#   - scripts/coverage-floor.py also fails a package sitting more than 5
+#     points ABOVE its floor -- the script's own RATCHET_SLACK, set loose on
+#     purpose so a single new test on a small package does not turn the build
+#     red for improving coverage. That is stale ratchet, not a passing check,
+#     and the fix is to raise the floor in this file to lock the gain in, not
+#     to leave the extra headroom sitting there.
 #   - the 70-85% band itself is not chased past 85%: a package already inside
 #     it is done, and effort belongs on packages below 70%, not on pushing an
 #     87% package toward 100%.
@@ -37,23 +39,45 @@
 #     test:go does. Without it, tests fall back to SQLite and internal/db's
 #     Postgres-only paths never run, reading far LOWER than CI (44% locally
 #     vs. 67% against real Postgres).
-#   - internal/startcheck has a second, unrelated gotcha: its tests skip the
-#     permission-refusal cases (skipIfRoot) when running as uid 0, and
-#     test:go's `golang:1.27` image runs as root with no `--user` set, while a
-#     workstation shell normally does not. That alone reads HIGHER off-CI:
-#     91% as an ordinary non-root user vs. 87.0% (86.96%, so a floor of 86)
-#     as root, Postgres unchanged either way.
+#   - internal/startcheck used to have a second gotcha, fixed by #93: its
+#     permission-refusal tests skip themselves as uid 0 (skipIfRoot), and
+#     test:go ran as root, so they never ran in CI and the package read
+#     LOWER there than on a workstation. test:go now drops to a non-root
+#     user for the test run itself, so the two conditions agree again and
+#     CI is the higher of the two figures rather than the lower.
 #
 # Reproduce both conditions together before regenerating any floor here:
 #
-#   docker run -d --rm --name covfloor-pg-$$ -e POSTGRES_PASSWORD=birdcage-ci \
-#     -p 127.0.0.1:<port>:5432 postgres:17-alpine
+#   docker network create covfloor-net-$$
+#   docker run -d --rm --name covfloor-pg-$$ --network covfloor-net-$$ \
+#     --network-alias postgres -e POSTGRES_PASSWORD=birdcage-ci \
+#     --entrypoint sh postgres:17-alpine -c '
+#       apk add --no-cache openssl >/dev/null
+#       mkdir -p /certs
+#       openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+#         -addext "subjectAltName=DNS:postgres" \
+#         -keyout /certs/server.key -out /certs/server.crt
+#       chown postgres:postgres /certs/server.crt /certs/server.key
+#       chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+#       exec docker-entrypoint.sh postgres -c ssl=on \
+#         -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key'
 #   # poll `docker exec <name> pg_isready -U postgres`, not just the port --
 #   # see test:go's own loop and its comment on why.
-#   docker network create covfloor-net-$$
-#   docker network connect --alias postgres covfloor-net-$$ covfloor-pg-$$
+#
+#   # BIRDCAGE_TEST_DATABASE_URL is sslmode=verify-full since #84 --
+#   # birdcage now refuses anything weaker at start-up, and this floor's
+#   # premise is matching test:go exactly, not a shape it would itself
+#   # reject. sslrootcert is captured from the running server, the same
+#   # way test:go's before_script does it: the certificate above is
+#   # self-signed, so the leaf the server presents back over the wire IS
+#   # the root verify-full is told to trust.
+#   docker run --rm --network covfloor-net-$$ -v "$PWD":/work postgres:17-alpine sh -c '
+#     apk add --no-cache openssl >/dev/null
+#     openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+#       | openssl x509 -outform pem > /tmp/covfloor-ca.pem
+#     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
 #   docker run --rm --network covfloor-net-$$ \
-#     -e BIRDCAGE_TEST_DATABASE_URL=postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable \
+#     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
 #     -v "$PWD":/work -w /work golang:1.27 \
 #     go test ./... -race -coverprofile=/work/coverage.out
 #
@@ -81,7 +105,27 @@ floors:
                              # store-failure paths.
                              # Main binary; RouterOS/CrowdSec credential-wiring
                              # path is still largely untested.
-  cmd/mockingbird: 60       # 60.5% measured.
+  cmd/mockingbird: 65       # 66.0% measured (was 60, and the package had
+                             # slipped to 59.9% under it -- pipeline 1405's
+                             # test:go caught that). The SNMP and port-scan
+                             # roads, the Intake status accessors and
+                             # currentSelfReport gained tests rather than the
+                             # floor being lowered. Measured with -race, as
+                             # test:go runs it, and as a non-root uid.
+                             # Set at 65 rather than 66 on purpose. This
+                             # package needs neither Postgres nor root, so a
+                             # workstation ought to agree with CI -- but
+                             # pipeline 1409 read 65.9% where this host read
+                             # 65.7%, because one test asked for a bind to
+                             # fail on a privileged port and the runner's
+                             # containers set ip_unprivileged_port_start=0, so
+                             # it bound instead. That test no longer depends on
+                             # the host (see snmp_test.go), and the figure is
+                             # 66.0% here now. One point of slack still costs
+                             # nothing and absorbs the next such difference
+                             # rather than turning the build red over it.
+                             # Still below the 70% band; the rest is main() and
+                             # the detector branches that need CAP_NET_RAW.
   internal/db: 67           # 67.6% measured against real Postgres (see
                              # header) -- was floored at 44 from a SQLite-only
                              # local run; still below the 70% band, but close.
@@ -114,12 +158,14 @@ floors:
   internal/mailbox: 86
   internal/opencanary: 100
   internal/selftest: 96
-  internal/startcheck: 86   # 86.96% measured as root (see header) -- go
-                             # test's own 1-decimal display rounds this to
-                             # 87.0%, but the exact value is just under 87,
-                             # so the floor is 86. Was floored at 91 from a
-                             # non-root local run where skipIfRoot's
-                             # permission-refusal tests ran.
+  internal/startcheck: 88   # 88.9% measured (was floored at 86). #93's
+                             # non-root fix made the permission-refusal tests
+                             # actually run in CI, and this is the first CI
+                             # figure that includes them: pipeline 1405's
+                             # test:go, the run that proved that change. The
+                             # floor was deliberately left at 86 until that
+                             # measurement existed, because a number in this
+                             # file may not come from a workstation.
   internal/store: 78
   internal/stream: 100
   internal/term: 100

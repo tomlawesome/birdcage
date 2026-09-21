@@ -437,6 +437,18 @@ func main() {
 		configLog.Info(fmt.Sprintf("%s=%s", envDatabaseURL, redactDatabaseURL(databaseURL)))
 	}
 
+	// Issue #84: before opening the database, prove a Postgres
+	// DATABASE_URL could not ever connect without authenticating the
+	// server -- the same "before any listener binds, never on first
+	// query" posture issue #70 established above for the data directory
+	// and TLS cert/key files. db.Open's sql.Open does no network I/O, so
+	// without this the refusal would otherwise only surface on the first
+	// query, deep inside pgx.
+	if err := startcheck.PostgresRequiresVerifyFull(databaseURL); err != nil {
+		dbLog.Error(err.Error())
+		os.Exit(1)
+	}
+
 	database, err := db.Open(databaseURL)
 	if err != nil {
 		dbLog.Error(fmt.Sprintf("open database (%s=%q): %v", envDatabaseURL, databaseURL, err))

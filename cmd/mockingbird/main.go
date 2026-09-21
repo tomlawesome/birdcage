@@ -89,6 +89,24 @@ var version = "dev"
 
 func main() {
 	logging.SetLevel(os.Getenv(envLogLevel))
+
+	// `mockingbird version` prints the stamped build version and exits
+	// (issue #97), matching cmd/birdcage's own `version` argument (issue
+	// #90, cmd/birdcage/main.go around line 195) exactly: it comes first,
+	// before mainLog or cfg exist, and writes to stdout rather than the
+	// log, because the release job compares its output with the tag it
+	// built from -- one line, no level prefix. It also has to come before
+	// os.Args[1:] is handed to runChild below as OpenCanary's own
+	// arguments: `docker run <image> version` replaces the Dockerfile's
+	// CMD entirely, so without this check "version" would be run as
+	// OpenCanary's argv instead of being answered.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		if err := runVersion(os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	mainLog := logging.New("mockingbird")
 
 	cfg, err := loadConfig()

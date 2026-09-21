@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/event"
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
@@ -239,5 +242,63 @@ func TestPortscanEventEncodingRoundTrips(t *testing.T) {
 	}
 	if fields.SourceIP != "198.51.100.5" {
 		t.Errorf("source ip = %q, want 198.51.100.5", fields.SourceIP)
+	}
+}
+
+// TestNewPortscanRoadDisabled proves the off switch actually turns
+// newPortscanRoad into a no-op: no detector, and an inventory that says
+// so -- the same contract TestNewSNMPRoadDisabled proves for the SNMP
+// road.
+func TestNewPortscanRoadDisabled(t *testing.T) {
+	t.Setenv(envPortscan, "0")
+	in, _ := newTestIntake(t, queue.Config{})
+
+	detector, inv := newPortscanRoad(Config{}, in, discardLogger())
+	if detector != nil {
+		t.Error("expected a nil detector when MOCKINGBIRD_PORTSCAN=0")
+	}
+	if inv.PortscanActive {
+		t.Error("expected PortscanActive=false when disabled")
+	}
+}
+
+// TestNewPortscanRoadOpenFailureIsHandled proves newPortscanRoad's
+// documented contract that a failure to open the capture socket is
+// never fatal: it returns a nil detector and an inactive inventory
+// rather than an error, so main keeps running with port-scan detection
+// off. Opening the AF_PACKET capture socket needs CAP_NET_RAW, which
+// this test process does not have.
+func TestNewPortscanRoadOpenFailureIsHandled(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: CAP_NET_RAW is likely present, so the capture socket would open")
+	}
+	in, _ := newTestIntake(t, queue.Config{})
+
+	detector, inv := newPortscanRoad(Config{}, in, discardLogger())
+	if detector != nil {
+		t.Error("expected a nil detector when opening the capture socket fails")
+	}
+	if inv.PortscanActive {
+		t.Error("expected PortscanActive=false when opening the capture socket fails")
+	}
+	if inv.ListeningPorts != 0 {
+		t.Errorf("ListeningPorts = %d, want 0 when detection is off", inv.ListeningPorts)
+	}
+}
+
+// TestRunPortscanRoadNilDetectorIsANoOp proves the "disabled, or the
+// open failed" case main relies on: runPortscanRoad must return
+// immediately rather than block, so main can start this goroutine
+// unconditionally regardless of whether detection is actually running.
+func TestRunPortscanRoadNilDetectorIsANoOp(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		runPortscanRoad(context.Background(), nil, discardLogger())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runPortscanRoad(nil, ...) did not return")
 	}
 }

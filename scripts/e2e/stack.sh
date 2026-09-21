@@ -68,8 +68,21 @@ LOG_VOL="$E2E_PREFIX-log"
 # let remove them: it only ever deletes an image tag beginning with
 # E2E_PREFIX, so pointing this at an image you built yourself
 # (E2E_BIRDCAGE_IMAGE=birdcage:local) never deletes it.
+#
+# `up` also treats a set override differently from the default (#98):
+# CI sets these to the tags build:images already built from this exact
+# commit, so the journey tests those bytes rather than a second build of
+# the same source. build_image below skips building when the tag already
+# exists either way, but only dies loudly on a miss when one of these was
+# set -- a workstation with neither set still builds from scratch, which
+# is the only way to debug a red job with no pipeline to hand it images.
 BIRDCAGE_IMAGE="${E2E_BIRDCAGE_IMAGE:-$E2E_PREFIX-birdcage-image}"
 MOCKINGBIRD_IMAGE="${E2E_MOCKINGBIRD_IMAGE:-$E2E_PREFIX-mockingbird-image}"
+# Always this harness's own build, never overridable the way the two
+# images above are: the certificate baked into it is generated fresh
+# every run (build_postgres_tls_image below), so there is never a
+# reason to point this at one built by hand.
+PG_IMAGE="$E2E_PREFIX-postgres-image"
 
 # E2E_BACKEND picks the database: sqlite (the default) or postgres.
 # Postgres is not an exotic variant to get to later -- it is one of the
@@ -139,10 +152,20 @@ build_helper_image() {
     | docker build --quiet --tag "$HELPER_IMAGE" - >/dev/null
 }
 
-build_image() { # build_image <tag> <dockerfile>
+build_image() { # build_image <tag> <dockerfile> <override-var-name-or-empty>
   if docker image inspect "$1" >/dev/null 2>&1; then
     log "using existing image $1"
     return 0
+  fi
+  # $3 is only non-empty when the tag came from E2E_BIRDCAGE_IMAGE or
+  # E2E_MOCKINGBIRD_IMAGE (#98): those name an image CI already built
+  # from this exact commit (build:images), so a miss there is not "build
+  # one" but "the thing that was supposed to exist is not there" -- a CI
+  # wiring bug, not a reason to test different bytes than the job
+  # claims to. Silently building a substitute is the failure this issue
+  # removes: a journey that does that is testing a build nobody judged.
+  if [ -n "$3" ]; then
+    die "$3=$1 names no local image -- it should have been built by build:images and handed to this job; refusing rather than building a different one"
   fi
   log "building $1 from $2 (this takes a few minutes the first time)"
   docker build --file "$REPO_ROOT/$2" --tag "$1" "$REPO_ROOT" >/dev/null \
@@ -186,21 +209,70 @@ chmod 600 /tls/server-key.pem
 " || die "generating the throwaway dashboard CA and leaf failed"
 }
 
-# start_postgres runs the second engine the product supports.
+# build_postgres_tls_image builds a one-line derived Postgres image
+# carrying a throwaway server certificate, the same way mikroview's e2e
+# harness does (its scripts/live-container.sh and the test:postgres job
+# in its .gitlab-ci.yml) -- because birdcage now refuses (#84) any
+# DATABASE_URL weaker than sslmode=verify-full, and the stock
+# postgres:18-alpine image serves no certificate at all, so a plain
+# server would be refused at boot before a single query runs.
 #
-# Plain postgres:18-alpine with no TLS, unlike mikroview's equivalent,
-# because birdcage does not currently refuse a plaintext connection to
-# its database -- see the note in `up`. Nothing here should be read as
-# saying that is right.
+# `docker build <dir>` tars the given local directory and sends it to
+# the daemon as the build's context over the API, the same as
+# build_image above -- so this needs no filesystem shared with a
+# remote DOCKER_HOST, and nothing is written to the repository.
+#
+# Self-signed, CN/SAN = $PG: the certificate is its own CA (there is
+# nothing else to sign it), and $PG is the hostname birdcage's
+# DATABASE_URL will name and verify-full will check the certificate
+# against -- the same reason generate_tls's dashboard leaf above covers
+# $BIRDCAGE. One day's validity: this is a throwaway server that lives
+# only for the length of one job.
+build_postgres_tls_image() {
+  local ctx
+  ctx="$(mktemp -d)" || die "creating the postgres TLS build context failed"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -keyout "$ctx/server.key" -out "$ctx/server.crt" \
+    -subj "/CN=$PG" -addext "subjectAltName=DNS:$PG" \
+    || { rm -rf "$ctx"; die "generating the postgres TLS certificate failed"; }
+  cat > "$ctx/Dockerfile" <<DOCKERFILE
+FROM postgres:18-alpine
+COPY server.crt server.key /certs/
+RUN chown postgres:postgres /certs/server.crt /certs/server.key \\
+ && chmod 644 /certs/server.crt && chmod 600 /certs/server.key
+DOCKERFILE
+  docker build --quiet --tag "$PG_IMAGE" "$ctx" >/dev/null \
+    || { rm -rf "$ctx"; die "building the TLS-enabled postgres image failed"; }
+
+  # Into the same throwaway-TLS volume generate_tls uses: start_birdcage
+  # mounts it read-only at /tls, and this is the CA birdcage's
+  # DATABASE_URL sslrootcert will be pointed at -- the certificate is
+  # its own CA, so the file birdcage trusts and the file the server
+  # presents are the same bytes.
+  docker run --rm --interactive --volume "$TLS_VOL:/tls" "$HELPER_IMAGE" \
+    sh -c "cat > /tls/postgres-ca.pem && chmod 644 /tls/postgres-ca.pem" \
+    < "$ctx/server.crt" \
+    || { rm -rf "$ctx"; die "could not export the postgres CA certificate"; }
+  rm -rf "$ctx"
+}
+
+# start_postgres runs the second engine the product supports, serving
+# the certificate build_postgres_tls_image just baked in.
 start_postgres() {
   docker run --detach --name "$PG" --network "$NET" \
     --env POSTGRES_PASSWORD=e2e --env POSTGRES_DB=birdcage \
     --pids-limit 128 --memory 512m \
-    postgres:18-alpine >/dev/null || die "starting $PG failed"
+    "$PG_IMAGE" \
+    -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key \
+    >/dev/null || die "starting $PG failed"
 
   # pg_isready, not a port check: Postgres accepts connections on 5432
   # well before it will answer a query, and a port check hands over a
-  # server that then refuses the first migration.
+  # server that then refuses the first migration. Run inside the
+  # container over its local socket, so this needs no client
+  # certificate of its own and says nothing about whether TLS is
+  # actually configured right -- start_birdcage's own wait, connecting
+  # over the network with sslmode=verify-full, is what proves that.
   local attempt
   for attempt in $(seq 1 60); do
     if docker exec "$PG" pg_isready -U postgres -d birdcage >/dev/null 2>&1; then
@@ -408,8 +480,8 @@ up() {
   command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
   down >/dev/null 2>&1 || true
 
-  build_image "$BIRDCAGE_IMAGE" build/birdcage/Dockerfile
-  build_image "$MOCKINGBIRD_IMAGE" build/mockingbird/Dockerfile
+  build_image "$BIRDCAGE_IMAGE" build/birdcage/Dockerfile "${E2E_BIRDCAGE_IMAGE:+E2E_BIRDCAGE_IMAGE}"
+  build_image "$MOCKINGBIRD_IMAGE" build/mockingbird/Dockerfile "${E2E_MOCKINGBIRD_IMAGE:+E2E_MOCKINGBIRD_IMAGE}"
   build_helper_image
 
   docker network create "$NET" >/dev/null || die "creating network $NET failed"
@@ -420,8 +492,12 @@ up() {
 
   generate_tls
   if [ "$E2E_BACKEND" = postgres ] && [ -z "${E2E_DATABASE_URL:-}" ]; then
+    build_postgres_tls_image
     start_postgres
-    E2E_DATABASE_URL="postgres://postgres:e2e@$PG:5432/birdcage?sslmode=disable"
+    # sslrootcert names a path inside the birdcage container, not this
+    # host: /tls is TLS_VOL, mounted read-only into $BIRDCAGE below, and
+    # build_postgres_tls_image already wrote the CA there.
+    E2E_DATABASE_URL="postgres://postgres:e2e@$PG:5432/birdcage?sslmode=verify-full&sslrootcert=/tls/postgres-ca.pem"
   fi
   start_birdcage
   copy_birdcage_ca
@@ -468,6 +544,10 @@ down() {
       "$E2E_PREFIX"*) docker image rm --force "$image" >/dev/null 2>&1 || true ;;
     esac
   done
+  # PG_IMAGE is never overridable (see its definition above), so it is
+  # always safe to remove -- always this harness's own build, rebuilt
+  # fresh on every `up`.
+  docker image rm --force "$PG_IMAGE" >/dev/null 2>&1 || true
 }
 
 case "${1:-}" in

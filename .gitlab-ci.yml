@@ -219,6 +219,21 @@ test:frontend:
 # Go tests against SQLite and a real Postgres (issue #7, ADR-0001):
 # BIRDCAGE_TEST_DATABASE_URL is what tells internal/db/dbtest the
 # Postgres is there; unset, those tests silently run SQLite-only.
+#
+# TLS since #84 (birdcage now refuses a weaker DATABASE_URL at
+# start-up -- internal/startcheck, not exercised by this job, but
+# BIRDCAGE_TEST_DATABASE_URL should not model a shape birdcage itself
+# refuses). The service's entrypoint is overridden to generate a
+# throwaway certificate before handing over to the stock entrypoint --
+# ported from mikroview's test:postgres job, which solved the same
+# problem first, the same way: no image build and no Docker inside this
+# job, since `services:` cannot build one.
+#
+# verify-full, not mikroview's require: this needs the actual chain, so
+# `before_script` below captures the certificate the server presents
+# over the network with openssl s_client and hands it to psql/pgx as
+# sslrootcert -- the certificate is its own CA (self-signed), so the
+# leaf the server sent back IS the root verify-full is told to trust.
 test:go:
   stage: test
   image: golang:1.27
@@ -227,13 +242,25 @@ test:go:
   services:
     - name: postgres:17-alpine
       alias: postgres
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          apk add --no-cache openssl >/dev/null
+          mkdir -p /certs
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+            -addext "subjectAltName=DNS:postgres" \
+            -keyout /certs/server.key -out /certs/server.crt
+          chown postgres:postgres /certs/server.crt /certs/server.key
+          chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+          exec docker-entrypoint.sh postgres -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
   variables:
     POSTGRES_PASSWORD: birdcage-ci
-    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=disable
+    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem
   script:
     # The runner only waits for the port, and Postgres listens briefly
     # during its own init before restarting; ask the server itself.
-    - apt-get -qq update && apt-get -qq install -y postgresql-client >/dev/null
+    - apt-get -qq update && apt-get -qq install -y postgresql-client openssl >/dev/null
     - |
       ready=0
       for attempt in $(seq 1 40); do
@@ -241,6 +268,14 @@ test:go:
         sleep 1
       done
       [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    # BIRDCAGE_TEST_DATABASE_URL's sslrootcert names this exact path --
+    # captured now, from the running server, rather than shared from the
+    # service container, which no volume or filesystem connects this
+    # job container to.
+    - |
+      openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+        | openssl x509 -outform pem > /tmp/postgres-ca.pem
+      [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
     # -coverprofile alongside -race so one run does both (#74). The
     # floors in supply-chain/coverage-floors.yml are a ratchet at
     # measured values, not the owner's 70-85% band: a threshold set at
@@ -259,9 +294,39 @@ test:go:
     # on a workstation, where the same tests fall back to SQLite.
     # golang:1.27 ships python3 (3.13.5, verified), which the checker
     # needs.
-    - go test ./... -race -coverprofile=coverage.out
-    - go tool cover -func=coverage.out | tail -1
-    - python3 scripts/coverage-floor.py coverage.out
+    # #93: run the suite as a NON-ROOT user. internal/startcheck proves
+    # birdcage refuses to start on unsafe file permissions, and those
+    # tests skip themselves as uid 0 -- correctly, because root ignores
+    # the mode bits they set, so the refusal would "pass" without ever
+    # being exercised. This image runs as root, so until now those two
+    # tests ran only on whoever happened to run the suite locally. A
+    # check that looks enforced and is not is the thing AGENTS.md's live
+    # testing rule exists to prevent.
+    #
+    # Root is still needed for the setup above -- apt-get, and capturing
+    # the server certificate -- so only the test run drops privileges.
+    # The caches go to a tester-owned directory rather than the image's
+    # root-owned /go/pkg/mod, because `go test` writes a lock there when
+    # it resolves modules and would fail as a non-root user. Downloading
+    # the modules again costs seconds and go.sum still verifies them.
+    - |
+      set -eu
+      useradd --create-home --uid 1001 tester
+      install -d -o tester -g tester /tmp/gotest
+      # tester has to read the certificate the URL below names.
+      chmod 0644 /tmp/postgres-ca.pem
+    - >-
+      su tester -c "cd '$CI_PROJECT_DIR' &&
+      HOME=/home/tester
+      GOCACHE=/tmp/gotest/cache
+      GOMODCACHE=/tmp/gotest/mod
+      GOFLAGS='$GOFLAGS'
+      BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
+      go test ./... -race -coverprofile=/tmp/gotest/coverage.out"
+    # Read back as root: the profile is tester-owned but world-readable,
+    # and nothing below writes to it.
+    - go tool cover -func=/tmp/gotest/coverage.out | tail -1
+    - python3 scripts/coverage-floor.py /tmp/gotest/coverage.out
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
@@ -444,6 +509,18 @@ test:image:mockingbird:
     # build:images produced, so the bytes that answer these checks are the
     # bytes release:push publishes.
     - docker tag "$MOCKINGBIRD_BUILD_IMAGE" "$APP"
+    # #97, matching test:image:birdcage's own check (#90): the stamping is
+    # proved here rather than at a release nobody can retry. An image whose
+    # VERSION argument is silently ignored still starts and still serves,
+    # so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - docker volume create "$APP-state" >/dev/null
     - >-
       docker run --rm --volume "$APP-state:/s" alpine:3.24 sh -c '
@@ -538,6 +615,13 @@ test:image:mockingbird:
 #     scripts/e2e/stack.sh logs
 #     scripts/e2e/stack.sh down
 #
+# With neither override set, `up` builds both images from scratch, same
+# as always -- a workstation debugging a red job has no build:images run
+# to hand it images. In CI (#98), E2E_BIRDCAGE_IMAGE and
+# E2E_MOCKINGBIRD_IMAGE below point stack.sh at the tags build:images
+# already built, so the journey tests those bytes instead of building a
+# second copy of the same source.
+#
 # Adding a journey (#79 port scan, #80 mail, #81 dashboard) is a job of
 # the same four lines with a different script name; the stack it needs
 # is already stood up by stack.sh.
@@ -551,13 +635,20 @@ e2e:enrol-and-hit:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -577,18 +668,27 @@ e2e:enrol-and-hit:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
@@ -608,15 +708,22 @@ e2e:smb:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds two extra images (the second canary's Mockingbird tag is
-  # already built by stack.sh up, but the Samba image is its own build)
-  # and runs a Samba server plus a second canary alongside the base
-  # stack's four containers.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -644,14 +751,21 @@ e2e:dashboard-own-ca:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -674,13 +788,20 @@ e2e:snmp:
   stage: e2e
   image: docker:29-cli
   <<: *gate
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -691,6 +812,31 @@ e2e:snmp:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #84's refusal, watched actually happen against the real binary
+# rather than only asserted in internal/startcheck's own unit tests: a
+# check nobody has watched fire is not evidence it actually gates
+# cmd/birdcage's start-up path. Builds and runs the shipped image
+# directly instead of going through stack.sh up -- the point is what
+# happens (or rather never happens) before that sequence's own
+# startcheck-then-listen ordering would ever reach "ready", so there is
+# no stack to stand up first. No Postgres server needed anywhere, real
+# or fake: PostgresRequiresVerifyFull only parses the URL, it never
+# dials (see scripts/e2e/postgres-requires-tls.sh).
+e2e:postgres-requires-tls:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-tls-refusal-$CI_JOB_ID
+  before_script:
+    # The script is bash (`set -eu`, case statements over multi-line
+    # output); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - scripts/e2e/postgres-requires-tls.sh
+
 # The same journey against the other engine birdcage ships, at the higher
 # bar (#91, docs/ci-hops.md) rather than every merge request: a storage
 # engine difference here would show up in how the audit line was written,
@@ -700,20 +846,29 @@ e2e:smb:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds two extra images (the second canary's Mockingbird tag is
-  # already built by stack.sh up, but the Samba image is its own build)
-  # and runs a Samba server plus a second canary alongside the base
-  # stack's four containers.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
@@ -732,18 +887,27 @@ e2e:snmp:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
@@ -756,19 +920,28 @@ e2e:dashboard-own-ca:postgres:
   stage: e2e
   image: docker:29-cli
   <<: *higher_bar
-  needs: []
-  # Builds both images and then runs four containers at once; the light
-  # lane's 4 CPU / 6 GB is not enough headroom for that.
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-pg-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
     E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
-    # variables); docker:29-cli ships busybox ash only.
-    - apk add --no-cache bash >/dev/null
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
   script:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
@@ -819,12 +992,11 @@ e2e:dashboard-own-ca:postgres:
 #
 # WHAT THE EVIDENCE DOES AND DOES NOT SAY. It binds a digest to a commit and
 # to the policy version that judged it. The image checks and the live
-# journeys ran on that commit; the `test:image:*` jobs ran on these exact
-# bytes (build:images), while the `e2e:*` journeys still build their own
-# copies of the same source through scripts/e2e/stack.sh. Feeding the
-# journeys the built image too is worth doing and is not done here -- see
-# docs/releasing.md, which states this limit rather than letting the word
-# "validated" imply more than it earns.
+# journeys ran on that commit; the `test:image:*` jobs and, since #98, the
+# `e2e:*` journeys that use scripts/e2e/stack.sh all run on these exact
+# bytes (build:images) -- see docs/releasing.md for the one job that is
+# still its own build and why. That is what makes "validated" mean the
+# bytes that ship, not a second build of the same source.
 # ---------------------------------------------------------------------------
 
 # Every release job needs the same two things: a shell the scripts are
@@ -1040,11 +1212,11 @@ release:promote:
     - |
       set -eu
       commit="$(cat .release-commit)"
-      # --expect-stamp only for birdcage: it is the one image with a
-      # `version` command to ask. Giving mockingbird one, so the same proof
-      # covers both, is #97.
+      # --expect-stamp for both images (#97): each now has a `version`
+      # command to ask, so promotion proves the released bytes carry the
+      # released version for birdcage and mockingbird alike.
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit")"
-      mockingbird_digest="$(scripts/promote-release.sh "$GHCR_MOCKINGBIRD_REPO" "$commit")"
+      mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_MOCKINGBIRD_REPO" "$commit")"
       # `latest` moves on every release, pre-release or not. Whether a
       # beta is the right thing to run is the decision of whoever pulls it,
       # not this pipeline's.
