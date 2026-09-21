@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -156,16 +155,24 @@ func TestNewSNMPRoadDisabled(t *testing.T) {
 
 // TestNewSNMPRoadBindFailureIsHandled proves newSNMPRoad's documented
 // contract that a bind failure is never fatal: it returns a nil
-// detector and an inactive inventory rather than an error, so main
-// keeps running with SNMP detection off. Binding the standard SNMP port
-// (161) needs CAP_NET_BIND_SERVICE or root, neither of which this test
-// process has -- the same assumption the port-scan road's open-failure
-// test makes about CAP_NET_RAW.
+// detector and an inactive inventory rather than an error, so main keeps
+// running with SNMP detection off.
+//
+// The address is unparseable rather than privileged, which matters. This
+// test first tried the real-world failure -- binding the standard SNMP
+// port (161) as a non-root user -- and it passed on a workstation and
+// failed in CI (pipeline 1409), because the runner's containers have
+// net.ipv4.ip_unprivileged_port_start=0, so uid 1001 binds 161 there
+// quite happily. That is the same sysctl the enrolment command passes to
+// the mockingbird container, and on this runner it is already the
+// default.
+//
+// So a test that needs a bind to fail cannot get there by asking for a
+// privileged port: whether that fails is the host's decision, not the
+// code's. An unparseable port always fails, in Detector.Open's
+// ResolveUDPAddr, before any privilege question arises.
 func TestNewSNMPRoadBindFailureIsHandled(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: binding the privileged port would succeed")
-	}
-	t.Setenv(envSNMPListen, "127.0.0.1:161")
+	t.Setenv(envSNMPListen, "127.0.0.1:not-a-port")
 	in, _ := newTestIntake(t, queue.Config{})
 
 	detector, inv := newSNMPRoad(in, discardLogger())
