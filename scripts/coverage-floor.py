@@ -41,8 +41,11 @@ Rules enforced, each one a `problems` entry below:
     package must not slip in unmeasured -- adding its floor is a reviewed
     change to supply-chain/coverage-floors.yml, not something this script
     does silently.
-  - a package sitting more than 2 points ABOVE its floor: a floor that never
-    rises is a target, not a ratchet. This is what makes it one.
+  - a package sitting more than RATCHET_SLACK points ABOVE its floor: a floor
+    that never rises is a target, not a ratchet. This is what makes it one.
+    The constant carries the value and why it is set where it is; this
+    docstring deliberately does not repeat the number, having already been
+    wrong about it once.
 
 Exit codes, same shape as scripts/ci-e2e-guard.py: 0 clean; 1 one of the
 rules above fired; 2 the profile or the floors file could not be read or

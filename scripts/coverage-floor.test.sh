@@ -78,21 +78,33 @@ $(block pkg/unlisted 9 1)" \
 "floors:
 $clean_floor"
 
-expect 1 "a package more than 2 points above its floor is caught" \
+# The stale-ratchet boundary. These two cases sit either side of
+# coverage-floor.py's RATCHET_SLACK, which is 5: 85% against a floor of 80
+# is exactly at it and passes, 86% is one point past it and is caught. The
+# number is written out here on purpose rather than read from the script --
+# a test that follows the constant pins nothing. Moving RATCHET_SLACK means
+# deliberately moving both of these, not discovering they still pass.
+#
+# The pair used to be 100%-against-90 and 82%-against-80, which proved only
+# that something above the floor fires and something a little above it does
+# not: every value from 3 to 5 would have passed both, so the boundary was
+# never actually pinned, and two comments elsewhere in the repository said
+# the slack was 2.
+expect 0 "a package exactly at the ratchet slack (5 points) still passes" \
 "mode: set
 $clean_block
-$(block pkg/high 10 0)" \
-"floors:
-$clean_floor
-  pkg/high: 90"
-
-expect 0 "a package exactly at the 2-point ratchet slack still passes" \
-"mode: set
-$clean_block
-$(block pkg/edge 82 18)" \
+$(block pkg/edge 85 15)" \
 "floors:
 $clean_floor
   pkg/edge: 80"
+
+expect 1 "a package one point past the ratchet slack is caught" \
+"mode: set
+$clean_block
+$(block pkg/high 86 14)" \
+"floors:
+$clean_floor
+  pkg/high: 80"
 
 expect 2 "an unreadable profile fails red, not green" \
 "PATH:$work/does-not-exist.out" \
