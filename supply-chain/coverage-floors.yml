@@ -20,10 +20,12 @@
 #     the change needs more tests, not a smaller floor. (internal/startcheck's
 #     floor moving down below is not that: it is a correction of a floor that
 #     was measured wrong in the first place -- see below.)
-#   - scripts/coverage-floor.py also fails a package sitting more than 2
-#     points ABOVE its floor: that is stale ratchet, not a passing check, and
-#     the fix is to raise the floor in this file to lock the gain in, not to
-#     leave the extra headroom sitting there.
+#   - scripts/coverage-floor.py also fails a package sitting more than 5
+#     points ABOVE its floor -- the script's own RATCHET_SLACK, set loose on
+#     purpose so a single new test on a small package does not turn the build
+#     red for improving coverage. That is stale ratchet, not a passing check,
+#     and the fix is to raise the floor in this file to lock the gain in, not
+#     to leave the extra headroom sitting there.
 #   - the 70-85% band itself is not chased past 85%: a package already inside
 #     it is done, and effort belongs on packages below 70%, not on pushing an
 #     87% package toward 100%.
@@ -103,7 +105,27 @@ floors:
                              # store-failure paths.
                              # Main binary; RouterOS/CrowdSec credential-wiring
                              # path is still largely untested.
-  cmd/mockingbird: 60       # 60.5% measured.
+  cmd/mockingbird: 65       # 66.0% measured (was 60, and the package had
+                             # slipped to 59.9% under it -- pipeline 1405's
+                             # test:go caught that). The SNMP and port-scan
+                             # roads, the Intake status accessors and
+                             # currentSelfReport gained tests rather than the
+                             # floor being lowered. Measured with -race, as
+                             # test:go runs it, and as a non-root uid.
+                             # Set at 65 rather than 66 on purpose. This
+                             # package needs neither Postgres nor root, so a
+                             # workstation ought to agree with CI -- but
+                             # pipeline 1409 read 65.9% where this host read
+                             # 65.7%, because one test asked for a bind to
+                             # fail on a privileged port and the runner's
+                             # containers set ip_unprivileged_port_start=0, so
+                             # it bound instead. That test no longer depends on
+                             # the host (see snmp_test.go), and the figure is
+                             # 66.0% here now. One point of slack still costs
+                             # nothing and absorbs the next such difference
+                             # rather than turning the build red over it.
+                             # Still below the 70% band; the rest is main() and
+                             # the detector branches that need CAP_NET_RAW.
   internal/db: 67           # 67.6% measured against real Postgres (see
                              # header) -- was floored at 44 from a SQLite-only
                              # local run; still below the 70% band, but close.
@@ -136,13 +158,14 @@ floors:
   internal/mailbox: 86
   internal/opencanary: 100
   internal/selftest: 96
-  internal/startcheck: 86   # Deliberately NOT raised in the same commit as
-                             # #93's non-root fix. The refusal tests now run
-                             # in CI, so the real figure is higher -- but
-                             # every number in this file must come from a
-                             # CI run, not a workstation, and that run has
-                             # not happened yet. Raised in its own commit
-                             # once the pipeline reports the measurement.
+  internal/startcheck: 88   # 88.9% measured (was floored at 86). #93's
+                             # non-root fix made the permission-refusal tests
+                             # actually run in CI, and this is the first CI
+                             # figure that includes them: pipeline 1405's
+                             # test:go, the run that proved that change. The
+                             # floor was deliberately left at 86 until that
+                             # measurement existed, because a number in this
+                             # file may not come from a workstation.
   internal/store: 78
   internal/stream: 100
   internal/term: 100

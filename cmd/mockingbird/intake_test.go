@@ -215,6 +215,55 @@ func TestBackpressureEvictsAndRecoversAfterDrain(t *testing.T) {
 	})
 }
 
+// TestIntakeCollisionsSumsBaseAndLiveLedger is runLogRoadOnce's
+// documented contract for collisionsBase, exercised directly rather than
+// through a full restart: Collisions() must add the live ledger's own
+// count to whatever a prior, discarded ledger already contributed, or a
+// backpressure-triggered restart (#48 decision 2) would understate the
+// cumulative total the heartbeat reports.
+func TestIntakeCollisionsSumsBaseAndLiveLedger(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
+
+	if got := in.Collisions(); got != 0 {
+		t.Fatalf("Collisions() = %d on a fresh Intake, want 0", got)
+	}
+
+	// The same id appended twice at two distinct log positions is
+	// exactly the collision case ledger.Append defines.
+	in.Ledger().Append("dup-id", queue.Position{})
+	in.Ledger().Append("dup-id", queue.Position{})
+	if got := in.Collisions(); got != 1 {
+		t.Fatalf("Collisions() = %d after one live collision, want 1", got)
+	}
+
+	// collisionsBase stands in for a prior ledger's own total, folded in
+	// by runLogRoadOnce on every restart -- see its comment on
+	// collisionsBase for why a plain Ledger.Collisions() call alone
+	// would understate this after a restart.
+	in.collisionsBase.Add(3)
+	if got := in.Collisions(); got != 4 {
+		t.Fatalf("Collisions() = %d, want 4 (1 live + 3 from a prior ledger)", got)
+	}
+}
+
+// TestIntakeLogReadOKAndPositionFoundDefaultTrue is #48 gap 2's rule
+// applied before the log road has ever run a Follow session: tailer.New
+// starts both flags true (see internal/agent/tailer's own comments on
+// logReadOK and resumeFound) specifically so a heartbeat sent before the
+// first catch-up scan completes reports "reading fine" rather than a
+// false alarm. Intake.LogReadOK and Intake.PositionFound must pass that
+// default through unchanged.
+func TestIntakeLogReadOKAndPositionFoundDefaultTrue(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
+
+	if !in.LogReadOK() {
+		t.Error("LogReadOK() = false before RunLogRoad ever ran, want true")
+	}
+	if !in.PositionFound() {
+		t.Error("PositionFound() = false before RunLogRoad ever ran, want true")
+	}
+}
+
 // newTokenStoreForTest builds a TokenStore around an in-memory token
 // with no backing file -- fine for every loop here except rotation,
 // which this test file never runs.

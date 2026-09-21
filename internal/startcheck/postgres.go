@@ -38,7 +38,7 @@ var ErrPostgresRequiresVerifyFull = errors.New(
 		"hostname); sslmode=require and verify-ca encrypt without that check, and " +
 		"disable/allow/prefer can fall back to an unencrypted connection. This database " +
 		"holds canary bearer-token hashes, the CA, enrolment sessions and the whole " +
-		"alert history, so nothing weaker is accepted.",
+		"alert history, so nothing weaker is accepted",
 )
 
 // errPostgresURLInvalid is returned instead of wrapping pgconn's own parse
