@@ -56,3 +56,41 @@ That is a rule quietly meaning something different on each engine, not a
 test that needs relaxing. The comparison now happens in Go on parsed
 timestamps, which is exact on both. 8 consecutive `-race` runs of the full
 package clean afterwards.
+
+## e2e jobs: the built image disappears from the runner mid-pipeline -- not a flake; defect, see #112
+
+Symptom, from `scripts/e2e/stack.sh`:
+
+    stack: E2E_BIRDCAGE_IMAGE=birdcage-build:<id> names no local image -- it
+    should have been built by build:images and handed to this job; refusing
+    rather than building a different one
+
+- 2026-09-22 · `5b7fbf5` (a docs-only merge, so nothing in the pipeline's own
+  code could have caused it) · pipeline 1436 on `dev` · `build:images` ran at
+  16:40:47 and succeeded at 16:42:15. `e2e:enrol-and-hit` and
+  `e2e:enrol-and-hit:postgres` then passed, finishing 16:48:32. Every e2e job
+  starting after that -- `e2e:smb` (16:48:34), `e2e:dashboard-own-ca`
+  (16:48:53), `e2e:snmp` (16:49:11) -- failed on the line above. So the image
+  was removed from the shared Docker daemon between 16:48:32 and 16:48:34,
+  while the pipeline that built it was still running. Retrying the three e2e
+  jobs alone cannot work: `build:images` does not re-run, so the image is
+  still absent. Retrying `build:images` first and then the three turned all
+  three green on unchanged code, and pipeline 1436 finished `success`.
+
+- 2026-09-22 · pipeline 1437 on !51 · the same three-line failure, on
+  `e2e:dashboard-own-ca` (16:51:03) and `e2e:snmp` (16:51:09), minutes after
+  1436's own jobs had been put right.
+
+### Diagnosed the same day, and it is not a flake
+
+The second sighting gave it away: the two pipelines had killed each other.
+`build:images` prunes every `birdcage-build:*` and `mockingbird-build:*` tag
+except its own pipeline's, which is correct on a runner that runs one
+pipeline at a time and wrong on this one, where the Docker daemon is shared
+and pipelines overlap. 1437's build pruned 1436's image at 16:48; the hand
+retry of 1436's build pruned 1437's at 16:51. Not random, and not the code
+under test either time.
+
+Filed as #112, which also carries the timing table and the candidate fixes.
+`stack.sh` is not at fault: refusing to substitute an image is exactly what a
+live test should do.
