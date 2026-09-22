@@ -142,8 +142,22 @@ floors:
                               # so anything less than 100 here means a kind or
                               # a profile arrived without a test.
   internal/agent/approval: 87
+  internal/agent/atomicfile: 70  # 70.6% measured, 2026-09-22 (#108, slice 1
+                              # commit 1). Factored out of cmd/mockingbird's
+                              # atomic.go so a second agent kind can import
+                              # it; the uncovered remainder is os-level
+                              # failure branches (temp-dir Chmod/Sync/Rename
+                              # errors) exercised by cmd/mockingbird's own
+                              # token_test.go, not duplicated here.
   internal/agent/client: 87
   internal/agent/enrol: 81
+  internal/agent/enrolment: 88  # 88.4% measured, 2026-09-22 (#108, slice 1
+                              # commit 1). Factored out of cmd/mockingbird's
+                              # enrol.go so a second agent kind can import
+                              # it rather than copy-pasting it; every
+                              # EnsureEnrolled branch, the retry loop's two
+                              # exits, writeState's partial-failure path and
+                              # redactErr are covered.
   internal/agent/event: 85
   internal/agent/ledger: 95
   internal/agent/portscan: 71
