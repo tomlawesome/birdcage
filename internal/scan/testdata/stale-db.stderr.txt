@@ -1,0 +1,1 @@
+2026/09/22 10:00:00 db could not be loaded: the vulnerability database was built 6 days ago (max allowed age is 5 days)

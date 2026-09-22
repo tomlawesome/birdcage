@@ -184,6 +184,11 @@ floors:
   internal/mail: 90
   internal/mailbox: 86
   internal/opencanary: 100
+  internal/scan: 100          # 100.0% measured, 2026-09-22 (#108, slice 1
+                              # commit 2). The Grype subprocess wrapper and
+                              # its failure classification -- every branch
+                              # is driven by a recorded-fixture unit test
+                              # (a real grype binary is never required).
   internal/selftest: 96
   internal/startcheck: 88   # 88.9% measured (was floored at 86). #93's
                              # non-root fix made the permission-refusal tests
