@@ -576,7 +576,16 @@ build:images:
       # all read from $name.
       for name in birdcage mockingbird; do
         local_tag="${name}-build:${CI_PIPELINE_ID}"
-        docker build --build-arg VERSION="$stamp" \
+        # --provenance=false --sbom=false: with the containerd image store
+        # (Docker 29's default on the runner) a build otherwise produces an
+        # OCI index -- the image manifest plus a BuildKit provenance
+        # manifest -- and pushing that index to the GitLab registry fails
+        # with "blob unknown to registry" naming the image manifest
+        # (pipeline #1474, #112). A plain single image manifest pushes and
+        # pulls by digest cleanly, and the attestation this project relies
+        # on is release:attest's own cosign signature, not BuildKit's.
+        docker build --provenance=false --sbom=false \
+          --build-arg VERSION="$stamp" \
           --file "build/${name}/Dockerfile" --tag "$local_tag" .
         # The config ID is the identity later jobs check back against. It is
         # not the registry digest -- that only exists once something is
