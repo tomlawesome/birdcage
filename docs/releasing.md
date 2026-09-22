@@ -1,9 +1,12 @@
 # Releasing birdcage
 
-Issue #90. Two images are published — `ghcr.io/tomlawesome/birdcage`, the
-server, and `ghcr.io/tomlawesome/mockingbird`, the canary. Both are
-published **by digest**: the digest is the identity, and a tag is only a
-readable label pointing at one.
+Issue #90. Two images are published to this project's own GitLab container
+registry — `registry.gitlab.tomlawson.io/ai/birdcage/birdcage`, the server,
+and `registry.gitlab.tomlawson.io/ai/birdcage/mockingbird`, the canary.
+GitHub is a read-only mirror of the repository (AGENTS.md) and nothing is
+published there; the one thing it does for a release is the second
+signature below. Both images are published **by digest**: the digest is the
+identity, and a tag is only a readable label pointing at one.
 
 The shape in one sentence: build the images once, judge those exact bytes,
 sign the digest on a runner that holds the key and does nothing else,
@@ -19,14 +22,23 @@ the split is ever quietly undone:
 
 | job | what it does | what it holds |
 | --- | --- | --- |
-| `release:push` | pushes the anchor tag `sha-<commit>`, then pulls the digest back and refuses unless it is the image that was tested | a registry credential |
+| `release:push` | pushes the anchor tag `sha-<commit>`, then pulls the digest back and refuses unless it is the image that was tested | the CI job token |
 | `release:attest` | mints the validation evidence over that digest | the signing key, and nothing else |
-| `release:preview` | verifies the evidence, then gives the digest the `preview` name | a registry credential |
-| `release:promote` | the manual button; verifies again, then moves the tested digest to `v<version>` | a registry credential |
+| `release:preview` | verifies the evidence, then gives the digest the `preview` name | the CI job token |
+| `release:promote` | the manual button; verifies again, then moves the tested digest to `v<version>` | the CI job token |
 
 An attacker who takes the signing runner gets a key but no push path. One
 who takes the publishing credential gets a push path but cannot mint
 evidence the verifier accepts. Neither alone is a release.
+
+The job token is scoped to this project by GitLab itself, needs no CI/CD
+variable and no owner setup — unlike the credential the countersigning
+workflow needs on the other host (setup step 1 below).
+
+The registry's own cleanup policy (#112) removes only tags matching
+`ci-.*` — the `build:images` transport tags — on a daily sweep. The
+`sha-<commit>` anchor, `preview`, `latest` and every version tag this stage
+creates are never candidates; a release tag is never swept.
 
 ## The version
 
@@ -84,8 +96,8 @@ when the moving is gated.
 
 Separately, and regardless of `latest`: the `docker run` line that
 `birdcage canary enrol` prints should pin the server's own stamped version
-when that is wired to GHCR (#69). A canary has to match the server that
-issued it, so it names a version rather than a moving tag.
+when that is wired to the release registry (#69). A canary has to match the
+server that issued it, so it names a version rather than a moving tag.
 
 ## Cutting a release
 
@@ -122,8 +134,11 @@ build — that is the rule working, not a nuisance to route around.
 
 ## Verifying a published image
 
-The public half of the signing key is committed as `cosign.pub`. Anyone can
-check a release:
+The registry is private, so a consumer needs a GitLab credential with read
+access to `ai/birdcage` before any of this resolves — `docker login
+registry.gitlab.tomlawson.io` first, the same way `release:push` does in CI.
+The public half of the signing key is committed as `cosign.pub`; anyone with
+registry read access can then check a release:
 
 ```sh
 scripts/ensure-cosign.sh ~/.local/bin
@@ -131,7 +146,7 @@ cosign verify-attestation \
   --key cosign.pub \
   --type https://tomlawson.io/attestations/birdcage-validation/v1 \
   --insecure-ignore-tlog=true \
-  ghcr.io/tomlawesome/birdcage@sha256:<digest>
+  registry.gitlab.tomlawson.io/ai/birdcage/birdcage@sha256:<digest>
 ```
 
 And the keyless countersignature, which is in the public transparency log:
@@ -140,7 +155,7 @@ And the keyless countersignature, which is in the public transparency log:
 cosign verify \
   --certificate-identity-regexp '^https://github.com/tomlawesome/birdcage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/tomlawesome/birdcage@sha256:<digest>
+  registry.gitlab.tomlawson.io/ai/birdcage/birdcage@sha256:<digest>
 ```
 
 A consumer should require **both**. One signature is a runner host; two are
@@ -169,15 +184,30 @@ Nothing below can be done by an assistant: GitLab CI/CD variables are
 refused by the safety hook, and the `gh` credential here gets 403 on GitHub
 repository secrets.
 
-### 1. The two CI/CD variables
+### 1. Two GitHub repository secrets, for the countersigning workflow
 
-Settings > CI/CD > Variables, both **protected** (so they are reachable
-only from protected branches and tags — `preview`, `main`, `v*`):
+Nothing on the GitLab side needs an owner-set variable any more:
+`release:push`, `release:preview` and `release:promote` authenticate with
+the CI job token GitLab already gives every job
+(`CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD`), scoped to this project alone.
 
-| variable | masked? | value |
-| --- | --- | --- |
-| `GHCR_TOKEN` | masked | a GitHub fine-grained PAT, **`write:packages` only**, scoped to `tomlawesome/birdcage` alone. No `repo`, no `delete:packages`. |
-| `GHCR_USER` | not masked | the literal login `tomlawesome`. Masking it only makes the logs unreadable; it is not a secret. |
+The countersigning workflow is the exception. It runs on GitHub, but the
+digest it reads and signs lives on `registry.gitlab.tomlawson.io` — a
+different host, with no built-in credential reaching it. Settings > Secrets
+and variables > Actions, on the GitHub mirror:
+
+| secret | value |
+| --- | --- |
+| `GITLAB_REGISTRY_USER` | the username that goes with the token below (a deploy token's own chosen username, or the account name if you use a personal access token instead) |
+| `GITLAB_REGISTRY_TOKEN` | a GitLab credential scoped to `ai/birdcage` alone, with **read_registry** (to fetch the key-based evidence cosign already wrote) and **write_registry** (cosign stores the keyless signature beside the image). A project deploy token is the narrowest instrument GitLab offers for this — no broader project or account access. |
+
+**Not verified this session, and worth proving before relying on it: whether
+`registry.gitlab.tomlawson.io` is reachable at all from GitHub's hosted
+runners.** It answers API calls from this environment, which says nothing
+about reachability from GitHub's network. If it is not reachable, the
+countersigning workflow cannot run on `ubuntu-latest`, and per AGENTS.md a
+self-hosted GitHub Actions runner is never the fix for that — it would need
+its own decision, not a secret.
 
 ### 2. The cosign key, on the runner host and never in GitLab
 
@@ -247,28 +277,15 @@ exist on a rootless host.
 The fence is this runner, not `.gitlab-ci.yml`: a job without the tag never
 sees the key, and a job with the tag on an unprotected ref never runs.
 
-### 4. Link the GHCR packages to the repository
-
-**Verify this rather than assuming it.** The images are pushed from GitLab
-with `GHCR_TOKEN`, not by Actions. A package pushed that way is not
-necessarily linked to the repository, and if it is not, the countersigning
-workflow's built-in `GITHUB_TOKEN` has no write access to it — and cosign
-needs that write to store the signature beside the image.
-
-Prove it on a throwaway tag before the first real release: push something
-to `ghcr.io/tomlawesome/birdcage:scratch`, check the package page lists
-this repository, and run the countersigning workflow against that digest.
-Then delete the tag.
-
 ## What has not been run yet
 
 The whole path above has never executed. The scripts have unit tests — 100
 or so across `scripts/*.test.sh`, every refusal ground covered — but every
 one of them stubs the registry, so no call has ever been made to a real
-GHCR. In particular, the functions that resolve a tag to a digest have
+registry. In particular, the functions that resolve a tag to a digest have
 never seen a registry's actual output.
 
-Two things in particular to watch on the first cut:
+Three things in particular to watch on the first cut:
 
 - Whether `release-cli`, acting with `CI_JOB_TOKEN`, can create a
   protected `v*` tag on this CE instance. If it cannot, the fallback is
@@ -278,6 +295,10 @@ Two things in particular to watch on the first cut:
   button. It should end up skipped once the pipeline finishes, since the
   job it needs was never played. If it instead sits pending and holds the
   pipeline open, give it its own `when: manual` and press both.
+- Whether the countersigning workflow can reach `registry.gitlab.tomlawson.io`
+  from GitHub's hosted runners at all, and whether `GITLAB_REGISTRY_TOKEN`'s
+  scope is actually enough for both the read and the write cosign needs.
+  Neither has been exercised; setup step 1 above is untested until it runs.
 
 Per AGENTS.md, a release path that has never run is not a release path. The
 first `preview` merge after the setup above is the run that proves it, and

@@ -19,7 +19,7 @@
 #   scripts/publish-channel.sh <image-repository> <digest> <channel-tag>
 #
 #   <image-repository>  No tag and no digest, e.g.
-#                        ghcr.io/tomlawesome/birdcage. A repository carrying
+#                        registry.gitlab.tomlawson.io/ai/birdcage/birdcage. A repository carrying
 #                        ':' or '@' is a usage error -- this is a stricter
 #                        rule than the verifier's own BIRDCAGE_IMAGE check
 #                        (which tolerates a registry port), because this

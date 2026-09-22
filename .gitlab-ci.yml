@@ -33,8 +33,8 @@ variables:
   # is judging, and a pipeline-wide value of that name would be inherited by
   # every verifier call -- including the one checking the *other* image,
   # which would then verify the wrong repository and still pass.
-  GHCR_BIRDCAGE_REPO: ghcr.io/tomlawesome/birdcage
-  GHCR_MOCKINGBIRD_REPO: ghcr.io/tomlawesome/mockingbird
+  BIRDCAGE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/birdcage
+  MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
 
 .gate: &gate
   rules:
@@ -1124,13 +1124,15 @@ e2e:dashboard-own-ca:postgres:
 # ---------------------------------------------------------------------------
 
 # Every release job needs the same two things: a shell the scripts are
-# written for, and the registry credential. Nothing here is a key.
-.ghcr_login: &ghcr_login
+# written for, and the registry credential. Nothing here is a key. The
+# credential is the job token GitLab already gives every job -- no CI/CD
+# variable to set, no owner setup, and it is scoped to this project only.
+.registry_login: &registry_login
   before_script:
     - apk add --no-cache bash curl >/dev/null
-    - test -n "$GHCR_TOKEN" || { echo "GHCR_TOKEN is not set -- is this ref protected?"; exit 1; }
-    - test -n "$GHCR_USER" || { echo "GHCR_USER is not set -- is this ref protected?"; exit 1; }
-    - echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+    - test -n "$CI_REGISTRY_PASSWORD" || { echo "CI_REGISTRY_PASSWORD is not set -- the job token should always carry this"; exit 1; }
+    - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
 
 release:push:
   stage: release
@@ -1148,7 +1150,7 @@ release:push:
   # the real one.
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
-  <<: *ghcr_login
+  <<: *registry_login
   script:
     - |
       set -eu
@@ -1159,8 +1161,8 @@ release:push:
       # candidacy for a release that has closed, and catching that days
       # later at the cut means days of preview builds nobody can release.
       released="$(scripts/release-version.sh --tag)"
-      if docker buildx imagetools inspect "${GHCR_BIRDCAGE_REPO}:${released}" >/dev/null 2>&1; then
-        echo "${GHCR_BIRDCAGE_REPO}:${released} already exists -- $released has been released."
+      if docker buildx imagetools inspect "${BIRDCAGE_RELEASE_REPO}:${released}" >/dev/null 2>&1; then
+        echo "${BIRDCAGE_RELEASE_REPO}:${released} already exists -- $released has been released."
         echo "Bump VERSION before merging anything else to preview."
         exit 1
       fi
@@ -1171,23 +1173,23 @@ release:push:
       # been judged. The anchor exists at all because an untagged manifest
       # is rubbish to a registry's garbage collector -- it can be deleted
       # inside its own evidence window by routine maintenance.
-      docker tag "$BIRDCAGE_BUILD_IMAGE" "${GHCR_BIRDCAGE_REPO}:${anchor}"
-      docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${GHCR_MOCKINGBIRD_REPO}:${anchor}"
+      docker tag "$BIRDCAGE_BUILD_IMAGE" "${BIRDCAGE_RELEASE_REPO}:${anchor}"
+      docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${MOCKINGBIRD_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
       # which is also what would happen if a second runner host ever meant
       # "the same pipeline" no longer implied "the same daemon".
-      birdcage_digest="$(scripts/publish-image.sh "${GHCR_BIRDCAGE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
-      mockingbird_digest="$(scripts/publish-image.sh "${GHCR_MOCKINGBIRD_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
+      birdcage_digest="$(scripts/publish-image.sh "${BIRDCAGE_RELEASE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
+      mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
       # docker:29-cli has no python and no jq, and a digest read wrongly is
-      # a digest published wrongly. GHCR_-prefixed on purpose -- a variable
+      # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
       # called BIRDCAGE_DIGEST would be inherited by every later job and
       # silently answer for scripts/verify-validation-evidence.sh, which
       # reads exactly that name.
       {
-        echo "GHCR_BIRDCAGE_DIGEST=$birdcage_digest"
-        echo "GHCR_MOCKINGBIRD_DIGEST=$mockingbird_digest"
+        echo "RELEASE_BIRDCAGE_DIGEST=$birdcage_digest"
+        echo "RELEASE_MOCKINGBIRD_DIGEST=$mockingbird_digest"
       } > digests.env
       cat digests.env
       # The durable record of what this pipeline published, kept for 90
@@ -1200,8 +1202,8 @@ release:push:
         "  \"pipelineId\": \"${CI_PIPELINE_ID}\"," \
         "  \"stamp\": \"${BIRDCAGE_STAMP}\"," \
         '  "images": {' \
-        "    \"birdcage\": { \"repository\": \"${GHCR_BIRDCAGE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
-        "    \"mockingbird\": { \"repository\": \"${GHCR_MOCKINGBIRD_REPO}\", \"digest\": \"${mockingbird_digest}\" }" \
+        "    \"birdcage\": { \"repository\": \"${BIRDCAGE_RELEASE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
+        "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }" \
         '  }' \
         '}' > .birdcage-release/tested-images.json
       cat .birdcage-release/tested-images.json
@@ -1230,11 +1232,11 @@ release:attest:
   needs:
     - job: release:push
       artifacts: true
-  <<: *ghcr_login
+  <<: *registry_login
   script:
     - |
       set -eu
-      for pair in "${GHCR_BIRDCAGE_REPO}|${GHCR_BIRDCAGE_DIGEST}" "${GHCR_MOCKINGBIRD_REPO}|${GHCR_MOCKINGBIRD_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         echo "attesting $repo@$digest"
@@ -1254,11 +1256,11 @@ release:preview:
     - job: release:attest
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
-  <<: *ghcr_login
+  <<: *registry_login
   script:
     - |
       set -eu
-      for pair in "${GHCR_BIRDCAGE_REPO}|${GHCR_BIRDCAGE_DIGEST}" "${GHCR_MOCKINGBIRD_REPO}|${GHCR_MOCKINGBIRD_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
@@ -1312,7 +1314,7 @@ release:promote:
     DOCKER_HOST: unix:///var/run/docker.sock
     # The second parent has to be reachable for the fallback above.
     GIT_DEPTH: 0
-  <<: *ghcr_login
+  <<: *registry_login
   script:
     - apk add --no-cache git >/dev/null
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
@@ -1322,7 +1324,7 @@ release:promote:
       second="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
       for candidate in "$head" $second; do
         if docker buildx imagetools inspect \
-             "${GHCR_BIRDCAGE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
+             "${BIRDCAGE_RELEASE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
           echo "$candidate" > .release-commit
           break
         fi
@@ -1339,8 +1341,8 @@ release:promote:
       # --expect-stamp for both images (#97): each now has a `version`
       # command to ask, so promotion proves the released bytes carry the
       # released version for birdcage and mockingbird alike.
-      birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_BIRDCAGE_REPO" "$commit")"
-      mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$GHCR_MOCKINGBIRD_REPO" "$commit")"
+      birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
+      mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       # `latest` moves on every release, pre-release or not. Whether a
       # beta is the right thing to run is the decision of whoever pulls it,
       # not this pipeline's.
@@ -1351,7 +1353,7 @@ release:promote:
       # -- which re-verifies the validation evidence before it moves any
       # name at all. Nobody moves it by hand. A tag that moves is not a
       # weaker promise when the moving is gated.
-      for pair in "${GHCR_BIRDCAGE_REPO}|${birdcage_digest}" "${GHCR_MOCKINGBIRD_REPO}|${mockingbird_digest}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}"; do
         BIRDCAGE_COMMIT="$commit" \
           scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
       done
@@ -1401,8 +1403,8 @@ release:gitlab:
     description: |
       Images published by digest, promoted from the build `preview` tested:
 
-      - `$GHCR_BIRDCAGE_REPO:$RELEASE_TAG`
-      - `$GHCR_MOCKINGBIRD_REPO:$RELEASE_TAG`
+      - `$BIRDCAGE_RELEASE_REPO:$RELEASE_TAG`
+      - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
 
       Verify before you run either of them -- docs/releasing.md has the
       commands. Both carry a key-based validation attestation; the keyless

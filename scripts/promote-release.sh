@@ -28,7 +28,7 @@
 #
 # Usage:
 #   scripts/promote-release.sh [--expect-stamp] <image-repository> <commit>
-#     <image-repository>  no tag, no digest, e.g. ghcr.io/tomlawesome/birdcage
+#     <image-repository>  no tag, no digest, e.g. registry.gitlab.tomlawson.io/ai/birdcage/birdcage
 #     <commit>             the 40-hex commit whose build is being released
 #     --expect-stamp       also require the image's own `version` output to
 #                           equal the stamp scripts/release-version.sh would
