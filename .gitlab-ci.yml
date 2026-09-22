@@ -35,6 +35,13 @@ variables:
   # which would then verify the wrong repository and still pass.
   BIRDCAGE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/birdcage
   MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
+  # Where the same digests are mirrored, read-only, for the public (#90,
+  # note 22233): GitLab is where a release is published and promoted --
+  # the evidence is bound to the digest here -- and GHCR is only ever a
+  # copy of a digest that already cleared that bar, never a second place
+  # to publish from.
+  BIRDCAGE_MIRROR_REPO: ghcr.io/tomlawesome/birdcage
+  MOCKINGBIRD_MIRROR_REPO: ghcr.io/tomlawesome/mockingbird
 
 .gate: &gate
   rules:
@@ -1134,6 +1141,23 @@ e2e:dashboard-own-ca:postgres:
     - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
     - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
 
+# The mirror jobs' credential: read access to the GitLab registry (the job
+# token, same as every other release job) plus write access to GHCR, scoped
+# to the push alone (note 22233). Nobody else in the release stage needs
+# GHCR_TOKEN -- every judging and GitLab-shipping job stays on
+# *registry_login only, so a compromise of this credential can, at worst,
+# push a copy of an already-published digest under its own already-public
+# tag; it cannot mint evidence or move a GitLab tag.
+.mirror_login: &mirror_login
+  before_script:
+    - apk add --no-cache bash >/dev/null
+    - test -n "$CI_REGISTRY_PASSWORD" || { echo "CI_REGISTRY_PASSWORD is not set -- the job token should always carry this"; exit 1; }
+    - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+    - test -n "$GHCR_TOKEN" || { echo "GHCR_TOKEN is not set -- is this ref protected?"; exit 1; }
+    - test -n "$GHCR_USER" || { echo "GHCR_USER is not set -- is this ref protected?"; exit 1; }
+    - echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+
 release:push:
   stage: release
   image: docker:29-cli
@@ -1267,6 +1291,51 @@ release:preview:
           scripts/publish-channel.sh "$repo" "$digest" preview
       done
 
+# Copies the `preview` tag release:preview just created to GHCR, the public
+# download point (note 22233). This job never judges anything: the digest
+# was already named by release:preview, which already verified the
+# evidence, so scripts/mirror-image.sh only resolves what that tag now
+# points at and copies it -- it does not call
+# scripts/verify-validation-evidence.sh, and must not, or this would become
+# a second job judging the same evidence rather than a copy of a decision
+# already made. That is also why the release guard's "no job both judges
+# and ships" rule does not apply here: there is no judging in this job to
+# collide with the shipping.
+#
+# The cosign attestation release:attest minted is not part of the image
+# manifest -- cosign stores it as its own object, tagged
+# `sha256-<digest-hex>.att` beside the image, so it has to be copied
+# separately or the countersigning workflow finds an image on GHCR with no
+# evidence next to it. Same script, because from mirror-image.sh's own
+# point of view that object is just another tag to copy and verify.
+#
+# Deliberately not allow_failure and not manual: a failed mirror should
+# turn the pipeline red so it gets noticed and retried, exactly like any
+# other job here, but it cannot undo or block the GitLab publish that
+# already happened -- release:push, release:attest and release:preview keep
+# whatever result they already reached regardless of what this job does
+# afterwards.
+release:mirror-preview:
+  stage: release
+  image: docker:29-cli
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:preview
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *mirror_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}"; do
+        repo="${pair%|*}"
+        mirror_repo="${pair#*|}"
+        digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}.att" "$mirror_repo"
+      done
+
 # Promotion. One manual job on `main` -- the single button that cuts a
 # release (#99). Nothing here decides that a release should happen: the
 # press is the owner's instruction, and everything the button then does is
@@ -1368,6 +1437,34 @@ release:promote:
     reports:
       dotenv: promotion.env
     expire_in: 90 days
+
+# Copies the version tag release:promote just created to GHCR, the same way
+# release:mirror-preview copies `preview` -- see that job's comment for why
+# this does not collide with the release guard's judge/ship rule. Needs
+# release:promote's dotenv for RELEASE_TAG, so this cannot become playable
+# until the button above has actually been pressed and has actually
+# succeeded; GitLab holds it exactly like release:gitlab below.
+release:mirror-release:
+  stage: release
+  image: docker:29-cli
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: release:promote
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *mirror_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}"; do
+        repo="${pair%|*}"
+        mirror_repo="${pair#*|}"
+        digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}.att" "$mirror_repo"
+      done
 
 # The annotated tag and the release note, created together once the digest
 # has actually moved. The order matters: promote first, name second. If

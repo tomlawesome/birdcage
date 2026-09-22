@@ -25,15 +25,16 @@
 # scripts/verify-validation-evidence.sh, which this workflow calls rather
 # than reimplementing.
 #
-# WHERE THE DIGEST LIVES (#90, 2026-09-22). Both images are published and
-# promoted on the GitLab container registry only -- there is no GHCR mirror.
-# So this workflow reads and writes registry.gitlab.tomlawson.io, not
-# ghcr.io, and needs a credential to do either: GITLAB_REGISTRY_USER and
-# GITLAB_REGISTRY_TOKEN, two repository secrets on this GitHub mirror that
-# do not exist yet. Unlike the old ghcr.io step, GITHUB_TOKEN cannot stand
-# in for this -- it has no reach into a different host's registry. See
-# docs/releasing.md for what to create and its scope; this is unresolved
-# until the owner sets it.
+# WHERE THE DIGEST LIVES (#90, note 22233, 2026-09-22). GitLab's own
+# registry is where release:push publishes and release:promote promotes --
+# the evidence is bound to that digest -- and GHCR is a read-only mirror of
+# it, pushed by release:mirror-preview/release:mirror-release after
+# publication and verified byte-for-byte before this workflow ever runs.
+# This workflow therefore reads and writes ghcr.io, the same as before
+# GHCR was briefly dropped: GITHUB_TOKEN already carries what it needs
+# under `packages: write` below, and no credential reaching into the
+# GitLab registry is required from this host at all -- the mirror job on
+# the GitLab side is what removed that problem, rather than a secret here.
 
 name: Countersign a released digest
 
@@ -72,10 +73,12 @@ jobs:
       # The keyless half: this is what lets cosign get an OIDC token Fulcio
       # will issue a short-lived certificate against.
       id-token: write
-      # No `packages: write` here: cosign stores the signature beside the
-      # image on registry.gitlab.tomlawson.io, not in a GitHub package, so
-      # GITHUB_TOKEN has no part in reaching it. The write credential is
-      # GITLAB_REGISTRY_TOKEN below.
+      # cosign stores the signature as an artifact beside the image, so it
+      # needs write access to the package itself. The image is mirrored
+      # from GitLab with GHCR_TOKEN, not by Actions, so the package must be
+      # linked to this repository for this permission to reach it -- see
+      # docs/releasing.md.
+      packages: write
     steps:
       - name: Check out the repository
         uses: actions/checkout@v5
@@ -100,30 +103,18 @@ jobs:
           printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
             || { echo "commit is not 40 lowercase hex characters: $COMMIT"; exit 1; }
 
-      - name: Log in to the GitLab registry
-        # Reads the key-based evidence and writes the keyless signature
-        # beside it, both on registry.gitlab.tomlawson.io -- a different
-        # host than this workflow runs on, so no built-in GitHub token
-        # reaches it. GITLAB_REGISTRY_USER/GITLAB_REGISTRY_TOKEN are new
-        # repository secrets the owner has to create; see docs/releasing.md
-        # for the exact scope. This step fails loudly if they are unset
-        # rather than silently trying an anonymous pull against a private
-        # registry.
+      - name: Log in to the registry
+        # The built-in token, not a new secret: the only write this workflow
+        # needs is to our own package, and GITHUB_TOKEN already carries it
+        # under `packages: write` above.
         run: |
           set -euo pipefail
-          test -n "${{ secrets.GITLAB_REGISTRY_TOKEN }}" || {
-            echo "GITLAB_REGISTRY_TOKEN is not set -- see docs/releasing.md for what to create"
-            exit 1
-          }
-          test -n "${{ secrets.GITLAB_REGISTRY_USER }}" || {
-            echo "GITLAB_REGISTRY_USER is not set -- see docs/releasing.md for what to create"
-            exit 1
-          }
-          echo "${{ secrets.GITLAB_REGISTRY_TOKEN }}" | docker login registry.gitlab.tomlawson.io \
-            --username "${{ secrets.GITLAB_REGISTRY_USER }}" --password-stdin
+          echo "${{ github.token }}" | docker login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
 
       - name: Verify the evidence, then countersign, one image at a time
         env:
+          OWNER: ${{ github.repository_owner }}
           BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
           MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
           COMMIT: ${{ inputs.commit }}
@@ -140,7 +131,7 @@ jobs:
           for pair in "birdcage|$BIRDCAGE_DIGEST_IN" "mockingbird|$MOCKINGBIRD_DIGEST_IN"; do
             name="${pair%|*}"
             digest="${pair#*|}"
-            image="registry.gitlab.tomlawson.io/ai/birdcage/${name}"
+            image="ghcr.io/${OWNER}/${name}"
             echo "::group::$name"
             # Refuses with a distinct exit code per ground -- 10 mismatch,
             # 11 missing, 12 ambiguous, 13 expired -- and `set -e` stops
@@ -157,14 +148,15 @@ jobs:
 
       - name: Say what was signed
         env:
+          OWNER: ${{ github.repository_owner }}
           BIRDCAGE_DIGEST_IN: ${{ inputs.birdcage_digest }}
           MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
         run: |
           {
             echo "### Countersigned"
             echo
-            echo "- \`registry.gitlab.tomlawson.io/ai/birdcage/birdcage@${BIRDCAGE_DIGEST_IN}\`"
-            echo "- \`registry.gitlab.tomlawson.io/ai/birdcage/mockingbird@${MOCKINGBIRD_DIGEST_IN}\`"
+            echo "- \`ghcr.io/${OWNER}/birdcage@${BIRDCAGE_DIGEST_IN}\`"
+            echo "- \`ghcr.io/${OWNER}/mockingbird@${MOCKINGBIRD_DIGEST_IN}\`"
             echo
             echo "The key-based validation evidence verified first, then each"
             echo "digest was signed keyless. Both signatures are in the public"
