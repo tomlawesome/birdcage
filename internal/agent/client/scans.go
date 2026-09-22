@@ -105,15 +105,7 @@ type wireScan struct {
 func (c *Client) SendScan(ctx context.Context, token string, snapshot Snapshot) error {
 	findings := make([]wireScanFinding, len(snapshot.Findings))
 	for i, f := range snapshot.Findings {
-		findings[i] = wireScanFinding{
-			Target:        f.Target,
-			Package:       f.Package,
-			Version:       f.Version,
-			Type:          f.Type,
-			Vulnerability: f.Vulnerability,
-			Severity:      f.Severity,
-			FixVersion:    f.FixVersion,
-		}
+		findings[i] = wireScanFinding(f)
 	}
 	maskedPaths := snapshot.MaskedPaths
 	if maskedPaths == nil {
