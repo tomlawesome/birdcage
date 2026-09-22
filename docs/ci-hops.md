@@ -92,7 +92,7 @@ of it by this issue.
 | `lint:scripts` | Every `scripts/*.test.sh`. Ten of them ran nowhere until #100; they test the release path, which has the least other coverage. |
 | `test:frontend` | Unit tests and the two pixel gates. Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
-| `test:smoke` | The real binary driven by a browser, in Firefox (#83) -- the owner's browser, so it is the bar every change has to clear. |
+| `test:smoke` | The real binary driven by a browser, in Firefox (#83) -- the owner's browser, so it is the bar every change has to clear. #81 widened its journeys past the hero sentence and four tiles: every section rendering with no console error, the range picker actually re-querying, a live event over the real ingest path reaching the page by SSE, the status strip including the mail item, and a killed birdcage read as a message rather than a blank page. |
 | `test:image:birdcage` | Proves the shipped image starts and answers. |
 | `test:image:mockingbird` | Proves nothing in the agent image runs as root. |
 | `e2e:enrol-and-hit` | Enrolment and the ingest path change often and are the product's spine. |
@@ -116,6 +116,7 @@ only for `enrol-and-hit`.
 | `e2e:dashboard-own-ca:postgres` | As above. |
 | `test:smoke:safari` | Browser coverage widens here (#83): Safari (WebKit in Playwright) is worth a release pipeline and not worth every branch. `test:smoke` itself stays at hop 1 too -- this adds to it, nothing moved off Firefox. |
 | `test:smoke:edge` | As above, Edge (Chromium with the `msedge` channel). |
+| `test:smoke:postgres` | #81: the same seeded story, the same journeys, against Postgres instead of a fresh SQLite file -- the same "storage engine, not detection" reasoning as the `e2e:*:postgres` rows above. Firefox stays the bar; this widens the database, not the browser. |
 
 Pixel-comparison decision (#83, owner, 2026-09-19): `compare:band` and
 `compare:below-band` (in `test:frontend`, hop 1) stay on Chromium at

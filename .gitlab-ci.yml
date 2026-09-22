@@ -473,6 +473,74 @@ test:smoke:edge:
     - npx playwright install --with-deps msedge
     - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
 
+# The same journeys again (#81), against Postgres instead of a fresh
+# SQLite file, at the same hop docs/ci-hops.md already puts every other
+# journey's Postgres variant (e2e:smb:postgres and its neighbours,
+# "Hop 2"): storage-engine differences show up in how the seeded story
+# is written and read back, not in what a browser does, so this is worth
+# a release pipeline and not worth every branch -- Firefox alone stays
+# the bar every change has to clear. DATABASE_URL is frontend/e2e/smoke.mjs's
+# own switch (unset there is SQLite, exactly as #39 left it); it must
+# already carry sslmode=verify-full, since internal/startcheck.PostgresRequiresVerifyFull
+# refuses anything weaker before birdcage's first listener binds. The
+# Postgres-with-TLS service block below is test:go's own, verbatim --
+# same throwaway certificate, same reason (services: cannot build an
+# image, so the stock entrypoint is overridden to mint one before
+# handing back to it).
+test:smoke:postgres:
+  stage: test
+  image: node:22-trixie
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          apk add --no-cache openssl >/dev/null
+          mkdir -p /certs
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+            -addext "subjectAltName=DNS:postgres" \
+            -keyout /certs/server.key -out /certs/server.crt
+          chown postgres:postgres /certs/server.crt /certs/server.key
+          chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+          exec docker-entrypoint.sh postgres -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+  variables:
+    POSTGRES_PASSWORD: birdcage-ci
+    BIRDCAGE_BROWSER: firefox
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    # The runner only waits for the port, and Postgres listens briefly
+    # during its own init before restarting; ask the server itself --
+    # same wait as test:go's own.
+    - apt-get -qq update && apt-get -qq install -y postgresql-client openssl >/dev/null
+    - |
+      ready=0
+      for attempt in $(seq 1 40); do
+        pg_isready -h postgres -U postgres >/dev/null 2>&1 && { ready=1; break; }
+        sleep 1
+      done
+      [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    # sslrootcert names this exact path -- captured now, from the running
+    # server, rather than shared from the service container, which no
+    # volume or filesystem connects this job container to.
+    - |
+      openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+        | openssl x509 -outform pem > /tmp/postgres-ca.pem
+      [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
+    - export DATABASE_URL="postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem"
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps firefox
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
 # The two shipped images (#69), built and run as validation only -- nothing
 # here pushes to a registry; publishing is a separate job with its own
 # credentials (git-and-delivery skill, "Validation and publication are
