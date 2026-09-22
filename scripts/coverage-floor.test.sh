@@ -9,7 +9,7 @@ repo_root="$(cd "$here/.." && pwd)"
 module="$(awk '/^module /{print $2; exit}' "$repo_root/go.mod")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-pass=0; fail=0
+pass=0; fail=0; skip=0
 
 # expect <want-exit> <name> <profile-content-or-PATH:x> <floors-content-or-PATH:x>
 # The checker resolves the module path from go.mod above the current
@@ -126,18 +126,42 @@ $clean_floor
 
 # The real thing must pass: a fresh coverage run against this checkout,
 # checked against the real, committed floors file.
-echo "generating a real coverage profile (go test ./..., can take a minute)..."
-real_profile="$work/real-cover.out"
-if ! (cd "$repo_root" && go test ./... -coverprofile="$real_profile" >/dev/null 2>&1); then
-  echo "FAIL go test ./... did not run cleanly; cannot check the real profile"
-  fail=$((fail + 1))
-elif (cd "$repo_root" && python3 "$checker" "$real_profile" "supply-chain/coverage-floors.yml"); then
-  echo "ok   this repository's own coverage profile passes its own floors"
-  pass=$((pass + 1))
+#
+# It only means anything where a Postgres is reachable. Without
+# BIRDCAGE_TEST_DATABASE_URL, internal/db's Postgres tests skip themselves,
+# the package reads about 44% against a floor of 67, and this check goes red
+# on every clean workstation -- for the exact reason coverage-floors.yml's
+# own header warns about, and with nothing wrong in the repository. A suite
+# that cannot tell a broken repository from an unconfigured machine trains
+# its reader to skim past the red, which is how a real one gets missed
+# (issue 100).
+#
+# So: state the precondition, skip loudly when it is absent, and let CI's
+# test:go job -- which does have a Postgres, and does set the variable --
+# be where this runs for real.
+if [ -z "${BIRDCAGE_TEST_DATABASE_URL:-}" ]; then
+  echo "skip this repository's own coverage profile against its own floors:"
+  echo "       BIRDCAGE_TEST_DATABASE_URL is not set, so internal/db's Postgres"
+  echo "       tests would skip and the profile would read far under its floor"
+  echo "       for that reason alone. CI's test:go job runs this for real."
+  skip=$((skip + 1))
+elif ! command -v go >/dev/null 2>&1; then
+  echo "skip this repository's own coverage profile against its own floors: no go toolchain"
+  skip=$((skip + 1))
 else
-  echo "FAIL this repository's own coverage profile does not pass its own floors"
-  fail=$((fail + 1))
+  echo "generating a real coverage profile (go test ./..., can take a minute)..."
+  real_profile="$work/real-cover.out"
+  if ! (cd "$repo_root" && go test ./... -coverprofile="$real_profile" >/dev/null 2>&1); then
+    echo "FAIL go test ./... did not run cleanly; cannot check the real profile"
+    fail=$((fail + 1))
+  elif (cd "$repo_root" && python3 "$checker" "$real_profile" "supply-chain/coverage-floors.yml"); then
+    echo "ok   this repository's own coverage profile passes its own floors"
+    pass=$((pass + 1))
+  else
+    echo "FAIL this repository's own coverage profile does not pass its own floors"
+    fail=$((fail + 1))
+  fi
 fi
 
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, $skip skipped"
 [ "$fail" = 0 ]
