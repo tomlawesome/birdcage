@@ -62,6 +62,9 @@ func TestHandleCanariesFields(t *testing.T) {
 	if c.ID != "canary-lan" || c.Status != "ok" || c.Ports != "ssh 22 · http 80 · smb 445" {
 		t.Errorf("canary = %+v, want id/status/ports canary-lan/ok/\"ssh 22 · http 80 · smb 445\"", c)
 	}
+	if c.Kind != agentkind.Honeypot {
+		t.Errorf("Kind = %q, want %q (issue #105: /api/canaries carries kind)", c.Kind, agentkind.Honeypot)
+	}
 	if c.Hits != 1 {
 		t.Errorf("Hits = %d, want 1", c.Hits)
 	}
@@ -82,6 +85,13 @@ func TestHandleCanariesFields(t *testing.T) {
 	}
 	if _, ok := canariesRaw[0]["silent_for_s"]; ok {
 		t.Error(`"silent_for_s" key present in JSON while status is "ok", want it omitted entirely`)
+	}
+	var kindRaw string
+	if err := json.Unmarshal(canariesRaw[0]["kind"], &kindRaw); err != nil {
+		t.Fatalf(`decode "kind" key: %v`, err)
+	}
+	if kindRaw != string(agentkind.Honeypot) {
+		t.Errorf(`"kind" = %q, want %q`, kindRaw, agentkind.Honeypot)
 	}
 }
 

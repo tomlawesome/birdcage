@@ -57,6 +57,10 @@ type Profile struct {
 	// DefaultImage and ImageEnv are `birdcage canary enrol`'s image
 	// selection for this kind: the image named by the environment
 	// variable ImageEnv, or DefaultImage if that variable is unset.
+	//
+	// TODO(#69 registry): birdcage doesn't publish Honeypot's image
+	// anywhere yet, so DefaultImage names a tag an operator has to build
+	// and load by hand until #69 lands a real registry to pull it from.
 	DefaultImage string
 	ImageEnv     string
 }

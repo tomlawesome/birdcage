@@ -155,6 +155,26 @@ func TestCanaryEnrolStatusNeverPrintsATokenHash(t *testing.T) {
 	}
 }
 
+// TestCanaryEnrolRefusesUnknownKind is issue #105's CLI-level refusal:
+// an unrecognised --kind is rejected before any database write or CA
+// load, with an error naming the invalid value and the valid set. It
+// runs with no environment configured at all -- BIRDCAGE_ADVERTISE_HOST
+// unset, no CA directory -- to prove kind validation happens first,
+// ahead of every other precondition runCanaryEnrol checks; if it ran
+// later, this test would instead see one of those unrelated errors.
+func TestCanaryEnrolRefusesUnknownKind(t *testing.T) {
+	err := runCanaryEnrol([]string{"--name", "x", "--lane", "y", "--kind", "seagull"})
+	if err == nil {
+		t.Fatal("runCanaryEnrol with an unregistered kind returned no error")
+	}
+	if !strings.Contains(err.Error(), "seagull") {
+		t.Errorf("error %q does not name the rejected kind", err.Error())
+	}
+	if !strings.Contains(err.Error(), string(agentkind.Honeypot)) {
+		t.Errorf("error %q does not list the valid kinds", err.Error())
+	}
+}
+
 // TestCanaryEnrolStatusReportsNoSessions covers the empty-database
 // message, so a future change to it is a deliberate edit rather than an
 // accident nobody noticed.
