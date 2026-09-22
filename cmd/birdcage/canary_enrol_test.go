@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -132,7 +133,7 @@ func TestCanaryEnrolStatusNeverPrintsATokenHash(t *testing.T) {
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
-	raw, session, err := store.MintEnrolmentSession(ctx, database, "enrol-status-test", "lane-a", time.Now().UTC())
+	raw, session, err := store.MintEnrolmentSession(ctx, database, "enrol-status-test", "lane-a", agentkind.Honeypot, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("store.MintEnrolmentSession: %v", err)
 	}

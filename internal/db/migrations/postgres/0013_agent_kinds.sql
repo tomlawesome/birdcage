@@ -1,0 +1,22 @@
+-- 0013_agent_kinds.sql is issue #105's schema half of ADR-0009 ("an
+-- agent has a kind"): a kind column on both canaries and
+-- enrolment_sessions, closed in Go (internal/agentkind.Kind) rather
+-- than a SQL CHECK constraint, the same reasoning 0006_canary_commands.sql's
+-- kind column and 0009_enrolment_sessions.sql's state column both give.
+--
+-- DEFAULT 'honeypot' is correct by construction: every node enrolled
+-- before this migration is a mockingbird, i.e. a honeypot, so backfilling
+-- the default onto every existing row is not a guess -- it is what those
+-- rows already are. NOT NULL, never nullable: a node without a kind is
+-- not a state this schema represents.
+--
+-- Additive and old-binary compatible (the #105 delivery plan's
+-- reversibility note: this migration framework is forward-only, no down
+-- files exist, so "reversible" means (a) no data destroyed, (b) a
+-- rolled-back binary's column-listing INSERTs still succeed because of
+-- this DEFAULT, and (c) a manual DROP COLUMN works on both engines if
+-- ever needed). Proven by TestOldBinaryInsertBackfillsHoneypot on both
+-- engines: insert into each table listing every column except kind, then
+-- read kind back as 'honeypot'.
+ALTER TABLE canaries           ADD COLUMN kind TEXT NOT NULL DEFAULT 'honeypot';
+ALTER TABLE enrolment_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'honeypot';

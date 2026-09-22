@@ -6,14 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
 // fakeIssue returns a fixed, obviously-fake cert/key pair -- Provision
 // never inspects their contents, only that issue succeeded, so a real
 // internal/ca.CA is unnecessary for these store-level tests (the real
-// thing is exercised by internal/ingest's mTLS tests instead).
-func fakeIssue(_ string) (certPEM, keyPEM []byte, err error) {
+// thing is exercised by internal/ingest's mTLS tests instead). Its kind
+// parameter (issue #105) is unused here for the same reason
+// internal/enrol's own closure ignores it -- #105 doesn't touch the
+// certificate.
+func fakeIssue(_ string, _ agentkind.Kind) (certPEM, keyPEM []byte, err error) {
 	return []byte("fake-cert-pem"), []byte("fake-key-pem"), nil
 }
 
@@ -22,7 +26,7 @@ func fakeIssue(_ string) (certPEM, keyPEM []byte, err error) {
 func contactedFixture(t *testing.T, database *db.DB, mintedAt time.Time) (secret string, session EnrolmentSession) {
 	t.Helper()
 	ctx := context.Background()
-	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", mintedAt)
+	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", agentkind.Honeypot, mintedAt)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}
@@ -68,18 +72,27 @@ func TestProvisionHappyPath(t *testing.T) {
 			t.Errorf("HeartbeatIntervalS = %d, want %d", result.HeartbeatIntervalS, DefaultHeartbeatIntervalS)
 		}
 
-		// The canary row exists, built from the session's name/lane and
-		// the fixed Mockingbird port set.
-		var name, lane, ports string
-		row := database.QueryRow(`SELECT name, lane, ports FROM canaries WHERE id = ?`, result.CanaryID)
-		if err := row.Scan(&name, &lane, &ports); err != nil {
+		// The canary row exists, built from the session's name/lane/kind
+		// and its kind's provisioning profile -- the single source for
+		// the port list now that there is no second mirror constant to
+		// compare against (issue #105).
+		honeypotProfile, ok := agentkind.Lookup(agentkind.Honeypot)
+		if !ok {
+			t.Fatal("agentkind.Lookup(Honeypot) ok = false")
+		}
+		var name, lane, kind, ports string
+		row := database.QueryRow(`SELECT name, lane, kind, ports FROM canaries WHERE id = ?`, result.CanaryID)
+		if err := row.Scan(&name, &lane, &kind, &ports); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}
 		if name != session.Name || lane != session.Lane {
 			t.Errorf("canaries name/lane = %q/%q, want %q/%q", name, lane, session.Name, session.Lane)
 		}
-		if ports != mockingbirdPorts {
-			t.Errorf("canaries ports = %q, want %q", ports, mockingbirdPorts)
+		if kind != string(agentkind.Honeypot) {
+			t.Errorf("canaries kind = %q, want %q", kind, agentkind.Honeypot)
+		}
+		if ports != honeypotProfile.Ports {
+			t.Errorf("canaries ports = %q, want %q", ports, honeypotProfile.Ports)
 		}
 
 		// The token is active and resolves to the new canary.
@@ -198,6 +211,48 @@ func TestProvisionAfterWindowExpires(t *testing.T) {
 	})
 }
 
+// TestProvisionUnregisteredKindFailsLoudly is the #105 delivery plan's
+// named "provision fails loudly on a session row carrying an
+// unregistered kind" test: a session in state "contacted" whose kind
+// column names nothing agentkind.Lookup knows -- written directly with
+// SQL, since MintEnrolmentSession itself refuses to mint one -- must
+// make Provision fail with an error, not silently fall back to
+// Honeypot's profile or any other kind's.
+func TestProvisionUnregisteredKindFailsLoudly(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		contactedAt := mintedAt.Add(time.Minute)
+		windowDeadline := contactedAt.Add(30 * time.Minute)
+		secretRaw := "unregistered-kind-secret"
+
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, enrolment_secret_hash, window_deadline, state)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"unregistered-kind-session", "irrelevant-token-hash", "canary-a", "lane-a", "seagull",
+			mintedAt.Format(receivedAtLayout), contactedAt.Format(receivedAtLayout), contactedAt.Format(receivedAtLayout),
+			HashToken(secretRaw), windowDeadline.Format(receivedAtLayout), string(EnrolmentStateContacted)); err != nil {
+			t.Fatalf("insert enrolment session with unregistered kind: %v", err)
+		}
+
+		result, _, err := Provision(ctx, database, HashToken(secretRaw), contactedAt.Add(time.Minute), fakeIssue)
+		if err == nil {
+			t.Fatal("Provision with an unregistered kind returned no error")
+		}
+		if result != (ProvisionResult{}) {
+			t.Errorf("result = %+v, want zero value on failure", result)
+		}
+
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM canaries`).Scan(&count); err != nil {
+			t.Fatalf("count canaries: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("canaries has %d rows, want 0: an unregistered kind must create no canary, not fall back to any registered one's profile", count)
+		}
+	})
+}
+
 // TestProvisionIssueFailureRollsBackEverything proves the transaction
 // boundary the design calls for: a CA failure must leave no canary row,
 // no token, and the session still contacted (and its secret intact) --
@@ -207,7 +262,7 @@ func TestProvisionIssueFailureRollsBackEverything(t *testing.T) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
 		secret, session := contactedFixture(t, database, mintedAt)
 
-		failingIssue := func(string) ([]byte, []byte, error) {
+		failingIssue := func(string, agentkind.Kind) ([]byte, []byte, error) {
 			return nil, nil, errors.New("ca: boom")
 		}
 

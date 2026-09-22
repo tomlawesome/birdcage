@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -22,18 +23,6 @@ const maxProvisionBodyBytes = 1024
 //
 // Refs #47: renewal of client certificates is not designed yet.
 const clientCertTTL = 365 * 24 * time.Hour
-
-// MockingbirdPorts is the fixed set of ports the Mockingbird image
-// serves, comma-separated in ascending order -- a provisioned canary is
-// never asked for its own ports, so this is what store.Provision writes
-// into the canaries row. It must match every `"*.enabled": true`
-// module's `.port` entry in build/mockingbird/opencanary.conf exactly;
-// verified against that file when this slice was written: ftp(21),
-// ssh(22), telnet(23), tftp(69), http(80), mssql(1433), mysql(3306),
-// rdp(3389), sip(5060), redis(6379). A change to that file must update
-// this constant, and its mirror in internal/store (which cannot import
-// this package -- see that constant's own doc comment for why).
-const MockingbirdPorts = "21,22,23,69,80,1433,3306,3389,5060,6379"
 
 // provisionRequest is POST /enrol/provision's request body: the
 // enrolment secret POST /enrol/hello handed back, and nothing else --
@@ -77,7 +66,12 @@ func (h *handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	hash := store.HashToken(req.EnrolmentSecret)
-	result, outcome, err := store.Provision(ctx, h.db, hash, h.now(), func(canaryID string) (certPEM, keyPEM []byte, err error) {
+	// kind is ignored here on purpose: #105 puts kind in hand at
+	// certificate-issuance time (store.Provision's issue callback) so
+	// #106 can carry it into the certificate without any further store
+	// rework. The certificate itself -- its subject, its extensions --
+	// is untouched by #105.
+	result, outcome, err := store.Provision(ctx, h.db, hash, h.now(), func(canaryID string, kind agentkind.Kind) (certPEM, keyPEM []byte, err error) {
 		return h.ca.IssueClient(canaryID, clientCertTTL)
 	})
 	if err != nil {

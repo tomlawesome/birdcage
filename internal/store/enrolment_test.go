@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -15,7 +16,7 @@ import (
 func TestMintEnrolmentSessionReturnsRawOnceAndStoresOnlyHash(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, session, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, session, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -81,7 +82,7 @@ func TestFirstContactUnknownToken(t *testing.T) {
 func TestFirstContactSucceedsAndBurnsSession(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -135,7 +136,7 @@ func TestFirstContactSucceedsAndBurnsSession(t *testing.T) {
 func TestFirstContactSecondCallReturnsReused(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -175,7 +176,7 @@ func TestFirstContactSecondCallReturnsReused(t *testing.T) {
 func TestFirstContactAfterDeadlineReturnsExpired(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -222,7 +223,7 @@ func TestFirstContactAfterDeadlineReturnsExpired(t *testing.T) {
 func TestFirstContactContactedSessionNeverReusableAfterItsWindow(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, _, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, _, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -259,11 +260,11 @@ func TestFirstContactContactedSessionNeverReusableAfterItsWindow(t *testing.T) {
 func TestListEnrolmentSessionsOrderedByCreatedAt(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
-		_, first, err := MintEnrolmentSession(ctx, database, "canary-first", "lane-a", mustParse(t, "2026-01-01T00:00:00Z"))
+		_, first, err := MintEnrolmentSession(ctx, database, "canary-first", "lane-a", agentkind.Honeypot, mustParse(t, "2026-01-01T00:00:00Z"))
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession first: %v", err)
 		}
-		_, second, err := MintEnrolmentSession(ctx, database, "canary-second", "lane-a", mustParse(t, "2026-01-02T00:00:00Z"))
+		_, second, err := MintEnrolmentSession(ctx, database, "canary-second", "lane-a", agentkind.Honeypot, mustParse(t, "2026-01-02T00:00:00Z"))
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession second: %v", err)
 		}

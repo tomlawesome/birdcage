@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -100,8 +101,12 @@ func runCanaryAdd(args []string) error {
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
+	// Kind is always agentkind.Honeypot here: `canary add` is a
+	// dev/testing convenience that predates kinds entirely (issue #34's
+	// "Not in this slice"), with no --kind flag of its own, and every
+	// node it has ever registered has been a honeypot.
 	c := store.Canary{
-		ID: args[0], Name: args[1], Lane: args[2], Ports: args[3],
+		ID: args[0], Name: args[1], Lane: args[2], Kind: agentkind.Honeypot, Ports: args[3],
 		HeartbeatIntervalS: interval, EnrolledAt: time.Now().UTC(),
 	}
 	if err := store.InsertCanary(ctx, database, c); err != nil {
@@ -360,7 +365,9 @@ func runCanaryEnrol(args []string) error {
 	defer rollbackCanaryTx(tx, &committed)
 
 	now := time.Now().UTC()
-	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, now)
+	// agentkind.Honeypot is hardcoded here for now; the #105 delivery
+	// plan's commit 3 adds a --kind flag and passes it through instead.
+	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, agentkind.Honeypot, now)
 	if err != nil {
 		return fmt.Errorf("mint enrolment session: %w", err)
 	}
