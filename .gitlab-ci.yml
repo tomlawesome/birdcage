@@ -490,14 +490,49 @@ test:smoke:edge:
 #
 # How the bytes reach the later jobs: every job here talks to the same
 # Docker daemon on the runner host (DOCKER_HOST below, as the existing jobs
-# already do), so an image built in this job is still in that daemon's store
-# for the rest of the pipeline. No `docker save` artifact is needed, which
-# matters because the mockingbird image is a few hundred megabytes and this
-# runs on every branch. The assumption -- one runner host, one daemon -- is
-# load-bearing, so it is not left implicit: this job records each image's
-# config ID, and `release:push` refuses to publish anything whose config ID
-# is not the one recorded here. A second runner host would make that check
-# fail loudly rather than publish an image nobody tested.
+# already do), so an image built in this job is normally still in that
+# daemon's store for the rest of the pipeline. No `docker save` artifact is
+# needed, which matters because the mockingbird image is a few hundred
+# megabytes and this runs on every branch.
+#
+# That daemon is SHARED across every pipeline running on this host at once
+# (#112), which the prune two paragraphs down was not written for: it used
+# to assume the local tag it just built was the only copy, so deleting every
+# other pipeline's tag was harmless because "harmless" meant "self-healing
+# for a runner that only ever has one pipeline on it". On a shared daemon it
+# instead deletes whatever another still-running pipeline is mid-e2e-stage
+# with, and that pipeline's jobs then fail for a reason that has nothing to
+# do with the code under test. Rather than change what gets pruned or when
+# (docs/ci-hops.md's #112 write-up has the four options considered and why
+# this one won), this job now also pushes each image to this project's own
+# container registry ($CI_REGISTRY_IMAGE, via scripts/publish-image.sh,
+# which pushes and then proves the round trip) and records the resulting
+# repo@digest in release.env alongside the local tag. Every later job that
+# uses one of these images calls scripts/ci-ensure-image.sh first, which
+# pulls that digest back and retags it locally if the daemon's local copy
+# is ever missing. Whoever prunes, and whenever, the worst case is now one
+# recovery pull instead of a failed job. The daemon-local prune below is
+# unchanged -- it still runs, and still deletes another pipeline's tag; that
+# is fine now, because the registry is what makes the local tag disposable.
+# This registry push is transport between this pipeline's own jobs, not a
+# release: publication that customers or an attacker's search engine would
+# ever see is still `release:push`'s alone, to $GHCR_BIRDCAGE_REPO /
+# $GHCR_MOCKINGBIRD_REPO, unchanged by any of this.
+#
+# The internal registry needs a cleanup policy of its own -- deleting
+# `ci-.*` tags older than about a week is plenty, since nothing here is
+# ever read after its pipeline finishes. That is a project setting
+# (Settings > Packages and registries > Container registry) only the
+# project owner can set; without it the registry keeps every pipeline's
+# images forever and grows without bound. That is growth, not breakage:
+# no job here reads an old tag, so an unset cleanup policy costs disk on
+# the registry, never a wrong or missing image.
+#
+# This job records each image's config ID, and `release:push` refuses to
+# publish anything whose config ID is not the one recorded here -- that
+# check does not depend on which daemon still holds the bytes, because
+# scripts/ci-ensure-image.sh has already made sure release:push's own local
+# tag is the real thing before it ever looks at the ID.
 #
 # The stamp is the release version, not a CI-only string, because the
 # version has to be in the bytes before the digest exists -- promotion moves
@@ -529,30 +564,47 @@ build:images:
     - |
       set -eu
       stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"
-      echo "building both images as $stamp"
-      birdcage_image="birdcage-build:${CI_PIPELINE_ID}"
-      mockingbird_image="mockingbird-build:${CI_PIPELINE_ID}"
-      docker build --build-arg VERSION="$stamp" \
-        --file build/birdcage/Dockerfile --tag "$birdcage_image" .
-      docker build --build-arg VERSION="$stamp" \
-        --file build/mockingbird/Dockerfile --tag "$mockingbird_image" .
-      # The config ID is the identity later jobs check back against. It is
-      # not the registry digest -- that only exists once something is pushed
-      # -- but it is what makes "the image I tested" and "the image I am
-      # pushing" the same statement.
-      birdcage_id="$(docker image inspect --format '{{.Id}}' "$birdcage_image")"
-      mockingbird_id="$(docker image inspect --format '{{.Id}}' "$mockingbird_image")"
-      {
-        echo "BIRDCAGE_STAMP=$stamp"
-        echo "BIRDCAGE_BUILD_IMAGE=$birdcage_image"
-        echo "MOCKINGBIRD_BUILD_IMAGE=$mockingbird_image"
-        echo "BIRDCAGE_BUILD_ID=$birdcage_id"
-        echo "MOCKINGBIRD_BUILD_ID=$mockingbird_id"
-      } > release.env
+      echo "building images as $stamp"
+      # Job-token creds, exactly as release:push logs in to GHCR -- never a
+      # personal token -- and only for this project's own registry, which
+      # every job in this pipeline can already reach.
+      echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+      : > release.env
+      # One list entry per image. A third image (#112's "nightjar, arriving
+      # on another branch") is one more name here and nothing else -- the
+      # build, the local tag, the registry push and the dotenv lines below
+      # all read from $name.
+      for name in birdcage mockingbird; do
+        local_tag="${name}-build:${CI_PIPELINE_ID}"
+        docker build --build-arg VERSION="$stamp" \
+          --file "build/${name}/Dockerfile" --tag "$local_tag" .
+        # The config ID is the identity later jobs check back against. It is
+        # not the registry digest -- that only exists once something is
+        # pushed -- but it is what makes "the image I tested" and "the
+        # image I am pushing" the same statement.
+        image_id="$(docker image inspect --format '{{.Id}}' "$local_tag")"
+        # Pushed to this project's OWN registry, never GHCR -- this is
+        # transport between this pipeline's own jobs (#112), so a shared
+        # daemon's prune below can never delete the only copy. It is not a
+        # release: release:push alone publishes anywhere a consumer would
+        # ever pull from. scripts/publish-image.sh both pushes and proves
+        # the round trip, the same guarantee release:push already relies on
+        # for GHCR, reused here rather than re-implemented.
+        registry_tag="${CI_REGISTRY_IMAGE}/${name}-build:ci-${CI_PIPELINE_ID}"
+        docker tag "$local_tag" "$registry_tag"
+        digest="$(scripts/publish-image.sh "$registry_tag" "$image_id")"
+        upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+        {
+          echo "${upper}_BUILD_IMAGE=$local_tag"
+          echo "${upper}_BUILD_ID=$image_id"
+          echo "${upper}_BUILD_DIGEST=${CI_REGISTRY_IMAGE}/${name}-build@${digest}"
+        } >> release.env
+      done
+      echo "BIRDCAGE_STAMP=$stamp" >> release.env
       cat release.env
   artifacts:
-    # dotenv rather than files: these are five short strings every later job
-    # needs as variables, and none of them is worth a download.
+    # dotenv rather than files: these are seven short strings every later
+    # job needs as variables, and none of them is worth a download.
     reports:
       dotenv: release.env
     expire_in: 1 day
@@ -567,7 +619,14 @@ test:image:birdcage:
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: birdcage-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     # The image under test is the one build:images produced, not a fresh
     # build of the same source -- see that job's header for why that
     # distinction is the whole point. Tagged under this job's own name so
@@ -628,7 +687,14 @@ test:image:mockingbird:
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: mockingbird-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     # As in test:image:birdcage: the image under test is the one
     # build:images produced, so the bytes that answer these checks are the
     # bytes release:push publishes.
@@ -778,6 +844,11 @@ e2e:enrol-and-hit:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
@@ -814,6 +885,11 @@ e2e:enrol-and-hit:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
@@ -853,6 +929,11 @@ e2e:smb:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
     - scripts/e2e/smb.sh
@@ -895,6 +976,11 @@ e2e:dashboard-own-ca:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
@@ -931,6 +1017,11 @@ e2e:snmp:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
   after_script:
@@ -994,6 +1085,11 @@ e2e:smb:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
     - scripts/e2e/smb.sh
@@ -1033,6 +1129,11 @@ e2e:snmp:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
   after_script:
@@ -1067,6 +1168,11 @@ e2e:dashboard-own-ca:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
@@ -1165,6 +1271,13 @@ release:push:
         exit 1
       fi
       anchor="sha-${CI_COMMIT_SHA}"
+      # release:push has no `needs:`, so it waits for every earlier job --
+      # the longest exposure window in the pipeline (#112) -- which means
+      # the local tag build:images built is the most likely of anyone's to
+      # have been pruned by a concurrent pipeline by the time this runs.
+      # Recovers it from this project's own registry if so.
+      scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
       # Only the anchor is pushed here. It is immutable by construction (a
       # commit sha names one build) and it is never what a user pulls: the
       # channel name is release:preview's to create, after the evidence has
