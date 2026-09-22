@@ -144,6 +144,102 @@ minted, its deadlines -- without ever printing a token or a hash. Useful
 for confirming a session was actually contacted, or for seeing one expire
 after being forgotten.
 
+## Enrolling a scanner (Nightjar)
+
+Issue #108, slice 1. The scanner agent -- Nightjar (ADR-0010) -- is a
+second agent kind: same `birdcage canary enrol` command, `--kind
+scanner`:
+
+```
+birdcage canary enrol --name office-nas --lane front-door --kind scanner
+```
+
+The printed command looks like this (values differ every time):
+
+```
+docker run -d --name nightjar --restart unless-stopped \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -v /:/host:ro \
+  -v /dev/null:/host/etc/shadow:ro \
+  -v /dev/null:/host/etc/gshadow:ro \
+  --tmpfs /host/etc/ssh:ro \
+  --tmpfs /host/root:ro \
+  --tmpfs /host/proc:ro \
+  --tmpfs /host/run:ro \
+  --tmpfs /host/sys:ro \
+  --tmpfs /host/dev:ro \
+  --tmpfs /host/tmp:ro \
+  --tmpfs /host/var/tmp:ro \
+  --tmpfs /host/home:ro \
+  -v nightjar-state:/var/lib/nightjar -v nightjar-grype-db:/var/lib/nightjar-grype-db \
+  -e NIGHTJAR_BIRDCAGE_URL=https://203.0.113.10:8444 \
+  -e NIGHTJAR_CA_PIN=<64 hex characters -- the CA's SHA-256 pin> \
+  -e NIGHTJAR_DEPLOY_TOKEN=<64 hex characters -- shown once, single-use> \
+  nightjar:latest
+token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
+```
+
+Nightjar has no listener, no published port and no capability at all --
+`--cap-drop ALL` drops even the ones Mockingbird's own `--cap-add
+NET_RAW` needs, because Nightjar has nothing analogous to detect. It
+mounts the whole host filesystem read-only at `/host` and runs Grype
+(the pinned scanner binary the image ships) against it on a timer,
+posting a snapshot of what it finds back to birdcage.
+
+### The mask flags are not optional either
+
+The `-v /dev/null:...` and `--tmpfs ...:ro` flags cover secret-bearing
+host paths -- `/etc/shadow`, SSH host keys, `/root`, `/proc` (where a
+command line can carry a password), `/home`, and a handful of others --
+so Grype never reads them even though it could otherwise see everything
+on the host through `/host`. The full list and the reasoning behind each
+entry live in `internal/hostmask` (issue #108's "second opinion on the
+host mount" record has the complete history). Nightjar checks this
+covering itself at startup, before it ever runs a scan: if a mask is
+missing or if anything under `/host` is not mounted read-only, it posts
+`status: "failed"` naming the offending path and does not scan, rather
+than trusting the run command alone. So a hand-edited copy of this
+command that drops a mask flag does not silently lose the covering --
+it stops scanning instead, loudly.
+
+**A snapshot is never complete host coverage.** Nightjar runs as an
+unprivileged user; a non-root scan silently skips whatever that user
+cannot read, on top of what the masks above deliberately hide.
+
+### Two things that catch people out
+
+**A mask flag over a path your host does not have fails the container
+at start**, with a read-only-filesystem error, because Docker cannot
+create a mountpoint under a read-only bind for something that was never
+there. If your host has no `/etc/ssh` (no SSH installed at all, for
+instance), delete that one `--tmpfs /host/etc/ssh:ro \` line from the
+pasted command and try again -- do not delete the whole mount, and do
+not drop `--read-only` to work around it.
+
+**Docker 25 or newer is required.** `ro` on a whole-root bind mount is
+only *recursively* read-only from Docker 25 onward (kernel 5.12+); on an
+older engine a host submount -- a separate `/home` partition, `/boot`,
+its own `/run` -- can stay writable underneath `/host` even though the
+top-level bind itself reports read-only. Nightjar's own startup check
+(above) is the backstop for this: it inspects every mount under `/host`
+individually and refuses to scan if any of them is not read-only, so an
+old engine fails loudly at every scan rather than silently scanning
+through a gap. Upgrading the engine is still the real fix.
+
+### The vulnerability database volume
+
+`nightjar-grype-db` is a second named volume, separate from
+`nightjar-state`: it holds Grype's own vulnerability database, which
+Grype fetches and refreshes itself on every scan -- birdcage never
+fetches, vendors or bakes this in. It grows to roughly a gigabyte and is
+worth keeping around between restarts (a fresh volume means a slow cold
+re-download before the first scan can run); do not delete it casually.
+
+If the database cannot be fetched or refreshed, or is older than five
+days, Grype refuses to run against it -- Nightjar reports that scan as
+`status: "failed"` with the reason, never as a clean host with zero
+findings.
+
 ## Tuning port-scan detection
 
 These settings belong in `docs/configuration.md` with the rest of the

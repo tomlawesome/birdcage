@@ -96,15 +96,29 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 37          # 37.8% measured (was 29.6%): four previously
-                             # untested security-relevant functions gained
-                             # tests -- redactDatabaseURL (keeps database
-                             # credentials out of logs), requireEnrolAddresses,
-                             # runCanaryEnrolStatus (proves it never prints a
-                             # token hash) and approvalHandler's rejection and
-                             # store-failure paths.
+  cmd/birdcage: 43           # 44.0% measured (was 37), 2026-09-22 (#108,
+                             # slice 1 commit 4): the scanner-kind enrol
+                             # renderer (printScannerEnrolRunCommand) and its
+                             # own trap regression test
+                             # (TestCanaryEnrolScannerKindPrintsScannerCommand,
+                             # proving --kind scanner reaches the scanner
+                             # renderer rather than the "no install
+                             # instructions registered" default) gained tests.
+                             # Measured against real Postgres, matching
+                             # test:go.
                              # Main binary; RouterOS/CrowdSec credential-wiring
                              # path is still largely untested.
+  cmd/nightjar: 50           # 50.4% measured, 2026-09-22 (#108, slice 1
+                             # commit 4). New binary: the scan loop's own
+                             # branches (mount-check failure, a runScan Go
+                             # error, the ok path) are driven directly via
+                             # buildSnapshot's injected checkMounts/runScan
+                             # functions, but main()'s own wiring and the
+                             # real checkMounts/realScan implementations
+                             # (which need a real container's
+                             # /proc/self/mountinfo and a real grype binary)
+                             # are not unit-testable and stay below the 70%
+                             # band, same as the other two agent binaries.
   cmd/mockingbird: 65       # 66.0% measured (was 60, and the package had
                              # slipped to 59.9% under it -- pipeline 1405's
                              # test:go caught that). The SNMP and port-scan
@@ -178,6 +192,11 @@ floors:
   internal/audit: 94
   internal/ca: 76
   internal/enrol: 80
+  internal/hostmask: 96      # 96.9% measured, 2026-09-22 (#108, slice 1
+                             # commit 4). The shared mask-list constant and
+                             # its startup mount check (Check, ParseMountinfo)
+                             # -- every branch is driven by fixture mountinfo
+                             # content, no real container required.
   internal/history: 82
   internal/ingest: 82
   internal/logging: 91

@@ -17,6 +17,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/hostmask"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/term"
 )
@@ -414,6 +415,18 @@ func runCanaryEnrol(args []string) error {
 		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
 			return fmt.Errorf("print docker run command: %w", err)
 		}
+	case agentkind.Scanner:
+		// #108's own trap: this case has to land in the same commit as
+		// the profile, or --kind scanner mints a session here and then
+		// falls into default below, failing half-way through its own
+		// output with a live token already burned.
+		image := os.Getenv(profile.ImageEnv)
+		if image == "" {
+			image = profile.DefaultImage
+		}
+		if err := printScannerEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+			return fmt.Errorf("print docker run command: %w", err)
+		}
 	default:
 		return fmt.Errorf("no install instructions registered for kind %q", kind)
 	}
@@ -465,6 +478,55 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
+	return err
+}
+
+// printScannerEnrolRunCommand writes the `docker run` line for the
+// scanner kind (issue #108 slice 1) -- ADR-0010 decision 3's shape (own
+// image, no listener) plus the owner-ratified host-mount covering
+// (issue #108, "the host mount is whole-root read-only, with the
+// secret-bearing paths covered over"): a read-only whole-root bind, one
+// flag per hostmask.Masks entry so the printed command and Nightjar's
+// own startup check (internal/hostmask.Check, cmd/nightjar/scanner.go)
+// can never drift, and no sysctl, no added capability and no published
+// port -- Nightjar listens on nothing.
+//
+// One operational trap this command can hit, named in
+// docs/enrolment.md: a --tmpfs or -v /dev/null flag over a path the
+// target host does not have fails the container at start with a
+// read-only-filesystem error, because Docker cannot create a mountpoint
+// under a read-only bind for a path that was never there. The remedy is
+// to drop that one flag from the pasted command -- e.g. a host with no
+// /etc/ssh -- not to abandon the covering; internal/hostmask.Check
+// treats an absent mask path as nothing to cover, matching this.
+func printScannerEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
+	if _, err := fmt.Fprintf(w, "docker run -d --name nightjar --restart unless-stopped \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  --read-only --cap-drop ALL --security-opt no-new-privileges \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -v /:/host:ro \\\n"); err != nil {
+		return err
+	}
+	for _, flag := range hostmask.RunFlags("/host") {
+		if _, err := fmt.Fprintf(w, "  %s \\\n", flag); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "  -v nightjar-state:/var/lib/nightjar -v nightjar-grype-db:/var/lib/nightjar-grype-db \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_CA_PIN=%s \\\n", pin); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_DEPLOY_TOKEN=%s \\\n", token); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))

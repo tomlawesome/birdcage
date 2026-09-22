@@ -36,6 +36,16 @@ type Kind string
 // about this kind's profile, not the kind itself.
 const Honeypot Kind = "honeypot"
 
+// Scanner is the second registered kind (#108, ADR-0010's vulnerability
+// agent), registered the moment its own first slice lands rather than
+// merely reserved (ADR-0009 decision 2 named the string without
+// registering it). The string stays "scanner" -- a role, matching
+// Honeypot's own reasoning -- even though the owner named the product
+// "Nightjar" (ADR-0010, "The agent is Nightjar"): "the kind is a role
+// and the name is the product, exactly as mockingbird sits against
+// honeypot".
+const Scanner Kind = "scanner"
+
 // Profile is what birdcage needs to know about a kind at provisioning
 // time and at enrolment-run-command time. It lives in code, not the
 // database (section 4 of the #105 delivery plan): a node's expected
@@ -74,6 +84,18 @@ var profiles = map[Kind]Profile{
 		DefaultImage: "mockingbird:latest",
 		ImageEnv:     "MOCKINGBIRD_IMAGE",
 	},
+	// Scanner's Ports is deliberately "" -- #108's plan section 6:
+	// "confirm store.Provision accepts an empty port list". Nightjar
+	// listens on nothing (no receiver, no webhook, ADR-0010 decision 3),
+	// so there is no port list to write, and the empty string round-trips
+	// through canaries.ports (TEXT NOT NULL DEFAULT '') and portsDisplay
+	// ("" -> "") without a schema or code change -- see
+	// TestProvisionScannerAcceptsEmptyPorts in internal/store.
+	Scanner: {
+		Ports:        "",
+		DefaultImage: "nightjar:latest",
+		ImageEnv:     "NIGHTJAR_IMAGE",
+	},
 }
 
 // Lookup returns k's provisioning profile, and false if k is not a
@@ -103,8 +125,6 @@ func Valid(k Kind) bool {
 // invalid input always produces the same error text.
 func Kinds() []Kind {
 	// Declared as a literal, not derived from profiles, so the order is
-	// stable without needing a sort -- there is exactly one entry today,
-	// and a second one (ADR-0010) is added here alongside its map entry
-	// above.
-	return []Kind{Honeypot}
+	// stable without needing a sort.
+	return []Kind{Honeypot, Scanner}
 }

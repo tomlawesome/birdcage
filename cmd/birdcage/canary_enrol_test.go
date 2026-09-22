@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/ca"
+	"github.com/tomlawesome/birdcage/internal/hostmask"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -70,6 +74,129 @@ func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	}
 	if strings.ContainsRune(got, 0x07) {
 		t.Errorf("a bell character reached the terminal unescaped:\n%q", got)
+	}
+}
+
+// TestScannerEnrolRunCommandCarriesEveryRequiredFlag is
+// TestEnrolRunCommandCarriesEveryRequiredFlag's own counterpart for the
+// scanner kind (#108, section 3): the printed command's security posture
+// -- read-only, no capabilities, no privilege escalation -- and its
+// mask flags, kept in sync with internal/hostmask so this test fails the
+// moment the two packages disagree, rather than a container silently
+// starting with a smaller covering than the docs promise.
+func TestScannerEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
+	var out strings.Builder
+	if err := printScannerEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "nightjar:latest"); err != nil {
+		t.Fatalf("printScannerEnrolRunCommand: %v", err)
+	}
+	got := out.String()
+
+	required := []struct {
+		flag string
+		why  string
+	}{
+		{"--read-only", "ADR-0010 decision 3: a scanner needs no writable filesystem of its own"},
+		{"--cap-drop ALL", "the scanner needs no Linux capability at all"},
+		{"--security-opt no-new-privileges", "belt-and-braces against a setuid escalation inside the container"},
+		{"-v /:/host:ro", "the whole-root read-only bind the owner ratified over narrower per-distro mounts"},
+		{"-v nightjar-state:/var/lib/nightjar", "credentials must outlive the container"},
+		{"-v nightjar-grype-db:/var/lib/nightjar-grype-db", "the Grype vulnerability database cache, refreshed every run, never rebuilt from cold each time"},
+		{"--restart unless-stopped", "a scanner that stops reporting is a security event, same as a canary"},
+	}
+	for _, r := range required {
+		if !strings.Contains(got, r.flag) {
+			t.Errorf("printed command is missing %q -- %s\ngot:\n%s", r.flag, r.why, got)
+		}
+	}
+
+	for _, forbidden := range []string{"--sysctl", "--cap-add", "--publish", "-p ", "--init"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("printed command contains %q, which #108 says it must not: no sysctl, no cap-add, no published port\ngot:\n%s", forbidden, got)
+		}
+	}
+
+	for _, want := range []string{
+		"-e NIGHTJAR_BIRDCAGE_URL=https://203.0.113.10:8444",
+		"-e NIGHTJAR_CA_PIN=deadbeef",
+		"-e NIGHTJAR_DEPLOY_TOKEN=cafebabe",
+		"nightjar:latest",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("printed command is missing %q\ngot:\n%s", want, got)
+		}
+	}
+
+	// Every hostmask.RunFlags("/host") flag must appear verbatim -- the
+	// single shared constant is the whole point (issue #108: "so the
+	// printed command and the check cannot drift").
+	for _, flag := range hostmask.RunFlags("/host") {
+		if !strings.Contains(got, flag) {
+			t.Errorf("printed command is missing mask flag %q\ngot:\n%s", flag, got)
+		}
+	}
+}
+
+// TestScannerEnrolRunCommandEscapesOperatorSuppliedValues mirrors
+// TestEnrolRunCommandEscapesOperatorSuppliedValues for the scanner
+// renderer.
+func TestScannerEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
+	var out strings.Builder
+	if err := printScannerEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name"); err != nil {
+		t.Fatalf("printScannerEnrolRunCommand: %v", err)
+	}
+	got := out.String()
+
+	if strings.ContainsRune(got, 0x1b) {
+		t.Errorf("an escape character reached the terminal unescaped:\n%q", got)
+	}
+	if strings.ContainsRune(got, 0x07) {
+		t.Errorf("a bell character reached the terminal unescaped:\n%q", got)
+	}
+}
+
+// TestCanaryEnrolScannerKindPrintsScannerCommand is #108's own trap,
+// proved end-to-end through runCanaryEnrol rather than only at
+// printScannerEnrolRunCommand's own level: --kind scanner must reach the
+// scanner renderer, not fall into the "no install instructions
+// registered" default that would otherwise mint a session and then fail
+// half-way through printing.
+func TestCanaryEnrolScannerKindPrintsScannerCommand(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	t.Setenv(envAdvertiseHost, "203.0.113.10")
+
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.SetSetting(context.Background(), database, store.SettingAdminApprovalAddress, "admin@example.net", now); err != nil {
+		t.Fatalf("set admin_approval_address: %v", err)
+	}
+	if err := store.SetSetting(context.Background(), database, store.SettingReleaseAddress, "release@example.net", now); err != nil {
+		t.Fatalf("set release_address: %v", err)
+	}
+	closeCanaryDB(database)
+
+	caDir := filepath.Join(t.TempDir(), "ca")
+	if err := os.Mkdir(caDir, 0o700); err != nil {
+		t.Fatalf("mkdir CA dir: %v", err)
+	}
+	t.Setenv(envCADir, caDir)
+	if _, _, err := ca.Load(caDir, nil); err != nil {
+		t.Fatalf("ca.Load: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return runCanaryEnrol([]string{"--name", "scanner-1", "--lane", "front-door", "--kind", "scanner"})
+	})
+	if err != nil {
+		t.Fatalf("runCanaryEnrol --kind scanner: %v", err)
+	}
+	if !strings.Contains(out, "docker run -d --name nightjar") {
+		t.Fatalf("output does not carry the scanner's own run command:\n%s", out)
+	}
+	if strings.Contains(out, "mockingbird") {
+		t.Fatalf("scanner enrolment output mentions mockingbird:\n%s", out)
 	}
 }
 

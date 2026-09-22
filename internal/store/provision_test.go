@@ -123,6 +123,52 @@ func TestProvisionHappyPath(t *testing.T) {
 	})
 }
 
+// TestProvisionScannerAcceptsEmptyPorts is #108's own instruction (the
+// "Scanner agent, slice 1" plan, section 6): "confirm store.Provision
+// accepts an empty port list; if it does not, make it do so rather than
+// inventing a fake port." Nightjar listens on nothing (ADR-0010 decision
+// 3), so agentkind.Scanner's Profile.Ports is "" -- this proves that
+// value reaches the canaries row unchanged rather than tripping a schema
+// constraint or a code path that assumes a non-empty port list.
+func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		ctx := context.Background()
+		raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-scanner", "front-door", agentkind.Scanner, mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+		secret, _, contactOutcome, err := FirstContact(ctx, database, HashToken(raw), mintedAt.Add(time.Minute))
+		if err != nil {
+			t.Fatalf("FirstContact: %v", err)
+		}
+		if contactOutcome != Contacted {
+			t.Fatalf("FirstContact outcome = %v, want Contacted", contactOutcome)
+		}
+
+		provisionAt := mintedAt.Add(2 * time.Minute)
+		result, provisionOutcome, err := Provision(ctx, database, HashToken(secret), provisionAt, fakeIssue)
+		if err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		if provisionOutcome != Provisioned {
+			t.Fatalf("outcome = %v, want Provisioned", provisionOutcome)
+		}
+
+		var kind, ports string
+		row := database.QueryRow(`SELECT kind, ports FROM canaries WHERE id = ?`, result.CanaryID)
+		if err := row.Scan(&kind, &ports); err != nil {
+			t.Fatalf("scan canaries row: %v", err)
+		}
+		if kind != string(agentkind.Scanner) {
+			t.Errorf("canaries kind = %q, want %q", kind, agentkind.Scanner)
+		}
+		if ports != "" {
+			t.Errorf("canaries ports = %q, want empty", ports)
+		}
+	})
+}
+
 // TestProvisionReplayIsUnknownSecret is design note decision 2's point:
 // once provisioned, a session's enrolment_secret_hash is shredded, so a
 // second Provision call with the same secret looks exactly like an
