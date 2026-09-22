@@ -50,9 +50,15 @@ Tracked so these aren't lost, not because they're unimportant:
 
 - **Being the OpenCanary honeypot software.** Birdcage consumes OpenCanary's
   output; it does not replace or embed OpenCanary.
-- **General-purpose SIEM functionality.** Birdcage is scoped to OpenCanary
-  honeypot data and the mitigation actions that follow from it, not a
-  broad log-aggregation platform.
+- **General-purpose SIEM functionality.** Birdcage is not a broad
+  log-aggregation platform. It carries signal the fleet can act on,
+  correlated with what it already knows -- not a category of data because
+  the data is collectable. The narrower original wording, scoping birdcage
+  to "OpenCanary honeypot data and the mitigation actions that follow from
+  it", was amended by
+  [ADR-0010](adr/0010-exposure-first-vulnerability-reporting.md), which
+  adds vulnerability reporting as a second kind of signal. That ADR states
+  the bar a further one has to clear.
 - **Being mikroview's live-traffic viewer.** `tomlawesome/mikroview`
   remains the "interrogation helper" for real firewall traffic. Birdcage's
   only planned coupling to it is consuming its bounded IP+time lookback
@@ -70,4 +76,8 @@ stance), [ADR-0002](adr/0002-gitflow-branching.md) (branching model), and
 [ADR-0003](adr/0003-mikroview-sidecar.md) (separate apps, auth model,
 Svelte), and
 [ADR-0008](adr/0008-container-only-distribution-and-two-images.md)
-(container-only distribution, two images).
+(container-only distribution, two images), as amended by
+[ADR-0009](adr/0009-agents-have-a-kind.md) (birdcage is a fleet control
+plane; an agent has a kind; one image per kind) and
+[ADR-0010](adr/0010-exposure-first-vulnerability-reporting.md)
+(exposure-first vulnerability reporting -- not in v1).
