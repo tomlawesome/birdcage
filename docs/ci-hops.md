@@ -101,6 +101,7 @@ of it by this issue.
 | `e2e:dashboard-own-ca` | The minted-certificate default. TLS setup is easy to break and hard to notice. |
 | `e2e:snmp` | Our own UDP parser, not a third party's. Parser changes are source changes. |
 | `e2e:postgres-requires-tls` | #84's refusal, watched fire against the real binary. Needs no Postgres server, so it is cheap enough for every merge request. |
+| `e2e:scanner` | Nightjar's own host-mount covering (#108) is enforced by the agent, not only by the printed command -- a regression there is a real exposure, not a cosmetic one. |
 
 ## Hop 2 -- entering and sitting on `preview` and `main`
 
@@ -113,6 +114,7 @@ only for `enrol-and-hit`.
 | `e2e:smb:postgres` | Storage-engine differences show up in how an alert is written, not in how it is detected. Proving every journey against both engines is worth a release pipeline and not worth every branch. |
 | `e2e:snmp:postgres` | As above. |
 | `e2e:dashboard-own-ca:postgres` | As above. |
+| `e2e:scanner:postgres` | As above -- migration 0014's `scan_snapshots` table has a Postgres variant, and the difference worth catching is in how the receipt is written, not in how Nightjar scans. |
 | `test:smoke:safari` | Browser coverage widens here (#83): Safari (WebKit in Playwright) is worth a release pipeline and not worth every branch. `test:smoke` itself stays at hop 1 too -- this adds to it, nothing moved off Firefox. |
 | `test:smoke:edge` | As above, Edge (Chromium with the `msedge` channel). |
 

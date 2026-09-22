@@ -1168,6 +1168,52 @@ e2e:postgres-requires-tls:
   script:
     - scripts/e2e/postgres-requires-tls.sh
 
+# Issue #108 slice 1, commit 5: Nightjar (ADR-0010) enrolled by the real
+# `birdcage canary enrol --kind scanner` command and run from its own
+# printed line, exactly as e2e:smb runs mockingbird's. scripts/e2e/
+# scanner-stack.sh is the extra infrastructure only this journey needs
+# (the Nightjar image, a fixture tree standing in for the operator's
+# host filesystem, and Grype's real vulnerability database fetched once)
+# -- started here rather than by stack.sh up, the same split smb-stack.sh
+# uses. NIGHTJAR_BUILD_IMAGE is build:images' own dotenv name for the
+# tag it built from this exact commit (commit 94945df).
+e2e:scanner:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    # scanner-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/scanner-stack.sh down
+    - scripts/e2e/stack.sh down
+
 # The same journey against the other engine birdcage ships, at the higher
 # bar (#91, docs/ci-hops.md) rather than every merge request: a storage
 # engine difference here would show up in how the audit line was written,
@@ -1292,6 +1338,47 @@ e2e:dashboard-own-ca:postgres:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request: migration
+# 0014's own scan_snapshots table has a Postgres variant that deserves a
+# live run, and a storage-engine difference here would show up in how
+# the receipt was written, not in how Nightjar scanned.
+e2e:scanner:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    - scripts/e2e/scanner-stack.sh down
     - scripts/e2e/stack.sh down
 
 # ---------------------------------------------------------------------------
