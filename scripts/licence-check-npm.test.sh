@@ -8,7 +8,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 checker="$here/licence-check-npm.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-pass=0; fail=0
+pass=0; fail=0; skip=0
 
 # mkpkg <node_modules_dir> <name> <version-dir> <package.json-body>
 # name may be "scope/pkg" for a scoped package.
@@ -100,13 +100,22 @@ mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"MIT"}'
 mkpkg "$nm/foo/node_modules" evil '{"name":"evil","version":"9.9.9","license":"GPL-3.0"}'
 expect 1 "a disallowed licence in a nested node_modules is caught" "$nm" "$good_policy"
 
-# The real thing must pass.
+# The real thing must pass -- where there is a real thing to check. A fresh
+# checkout and every worktree have no frontend/node_modules, so without this
+# guard the suite fails there with nothing installed to examine, which says
+# nothing about the checker or the repository. CI's frontend job runs the
+# real checker after its own `npm ci`, and that is where this is covered.
 repo_root="$(cd "$here/.." && pwd)"
-if (cd "$repo_root" && "$checker" >/dev/null 2>&1); then
+if [ ! -d "$repo_root/frontend/node_modules" ]; then
+  echo "skip this repository's own frontend/node_modules: not installed here."
+  echo "       Run npm ci in frontend/ to check it locally; CI's frontend job"
+  echo "       runs the real checker against its own install."
+  skip=$((skip + 1))
+elif (cd "$repo_root" && "$checker" >/dev/null 2>&1); then
   echo "ok   this repository's own frontend/node_modules passes"; pass=$((pass + 1))
 else
   echo "FAIL this repository's own frontend/node_modules does not pass"; fail=$((fail + 1))
 fi
 
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, $skip skipped"
 [ "$fail" = 0 ]

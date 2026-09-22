@@ -163,6 +163,54 @@ lint:ci:
     - python3 scripts/ci-release-guard.py
     - scripts/ci-release-guard.test.sh
 
+# ---------------------------------------------------------------------------
+# Every scripts/*.test.sh, in one job (#100). Before this, three of the
+# thirteen suites ran anywhere: the two guard suites in lint:ci and the pip
+# licence suite in lint:licences-python. The other ten tested scripts in the
+# release path -- the part of this repository with the least other coverage,
+# none of which has ever run against a real registry -- and nothing ran them.
+#
+# The loop is deliberate. A list would have to be edited every time a suite
+# is added, and the ten that were missing are exactly what happens when
+# somebody forgets. A new scripts/*.test.sh is gated the moment it lands.
+#
+# The suites are hermetic: the ones that would otherwise need docker, cosign
+# or a registry source their script and replace the daemon-touching
+# functions with fixtures, so this needs nothing but bash and python3. The
+# two checks that do need more -- a Postgres for the coverage floors, an
+# installed frontend/node_modules for the npm licences -- say so and skip
+# here, and run for real in test:go and frontend, which have them.
+# ---------------------------------------------------------------------------
+lint:scripts:
+  stage: lint
+  image: python:3.13-alpine
+  <<: *gate
+  needs: []
+  before_script:
+    # curl is not padding: ensure-cosign.sh downloads with it, and its suite
+    # drives that path against a file:// fixture. Without curl the suite goes
+    # red with four "curl: command not found" -- which this job found by
+    # being run in this image before it was committed, on a workstation
+    # where curl happens to exist.
+    - apk add --no-cache bash curl >/dev/null
+    - pip install --quiet pyyaml
+  script:
+    - |
+      set -eu
+      found=0
+      failed=""
+      for suite in scripts/*.test.sh; do
+        found=$((found + 1))
+        echo "--- $suite"
+        if bash "$suite"; then :; else failed="$failed $suite"; fi
+      done
+      [ "$found" -gt 0 ] || { echo "no scripts/*.test.sh found at all"; exit 1; }
+      if [ -n "$failed" ]; then
+        echo "failed suites:$failed"
+        exit 1
+      fi
+      echo "all $found script suites passed"
+
 lint:agent-deps:
   stage: lint
   image: golang:1.27

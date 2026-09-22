@@ -89,6 +89,7 @@ of it by this issue.
 | `lint:licences` | A dependency can arrive on any branch; a licence found late is found after it shipped. |
 | `lint:ci` | Guards this arrangement. Cheapest job in the pipeline. |
 | `lint:agent-deps` | ADR-0008 decision 4 -- no server package may reach the agent image. Broken by an ordinary import. |
+| `lint:scripts` | Every `scripts/*.test.sh`. Ten of them ran nowhere until #100; they test the release path, which has the least other coverage. |
 | `test:frontend` | Unit tests and the two pixel gates. Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
 | `test:smoke` | The real binary driven by a browser. |
