@@ -136,6 +136,11 @@ floors:
                              # tests; has no tests of its own.
 
   # --- inside or above the 70-85% band ---
+  internal/agentkind: 100     # 100.0% measured, 2026-09-22 (#105). A closed
+                              # enum and a lookup table: every value and both
+                              # sides of Valid() are exercised by construction,
+                              # so anything less than 100 here means a kind or
+                              # a profile arrived without a test.
   internal/agent/approval: 87
   internal/agent/client: 87
   internal/agent/enrol: 81
