@@ -92,7 +92,7 @@ of it by this issue.
 | `lint:scripts` | Every `scripts/*.test.sh`. Ten of them ran nowhere until #100; they test the release path, which has the least other coverage. |
 | `test:frontend` | Unit tests and the two pixel gates. Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
-| `test:smoke` | The real binary driven by a browser. |
+| `test:smoke` | The real binary driven by a browser, in Firefox (#83) -- the owner's browser, so it is the bar every change has to clear. |
 | `test:image:birdcage` | Proves the shipped image starts and answers. |
 | `test:image:mockingbird` | Proves nothing in the agent image runs as root. |
 | `e2e:enrol-and-hit` | Enrolment and the ingest path change often and are the product's spine. |
@@ -113,6 +113,16 @@ only for `enrol-and-hit`.
 | `e2e:smb:postgres` | Storage-engine differences show up in how an alert is written, not in how it is detected. Proving every journey against both engines is worth a release pipeline and not worth every branch. |
 | `e2e:snmp:postgres` | As above. |
 | `e2e:dashboard-own-ca:postgres` | As above. |
+| `test:smoke:safari` | Browser coverage widens here (#83): Safari (WebKit in Playwright) is worth a release pipeline and not worth every branch. `test:smoke` itself stays at hop 1 too -- this adds to it, nothing moved off Firefox. |
+| `test:smoke:edge` | As above, Edge (Chromium with the `msedge` channel). |
+
+Pixel-comparison decision (#83, owner, 2026-09-19): `compare:band` and
+`compare:below-band` (in `test:frontend`, hop 1) stay on Chromium at
+every hop. They check rendering fidelity against the round-6 design
+references, which were captured in Chromium -- a drawing, not a browser
+compatibility question -- so re-taking them in another engine would buy
+nothing and make every future diff against the design harder to read.
+The reference shots themselves are unchanged by this issue.
 
 These cost nothing on a merge request. They run on the promotion merge
 request -- so a problem is visible *before* the promotion lands -- and
