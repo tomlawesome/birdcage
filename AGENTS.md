@@ -61,6 +61,13 @@ issue that records the decision:
 - `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
   for the owner's review on #73.
 
+Shipped as a binary in an agent image, never linked into birdcage:
+
+- `grype` (Anchore) — the scanner agent's engine, Apache-2.0; owner,
+  2026-09-22, #108. Chosen over Trivy against a verified comparison; the
+  reasoning is in ADR-0010, "Engine: Grype". Its vulnerability database is
+  fetched at runtime and cached, never vendored.
+
 Frontend (`frontend/package.json`), dev-only, never shipped:
 
 - `@vitest/coverage-v8` -- the coverage plugin of the test runner the
