@@ -1036,6 +1036,56 @@ e2e:snmp:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #79: a real sweep of closed ports against the real Mockingbird
+# image produces a real port-scan alert, and the image run without a
+# working NET_RAW capability reports detection absent rather than
+# silently matching nothing -- #65's own trap, where a filter with the
+# wrong offsets passed every unit test and only running the real image
+# caught it. test:image:mockingbird above proves the image starts
+# unprivileged and deliberately keeps --security-opt no-new-privileges,
+# which turns this exact feature off; this is the second, separate job
+# issue #65's comments ask for, exercising the capability and the BPF
+# filter instead. scripts/e2e/portscan-stack.sh is the extra
+# infrastructure this journey needs and no other journey does: two more
+# canaries carrying the two capability shapes, plus the container this
+# journey sweeps from (see that file's own comment for the capability
+# combination that looked plausible and was tried and rejected).
+e2e:portscan:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs six containers at once (the base stack's four plus two more
+  # canaries and a sweep container), using the images build:images
+  # already built; the light lane's 4 CPU / 6 GB is not enough headroom
+  # for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-portscan-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/portscan-stack.sh up)"
+    - scripts/e2e/portscan.sh
+  after_script:
+    # portscan-stack.sh down first: it removes containers attached to
+    # the network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/portscan-stack.sh down
+    - scripts/e2e/stack.sh down
+
 # Issue #84's refusal, watched actually happen against the real binary
 # rather than only asserted in internal/startcheck's own unit tests: a
 # check nobody has watched fire is not evidence it actually gates
