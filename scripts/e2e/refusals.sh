@@ -130,4 +130,25 @@ case "$audit" in
   *) fail "no ingest.client_cert_mismatch entry naming $E2E_CANARY_ID and $other; got: ${audit:-<nothing>}" ;;
 esac
 
+step "an unregistered --kind is refused at the door"
+# Issue #105: the closed enum (internal/agentkind) refuses an
+# unregistered kind in the CLI process itself, before any database
+# write -- so this proves two things together: the command exits
+# non-zero, and no session was minted for it at all (not minted-then-
+# rejected, which would still leave a row behind).
+bad_kind_name="$E2E_CANARY_NAME-badkind"
+set +e
+bad_kind_output="$("$E2E_STACK" birdcage canary enrol --name "$bad_kind_name" --lane "$E2E_CANARY_LANE" --kind seagull 2>&1)"
+bad_kind_status=$?
+set -e
+[ "$bad_kind_status" -ne 0 ] || fail "birdcage canary enrol --kind seagull exited 0, want non-zero: $bad_kind_output"
+ok "birdcage canary enrol --kind seagull exited non-zero: $bad_kind_output"
+
+status_after_bad_kind="$("$E2E_STACK" birdcage canary enrol --status)" \
+  || fail "birdcage canary enrol --status did not run"
+case "$status_after_bad_kind" in
+  *"name=$bad_kind_name"*) fail "a session named $bad_kind_name was minted despite the unregistered kind: $status_after_bad_kind" ;;
+  *) ok "no enrolment session was minted for the refused kind" ;;
+esac
+
 finish

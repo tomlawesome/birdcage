@@ -33,12 +33,33 @@ case "$status" in
   *state=provisioned*) ok "session contacted and provisioned" ;;
   *) fail "the session is not provisioned: $status" ;;
 esac
+# Issue #105: `birdcage canary enrol` (stack.sh up) was run with no
+# --kind, and that is the "default is honeypot, behaves exactly as
+# today" acceptance -- every check in this file already proves the
+# honeypot behaviour still works; this one just proves the session's
+# own kind= field says what it did.
+case "$status" in
+  *kind=honeypot*) ok "enrolment session kind is honeypot" ;;
+  *) fail "the session's kind is not honeypot: $status" ;;
+esac
 
 step "the canary appears in birdcage canary list"
 list="$("$E2E_STACK" birdcage canary list)" || fail "birdcage canary list did not run"
 case "$list" in
   *"canary=$E2E_CANARY_ID"*) ok "canary $E2E_CANARY_ID holds a token" ;;
   *) fail "canary $E2E_CANARY_ID is not in the list: $list" ;;
+esac
+
+step "GET /api/canaries carries the enrolled node's kind"
+# Issue #105: the dashboard's own read path, not a row peek -- kind
+# minted at enrolment (checked above), carried through
+# store.Provision, and now read back exactly as the product's own API
+# would show an operator.
+canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
+  || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
+case "$canary_json" in
+  *'"kind":"honeypot"'*) ok "canary $E2E_CANARY_ID: $canary_json" ;;
+  *) fail "canary $E2E_CANARY_ID's kind is not honeypot: $canary_json" "$E2E_BIRDCAGE" ;;
 esac
 
 step "a client certificate was issued to this canary"
