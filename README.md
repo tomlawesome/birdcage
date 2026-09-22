@@ -88,8 +88,11 @@ this one does — those terms are not restricted by this one.
 
 Not permitted at all for a company, including one that only runs it on its own
 network and sells nothing; for a government; or for anything funded by the
-state, such as a state school or hospital. An independently funded school that
-is a registered charity is covered by the charity permission.
+state, such as a state school or hospital.
+
+A registered charity is permitted whatever else is true of it, including one
+that receives government funding. Being a registered charity is the test, not
+where its money comes from.
 
 Licences to use it commercially, or to modify or redistribute it, are
 available. Ask.
