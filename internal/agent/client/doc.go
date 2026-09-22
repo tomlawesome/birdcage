@@ -1,8 +1,9 @@
 // Package client is the HTTPS client a canary's agent (#48) uses to talk
 // to birdcage's ingest submux (#32): push batches of OpenCanary events,
-// rotate its own bearer token, send its heartbeat, and poll for commands.
-// It is deliberately thin -- one goroutine-safe *http.Client, four
-// request shapes matching internal/ingest's four routes wire-for-wire,
+// rotate its own bearer token, send its heartbeat, poll for commands,
+// and -- as of #108 slice 1 -- post a Nightjar scan snapshot. It is
+// deliberately thin -- one goroutine-safe *http.Client, five request
+// shapes matching internal/ingest's five routes wire-for-wire,
 // and enough response classification to tell the caller "birdcage
 // permanently rejected this event" apart from "try again" -- and carries
 // none of the state an agent needs around it: no on-disk queue, no token
@@ -26,8 +27,9 @@
 // Every wire type here mirrors internal/ingest's own field-for-field
 // (batch.go's ingestEvent/ingestBatch/ackResponse, rotate.go's
 // rotateResponse, heartbeat.go's ingestHeartbeat, command.go's
-// commandPoll/deliveredCommand) rather than a shape invented
-// independently, so the two sides can only drift apart by an edit this
-// package's own tests -- run against internal/ingest's real handlers,
-// not a hand-written fake -- would catch.
+// commandPoll/deliveredCommand, scans.go's ingestScan/ingestScanEngine/
+// ingestScanFinding) rather than a shape invented independently, so the
+// two sides can only drift apart by an edit this package's own tests --
+// run against internal/ingest's real handlers, not a hand-written fake
+// -- would catch.
 package client

@@ -140,6 +140,27 @@ func (h *handler) handleCanaries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, canariesResponse{Canaries: canaries})
 }
 
+// scansResponse is GET /api/scans' body.
+type scansResponse struct {
+	Scans []store.ScanSnapshot `json:"scans"`
+}
+
+// handleScans serves GET /api/scans (#108 slice 1): the minimal
+// read-back of every recorded Nightjar scan receipt, same auth posture
+// as GET /api/alerts (issue #8's requireAuth seam, not yet filled in).
+// No filtering or paging -- #109 adds those once there is a findings
+// table worth either over; this slice only has to prove a snapshot
+// landed.
+func (h *handler) handleScans(w http.ResponseWriter, r *http.Request) {
+	scans, err := store.ListScanSnapshots(r.Context(), h.db)
+	if err != nil {
+		log.Printf("api: list scan snapshots: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, scansResponse{Scans: scans})
+}
+
 // heartbeatRequest is POST /api/heartbeat's body.
 type heartbeatRequest struct {
 	Canary string `json:"canary"`
