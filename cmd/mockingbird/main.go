@@ -242,6 +242,19 @@ func main() {
 		})
 	}()
 
+	// The readiness road (#65): only meaningful alongside a real
+	// OpenCanary child -- os.Args[1:] empty is the same "no child at all"
+	// case runChild itself no-ops on, and a check that only ever reads its
+	// own agent's empty environment has nothing to prove.
+	if len(os.Args) > 1 {
+		readinessLog := logging.New("readiness")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runReadinessCheck(ctx, defaultReadinessConfig(), readinessLog)
+		}()
+	}
+
 	<-ctx.Done()
 	mainLog.Info("shutting down")
 	// Queued-but-unsent events are deliberately abandoned here rather

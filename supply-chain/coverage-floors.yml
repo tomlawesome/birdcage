@@ -144,6 +144,14 @@ floors:
   internal/agent/portscan: 71
   internal/agent/probe: 95
   internal/agent/queue: 88
+  internal/agent/readiness: 98 # New package (#65): independently dials the
+                             # ports opencanary.conf enables to tell a
+                             # started module from one that never did,
+                             # rather than trusting OpenCanary's own startup
+                             # log, which cannot tell the two apart itself.
+                             # 98.0% measured on this checkout; the only gap
+                             # is a context-cancellation race in Check that
+                             # is exercised but not always the branch hit.
   internal/agent/receiver: 95
   internal/agent/snmp: 82
   internal/agent/tailer: 77
