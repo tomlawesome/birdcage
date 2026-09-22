@@ -401,6 +401,13 @@ test:go:
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
 # image plus the Go tarball pinned to go.mod's version, since both are
 # needed in one job. SQLite only -- Postgres at the preview bar is #7's.
+#
+# Firefox (#83, AGENTS.md "Browser journeys run in Firefox"): the owner
+# browses on Firefox, so that is the bar every change has to clear. The
+# engine is resolved once, by frontend/e2e/browser.mjs -- BIRDCAGE_BROWSER
+# below is set explicitly rather than relying on that module's default, so
+# the browser this job runs is visible here rather than only in the script
+# it calls.
 test:smoke:
   stage: test
   image: node:22-trixie
@@ -408,6 +415,8 @@ test:smoke:
   needs:
     - job: test:frontend
       artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: firefox
   script:
     - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
@@ -415,7 +424,53 @@ test:smoke:
     - go build -o birdcage ./cmd/birdcage
     - cd frontend
     - npm ci
-    - npx playwright install --with-deps chromium
+    - npx playwright install --with-deps firefox
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The same journey (frontend/e2e/smoke.mjs), widened to Safari at the
+# `preview` -> `main` promotion (#83, docs/ci-hops.md "Hop 2"): Firefox
+# stays the bar for every change above, and this adds to it rather than
+# replacing it -- test:smoke keeps running at this hop too, because *gate
+# names it as well. Safari is WebKit in Playwright.
+test:smoke:safari:
+  stage: test
+  image: node:22-trixie
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: safari
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps webkit
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The same journey, widened to Edge at the promotion (#83, docs/ci-hops.md
+# "Hop 2"). Edge is Chromium with the msedge channel, not a separate
+# Playwright engine -- frontend/e2e/browser.mjs resolves that.
+test:smoke:edge:
+  stage: test
+  image: node:22-trixie
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: edge
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps msedge
     - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
 
 # The two shipped images (#69), built and run as validation only -- nothing

@@ -14,7 +14,10 @@
 //
 // Usage: node e2e/smoke.mjs   (from frontend/, with BIRDCAGE_BIN set if
 // the binary isn't at the default path)
-import { chromium } from 'playwright'
+//
+// Browser: resolved once, by ./browser.mjs (issue #83) -- BIRDCAGE_BROWSER
+// selects it, default firefox.
+import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -94,7 +97,8 @@ async function main() {
   try {
     await waitForServer(`http://127.0.0.1:${httpPort}/`)
 
-    const browser = await chromium.launch()
+    console.log(`launching ${resolveBrowserName()}...`)
+    const browser = await launchBrowser()
     try {
       const page = await browser.newPage()
       const consoleErrors = []

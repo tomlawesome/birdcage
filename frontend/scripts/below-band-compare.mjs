@@ -11,6 +11,13 @@
 // the reference shot cropped the same way.
 //
 // Usage: node scripts/below-band-compare.mjs   (from frontend/)
+//
+// Stays on chromium.launch() deliberately (issue #83, owner decision
+// 2026-09-19): this is a rendering-fidelity check against the round-6
+// references, which were captured in Chromium, not a browser-compatibility
+// check, so the browser here is an implementation detail of the reference
+// set. See frontend/e2e/browser.mjs, which the behavioural journeys use
+// instead.
 import { createServer } from 'vite'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
