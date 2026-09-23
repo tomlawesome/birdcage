@@ -95,6 +95,25 @@ Filed as #112, which also carries the timing table and the candidate fixes.
 `stack.sh` is not at fault: refusing to substitute an image is exactly what a
 live test should do.
 
+## e2e:enrol-and-hit / lifecycle.sh step 6 (revocation) -- not a flake; defect fixed, see #119
+
+- 2026-09-23 · e60dfac · pipeline 1543, job 21207 · failed: "the alerts
+  count changed across the refused request (51 -> 52): something was
+  stored despite the 401". Retried as job 21261 on the same commit and
+  passed.
+
+### Diagnosed the same day, and it is not a flake
+
+The step proved "nothing was stored despite the 401" by counting
+`alerts where instance_id = $E2E_CANARY_ID` before and after the refused
+request and requiring equality -- but that canary is live for the whole
+journey (restarted in an earlier step, still delivering heartbeats and
+self-tests later on), so any of its own real hits landing in the gap
+between the two counts read as a false failure. Fixed by proving the
+negative directly: post the revoked token's batch with a marker unique
+to the run and query for that marker rather than for a count staying
+still. Refs #119.
+
 ## TestRunCommandPollLoopDropsOnFullBuffer (cmd/mockingbird) -- fixed
 
 - 2026-09-23 · 5a0c594 · pipeline 1528 `test:go` · "log output = ... context

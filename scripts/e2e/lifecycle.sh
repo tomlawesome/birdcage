@@ -217,9 +217,6 @@ mint_raw="$(printf '%s\n' "$mint_output" | sed -n 's/^token (shown once, record 
 [ -n "$mint_token_id" ] && [ -n "$mint_raw" ] \
   || fail "could not parse a token id and raw token out of birdcage canary mint's output"
 
-alerts_before_revoke="$("$E2E_STACK" query "select count(*) from alerts where instance_id = '$E2E_CANARY_ID'")" \
-  || fail "could not count alerts before revocation"
-
 revoke_output="$("$E2E_STACK" birdcage canary revoke "$mint_token_id")" \
   || fail "birdcage canary revoke $mint_token_id did not run"
 case "$revoke_output" in
@@ -227,25 +224,45 @@ case "$revoke_output" in
   *) fail "revoke did not confirm the expected token/canary: $revoke_output" ;;
 esac
 
+# "Nothing was stored despite the 401" used to be proved by a global
+# alerts count taken before and after the refused request -- but
+# $E2E_CANARY_ID is live for the whole journey (restarted in step 2,
+# still delivering in step 4), so any of its own real hits landing in
+# the gap between the two counts failed this step on a false positive
+# (issue #119: seen 51 -> 52 in CI on an otherwise-passing retry).
+#
+# Proving the negative directly instead: the batch below carries one
+# event shaped exactly like what internal/ingest/batch.go's
+# validateEvent would accept and store (a well-formed event_id,
+# source_ip, dest_port and service -- see the unit tests in
+# internal/ingest/batch_test.go for the same shape), with a marker
+# unique to this run riding in `raw`. If the revoked token had let this
+# batch through, that marker would be sitting in the alerts table's
+# `raw` column; querying for it rather than for a count is immune to
+# whatever else the live canary is doing at the same time.
+event_id="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+marker="e2e-revoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+
 revoked_attempt="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
   --cert /state/client.pem --key /state/client-key.pem \
   -H \"Authorization: Bearer $mint_raw\" \
-  -X POST '$BIRDCAGE_INGEST_URL/ingest/events' -d '{\"events\":[]}'")" \
+  -X POST '$BIRDCAGE_INGEST_URL/ingest/events' \
+  -d '{\"events\":[{\"event_id\":\"$event_id\",\"source_ip\":\"203.0.113.9\",\"dest_port\":22,\"service\":\"ssh\",\"raw\":\"marker $marker\"}]}'")" \
   || fail "the revoked-token request could not be sent"
 case "$revoked_attempt" in
   *http=401*'"error":"unauthorized"'*|*'"error":"unauthorized"'*http=401*) ;;
   *) fail "the revoked token was not refused with 401 unauthorized: $revoked_attempt" "$E2E_BIRDCAGE" ;;
 esac
 
-alerts_after_revoke="$("$E2E_STACK" query "select count(*) from alerts where instance_id = '$E2E_CANARY_ID'")" \
-  || fail "could not count alerts after revocation"
-[ "$alerts_after_revoke" = "$alerts_before_revoke" ] \
-  || fail "the alerts count changed across the refused request ($alerts_before_revoke -> $alerts_after_revoke): something was stored despite the 401"
+stored_with_marker="$("$E2E_STACK" query "select count(*) from alerts where raw like '%$marker%'")" \
+  || fail "could not query alerts for marker $marker"
+[ "$stored_with_marker" -eq 0 ] \
+  || fail "an alert carrying marker $marker is stored ($stored_with_marker rows) despite the 401: the revoked token's batch was accepted" "$E2E_BIRDCAGE"
 
 audit="$("$E2E_STACK" query "select reason from audit_log where action = 'canary.token_revoked' and target = '$E2E_CANARY_ID' order by id desc limit 1")" \
   || fail "could not read the audit log for the revocation"
 case "$audit" in
-  *"revoked via CLI"*) ok "revoked, refused with 401, nothing stored, audited: $audit" ;;
+  *"revoked via CLI"*) ok "revoked, refused with 401, marker $marker never stored, audited: $audit" ;;
   *) fail "no canary.token_revoked entry naming $E2E_CANARY_ID; got: ${audit:-<nothing>}" ;;
 esac
 
