@@ -507,3 +507,68 @@ func TestHandleBatchStillRejectsMalformedEventsByID(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleBatchBaseLineAckedNotStored is issue #117's acceptance
+// test: OpenCanary's own start-up lines (service "base", the range the
+// module-load messages in internal/opencanary/service.go's logTypeRanges
+// map to) must ack like any other event -- so the agent's queue drains
+// -- but must never be persisted as an alert or counted as a hit. A
+// batch mixing one base line with one real event acks both ids and
+// stores exactly the real one.
+func TestHandleBatchBaseLineAckedNotStored(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		baseID := validEventID1
+		realID := validEventID2
+		// dest_port -1 / source_ip "" mirrors a real start-up line
+		// (internal/opencanary/service.go:43's "Added service from
+		// class ..."): OpenCanary logs it before any connection exists.
+		baseEvent := fmt.Sprintf(`{"event_id":%q,"source_ip":"","dest_port":-1,"service":"base","raw":"Added service from class FTP"}`, baseID)
+		body := fmt.Sprintf(`{"events":[%s,%s]}`, baseEvent, validEventJSON(realID))
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		stored := map[string]bool{}
+		for _, id := range resp.Stored {
+			stored[id] = true
+		}
+		if !stored[baseID] {
+			t.Errorf("stored = %v, want the base line's id (%s) acked", resp.Stored, baseID)
+		}
+		if !stored[realID] {
+			t.Errorf("stored = %v, want the real event's id (%s) acked", resp.Stored, realID)
+		}
+		if len(resp.Rejected) != 0 {
+			t.Errorf("rejected = %v, want none -- a base line acks, it is never rejected", resp.Rejected)
+		}
+
+		var alertCount int
+		row := database.QueryRow(`SELECT COUNT(*) FROM alerts WHERE instance_id = ?`, "canary-a")
+		if err := row.Scan(&alertCount); err != nil {
+			t.Fatalf("count alerts: %v", err)
+		}
+		if alertCount != 1 {
+			t.Errorf("alerts stored for canary-a = %d, want 1 (the base line must not be stored)", alertCount)
+		}
+
+		alerts, err := store.ListAlerts(context.Background(), database, store.AlertFilter{InstanceID: "canary-a"})
+		if err != nil {
+			t.Fatalf("ListAlerts(canary-a): %v", err)
+		}
+		for _, a := range alerts {
+			if a.Service == "base" {
+				t.Errorf("alert stored with service=base: %+v", a)
+			}
+		}
+	})
+}

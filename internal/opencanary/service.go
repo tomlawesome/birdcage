@@ -79,3 +79,25 @@ func ServiceForLogType(logType *int) string {
 	}
 	return UnknownService
 }
+
+// baseService is the service name the first entry of logTypeRanges (the
+// 1000-1006 range) produces -- OpenCanary's own start-up lines ("Added
+// service from class ...", internal/opencanary/service.go's package
+// comment), not a hit against an emulated service.
+const baseService = "base"
+
+// IsBase reports whether service is OpenCanary's own start-up-line
+// service name. Issue #117: those lines are forwarded by the agent (a
+// future feature reads them for which modules started) but must never
+// be stored as an alert or counted as a hit.
+//
+// This takes the already-computed service name rather than a logtype
+// because that is the only form the ingest wire carries: ingestEvent
+// (internal/ingest/batch.go) has no logtype field, only the Service the
+// agent already derived via ServiceForLogType. baseService is the only
+// name the 1000-1006 range ever produces and no other range produces it
+// (TestLogTypeRangesDoNotOverlap), so comparing the service name is
+// exactly equivalent to testing logtype membership in that range.
+func IsBase(service string) bool {
+	return service == baseService
+}

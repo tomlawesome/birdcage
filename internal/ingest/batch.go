@@ -13,6 +13,7 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/opencanary"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -163,6 +164,21 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			// this field itself (#48) may leave it unset the same way.
 			service = "unknown"
 		}
+
+		if opencanary.IsBase(service) {
+			// Issue #117: OpenCanary's own start-up lines (logtype
+			// 1000-1006, service "base") are forwarded by the agent --
+			// #65 will use them later to know which modules started --
+			// but birdcage owns the filter: they ack like any other
+			// stored event, so the agent's queue drains, but are never
+			// persisted as an alert or counted in a canary's hits. Never
+			// self-test matched either: a start-up line is never the
+			// marker MatchSelfTest or MatchSelfTestClaim is looking for.
+			slog.Info("ingest: skipping OpenCanary start-up line", "canary", tok.CanaryID, "event_id", ev.EventID, "message", ev.Raw)
+			resp.Stored = append(resp.Stored, ev.EventID)
+			continue
+		}
+
 		insert := store.AlertInsert{
 			InstanceID: tok.CanaryID, // identity from the token, never the payload
 			SourceIP:   ev.SourceIP,
