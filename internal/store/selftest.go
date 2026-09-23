@@ -249,6 +249,16 @@ func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex
 	if !found {
 		return false, "no live marker for this claim", nil
 	}
+	// Check 5, note 19855's "at most one claim per target per run": the
+	// first corroborated claim binds the marker to its event id, so a
+	// second event carrying it -- a replay, or an intruder's hit an
+	// agent wrongly claimed alongside its own -- is refused and stored
+	// real. The same event id presented again (a batch retried after
+	// birdcage's ack was lost, which the dedup index otherwise makes
+	// free) is not a second claim.
+	if info.ClaimedBy != "" && info.ClaimedBy != alert.EventID {
+		return false, "marker already claimed by another event", nil
+	}
 	if gradeForService(info.Service) != GradeAttributed {
 		return false, "target is not attributed-grade", nil
 	}
@@ -267,6 +277,7 @@ func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex
 	if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
 		return false, "", fmt.Errorf("record selftest claim match: %w", err)
 	}
+	idx.claim(alert.InstanceID, marker, alert.EventID)
 	return true, "", nil
 }
 
@@ -503,6 +514,18 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 	return true, nil
 }
 
+// claim binds canaryID's marker to the event that first claimed it --
+// MatchSelfTestClaim's one-claim-per-target rule. A no-op for a marker
+// the index no longer holds.
+func (idx *SelfTestIndex) claim(canaryID, marker, eventID string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if info, ok := idx.byCanary[canaryID][marker]; ok {
+		info.ClaimedBy = eventID
+		idx.byCanary[canaryID][marker] = info
+	}
+}
+
 // selfTestMarkerInfo is one live marker's expiry and the service it was
 // minted for -- SelfTestIndex's byCanary value from #46 slice 3 onward.
 // Service is new: MatchSelfTestClaim needs a claimed marker's own
@@ -512,6 +535,9 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 type selfTestMarkerInfo struct {
 	ExpiresAt time.Time
 	Service   string
+	// ClaimedBy is the event id of the first corroborated claim on this
+	// marker, empty until then -- see MatchSelfTestClaim's check 5.
+	ClaimedBy string
 }
 
 // SelfTestIndex is the bounded, in-memory index of markers birdcage has

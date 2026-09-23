@@ -404,7 +404,7 @@ func TestMatchSelfTestClaim_GoodClaimMarksSynthetic(t *testing.T) {
 		now := time.Now()
 		marker := mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
 
-		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10"}
+		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10", EventID: "evt-1"}
 		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
 		if err != nil {
 			t.Fatalf("MatchSelfTestClaim: %v", err)
@@ -414,6 +414,29 @@ func TestMatchSelfTestClaim_GoodClaimMarksSynthetic(t *testing.T) {
 		}
 		if refusal != "" {
 			t.Errorf("matched claim carries a refusal reason: %q", refusal)
+		}
+
+		// The same event presented again (a retried batch) is still the
+		// one claim, not a second.
+		matched, _, err = MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+		if err != nil {
+			t.Fatalf("retried MatchSelfTestClaim: %v", err)
+		}
+		if !matched {
+			t.Fatal("the same event retried was refused")
+		}
+
+		// Note 19855's "at most one claim per target per run": a
+		// different event carrying the same marker is refused and stays
+		// real.
+		other := alert
+		other.EventID = "evt-2"
+		matched, refusal, err = MatchSelfTestClaim(context.Background(), database, idx, other, marker, now)
+		if err != nil {
+			t.Fatalf("second MatchSelfTestClaim: %v", err)
+		}
+		if matched || refusal == "" {
+			t.Fatalf("a second event's claim on the same marker was accepted (matched=%v, refusal=%q)", matched, refusal)
 		}
 	})
 }
