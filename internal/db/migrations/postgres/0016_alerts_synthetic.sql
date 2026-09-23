@@ -1,0 +1,24 @@
+-- alerts gains synthetic (issue #46 item 2): true for a hit
+-- store.MatchSelfTest recognised as one of birdcage's own scheduled
+-- self-test probes rather than a real visitor. Written once, at insert
+-- (internal/ingest/batch.go, before store.InsertAlertIfNew), never
+-- updated afterward -- a row's synthetic-ness is a fact about how it
+-- arrived, not something that changes later.
+--
+-- NOT NULL DEFAULT 0/false, matching 0013_agent_kinds.sql's own
+-- backfill precedent: every alert this schema has ever stored predates
+-- #46's self-test and was real, so the default is correct by
+-- construction, on both engines, for existing rows as well as new ones
+-- that arrive before this slice's ingest change ships.
+--
+-- Stored as INTEGER (0/1) rather than a native boolean type, matching
+-- this schema's existing convention (0005_canary_agent_report.sql's own
+-- comment) of engine-portable INTEGER over per-engine boolean DDL.
+--
+-- Every store read path that feeds the dashboard (GetStats, ListTrace,
+-- ListVisitors, ListCanaries' hits count, ListInstances) filters
+-- "synthetic = 0" so a self-test never shows up as a hit. GET
+-- /api/alerts -- the raw-alert admin listing -- is the deliberate
+-- exception: it returns every row, synthetic included, with the field
+-- named on the wire so a caller can tell the two apart.
+ALTER TABLE alerts ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0;
