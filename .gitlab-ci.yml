@@ -1143,6 +1143,11 @@ e2e:portscan:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/portscan-stack.sh up)"
     - scripts/e2e/portscan.sh
