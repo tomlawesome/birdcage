@@ -162,6 +162,28 @@ restarts. Nothing an intruder changes in there survives.
 `build/smb-lure/README.md` has the per-flag table and the evidence for
 which capabilities are actually needed.
 
+#### Restarting the canary takes the lure with it
+
+The lure listens inside the canary container's network namespace, so
+restarting the canary destroys the namespace its Samba is listening in.
+The lure container stays `running` with nothing answering on port 445 --
+the most misleading state it could be in, because `docker ps` says it is
+fine. Docker will not re-attach it by itself.
+
+So restart the lure too, every time you restart the canary:
+
+```
+docker restart mockingbird
+docker restart smb-lure
+```
+
+`docker start smb-lure` does nothing, because the container never stopped.
+It has to be `restart`.
+
+Nothing is lost in the gap: the agent picks up where it left off in the
+audit file, so an access either side of a restart still reaches birdcage,
+and a line it reads twice raises one alert rather than two.
+
 #### Turning it off, and naming the shares
 
 | Flag | Default | What it does |

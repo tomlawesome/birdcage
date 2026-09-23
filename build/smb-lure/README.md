@@ -145,6 +145,29 @@ with each one removed (2026-09-23, Docker 29.7.2 rootless):
   files are world-readable (0444), so the guest account reads them
   without it.
 
+### Restarting the canary takes the lure with it
+
+The lure listens inside the canary container's network namespace, so
+restarting the canary destroys the namespace its Samba is listening in. The
+lure container stays `running` with nothing answering on 445, which is the
+most misleading state it could be in -- Docker does not re-attach a
+container to a namespace that has been replaced.
+
+So restart the lure too, every time you restart the canary:
+
+```
+docker restart mockingbird
+docker restart smb-lure
+```
+
+`docker start smb-lure` does nothing here: the container never stopped. It
+has to be `restart`.
+
+Nothing is lost in the gap. The lure writes to the audit volume and the
+agent resumes from its saved position, so accesses either side of the
+restart still reach birdcage, and a line read twice mints the id it already
+had rather than a second alert.
+
 ## Configuration
 
 Identity follows the operator's naming (decision 7), never ours. Sharing
