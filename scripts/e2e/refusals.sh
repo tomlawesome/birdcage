@@ -229,17 +229,21 @@ esac
 
 # The contrast, so neither 403 above can be explained by anything else
 # about the request: the identical scanner call against its own route
-# gets past authorisation and is answered by the scan handler
-# (deterministic 400 on {} -- status must be "ok" or "failed"). The
-# honeypot's own-route contrast already exists above (400, "at least one
-# event").
+# gets past authorisation and is answered by the scan handler --
+# deterministic 400 on {}, "taken_at must be an RFC3339 timestamp"
+# (handleScan's own validation order in internal/ingest/scans.go parses
+# taken_at before it ever looks at status, so that -- not the "status
+# must be ..." message a first read of the body might expect -- is the
+# message an empty object actually gets; verified against the real
+# handler rather than assumed). The honeypot's own-route contrast
+# already exists above (400, "at least one event").
 contrast="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
   --cert /work/scanner-cert.pem --key /work/scanner-key.pem \
   -H \"Authorization: Bearer \$(cat /work/scanner-token)\" \
   -X POST '$BIRDCAGE_INGEST_URL/ingest/scans' -d '{}'")" \
   || fail "the scanner's own-route contrast request could not be sent: $contrast"
 case "$contrast" in
-  *http=400*'status must be'*|*'status must be'*http=400*)
+  *http=400*'RFC3339'*|*'RFC3339'*http=400*)
     ok "the scanner's own credential authenticates on its own route (400 from the scan handler)" ;;
   *) fail "the scanner's own-route contrast did not reach the scan handler, so the 403s above prove nothing: $contrast" ;;
 esac
