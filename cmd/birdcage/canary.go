@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
@@ -310,11 +311,13 @@ func runCanaryEnrol(args []string) error {
 		return runCanaryEnrolStatus()
 	}
 
-	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> [--kind <kind>] (or --status)"
+	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> [--kind <kind>] [--bait-names <a,b>] [--segment-profile <windows|linux|off>] (or --status)"
 	fs := flag.NewFlagSet("canary enrol", flag.ContinueOnError)
 	name := fs.String("name", "", "canary name (required)")
 	lane := fs.String("lane", "", "canary lane (required)")
 	kindFlag := fs.String("kind", string(agentkind.Honeypot), "agent kind (issue #105)")
+	baitNames := fs.String("bait-names", "", "two or three names in your own naming style for the poisoner detector to ask for (issue #86)")
+	segmentProfile := fs.String("segment-profile", "", "which protocols the poisoner detector uses: windows (default), linux or off (issue #86)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -328,6 +331,28 @@ func runCanaryEnrol(args []string) error {
 	profile, ok := agentkind.Lookup(kind)
 	if !ok {
 		return fmt.Errorf("%s: unknown --kind %q (valid kinds: %s)", usage, *kindFlag, strings.Join(kindNames(), ", "))
+	}
+
+	// #86's two optional settings, validated here, before anything is
+	// minted. The order matters for the same reason #108's own comment
+	// below gives: a check that ran after the session was created would
+	// burn a live token on a typo. Both are validated with the agent's own
+	// parsers, so what this command accepts and what the agent accepts can
+	// never drift -- the call internal/hostmask already makes for the
+	// scanner's mounts.
+	bait, err := poisonerBaitNames(*baitNames)
+	if err != nil {
+		return fmt.Errorf("%s: %w", usage, err)
+	}
+	segment, err := poisoner.ParseProfile(*segmentProfile)
+	if err != nil {
+		return fmt.Errorf("%s: %w", usage, err)
+	}
+	if *segmentProfile == "" {
+		// Nothing to put in the run command: the agent's own default is
+		// the same value, and an explicit flag for a default is noise in
+		// the one instruction the product asks an operator to paste.
+		segment = ""
 	}
 
 	advertiseHost := os.Getenv(envAdvertiseHost)
@@ -412,7 +437,7 @@ func runCanaryEnrol(args []string) error {
 		if image == "" {
 			image = profile.DefaultImage
 		}
-		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image, bait, string(segment)); err != nil {
 			return fmt.Errorf("print docker run command: %w", err)
 		}
 	case agentkind.Scanner:
@@ -449,7 +474,19 @@ func runCanaryEnrol(args []string) error {
 // random hex -- never attacker- or even operator-influenced, so neither
 // is escaped, the same distinction runCanaryMint draws between canaryID
 // and tok.ID/raw.
-func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
+// baitNames and segmentProfile are #86's two optional per-canary
+// settings. Both are empty unless the operator asked for them, and an
+// empty one prints no line at all rather than an explicit default: the
+// agent's own default is the same value, and the run command is the
+// product's one install instruction, not a place to restate defaults.
+//
+// baitNames has already been through the agent's own parser (see
+// poisonerBaitNames), so by the time it reaches here it holds only
+// lower-case letters, digits, hyphens and the commas between them.
+// term.Escape is applied anyway, because this file's rule is that every
+// operator-supplied value is escaped at the point it reaches the
+// terminal, and a rule with an exception is a rule somebody forgets.
+func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image, baitNames, segmentProfile string) error {
 	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped --init \\\n"); err != nil {
 		return err
 	}
@@ -480,8 +517,47 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token); err != nil {
 		return err
 	}
+	if baitNames != "" {
+		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_POISONER_NAMES=%s \\\n", term.Escape(baitNames)); err != nil {
+			return err
+		}
+	}
+	if segmentProfile != "" {
+		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_POISONER_PROFILE=%s \\\n", term.Escape(segmentProfile)); err != nil {
+			return err
+		}
+	}
 	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
 	return err
+}
+
+// poisonerBaitNames validates the --bait-names list and returns it in the
+// form the run command carries: the agent's own normalisation, re-joined
+// with commas.
+//
+// Every entry has to be usable. A partly-good list is refused rather than
+// silently trimmed, because this is the operator typing their own network
+// in, once, at the moment they are watching the output -- unlike the
+// agent's own read of the environment variable later, where refusing the
+// lot would leave a running canary with no bait at all.
+//
+// The error names the rule and how many entries broke it. It does not
+// quote the offending name back, because this output can end up in a
+// terminal recording, a runbook or a ticket, and the whole point of
+// deriving bait names from the operator's own network is that there is
+// nothing for an attacker to look up.
+func poisonerBaitNames(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	names, refused, err := poisoner.ParseNames(raw)
+	if err != nil {
+		return "", err
+	}
+	if refused > 0 {
+		return "", fmt.Errorf("%d of the --bait-names entries could not be used: a bait name is 1 to 15 characters of letters, digits and hyphens, not starting or ending with a hyphen, and at most %d are used", refused, poisoner.MaxOperatorNames)
+	}
+	return strings.Join(names, ","), nil
 }
 
 // printScannerEnrolRunCommand writes the `docker run` line for the

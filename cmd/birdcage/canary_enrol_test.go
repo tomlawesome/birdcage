@@ -24,7 +24,7 @@ import (
 // than with a diff nobody reads.
 func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 	var out strings.Builder
-	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest"); err != nil {
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", "", ""); err != nil {
 		t.Fatalf("printEnrolRunCommand: %v", err)
 	}
 	got := out.String()
@@ -64,7 +64,7 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 // same rule every other command in cmd/birdcage follows.
 func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	var out strings.Builder
-	if err := printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name"); err != nil {
+	if err := printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name", "old-fs-01\x1b[32m", "linux\x07"); err != nil {
 		t.Fatalf("printEnrolRunCommand: %v", err)
 	}
 	got := out.String()
@@ -74,6 +74,99 @@ func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	}
 	if strings.ContainsRune(got, 0x07) {
 		t.Errorf("a bell character reached the terminal unescaped:\n%q", got)
+	}
+}
+
+// TestEnrolRunCommandOmitsThePoisonerSettingsWhenNotAskedFor: the two
+// optional settings issue #86 adds print nothing at all when the operator
+// did not ask for them. The agent's own defaults are the same values, and
+// the run command is the product's one install instruction, not a place to
+// restate defaults an operator then has to reason about.
+func TestEnrolRunCommandOmitsThePoisonerSettingsWhenNotAskedFor(t *testing.T) {
+	var out strings.Builder
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", "", ""); err != nil {
+		t.Fatalf("printEnrolRunCommand: %v", err)
+	}
+	got := out.String()
+	for _, unwanted := range []string{"MOCKINGBIRD_POISONER_NAMES", "MOCKINGBIRD_POISONER_PROFILE"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("the printed command names %s without being asked:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestEnrolRunCommandCarriesThePoisonerSettings is the other half: when
+// the operator does supply them, they reach the container, because a
+// setting that has to be added by hand afterwards is one that does not
+// get added.
+func TestEnrolRunCommandCarriesThePoisonerSettings(t *testing.T) {
+	var out strings.Builder
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", "old-fs-01,printer-7", "linux"); err != nil {
+		t.Fatalf("printEnrolRunCommand: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"-e MOCKINGBIRD_POISONER_NAMES=old-fs-01,printer-7",
+		"-e MOCKINGBIRD_POISONER_PROFILE=linux",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("printed command is missing %q\ngot:\n%s", want, got)
+		}
+	}
+	// Still one command: every line but the last ends in a continuation.
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	for i, line := range lines[:len(lines)-1] {
+		if !strings.HasSuffix(line, "\\") {
+			t.Errorf("line %d does not continue, so the command is broken in two:\n%s", i, got)
+		}
+	}
+}
+
+// TestPoisonerBaitNames is the validation that runs before a token is
+// minted. A typo must not burn a live deploy token, and the error must not
+// quote the name back -- this output ends up in runbooks and tickets, and
+// the point of deriving bait names from the operator's own network is that
+// there is nothing for an attacker to look up.
+func TestPoisonerBaitNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "not asked for", raw: "", want: ""},
+		{name: "only spaces", raw: "   ", want: ""},
+		{name: "two names", raw: "old-fs-01,printer-7", want: "old-fs-01,printer-7"},
+		{name: "normalised", raw: " OLD-FS-01 , Printer-7 ", want: "old-fs-01,printer-7"},
+		{name: "three names", raw: "a,b,c", want: "a,b,c"},
+		// A partly-good list is refused rather than silently trimmed: the
+		// operator is watching this output, so they can fix it now.
+		{name: "one bad entry", raw: "old-fs-01,bad_name", wantErr: true},
+		{name: "four names", raw: "old-fs-01,printer-7,srv-22,extra-9", wantErr: true},
+		{name: "all bad", raw: "_,-", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := poisonerBaitNames(tc.raw)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want an error: %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if err != nil {
+				for _, field := range strings.Split(tc.raw, ",") {
+					field = strings.TrimSpace(field)
+					// Entries shorter than three characters are skipped:
+					// "a" or "-" appears inside ordinary English, so a
+					// substring check on one would fail on the wording of
+					// the rule rather than on a leaked name.
+					if len(field) >= 3 && strings.Contains(err.Error(), field) {
+						t.Errorf("the error quotes %q: %s", field, err)
+					}
+				}
+			}
+		})
 	}
 }
 

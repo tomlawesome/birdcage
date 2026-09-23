@@ -265,3 +265,70 @@ func TestSubmitPoisonerEventQueuesWithAnID(t *testing.T) {
 		t.Errorf("queue depth after the same event twice = %d, want 1", got)
 	}
 }
+
+// TestNewPoisonerRoadOffReturnsNoDetector is the switch's whole effect:
+// nothing is built, nothing is opened, and main's goroutine is a no-op.
+func TestNewPoisonerRoadOffReturnsNoDetector(t *testing.T) {
+	t.Setenv(envPoisoner, "0")
+	in, _ := newTestIntake(t, queue.Config{})
+	detector, inv := newPoisonerRoad(in, discardLogger())
+	if detector != nil {
+		t.Error("a detector was built with the road switched off")
+	}
+	if inv.Active {
+		t.Error("the inventory claims the road is active")
+	}
+	if got := inv.line(); got != "poisoner detection off" {
+		t.Errorf("startup line = %q", got)
+	}
+}
+
+// TestNewPoisonerRoadBuildsTheDetector runs the real startup path. It uses
+// the "off" profile deliberately: this test runs on a developer's machine
+// and in CI, and a profile that sends would put real bait queries on
+// whatever network those are attached to. "off" exercises everything the
+// road does except the sending, which is what the detector's own package
+// tests cover.
+//
+// It does not require the three low ports to bind -- an ordinary test host
+// has no lowered privileged-port floor, so they will not -- and asserts
+// only what is true either way.
+func TestNewPoisonerRoadBuildsTheDetector(t *testing.T) {
+	t.Setenv(envPoisonerProfile, "off")
+	t.Setenv(envPoisonerHours, "00:00-24:00/Mon,Tue,Wed,Thu,Fri,Sat,Sun")
+	in, _ := newTestIntake(t, queue.Config{})
+	log, buf := captureLogger()
+
+	detector, inv := newPoisonerRoad(in, log)
+	if detector == nil {
+		// Only reachable on a host with no interface to ask on and no port
+		// that would bind, which is a real state (a container run with
+		// --network none) and not a failure of this code.
+		t.Skipf("nothing opened on this host: %s", buf.String())
+	}
+	if !inv.Active {
+		t.Error("a detector was built but the inventory says the road is off")
+	}
+	if inv.Profile != poisoner.ProfileOff {
+		t.Errorf("inventory profile = %q, want off", inv.Profile)
+	}
+	if inv.Sending {
+		t.Error("the off profile reports that it is sending")
+	}
+	if inv.Counting != detector.Listening() {
+		t.Errorf("inventory counts %d ports, detector has %d", inv.Counting, detector.Listening())
+	}
+
+	// And the run goroutine returns cleanly when its context ends, rather
+	// than holding shutdown up.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	runPoisonerRoad(ctx, detector, log)
+
+	// Nothing this road logs at startup may name a bait name. There are
+	// none configured here, so the check is that the derived ones -- which
+	// the detector does know -- did not reach the log either.
+	if strings.Contains(buf.String(), poisoner.WPADName+",") {
+		t.Errorf("the startup log lists the name rotation: %s", buf.String())
+	}
+}
