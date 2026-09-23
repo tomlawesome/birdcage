@@ -95,6 +95,7 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	mux.Handle("/api/instances", protected)
 	mux.Handle("/api/stats", protected)
 	mux.Handle("/api/canaries", protected)
+	mux.Handle("/api/canary", protected)
 	mux.Handle("/api/scans", protected)
 	mux.Handle("/api/heartbeat", protected)
 	mux.Handle("/api/visitors", protected)
@@ -106,10 +107,10 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	return mux
 }
 
-// dashboardRoutes registers birdcage's entire dashboard API -- ten GET
-// routes (including /api/stream, issue #44, /api/history, issue #56,
-// /api/mail, issue #55, and /api/scans, issue #108 slice 1) and one POST
-// (/api/heartbeat) -- and nothing else. Mirrors mikroview's
+// dashboardRoutes registers birdcage's entire dashboard API -- eleven
+// GET routes (including /api/stream, issue #44, /api/history, issue #56,
+// /api/mail, issue #55, /api/scans, issue #108 slice 1, and /api/canary,
+// issue #118) and one POST (/api/heartbeat) -- and nothing else. Mirrors mikroview's
 // readOnlyRoutes (internal/api/auth.go there): a caller dispatched to
 // this mux is structurally unable to reach anything but these routes,
 // because nothing else is ever registered on it. That property is what
@@ -121,6 +122,7 @@ func dashboardRoutes(h *handler) *http.ServeMux {
 	mux.HandleFunc("GET /api/instances", h.handleInstances)
 	mux.HandleFunc("GET /api/stats", h.handleStats)
 	mux.HandleFunc("GET /api/canaries", h.handleCanaries)
+	mux.HandleFunc("GET /api/canary", h.handleCanary)
 	mux.HandleFunc("GET /api/scans", h.handleScans)
 	mux.HandleFunc("POST /api/heartbeat", h.handleHeartbeat)
 	mux.HandleFunc("GET /api/visitors", h.handleVisitors)

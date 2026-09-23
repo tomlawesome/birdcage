@@ -112,4 +112,32 @@ case "$alert" in
   *) fail "the ftp alert does not name port 21: $alert" "$E2E_BIRDCAGE" ;;
 esac
 
+step "GET /api/canaries counts only this journey's real hits"
+# Issue #117: OpenCanary logs its own start-up lines (logtype 1000-1006,
+# service "base") through the log the agent tails, and the agent
+# forwards them -- birdcage must never store or count them. This
+# canary's hits must be exactly the real, non-base traffic this journey
+# produced: the one FTP login above, plus the one SSH pre-login artifact
+# every fresh canary's own SSH listener logs at start-up from
+# 127.0.0.1 (logtype 4000, out of scope for #117 -- see the issue body).
+# A canary fresh off enrolment showed ~11 hits before this fix, purely
+# from base start-up lines; this must now read 2, not a double-digit
+# count.
+canary_json2="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
+  || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
+case "$canary_json2" in
+  *'"hits":2'*) ok "hits: $canary_json2" ;;
+  *) fail "hits is not 2 (1 FTP login + 1 SSH pre-login artifact) -- base start-up lines are being counted as hits: $canary_json2" "$E2E_BIRDCAGE" ;;
+esac
+
+step "GET /api/alerts lists no base rows"
+# The other half of #117's acceptance: not merely under-counted, but
+# never stored as an alert at all.
+base_alerts="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?instance=$E2E_CANARY_ID&service=base' | jq -c '.alerts'")" \
+  || fail "GET /api/alerts?service=base did not run" "$E2E_BIRDCAGE"
+case "$base_alerts" in
+  '[]') ok "no service=base rows: $base_alerts" ;;
+  *) fail "GET /api/alerts?service=base returned rows -- OpenCanary start-up lines must never be stored: $base_alerts" "$E2E_BIRDCAGE" ;;
+esac
+
 finish

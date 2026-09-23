@@ -64,6 +64,15 @@ type Canary struct {
 	// see notDelivering's doc comment in health.go.
 	AgentLogReadOK *bool `json:"-"`
 
+	// AgentVersion is the agent's own last self-reported version
+	// (canaries.agent_version, written by RecordCanaryAgentHeartbeat and
+	// RecordCanaryCommonHeartbeat). nil means no heartbeat has ever
+	// carried one -- a pre-agent canary, or one enrolled but never yet
+	// heard from. Issue #118's canary page names it in the facts column;
+	// the fleet dashboard has never needed it, which is why it arrives
+	// here only now.
+	AgentVersion *string `json:"agent_version,omitempty"`
+
 	// AgentDropped, AgentRejected, AgentEventIDCollisions and
 	// AgentPositionFound are the agent's last self-reported values for
 	// #48's process-composition note (gap 3): cumulative events dropped
@@ -555,7 +564,8 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
-			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at
+			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at,
+			agent_version
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -574,12 +584,15 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agentPositionFound *int64
 			lastSeenAddr       *string
 			registeredAt       *string
+			agentVersion       *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
-			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt); err != nil {
+			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
+			&agentVersion); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.LastSeenAddr = lastSeenAddr
+		c.AgentVersion = agentVersion
 		// c.Kind is opaque on read, like scanEnrolmentSession's own kind
 		// field -- see that function's doc comment.
 		c.Kind = agentkind.Kind(kind)

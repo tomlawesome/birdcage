@@ -54,7 +54,25 @@ export interface Canary {
   last_self_test_at?: string | null
   last_self_test_passed?: boolean
   self_test_failed_services?: string[]
+  /** issue #46 slice 2: the most recently completed run's per-service
+   * breakdown, absent entirely when no run has ever completed. The
+   * canary page's ledger (#118) draws one card per entry. */
+  self_test?: SelfTestServiceResult[]
   hits: number
+}
+
+/** How strong a passing self-test target's evidence is (#46's three
+ * grades of proof, internal/store/selftest_grade.go). A service the run
+ * never probed has no entry at all -- absence is how "untested" is
+ * carried, which is why there is no third value here. */
+export type SelfTestGrade = 'marked' | 'challenge_marked' | 'attributed'
+
+/** One service's outcome in a canary's most recently completed self-test
+ * run (GET /api/canaries' and GET /api/canary's `self_test` array). */
+export interface SelfTestServiceResult {
+  service: string
+  grade: SelfTestGrade
+  passed: boolean
 }
 
 export interface CanariesResponse {
@@ -198,4 +216,47 @@ export interface HistoryResponse {
   until: string
   periods: HistoryPeriod[]
   summary: HistorySummary[]
+}
+
+/** The standing facts about one canary (GET /api/canary's `facts`,
+ * issue #118) -- what the canary page's right-hand column names and no
+ * fleet read carries. Who enrolled it is deliberately not here: birdcage
+ * has no operator identity yet (issue #8), so the API does not claim
+ * one. */
+export interface CanaryFacts {
+  kind: string
+  lane: string
+  ports: string
+  /** The peer address the canary's heartbeats arrive from, absent until
+   * one has. */
+  address?: string
+  heartbeat_interval_s: number
+  self_test_enabled: boolean
+  /** 24-hour UTC "HH:MM" -- the schedule that actually applies, whether
+   * that is the self-test's own or the rotation one it follows. */
+  self_test_schedule: string
+  enrolled_at: string
+  registered_at?: string
+  agent_version?: string
+  token_rotated_at?: string
+  token_rotates_at?: string
+}
+
+/** One past self-test run, as the canary page's line draws it: a hollow
+ * tick under the line per run, filled with words above when it failed.
+ * `passed` is absent while a run is still inside its deadline. */
+export interface SelfTestRunSummary {
+  issued_at: string
+  completed_at?: string
+  passed?: boolean
+  failed_services?: string[]
+}
+
+/** GET /api/canary?id=&range= (issue #118): one canary's own page. The
+ * canary itself is exactly the shape /api/canaries sends for it, so the
+ * page and its tile can never disagree about a status. */
+export interface CanaryPageResponse {
+  canary: Canary
+  facts: CanaryFacts
+  self_test_runs: SelfTestRunSummary[]
 }

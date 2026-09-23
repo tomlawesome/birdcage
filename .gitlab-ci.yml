@@ -281,6 +281,9 @@ test:frontend:
     - fc-match sans-serif && fc-match monospace
     - npm run compare:band
     - npm run compare:below-band
+    # Issue #118's canary page, gated the same way the band is: the four
+    # round-7 scenes against references captured from the build.
+    - npm run compare:canary
     - npm run build
   # Surfaces the total in the job list, and feeds GitLab the per-line
   # cobertura report so coverage shows on the merge request diff rather

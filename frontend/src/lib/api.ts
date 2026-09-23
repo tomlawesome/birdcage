@@ -12,7 +12,15 @@
 // unreachable lazy chunks (Vite code-splits every dynamic import
 // regardless of reachability), but no production request ever fetches
 // them.
-import type { CanariesResponse, HistoryResponse, MailStatus, Range, TraceResponse, VisitorsResponse } from './types'
+import type {
+  CanariesResponse,
+  CanaryPageResponse,
+  HistoryResponse,
+  MailStatus,
+  Range,
+  TraceResponse,
+  VisitorsResponse,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -32,6 +40,11 @@ interface Fixture {
    * predate the endpoint, and a scene without history reads as a fleet
    * with nothing recorded yet, which is a state the section draws. */
   history?: HistoryResponse
+  /** Only the round-7 canary scenes carry one (issue #118): the canary
+   * page is reached from a tile, and a scene without the block is a
+   * fleet scene that has no canary page to draw. Keyed by canary id, so
+   * one scene can answer for whichever tile was opened. */
+  canary?: Record<string, CanaryPageResponse>
   /** Every scene carries one (issue #55). Mail is off in all of them
    * except 'alerts', which is the scene where something has gone wrong
    * and is therefore where a broken mailer is worth showing. A scene
@@ -40,9 +53,32 @@ interface Fixture {
   mail?: MailStatus
 }
 
-type SceneName = 'quiet' | 'silent' | 'night' | 'alerts' | 'history'
+type SceneName =
+  | 'quiet'
+  | 'silent'
+  | 'night'
+  | 'alerts'
+  | 'history'
+  // Issue #118's four round-7 canary scenes. Named for what the page
+  // says, not for the fleet state, since that is what the scene is of:
+  // one canary, quiet and answering; deaf on telnet; silent for the
+  // third time this week; and the sweep night seen from this canary.
+  | 'canary-quiet'
+  | 'canary-failed'
+  | 'canary-silent'
+  | 'canary-night'
 
-const SCENES: SceneName[] = ['quiet', 'silent', 'night', 'alerts', 'history']
+const SCENES: SceneName[] = [
+  'quiet',
+  'silent',
+  'night',
+  'alerts',
+  'history',
+  'canary-quiet',
+  'canary-failed',
+  'canary-silent',
+  'canary-night',
+]
 
 // Static imports (not a dynamic fetch of the JSON file) so a production
 // build's tree-shaking can drop them entirely once the import.meta.env.DEV
@@ -59,6 +95,14 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/alerts.json')) as unknown as Fixture
     case 'history':
       return (await import('../dev/fixtures/history.json')) as unknown as Fixture
+    case 'canary-quiet':
+      return (await import('../dev/fixtures/canary-quiet.json')) as unknown as Fixture
+    case 'canary-failed':
+      return (await import('../dev/fixtures/canary-failed.json')) as unknown as Fixture
+    case 'canary-silent':
+      return (await import('../dev/fixtures/canary-silent.json')) as unknown as Fixture
+    case 'canary-night':
+      return (await import('../dev/fixtures/canary-night.json')) as unknown as Fixture
   }
 }
 
@@ -136,4 +180,19 @@ export async function fetchMail(): Promise<MailStatus> {
     )
   }
   return getJSON<MailStatus>('/api/mail')
+}
+
+/** GET /api/canary (issue #118): one canary's own page -- the canary as
+ * the fleet read already reports it, its standing facts, and every
+ * self-test run in the window. A fixture scene without a `canary` block,
+ * or without this canary in it, throws the same ApiError a real 404
+ * would, so the page draws its not-found line either way. */
+export async function fetchCanary(id: string, range: Range = '14d'): Promise<CanaryPageResponse> {
+  const scene = fixtureScene()
+  if (scene) {
+    const page = (await loadFixture(scene)).canary?.[id]
+    if (!page) throw new ApiError(`/api/canary?id=${id}: 404`, 404)
+    return page
+  }
+  return getJSON<CanaryPageResponse>(`/api/canary?id=${encodeURIComponent(id)}&range=${range}`)
 }

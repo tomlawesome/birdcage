@@ -14,3 +14,7 @@ scripts/.out
 # below-band-compare.mjs's screenshots (issue #38) -- same, regenerate with
 # `npm run compare:below-band`.
 .below-band-compare
+
+# canary-compare.mjs's screenshots (issue #118) -- same, regenerate with
+# `npm run compare:canary`.
+.canary-compare

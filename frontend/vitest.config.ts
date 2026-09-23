@@ -68,11 +68,15 @@ export default defineConfig({
       // action pills) and the events feed's merge-and-sort order was
       // pulled out to lib/sentence/eventRow.ts's buildEventRows and
       // tested there directly -- the ratchet working as intended.
+      // Raised again 2026-09-23 from 85/70/91/90: the canary page (#118)
+      // landed with its four lib/canary modules, the single-canary line
+      // model and its own component and routing tests, which moved every
+      // figure up. Today's measurement rounded down, as before.
       thresholds: {
-        statements: 85,
-        branches: 70,
-        functions: 91,
-        lines: 90,
+        statements: 89,
+        branches: 71,
+        functions: 93,
+        lines: 92,
       },
     },
   },

@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "compare:band": "node scripts/band-compare.mjs",
     "compare:below-band": "node scripts/below-band-compare.mjs",
+    "compare:canary": "node scripts/canary-compare.mjs",
     "smoke": "node e2e/smoke.mjs"
   },
   "devDependencies": {

@@ -11,15 +11,24 @@
   // nothing themselves. Issue #56 adds the state history on the same
   // tick, alongside those three rather than inside their Promise.all --
   // see the `history` state below for why.
-  import { fetchCanaries, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
-  import type { HistoryResponse, MailStatus } from './lib/types'
+  //
+  // Issue #118 adds the app's second page: one canary's own view, at
+  // #/canaries/<id>. The chrome below is shared -- only <main> and the
+  // footer sentence change -- and the page's own read joins the same
+  // tick as the four above, so a canary page refreshes exactly as the
+  // cage does.
+  import { fetchCanaries, fetchCanary, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
+  import type { CanaryPageResponse, HistoryResponse, MailStatus } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
   import { initialLoaderState, onFetchError, onFetchSuccess, type LoaderState } from './lib/loader'
+  import { cageHref, parseRoute, type Route } from './lib/route'
+  import { canaryFooter } from './lib/canary/sentence'
   import Band from './lib/band/Band.svelte'
   import Tiles from './Tiles.svelte'
   import Events from './Events.svelte'
   import History from './History.svelte'
+  import CanaryPage from './CanaryPage.svelte'
 
   const RANGES = ['15m', '1h', '24h', '14d', '90d'] as const
   type RangeKey = (typeof RANGES)[number]
@@ -39,6 +48,25 @@
   let activeDeck = $state(0)
 
   const REFRESH_MS = 30_000
+
+  // The whole router (lib/route.ts): which of the app's two places is
+  // showing. Read once at mount and re-read on every hashchange, so the
+  // back button, a bookmark and a typed address all work without any
+  // history bookkeeping of our own.
+  let route: Route = $state(typeof location === 'undefined' ? { name: 'cage' } : parseRoute(location.hash))
+  $effect(() => {
+    if (typeof window === 'undefined') return
+    const onHashChange = () => (route = parseRoute(location.hash))
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  })
+
+  // Issue #118's read, on the same tick as the four below and kept out
+  // of the Promise.all for the same reason the history is: it answers
+  // for one page, and a canary that has just been deleted should say so
+  // on its own page rather than stale the whole shell.
+  let canaryPage: CanaryPageResponse | null = $state(null)
+  let canaryFailed = $state(false)
 
   let loaderState: LoaderState = $state(initialLoaderState)
 
@@ -79,6 +107,9 @@
   // dashboard behaving exactly as it does today.
   $effect(() => {
     const range = activeRange
+    // Read here so the effect re-subscribes on navigation: moving to a
+    // canary page must fetch that page now, not on the next 30 s tick.
+    const currentRoute = route
     let inFlight = false
     const load = async () => {
       if (inFlight) return
@@ -87,7 +118,10 @@
       // a range we've since left" check as the three reads below, so the
       // history section refreshes on the poll and on a pushed event
       // exactly as the rest of the page does.
-      const historyLoad = fetchHistory(range)
+      // Narrowed to one canary on its own page: the section there is a
+      // thread of that canary's states, not the fleet's.
+      const historyCanary = currentRoute.name === 'canary' ? currentRoute.id : undefined
+      const historyLoad = fetchHistory(range, historyCanary)
         .then((h) => {
           if (range !== activeRange) return
           history = h
@@ -96,6 +130,21 @@
         .catch(() => {
           if (range === activeRange) historyFailed = true
         })
+      const canaryLoad =
+        currentRoute.name === 'canary'
+          ? fetchCanary(currentRoute.id, range)
+              .then((p) => {
+                if (range !== activeRange) return
+                canaryPage = p
+                canaryFailed = false
+              })
+              .catch(() => {
+                if (range === activeRange) {
+                  canaryPage = null
+                  canaryFailed = true
+                }
+              })
+          : Promise.resolve()
       // Same tick, same "drop a response for a range we've since left"
       // check. Range-free itself -- "is mail working" is not a question
       // about a window -- but still guarded, so a slow response landing
@@ -117,6 +166,7 @@
       } finally {
         await historyLoad
         await mailLoad
+        await canaryLoad
         inFlight = false
       }
     }
@@ -159,7 +209,17 @@
   let sentence = $derived(
     data && trace ? computeSentence(canaries, visitors, activeRange, trace.now, trace.last_hit) : null,
   )
-  let footer = $derived(data && trace ? computeFooter(canaries, visitors, activeRange, trace.now, trace.last_hit) : null)
+  // The footer speaks for whichever page is showing: the cage's summary,
+  // or this canary's own closing line.
+  let footer = $derived(
+    !data || !trace
+      ? null
+      : route.name === 'canary'
+        ? canaryPage
+          ? canaryFooter({ page: canaryPage, trace, visitors, history })
+          : null
+        : computeFooter(canaries, visitors, activeRange, trace.now, trace.last_hit),
+  )
 
   // The strip's mail item (issue #55). Measured against trace.now, the
   // same clock every other duration on this page uses, so a fixture
@@ -195,9 +255,24 @@
 
   <nav class="tabs" aria-label="Sections">
     {#each TABS as tab, i (tab)}
-      <button type="button" class:on={i === activeTab} aria-current={i === activeTab} onclick={() => (activeTab = i)}>
+      <button
+        type="button"
+        class:on={i === activeTab && route.name === 'cage'}
+        aria-current={i === activeTab && route.name === 'cage'}
+        onclick={() => {
+          activeTab = i
+          // The cage tab is also the way back from a canary page.
+          if (i === 0 && route.name === 'canary') location.hash = cageHref
+        }}
+      >
         {tab}
       </button>
+      <!-- The crumb sits directly after "the cage", the way the concept
+           puts it: this page is a place inside that tab, not a fifth
+           tab of its own. -->
+      {#if i === 0 && route.name === 'canary'}
+        <span class="crumb">&rsaquo; <b>{route.id}</b></span>
+      {/if}
     {/each}
   </nav>
 
@@ -258,13 +333,24 @@
     {/each}
   </nav>
 
-  <main aria-label={TABS[activeTab]}>
+  <main aria-label={route.name === 'canary' ? route.id : TABS[activeTab]}>
     <!-- The sentence (#38), the band (#37), the tiles and the events
          (#38) -- but only once the first fetch has landed (issue #39):
          no data yet draws only this state line, in the concept's voice,
          at the hero sentence's position. -->
     {#if !data}
       <div class="state-line">{#if loaderState.phase === 'error'}the cage is not answering &middot; retrying in 30 s{:else}listening for the cage&hellip;{/if}</div>
+    {:else if route.name === 'canary'}
+      <!-- Issue #118: one canary's own page. The shell above is
+           unchanged; only what fills main is. -->
+      {#if canaryPage && trace}
+        <CanaryPage page={canaryPage} {trace} {visitors} {history} range={activeRange} />
+      {:else}
+        <div class="state-line">
+          {#if canaryFailed}there is no canary called {route.id} &middot; <a href={cageHref}>back to the cage</a>{:else}listening
+            for {route.id}&hellip;{/if}
+        </div>
+      {/if}
     {:else if sentence && trace}
       <div class="grp">{grpLine.lead}{#if grpLine.flagged}<span class="r">{grpLine.flagged}</span>{grpLine.tail}{/if}</div>
       <div class="hero">
@@ -335,6 +421,14 @@
   .tabs button.on {
     color: var(--ink);
     position: relative;
+  }
+  .tabs .crumb {
+    color: var(--ink-3);
+    align-self: center;
+  }
+  .tabs .crumb b {
+    color: var(--iot);
+    font: 700 12px var(--mono);
   }
   .tabs button.on::after {
     content: '';
@@ -528,6 +622,9 @@
     top: 94px;
     font: 13px/1.55 var(--sans);
     color: var(--ink-2);
+  }
+  .state-line a {
+    color: var(--accent);
   }
 
   .foot {
