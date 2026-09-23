@@ -96,16 +96,8 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 43           # 44.0% measured (was 37), 2026-09-22 (#108,
-                             # slice 1 commit 4): the scanner-kind enrol
-                             # renderer (printScannerEnrolRunCommand) and its
-                             # own trap regression test
-                             # (TestCanaryEnrolScannerKindPrintsScannerCommand,
-                             # proving --kind scanner reaches the scanner
-                             # renderer rather than the "no install
-                             # instructions registered" default) gained tests.
-                             # Measured against real Postgres, matching
-                             # test:go.
+  cmd/birdcage: 63           # 64.3% measured with -race, 2026-09-23 (#94:
+                             # main() split into startup.go)
                              # Main binary; RouterOS/CrowdSec credential-wiring
                              # path is still largely untested.
   cmd/nightjar: 50           # 50.4% measured, 2026-09-22 (#108, slice 1
