@@ -9,6 +9,7 @@
   // props from App.svelte's one loader (issue #39); no fetching here.
   import type { Canary, Range, TraceResponse } from './lib/types'
   import { computeTileStatus, type TileHit } from './lib/sentence'
+  import { canaryHref } from './lib/route'
 
   let { canaries, trace, range }: { canaries: Canary[]; trace: TraceResponse; range: Range } = $props()
 
@@ -54,7 +55,10 @@
       class:degraded={c.status === 'rotation_stalled'}
       class:pending={c.status === 'pending'}
     >
-      <div class="n">{c.name}<small>on {c.lane}</small></div>
+      <!-- The tile is the way into the canary's own page (issue #118).
+           The name is the link, so the whole fleet is navigable without
+           a tile having to grow a button. -->
+      <div class="n"><a href={canaryHref(c.id)}>{c.name}</a><small>on {c.lane}</small></div>
       <div class="st">
         {#each status.lines as line, i (i)}
           {#if i > 0}<br />{/if}
@@ -65,7 +69,7 @@
       <div class="big">{c.hits}<small>hits &middot; {RANGE_LABELS[range]}</small></div>
       {#if c.status === 'silent'}
         <div class="acts">
-          <span class="pill">open {c.name} &#9656;</span>
+          <a class="pill" href={canaryHref(c.id)}>open {c.name} &#9656;</a>
           <span class="pill quiet">mark as maintenance</span>
         </div>
       {/if}
@@ -148,6 +152,14 @@
     font: 700 12.5px var(--mono);
     color: var(--c);
   }
+  .tile .n a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .tile .n a:hover,
+  .tile .n a:focus-visible {
+    text-decoration: underline;
+  }
   .tile .n small {
     font-weight: 500;
     color: var(--ink-3);
@@ -211,6 +223,8 @@
     flex-wrap: wrap;
   }
   .pill {
+    display: inline-block;
+    text-decoration: none;
     font: 600 11px var(--sans);
     color: var(--accent);
     border: 1px solid var(--hair-2);
