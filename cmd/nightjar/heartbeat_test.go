@@ -6,7 +6,9 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 )
@@ -80,4 +82,45 @@ func TestSendHeartbeatUnauthorizedDoesNotPanic(t *testing.T) {
 	c := newTestClient(t, ts)
 
 	sendHeartbeat(context.Background(), c, "not-a-real-token", "1.0.0")
+}
+
+// The loop sends once immediately and then on every tick, and stops when
+// its context is cancelled -- the shape main relies on so a heartbeat is
+// never gated behind a scan cycle.
+func TestRunHeartbeatLoopSendsImmediatelyThenOnEachTick(t *testing.T) {
+	var posts atomic.Int32
+	gotThree := make(chan struct{}, 1)
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ingest/heartbeat" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if posts.Add(1) == 3 {
+			select {
+			case gotThree <- struct{}{}:
+			default:
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runHeartbeatLoop(ctx, c, "tok", "v-test", 10*time.Millisecond)
+	}()
+
+	select {
+	case <-gotThree:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("expected at least three heartbeats within 5s, got %d", posts.Load())
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop did not return after its context was cancelled")
+	}
 }

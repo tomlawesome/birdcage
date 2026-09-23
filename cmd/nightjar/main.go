@@ -109,7 +109,7 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		runHeartbeatLoop(ctx, cli, token, version)
+		runHeartbeatLoop(ctx, cli, token, version, heartbeatInterval)
 	}()
 	wg.Wait()
 

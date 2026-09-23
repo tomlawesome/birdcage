@@ -25,7 +25,9 @@ var heartbeatLog = logging.New("heartbeat")
 const heartbeatInterval = 60 * time.Second
 
 // runHeartbeatLoop sends the common heartbeat immediately, then every
-// heartbeatInterval, on a time.Ticker -- monotonic, per #48's hard
+// interval (heartbeatInterval in production; a test passes something
+// short, the same reason runScanLoop takes its interval as a parameter),
+// on a time.Ticker -- monotonic, per #48's hard
 // constraint that no agent cadence may evaluate wall-clock time, which
 // this loop inherits rather than re-deciding.
 //
@@ -36,8 +38,8 @@ const heartbeatInterval = 60 * time.Second
 // is logged and left for the next tick; the agent never invents a path
 // back to a token mint, and recovery is re-enrolment (#47), the same
 // stance every agent takes on its own dead credential.
-func runHeartbeatLoop(ctx context.Context, c *client.Client, token, version string) {
-	ticker := time.NewTicker(heartbeatInterval)
+func runHeartbeatLoop(ctx context.Context, c *client.Client, token, version string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	sendHeartbeat(ctx, c, token, version)
