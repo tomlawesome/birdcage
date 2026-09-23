@@ -46,7 +46,7 @@ type claimWindow struct {
 // and if decided, what marker (if any) does it carry.
 type claimTracker struct {
 	mu      sync.Mutex
-	windows []*claimWindow   // still open, undecided
+	windows []*claimWindow    // still open, undecided
 	claimed map[string]string // event id -> marker, decided windows only
 }
 
