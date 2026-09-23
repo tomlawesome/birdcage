@@ -70,4 +70,121 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(plainText(result.lines[0])).toContain('silent')
     expect(result.lines[0][0].cls).toBe('off')
   })
+
+  // Issue #47 steps 7-9.
+  it('pending: names the state and its own detail line, not a fault colour', () => {
+    const result = computeTileStatus({ ...base, status: 'pending' }, '2026-01-01T00:00:00Z')
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toContain('pending')
+    expect(text).toContain('self-test')
+    // The degraded-tier colour ('wn'), never the critical-tier alarm
+    // colour ('al') -- pending is #45's own third category, not a fault.
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+})
+
+// Issue #46: the tile line note 22577 asks for -- one line naming the
+// failed self-test on a self_test_failed tile, and one more appended to
+// an otherwise-healthy tile's own line reporting the last self-test that
+// did complete.
+describe('computeTileStatus: issue #46 self-test line', () => {
+  it('self_test_failed: names the failed services and says to check the box', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'self_test_failed',
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: false,
+        self_test_failed_services: ['vnc', 'ntp'],
+      },
+      '2026-01-01T04:05:00Z',
+    )
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toBe('⚠ self-test 04:00 · failed: vnc, ntp — check those services on the box')
+    expect(result.lines[0][0].cls).toBe('al')
+  })
+
+  it('self_test_failed: an empty service list still reads as a whole clause, no dangling colon', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'self_test_failed',
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: false,
+        self_test_failed_services: [],
+      },
+      '2026-01-01T04:05:00Z',
+    )
+    expect(plainText(result.lines[0])).toBe('⚠ self-test 04:00 · failed — check those services on the box')
+  })
+
+  it('a passing self-test appends a second line on the no-hits branch', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'ok',
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: true,
+      },
+      '2026-01-01T04:05:09Z',
+    )
+    expect(result.lines).toHaveLength(2)
+    expect(plainText(result.lines[1])).toBe('self-test 04:00 · passed')
+    // No cls on the appended line -- it is not an alarm, just a fact.
+    expect(result.lines[1][0].cls).toBeUndefined()
+  })
+
+  it('a passing self-test appends a third line after a second visitor', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'ok',
+        hits: [{ at: '2026-01-01T04:01:00Z', kind: 'inside', service: 'ssh' }],
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: true,
+      },
+      '2026-01-01T04:05:09Z',
+    )
+    expect(result.lines).toHaveLength(3)
+    expect(plainText(result.lines[1])).toBe('from inside 04:01')
+    expect(plainText(result.lines[2])).toBe('self-test 04:00 · passed')
+  })
+
+  it('no self-test line at all when last_self_test_at is null', () => {
+    const result = computeTileStatus(
+      { ...base, status: 'ok', last_self_test_at: null },
+      '2026-01-01T00:00:09Z',
+    )
+    expect(result.lines).toHaveLength(1)
+  })
+
+  it('a silent tile never gets the appended self-test line', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'silent',
+        silent_for_s: 372,
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: true,
+      },
+      '2026-01-01T00:06:12Z',
+    )
+    expect(result.lines).toHaveLength(1)
+  })
+
+  it('an honest render: status still ok but last_self_test_passed is false', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'ok',
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: false,
+        self_test_failed_services: ['ntp'],
+      },
+      '2026-01-01T04:05:09Z',
+    )
+    expect(plainText(result.lines[1])).toBe('self-test 04:00 · failed: ntp')
+  })
 })

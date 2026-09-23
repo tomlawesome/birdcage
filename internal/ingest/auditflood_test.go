@@ -26,7 +26,7 @@ func TestRateLimitFloodDoesNotWriteOneRowPerRejection(t *testing.T) {
 		tiny := limiterLimits{RequestsPerMinute: 1, EventsPerMinute: 60000}
 		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		now := base
-		h := newHandler(database, nil, func() time.Time { return now }, tiny)
+		h := newHandler(database, nil, func() time.Time { return now }, tiny, store.NewSelfTestIndex(), nil)
 		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID1))
 
 		rec := httptest.NewRecorder()
@@ -67,7 +67,7 @@ func TestTokenConflictFloodDoesNotWriteOneRowPerPresentation(t *testing.T) {
 		// this test relies on is false.
 		base := time.Now().UTC().Add(time.Minute)
 		now := base
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1)
 		rec := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestFloodedRateLimitStillReadsThrottled(t *testing.T) {
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 1, EventsPerMinute: 60000}
 		now := base
-		h := newHandler(database, nil, func() time.Time { return now }, tiny)
+		h := newHandler(database, nil, func() time.Time { return now }, tiny, store.NewSelfTestIndex(), nil)
 		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID1))
 
 		rec := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestFloodedTokenConflictStillReadsTokenConflict(t *testing.T) {
 		// TestTokenConflictFloodDoesNotWriteOneRowPerPresentation.
 		base := time.Now().UTC().Add(time.Minute)
 		now := base
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1)
 		rec := httptest.NewRecorder()

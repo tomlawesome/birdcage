@@ -94,4 +94,53 @@ describe('the status pill: issue #45 ranking', () => {
     expect(s.kind).toBe('critical')
     if (s.kind === 'critical') expect(s.canaryName).toBe('b')
   })
+
+  // Issue #47 steps 7-9: pending is #45's own third category, not a
+  // fault -- the pill has no dedicated rendering for it (unlike
+  // critical/degraded), so a lone pending canary falls through to the
+  // ordinary quiet/live read, same as a fleet with nothing wrong at all.
+  it('a lone pending canary does not read as critical or degraded', () => {
+    const canaries = [canary('a', 'pending')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('quiet')
+  })
+
+  it('rotation_stalled outranks pending', () => {
+    const canaries = [canary('a', 'pending'), canary('b', 'rotation_stalled', { rotation_stalled_for_s: 1000 })]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('degraded')
+    if (s.kind === 'degraded') expect(s.canaryName).toBe('b')
+  })
+
+  // Issue #46: self_test_failed joins the critical kind, between
+  // not_delivering and throttled in health.go's own order.
+  it('a lone self_test_failed canary reads as critical, with the failed services in the label', () => {
+    const canaries = [canary('a', 'self_test_failed', { self_test_failed_services: ['vnc', 'ntp'] }), canary('b', 'ok')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') {
+      expect(s.canaryName).toBe('a')
+      expect(s.label).toBe('a self-test failed: vnc, ntp')
+    }
+  })
+
+  it('self_test_failed with no named services still reads as a whole clause', () => {
+    const canaries = [canary('a', 'self_test_failed', { self_test_failed_services: [] })]
+    const s = computeStatus(canaries, [], '14d')
+    if (s.kind === 'critical') expect(s.label).toBe('a self-test failed')
+  })
+
+  it('not_delivering outranks self_test_failed', () => {
+    const canaries = [canary('a', 'self_test_failed'), canary('b', 'not_delivering')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') expect(s.canaryName).toBe('b')
+  })
+
+  it('self_test_failed outranks throttled', () => {
+    const canaries = [canary('a', 'throttled', { throttled_for_s: 60 }), canary('b', 'self_test_failed')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') expect(s.canaryName).toBe('b')
+  })
 })

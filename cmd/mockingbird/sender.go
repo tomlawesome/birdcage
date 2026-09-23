@@ -45,22 +45,46 @@ func runSenderLoop(ctx context.Context, c *client.Client, ts *TokenStore, in *In
 			continue
 		}
 
-		if err := p.wait(ctx, len(batch)); err != nil {
-			return
+		// #46 slice 3: an event still awaiting its claim window's
+		// exactly-one decision (claim.go) is left queued for another
+		// round rather than sent unclaimed -- "the agent claims before
+		// the event leaves the box" (note 19897) only holds if the
+		// sender never ships a candidate ahead of that decision. Every
+		// other event in the batch ships on this round exactly as
+		// before, claimed or not: holding back only the undecided ones
+		// costs one held-back event at most twice a day, not the batch.
+		ids := make([]string, 0, len(batch))
+		events := make([]client.Event, 0, len(batch))
+		for _, qe := range batch {
+			if in.claims.pending(qe.ID) {
+				continue
+			}
+			fields := fieldsOrFallback(qe.Payload)
+			marker, _ := in.claims.marker(qe.ID)
+			ids = append(ids, qe.ID)
+			events = append(events, client.Event{
+				ID:             qe.ID,
+				SourceIP:       fields.SourceIP,
+				DestPort:       fields.DestPort,
+				Service:        fields.Service,
+				Raw:            string(qe.Payload),
+				SelfTestMarker: marker,
+			})
+		}
+		if len(events) == 0 {
+			// Every peeked event is still awaiting a claim decision --
+			// wait out the idle interval and Peek again rather than
+			// pushing p's own rate budget for an empty send.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(senderIdleInterval):
+			}
+			continue
 		}
 
-		ids := make([]string, len(batch))
-		events := make([]client.Event, len(batch))
-		for i, qe := range batch {
-			fields := fieldsOrFallback(qe.Payload)
-			ids[i] = qe.ID
-			events[i] = client.Event{
-				ID:       qe.ID,
-				SourceIP: fields.SourceIP,
-				DestPort: fields.DestPort,
-				Service:  fields.Service,
-				Raw:      string(qe.Payload),
-			}
+		if err := p.wait(ctx, len(events)); err != nil {
+			return
 		}
 
 		result, err := authedRetryValue(ts, func(token string) (client.BatchResult, error) {
@@ -123,9 +147,11 @@ func (in *Intake) applyVerdicts(sentIDs []string, result client.BatchResult) {
 			in.Queue.Ack(id)
 			ldg.Resolve(id, ledger.Stored)
 			lastStored = id
+			in.claims.forget(id) // #46 slice 3: terminal resolution, nothing left to attach a marker to
 		case isRejected && !isStored:
 			in.Queue.Reject(id)
 			ldg.Resolve(id, ledger.Rejected)
+			in.claims.forget(id) // #46 slice 3: terminal resolution, same as Stored above
 		case isStored && isRejected:
 			// Contradiction: client.BatchResult's own contract
 			// guarantees Stored and Rejected never share an id, so this

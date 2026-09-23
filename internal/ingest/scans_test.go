@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -40,7 +41,7 @@ func listScans(t *testing.T, database *db.DB) []store.ScanSnapshot {
 // required behavior: no token, no write.
 func TestHandleScanRequiresCanaryToken(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", "", validScanOKBody))
@@ -58,9 +59,9 @@ func TestHandleScanRequiresCanaryToken(t *testing.T) {
 // ignore.
 func TestHandleScanRejectsIdentityField(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"canary_id": "canary-b", "taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "x", "findings": [], "masked_paths": []}`
 		rec := httptest.NewRecorder()
@@ -76,10 +77,10 @@ func TestHandleScanRejectsIdentityField(t *testing.T) {
 // masked-path list intact -- never the findings' own contents.
 func TestHandleScanStoresOKSnapshot(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
-		enrollCanary(t, database, "canary-b")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		enrollCanaryKind(t, database, "canary-b", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, validScanOKBody))
@@ -118,9 +119,9 @@ func TestHandleScanStoresOKSnapshot(t *testing.T) {
 // failed run never had.
 func TestHandleScanStoresFailedSnapshotWithNoEngineData(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed",
 			"reason": "db could not be loaded: the vulnerability database was built 6 days ago (max allowed age is 5 days)",
@@ -152,9 +153,9 @@ func TestHandleScanStoresFailedSnapshotWithNoEngineData(t *testing.T) {
 // malformed body, not a storable one.
 func TestHandleScanFailedRequiresReason(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "findings": [], "masked_paths": []}`
 		rec := httptest.NewRecorder()
@@ -173,9 +174,9 @@ func TestHandleScanFailedRequiresReason(t *testing.T) {
 // stored one."
 func TestHandleScanFailedFindingsMustBeEmpty(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "db stale",
 			"findings": [{"target": "dir:/host", "package": "openssl", "version": "1.0.1f", "type": "deb",
@@ -193,9 +194,9 @@ func TestHandleScanFailedFindingsMustBeEmpty(t *testing.T) {
 
 func TestHandleScanOkReasonMustBeEmpty(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z",
 			"engine": {"name": "grype", "version": "v0.119.0", "db_built_at": "2026-01-01T12:00:00Z"},
@@ -210,9 +211,9 @@ func TestHandleScanOkReasonMustBeEmpty(t *testing.T) {
 
 func TestHandleScanOkRequiresEngineMetadata(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "ok", "findings": [], "masked_paths": []}`
 		rec := httptest.NewRecorder()
@@ -225,9 +226,9 @@ func TestHandleScanOkRequiresEngineMetadata(t *testing.T) {
 
 func TestHandleScanRejectsUnknownStatus(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "clean", "findings": [], "masked_paths": []}`
 		rec := httptest.NewRecorder()
@@ -248,9 +249,9 @@ func TestHandleScanRejectsMalformedFinding(t *testing.T) {
 	for _, field := range []string{"target", "package", "version", "type", "vulnerability", "severity"} {
 		t.Run(field, func(t *testing.T) {
 			forEachEngine(t, func(t *testing.T, database *db.DB) {
-				enrollCanary(t, database, "canary-a")
+				enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 				raw := mintToken(t, database, "canary-a")
-				h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+				h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 				finding := "{"
 				for k, v := range base {
@@ -283,9 +284,9 @@ func TestHandleScanRejectsMalformedFinding(t *testing.T) {
 // TestHandleHeartbeatUnknownFieldRejected's sibling in heartbeat_test.go).
 func TestHandleScanRejectsTrailingData(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "x", "findings": [], "masked_paths": []}{}`
 		rec := httptest.NewRecorder()
@@ -298,9 +299,9 @@ func TestHandleScanRejectsTrailingData(t *testing.T) {
 
 func TestHandleScanRejectsMalformedTakenAt(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "not-a-timestamp", "status": "failed", "reason": "x", "findings": [], "masked_paths": []}`
 		rec := httptest.NewRecorder()
@@ -313,9 +314,9 @@ func TestHandleScanRejectsMalformedTakenAt(t *testing.T) {
 
 func TestHandleScanRejectsMalformedDBBuiltAt(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z",
 			"engine": {"name": "grype", "version": "v0.119.0", "db_built_at": "not-a-timestamp"},
@@ -336,9 +337,9 @@ func TestHandleScanRejectsMalformedDBBuiltAt(t *testing.T) {
 // error path, reported as retryable (503), never a rejection.
 func TestHandleScanStorageFailureReturns503(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		if _, err := database.Exec(`DROP TABLE scan_snapshots`); err != nil {
 			t.Fatalf("drop scan_snapshots: %v", err)
@@ -354,9 +355,9 @@ func TestHandleScanStorageFailureReturns503(t *testing.T) {
 
 func TestHandleScanRejectsNonAbsoluteMaskedPath(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "x",
 			"findings": [], "masked_paths": ["etc/shadow"]}`
@@ -373,9 +374,9 @@ func TestHandleScanRejectsNonAbsoluteMaskedPath(t *testing.T) {
 // command masks nothing still reports the field, just empty.
 func TestHandleScanMaskedPathsEmptyAccepted(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "x",
 			"findings": [], "masked_paths": []}`
@@ -397,9 +398,9 @@ func TestHandleScanMaskedPathsEmptyAccepted(t *testing.T) {
 // failure, but anything past the cap does.
 func TestHandleScanOverLimitReturns413(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		oversized := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "` +
 			strings.Repeat("x", scanMaxBodyBytes) + `", "findings": [], "masked_paths": []}`
@@ -413,9 +414,9 @@ func TestHandleScanOverLimitReturns413(t *testing.T) {
 
 func TestHandleScanUnknownFieldRejected(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, `{"unexpected_field":true}`))
@@ -431,10 +432,10 @@ func TestHandleScanUnknownFieldRejected(t *testing.T) {
 // this mux shares (requireBearerToken), not a limiter of its own.
 func TestHandleScanOverLimitReturns429AndIsRecorded(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
-		h := newHandler(database, nil, time.Now, tiny)
+		h := newHandler(database, nil, time.Now, tiny, store.NewSelfTestIndex(), nil)
 
 		var last *httptest.ResponseRecorder
 		for i := 0; i < 3; i++ {

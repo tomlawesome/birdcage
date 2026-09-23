@@ -2,12 +2,15 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
@@ -28,13 +31,54 @@ func forEachEngine(t *testing.T, fn func(t *testing.T, database *db.DB)) {
 	}
 }
 
+// mintToken mints a bearer token for canaryID, registering canaryID as a
+// Honeypot (the kind almost every test in this package wants -- a
+// scanner-shaped test uses mintTokenForKind directly) unless a canaries
+// row already exists for it. Issue #106's registry kind check means
+// every route on this mux now refuses a token whose canary is
+// unregistered, so a test minting a token has to have a row behind it to
+// reach its handler at all -- ensureCanary makes that the default
+// instead of a per-call chore, while staying a no-op for a test that
+// already registered the canary itself (heartbeat_test.go's enrollCanary
+// and scans_test.go's enrollCanaryKind, both called before mintToken in
+// several tests).
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
+	return mintTokenForKind(t, database, canaryID, agentkind.Honeypot)
+}
+
+// mintTokenForKind is mintToken with the registered kind explicit, for a
+// test that needs something other than Honeypot (scans_test.go's
+// scanner-only route).
+func mintTokenForKind(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) string {
+	t.Helper()
+	ensureCanary(t, database, canaryID, kind)
 	raw, _, err := store.MintCanaryToken(context.Background(), database, canaryID, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("MintCanaryToken: %v", err)
 	}
 	return raw
+}
+
+// ensureCanary registers canaryID with kind if (and only if) no canaries
+// row for it exists yet -- idempotent, so a test that already called
+// enrollCanary/enrollCanaryKind for canaryID before minting a token
+// doesn't collide with a second, conflicting insert here.
+func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
+	t.Helper()
+	var exists int
+	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	if err == nil {
+		return // already registered -- including with a different kind, which the caller asked for by registering it itself first.
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("check canary %s exists: %v", canaryID, err)
+	}
+	if err := store.InsertCanary(context.Background(), database, store.Canary{
+		ID: canaryID, Name: canaryID, Lane: "lan", Kind: kind, EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", canaryID, err)
+	}
 }
 
 func revokeAllTokens(t *testing.T, database *db.DB, canaryID string) {
@@ -75,7 +119,7 @@ func batchRequest(token, body string) *http.Request {
 func TestIngestAuthDatabaseFailureIsRetryableNot401(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		token := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		// Closing the handle is how this test reaches the lookup's
 		// error path; dbtest's own cleanup closing it again is a no-op.
@@ -98,7 +142,7 @@ func TestIngestAuthDatabaseFailureIsRetryableNot401(t *testing.T) {
 // 401".
 func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 		validBody := `{"events":[]}`
 
 		cases := []struct {
@@ -139,7 +183,7 @@ func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 // still a placeholder no-op).
 func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		for _, path := range []string{"/api/alerts", "/api/heartbeat", "/api/stream", "/"} {
 			rec := httptest.NewRecorder()
@@ -171,4 +215,28 @@ func TestDashboardMuxCannotReachIngestRoute(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestEveryIngestRouteNamesARegisteredKind is issue #106's own required
+// package test (design note section 2): ingestRoute's zero value for
+// kinds refuses every request, on purpose -- a route added without
+// thinking about kinds fails closed rather than open. This test is what
+// catches the *other* way that could go wrong unnoticed: a route that
+// compiles with kinds set, but to something that doesn't actually name a
+// registered kind (a typo, a kind that was renamed elsewhere). Every
+// entry ingestRoutes returns must name at least one kind, and every kind
+// it names must be one agentkind.Valid recognizes.
+func TestEveryIngestRouteNamesARegisteredKind(t *testing.T) {
+	h := &ingestHandler{}
+	for _, route := range ingestRoutes(h) {
+		if len(route.kinds) == 0 {
+			t.Errorf("route %s names no kind -- it refuses every request by construction; give it at least one registered kind", route.pattern)
+			continue
+		}
+		for _, k := range route.kinds {
+			if !agentkind.Valid(k) {
+				t.Errorf("route %s names unregistered kind %q", route.pattern, k)
+			}
+		}
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -46,6 +47,59 @@ func TestMintCanaryTokenReturnsRawOnceAndStoresOnlyHash(t *testing.T) {
 		}
 		if found.ID != token.ID {
 			t.Errorf("LookupCanaryTokenByHash id = %q, want %q", found.ID, token.ID)
+		}
+	})
+}
+
+// TestLookupCanaryTokenByHashJoinsCanaryKind is issue #106's own
+// required proof for the LEFT JOIN this function grows: a token for a
+// registered canary resolves with that canary's kind attached, so
+// internal/ingest's requireBearerToken can authorise a route on it
+// without a second lookup.
+func TestLookupCanaryTokenByHashJoinsCanaryKind(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		if err := InsertCanary(context.Background(), database, Canary{
+			ID: "canary-scanner", Name: "canary-scanner", Lane: "lan",
+			Kind: agentkind.Scanner, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z"),
+		}); err != nil {
+			t.Fatalf("InsertCanary: %v", err)
+		}
+		raw, _, err := MintCanaryToken(context.Background(), database, "canary-scanner", mustParse(t, "2026-01-01T00:00:00Z"))
+		if err != nil {
+			t.Fatalf("MintCanaryToken: %v", err)
+		}
+
+		found, err := LookupCanaryTokenByHash(context.Background(), database, HashToken(raw))
+		if err != nil {
+			t.Fatalf("LookupCanaryTokenByHash: %v", err)
+		}
+		if found.Kind != agentkind.Scanner {
+			t.Errorf("Kind = %q, want %q", found.Kind, agentkind.Scanner)
+		}
+	})
+}
+
+// TestLookupCanaryTokenByHashMissingCanaryRowYieldsEmptyKind is the LEFT
+// JOIN's other half: canary_tokens carries no foreign key into canaries
+// (migration 0004's own comment), so a live token whose canaries row is
+// missing must resolve -- not error -- with Kind == "", which
+// agentkind.Valid rejects and every kind-gated route therefore refuses.
+func TestLookupCanaryTokenByHashMissingCanaryRowYieldsEmptyKind(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw, _, err := MintCanaryToken(context.Background(), database, "canary-never-registered", mustParse(t, "2026-01-01T00:00:00Z"))
+		if err != nil {
+			t.Fatalf("MintCanaryToken: %v", err)
+		}
+
+		found, err := LookupCanaryTokenByHash(context.Background(), database, HashToken(raw))
+		if err != nil {
+			t.Fatalf("LookupCanaryTokenByHash: %v", err)
+		}
+		if found.Kind != "" {
+			t.Errorf("Kind = %q, want \"\" for a token with no canaries row", found.Kind)
+		}
+		if agentkind.Valid(found.Kind) {
+			t.Error("agentkind.Valid(\"\") = true, want false -- an empty Kind must never look registered")
 		}
 	})
 }

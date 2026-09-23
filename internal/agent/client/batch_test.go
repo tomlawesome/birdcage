@@ -1,6 +1,8 @@
 package client
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -8,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -22,13 +26,42 @@ var (
 
 const badID = "not-a-valid-event-id"
 
+// mintToken mints a bearer token for canaryID, registering it as a
+// Honeypot -- the kind almost every test in this package wants -- unless
+// a canaries row already exists for it (issue #106: every ingest route
+// now refuses a token whose canary is unregistered, so a token minted
+// for a test has to have a row behind it to reach a handler at all).
+// scans_test.go's enrollCanaryKind registers "canary-a" as a Scanner
+// before calling this, for the one route here that needs it.
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
+	ensureCanary(t, database, canaryID, agentkind.Honeypot)
 	raw, _, err := store.MintCanaryToken(ctx(), database, canaryID, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("MintCanaryToken: %v", err)
 	}
 	return raw
+}
+
+// ensureCanary registers canaryID with kind if (and only if) no canaries
+// row for it exists yet -- idempotent, so a test that already called
+// enrollCanary/enrollCanaryKind for canaryID before minting a token
+// doesn't collide with a second, conflicting insert here.
+func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
+	t.Helper()
+	var exists int
+	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("check canary %s exists: %v", canaryID, err)
+	}
+	if err := store.InsertCanary(ctx(), database, store.Canary{
+		ID: canaryID, Name: canaryID, Lane: "lan", Kind: kind, EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", canaryID, err)
+	}
 }
 
 // TestPushBatchStoredAndRejected proves this package's ack/reject split
@@ -38,7 +71,7 @@ func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 // shape this package invented.
 func TestPushBatchStoredAndRejected(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		result, err := c.PushBatch(ctx(), token, []Event{
@@ -61,13 +94,64 @@ func TestPushBatchStoredAndRejected(t *testing.T) {
 	})
 }
 
+// TestPushBatchSelfTestMarkerReachesBirdcageSynthetic is #46 slice 3's
+// wire-field proof at this package's own level: an Event carrying
+// SelfTestMarker for a live, attributed-grade target birdcage itself
+// minted is stored synthetic by the real handler -- possible only if
+// PushBatch actually serialises SelfTestMarker onto the wire as
+// self_test_marker, since store.MatchSelfTestClaim has nothing else to
+// corroborate against.
+func TestPushBatchSelfTestMarkerReachesBirdcageSynthetic(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
+		token := mintToken(t, database, testCanaryID)
+
+		addr := "198.51.100.5"
+		if err := store.SetCanaryLastSeenAddr(ctx(), database, testCanaryID, addr); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		// A throwaway index for the mint call only -- the real handler's
+		// own index (built inside newIngestServer) loads this command
+		// from canary_commands on its first use, the same lazy-load path
+		// a restarted birdcage process relies on.
+		cmd, err := store.MintSelfTestCommand(ctx(), database, store.NewSelfTestIndex(), testCanaryID, addr,
+			[]store.SelfTestTarget{{Service: "portscan", DestPort: 0}}, time.Now().UTC(), time.Now().UTC().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
+		params, err := selftest.DecodeParams([]byte(cmd.Params))
+		if err != nil {
+			t.Fatalf("decode minted params: %v", err)
+		}
+		marker := params.Targets[0].Marker
+
+		result, err := c.PushBatch(ctx(), token, []Event{
+			{ID: validID1, SourceIP: addr, DestPort: 54321, Service: "portscan", Raw: "scan", SelfTestMarker: marker},
+		})
+		if err != nil {
+			t.Fatalf("PushBatch: %v", err)
+		}
+		if len(result.Stored) != 1 || result.Stored[0] != validID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored", result.Stored, result.Rejected, validID1)
+		}
+
+		alerts, err := store.ListAlerts(ctx(), database, store.AlertFilter{InstanceID: testCanaryID})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		if len(alerts) != 1 || !alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = true", alerts)
+		}
+	})
+}
+
 // TestPushBatchDuplicateAcksAsStored proves the same batch sent twice
 // stores once and both times reports the id as Stored (#32: "a
 // duplicate id acks as stored -- idempotent success"), against the real
 // handler and its actual dedup index.
 func TestPushBatchDuplicateAcksAsStored(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 		events := []Event{{ID: validID1, SourceIP: "203.0.113.9", DestPort: 22, Service: "ssh", Raw: "hit"}}
 
@@ -97,7 +181,7 @@ func TestPushBatchDuplicateAcksAsStored(t *testing.T) {
 // birdcage" apart from "try again".
 func TestPushBatchUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
 		_, err := c.PushBatch(ctx(), "not-a-real-token", []Event{{ID: validID1, DestPort: -1, Raw: "{}"}})
 		if !IsUnauthorized(err) {
@@ -118,7 +202,7 @@ func TestPushBatchUnauthorized(t *testing.T) {
 // rejected even sent alone, the other is ordinary and stored.
 func TestPushBatchEnvelopeRejectionFallsBackToSingly(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		oversizedRaw := strings.Repeat("x", 310*1024)

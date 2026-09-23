@@ -183,6 +183,26 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     expect(s.sub.find((seg) => seg.text === 'Look at the box now.')?.bold).toBe(true)
   })
 
+  // Issue #46: #45's self_test_failed state gets rule 2's own copy,
+  // shaped like rule2Throttled per the brief.
+  it('self-test failed: hero and sub name the failed services and the time', () => {
+    const bad = canary('canary-iot', 'self_test_failed', {
+      last_self_test_at: '2026-09-05T04:00:00Z',
+      last_self_test_passed: false,
+      self_test_failed_services: ['vnc', 'ntp'],
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-iot failed its self-test.')
+    expect(plainText(s.sub)).toBe(
+      "Birdcage tried its own door at 04:00 and vnc, ntp didn't answer the way a canary must — a real visitor " +
+        'would get the same silence, so those ports are catching nothing right now. Go and see why. The other ' +
+        'three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === '04:00')?.bold).toBe(true)
+    expect(s.sub.find((seg) => seg.text === 'Go and see why.')?.bold).toBe(true)
+  })
+
   it('not delivering: hero and sub', () => {
     const bad = canary('canary-iot', 'not_delivering', { not_delivering: true })
     const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
@@ -314,6 +334,34 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     expect(plainText(s.hero)).toContain('canary-srv is not delivering.')
   })
 
+  it('not delivering outranks self-test failed', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'self_test_failed', { self_test_failed_services: ['vnc'] }),
+        canary('canary-srv', 'not_delivering', { not_delivering: true }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain('canary-srv is not delivering.')
+  })
+
+  it('self-test failed outranks throttled', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'throttled', { throttled_for_s: 120 }),
+        canary('canary-srv', 'self_test_failed', { self_test_failed_services: ['vnc'] }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain('canary-srv failed its self-test.')
+  })
+
   it('"the other N are fine" is earned: absent when another canary is not ok', () => {
     const s = computeSentence(
       [
@@ -345,5 +393,30 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       lastHit,
     )
     expect(plainText(s.sub)).toContain('The other one is fine.')
+  })
+
+  // Issue #47 steps 7-9: rule 2's switch has no case for 'pending' --
+  // #45's own "hero-sentence prose is a separate design call" applies
+  // here too, so a fleet whose only issue is one pending canary falls
+  // through to rule 4's ordinary quiet story, not a fault sentence. The
+  // dashboard tile still says "pending" (Tiles.svelte); this pins that
+  // the hero voice deliberately does not, until that copy is written.
+  it('a lone pending canary does not trigger rule 2', () => {
+    const s = computeSentence([canary('canary-iot', 'pending')], [], '14d', now, lastHit)
+    expect(s.rule).toBe(4)
+  })
+
+  it('rotation stalled still outranks pending', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'pending'),
+        canary('canary-srv', 'rotation_stalled', { rotation_stalled: true, rotation_stalled_for_s: 1200 }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's token rotation has stalled")
   })
 })

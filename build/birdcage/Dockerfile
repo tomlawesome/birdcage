@@ -50,13 +50,13 @@ COPY --from=backend --chown=1000:1000 /var/lib/birdcage /var/lib/birdcage
 USER 1000:1000
 ENV BIRDCAGE_DB_PATH=/var/lib/birdcage/birdcage.db
 # 8080/tcp is the dashboard and its API (BIRDCAGE_HTTP_ADDR). Issue #63:
-# it refuses to start as plain HTTP unless bound strictly to loopback,
-# so a bare `docker run` with no other configuration exits immediately
-# -- either bind-mount a certificate and set BIRDCAGE_HTTP_TLS_CERT/
-# BIRDCAGE_HTTP_TLS_KEY, or publish 8080 only to the host's own loopback
-# (`-p 127.0.0.1:8080:8080` still needs BIRDCAGE_HTTP_ADDR itself set to
-# a loopback host or a unix socket -- see docs/configuration.md's
-# "Dashboard TLS" section). 8443/tcp is the HTTPS ingest listener
+# it never serves plain HTTP off loopback. A bare `docker run` with no
+# other configuration serves HTTPS on a certificate birdcage mints from
+# its own CA; bind-mount a certificate and set BIRDCAGE_HTTP_TLS_CERT/
+# BIRDCAGE_HTTP_TLS_KEY to use your own instead. Plain HTTP needs
+# BIRDCAGE_HTTP_ADDR itself set to a loopback host or a unix socket --
+# see docs/configuration.md's "Dashboard TLS" section for all four
+# modes. 8443/tcp is the HTTPS ingest listener
 # canaries report to (BIRDCAGE_INGEST_ADDR); it only starts once its TLS
 # material is configured -- see cmd/birdcage/main.go.
 EXPOSE 8080/tcp 8443/tcp

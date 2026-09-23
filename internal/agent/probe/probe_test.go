@@ -121,3 +121,64 @@ func TestSweepWithConfig_BoundsTheWholeRun(t *testing.T) {
 		}
 	}
 }
+
+// TestSweepWithConfig_AttributedTargetReportsFact proves probeOne's
+// attributionCarriers branch through the public Sweep path (#46 slice
+// 3): a successful portscan probe reports StatusOK with a non-nil Fact,
+// carrying the marker nowhere -- attribution never works by content.
+func TestSweepWithConfig_AttributedTargetReportsFact(t *testing.T) {
+	params := selftest.Params{
+		RunID:   "run-attributed",
+		Address: "127.0.0.1",
+		Targets: []selftest.Target{
+			{Service: "portscan", DestPort: 0, Marker: "unused"},
+		},
+	}
+	cfg := Config{ProbeTimeout: 5 * time.Second, SweepTimeout: 10 * time.Second, Concurrency: 1}
+	outcomes := SweepWithConfig(context.Background(), params, cfg)
+
+	if len(outcomes) != 1 {
+		t.Fatalf("got %d outcomes, want 1", len(outcomes))
+	}
+	o := outcomes[0]
+	if o.Status != StatusOK {
+		t.Fatalf("status = %s, want StatusOK (err=%v)", o.Status, o.Err)
+	}
+	if o.Fact == nil {
+		t.Fatal("Fact is nil for a successful attributed-grade probe")
+	}
+	if o.Fact.Service != "portscan" {
+		t.Errorf("Fact.Service = %q, want %q", o.Fact.Service, "portscan")
+	}
+}
+
+// TestSweepWithConfig_AttributedTargetFailureReportsNoFact proves the
+// other half of probeOne's attributionCarriers branch: a probe that
+// never reaches the wire (ntp against an unresolvable address) is
+// StatusFailed with Err set and Fact left nil, the same contract every
+// other carrier's failure keeps.
+func TestSweepWithConfig_AttributedTargetFailureReportsNoFact(t *testing.T) {
+	params := selftest.Params{
+		RunID:   "run-attributed-fail",
+		Address: "not a valid host or address",
+		Targets: []selftest.Target{
+			{Service: "ntp", DestPort: 123, Marker: "unused"},
+		},
+	}
+	cfg := Config{ProbeTimeout: 2 * time.Second, SweepTimeout: 5 * time.Second, Concurrency: 1}
+	outcomes := SweepWithConfig(context.Background(), params, cfg)
+
+	if len(outcomes) != 1 {
+		t.Fatalf("got %d outcomes, want 1", len(outcomes))
+	}
+	o := outcomes[0]
+	if o.Status != StatusFailed {
+		t.Fatalf("status = %s, want StatusFailed", o.Status)
+	}
+	if o.Err == nil {
+		t.Error("StatusFailed outcome carries a nil Err")
+	}
+	if o.Fact != nil {
+		t.Error("Fact is non-nil for a failed probe")
+	}
+}

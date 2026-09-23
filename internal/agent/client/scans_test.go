@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -16,8 +17,8 @@ import (
 // internal/ingest/scans_test.go's own equivalent test.
 func TestSendScanStoresOKSnapshot(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
 		token := mintToken(t, database, "canary-a")
 
 		dbBuiltAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -65,8 +66,8 @@ func TestSendScanStoresOKSnapshot(t *testing.T) {
 // engine metadata at all rather than a fabricated zero time.
 func TestSendScanStoresFailedSnapshotWithNoEngineData(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
 		token := mintToken(t, database, "canary-a")
 
 		err := c.SendScan(ctx(), token, Snapshot{
@@ -102,8 +103,8 @@ func TestSendScanStoresFailedSnapshotWithNoEngineData(t *testing.T) {
 // on every snapshot), never omits it because the caller left it nil.
 func TestSendScanEmptyMaskedPathsSentAsEmptyArray(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
 		token := mintToken(t, database, "canary-a")
 
 		err := c.SendScan(ctx(), token, Snapshot{
@@ -129,7 +130,7 @@ func TestSendScanEmptyMaskedPathsSentAsEmptyArray(t *testing.T) {
 // ErrUnauthorized, mirroring TestSendHeartbeatUnauthorized.
 func TestSendScanUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
 
 		err := c.SendScan(ctx(), "not-a-real-token", Snapshot{
 			TakenAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -163,8 +164,8 @@ func TestSendScanRetryableOn429(t *testing.T) {
 // validation of its own, so the server's 400 is what the caller sees.
 func TestSendScanRejectedBodyIsRetryable(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
 		token := mintToken(t, database, "canary-a")
 
 		err := c.SendScan(ctx(), token, Snapshot{

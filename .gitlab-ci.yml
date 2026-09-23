@@ -1047,9 +1047,16 @@ e2e:enrol-and-hit:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    # Issue #78 journey C: the birdcage image alone, refusing to start on
+    # a handful of bad configurations -- before stack.sh up, since it
+    # needs no stack (or the stack's own well-configured containers)
+    # to make its point.
+    - scripts/e2e/startup-refusals.sh
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
+    - scripts/e2e/lifecycle.sh
+    - scripts/e2e/surface.sh
   after_script:
     - scripts/e2e/stack.sh down
 
@@ -1088,9 +1095,16 @@ e2e:enrol-and-hit:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    # Issue #78 journey C: the birdcage image alone, refusing to start on
+    # a handful of bad configurations -- before stack.sh up, since it
+    # needs no stack (or the stack's own well-configured containers)
+    # to make its point.
+    - scripts/e2e/startup-refusals.sh
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
+    - scripts/e2e/lifecycle.sh
+    - scripts/e2e/surface.sh
   after_script:
     - scripts/e2e/stack.sh down
 

@@ -94,3 +94,18 @@ under test either time.
 Filed as #112, which also carries the timing table and the candidate fixes.
 `stack.sh` is not at fault: refusing to substitute an image is exactly what a
 live test should do.
+
+## TestRunCommandPollLoopDropsOnFullBuffer (cmd/mockingbird) -- fixed
+
+- 2026-09-23 · 5a0c594 · pipeline 1528 `test:go` · "log output = ... context
+  canceled, want a buffer-full drop naming cmd-1". The test slept a fixed
+  50 ms for "several poll cycles at 5 ms"; under `-race` on a busy runner the
+  first TLS handshake alone took longer, and the loop was cancelled before it
+  had received a command. Passed 20/20 locally under `-race` on the same
+  code.
+
+### Fixed the same day
+
+The test now cancels once the server has answered a second poll, which the
+loop only starts after the first cycle's drop is logged. No sleep left.
+

@@ -60,6 +60,41 @@ func TestLoadConfigMissingCACert(t *testing.T) {
 	}
 }
 
+// TestLoadConfigUnreadableCertFiles proves loadConfig's own three
+// os.ReadFile checks (CACert, ClientCert, ClientKey -- config.go, after
+// ensureEnrolled has already accepted the state directory as complete),
+// distinct from TestLoadConfigMissingCACert above: removing a file
+// entirely makes EnsureEnrolled itself refuse first ("incomplete
+// enrolment state"), never reaching loadConfig's own read. Here every
+// enrolStateFiles entry exists (so EnsureEnrolled is satisfied), but one
+// is a directory rather than a regular file -- the shape a botched
+// volume mount could plausibly produce -- so os.Stat still succeeds
+// while os.ReadFile fails with its own "is a directory" error, and
+// loadConfig must name which file it was.
+func TestLoadConfigUnreadableCertFiles(t *testing.T) {
+	for _, name := range []string{caFileName, clientCertFileName, clientKeyFileName} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeStateDir(t)
+			path := filepath.Join(dir, name)
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("remove %s: %v", name, err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatalf("mkdir %s: %v", name, err)
+			}
+			setValidEnv(t, dir)
+
+			_, err := loadConfig()
+			if err == nil {
+				t.Fatalf("loadConfig succeeded with %s replaced by a directory", name)
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("err = %q, want it to name %s", err, name)
+			}
+		})
+	}
+}
+
 func TestLoadConfigSuccess(t *testing.T) {
 	dir := writeStateDir(t)
 	setValidEnv(t, dir)

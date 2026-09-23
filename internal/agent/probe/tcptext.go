@@ -13,9 +13,19 @@ import (
 // line it receives next, not from having seen a specific prompt first.
 const greetingBudget = 500 * time.Millisecond
 
+// selfTestPassword is the fixed, obviously-fake password every
+// credential-shaped carrier sends alongside its marker, for the modules
+// that only log once a password arrives (ftp, telnet, http). It carries
+// no meaning of its own: the marker is the proof, this is the second
+// field OpenCanary's own parser waits for. ssh.go uses the same word.
+const selfTestPassword = "birdcage-selftest"
+
 // probeFTP plants marker as the USER command's argument -- the first
 // credential-shaped thing an FTP client sends, and the field
-// OpenCanary's ftp module logs (#46 carrier table).
+// OpenCanary's ftp module logs (#46 carrier table). The PASS that
+// follows is what makes the module log at all: opencanary/modules/ftp.py
+// logs USERNAME and PASSWORD together from ftp_PASS, never from ftp_USER
+// alone (MR !60 pipeline 1524: a USER-only probe produced no event).
 func probeFTP(ctx context.Context, address string, port int, marker string) error {
 	conn, err := dialTCP(ctx, address, port)
 	if err != nil {
@@ -26,7 +36,7 @@ func probeFTP(ctx context.Context, address string, port int, marker string) erro
 	defer func() { _ = conn.Close() }()
 
 	drainBriefly(conn, greetingBudget)
-	_, err = conn.Write([]byte("USER " + marker + "\r\n"))
+	_, err = conn.Write([]byte("USER " + marker + "\r\nPASS " + selfTestPassword + "\r\n"))
 	return err
 }
 
@@ -46,6 +56,6 @@ func probeTelnet(ctx context.Context, address string, port int, marker string) e
 	defer func() { _ = conn.Close() }()
 
 	drainBriefly(conn, greetingBudget)
-	_, err = conn.Write([]byte(marker + "\r\n"))
+	_, err = conn.Write([]byte(marker + "\r\n" + selfTestPassword + "\r\n"))
 	return err
 }

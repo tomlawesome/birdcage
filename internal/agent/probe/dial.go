@@ -36,6 +36,22 @@ func dial(ctx context.Context, network, address string, port int) (net.Conn, err
 	return conn, nil
 }
 
+// dialTCPFromPort is dialTCP with an explicit local port, for
+// probePortscan (#46 slice 3): binding the same source port across every
+// touch is what turns "the source port it bound" into one fact instead
+// of a fresh ephemeral one per dial.
+func dialTCPFromPort(ctx context.Context, address string, port, sourcePort int) (net.Conn, error) {
+	d := net.Dialer{LocalAddr: &net.TCPAddr{Port: sourcePort}}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(address, strconv.Itoa(port)))
+	if err != nil {
+		return nil, err
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	return conn, nil
+}
+
 // drainBriefly discards up to budget's worth of whatever conn sends
 // first (a banner, a login prompt, telnet option negotiation), so a
 // carrier's following write lands after it rather than racing it. The

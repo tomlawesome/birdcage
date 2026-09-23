@@ -66,13 +66,12 @@ func (h *handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	hash := store.HashToken(req.EnrolmentSecret)
-	// kind is ignored here on purpose: #105 puts kind in hand at
-	// certificate-issuance time (store.Provision's issue callback) so
-	// #106 can carry it into the certificate without any further store
-	// rework. The certificate itself -- its subject, its extensions --
-	// is untouched by #105.
+	// kind is the session's own kind (#105 put it in hand at
+	// certificate-issuance time precisely for this): #106 carries it
+	// into the certificate's subject as the OU IssueClient sets, so the
+	// ingest listener can authorise on it later.
 	result, outcome, err := store.Provision(ctx, h.db, hash, h.now(), func(canaryID string, kind agentkind.Kind) (certPEM, keyPEM []byte, err error) {
-		return h.ca.IssueClient(canaryID, clientCertTTL)
+		return h.ca.IssueClient(canaryID, kind, clientCertTTL)
 	})
 	if err != nil {
 		// birdcage's own storage or CA trouble, not the secret's fault --

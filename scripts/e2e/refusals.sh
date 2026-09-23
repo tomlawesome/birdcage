@@ -151,4 +151,135 @@ case "$status_after_bad_kind" in
   *) ok "no enrolment session was minted for the refused kind" ;;
 esac
 
+step "a scanner is enrolled with its own real certificate and token"
+# Issue #106's cross-post legs need a second real, live kind -- a
+# scanner -- whose credentials are reachable from the same helper the
+# honeypot's own /state already is. Nightjar itself is never run here
+# (its image is not built by this job; scripts/e2e/scanner.sh's own
+# stack covers running the real binary): the certificate and token this
+# leg needs come from the same two real enrolment endpoints the "other"
+# canary above already used, with --kind scanner added. The response
+# never leaves this one helper invocation -- only the canary id crosses
+# back to this script, the same discipline the "other" canary above
+# keeps -- so nothing here copies key material through the script.
+"$E2E_STACK" birdcage canary enrol --name "$E2E_CANARY_NAME-scanner" --lane "$E2E_CANARY_LANE" --kind scanner \
+  | "$E2E_STACK" write-work scanner-enrol.txt \
+  || fail "minting a scanner enrolment session failed"
+
+scanner_canary="$(helper '
+set -eu
+cd /tmp
+token=$(sed -n "s/^.*NIGHTJAR_DEPLOY_TOKEN=\([0-9a-f]*\).*$/\1/p" /work/scanner-enrol.txt)
+test -n "$token" || { echo "no deploy token for the scanner"; exit 1; }
+secret=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/hello" \
+  -d "{\"token\":\"$token\"}" | jq -er .enrolment_secret)
+provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" \
+  -d "{\"enrolment_secret\":\"$secret\"}")
+printf "%s" "$provision" | jq -er .client_cert_pem > /work/scanner-cert.pem
+printf "%s" "$provision" | jq -er .client_key_pem > /work/scanner-key.pem
+printf "%s" "$provision" | jq -er .canary_token > /work/scanner-token
+chmod 600 /work/scanner-cert.pem /work/scanner-key.pem /work/scanner-token
+printf "%s" "$provision" | jq -er .canary_id
+')" || fail "the scanner could not be provisioned: $scanner_canary"
+[ -n "$scanner_canary" ] || fail "the scanner was provisioned without a canary id"
+ok "scanner $scanner_canary holds its own client certificate and token"
+
+step "the honeypot's own credential is refused on the scanner's route (403, not 401)"
+# Issue #106: a kind refusal is 403 {"error":"forbidden"}, deliberately
+# not the uniform 401 -- a 401 is permanent to the agent and would push
+# it toward re-enrolment for a perfectly good credential that simply
+# isn't this route's. Asserted as 403 and explicitly not 401: a 401 here
+# would mean some other check fired and this leg proved nothing.
+honeypot_cross="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
+  --cert /state/client.pem --key /state/client-key.pem \
+  -H \"Authorization: Bearer \$(cat /state/token)\" \
+  -X POST '$BIRDCAGE_INGEST_URL/ingest/scans' -d '{}'")" \
+  || fail "the honeypot's cross-post to /ingest/scans could not be sent: $honeypot_cross"
+case "$honeypot_cross" in
+  *http=403*) ;;
+  *) fail "the honeypot's cross-post to /ingest/scans was not refused with 403: $honeypot_cross" ;;
+esac
+case "$honeypot_cross" in
+  *'{"error":"forbidden"}'*) ok "403 and the kind-refusal body" ;;
+  *) fail "the refusal body was not {\"error\":\"forbidden\"}: $honeypot_cross" ;;
+esac
+case "$honeypot_cross" in
+  *http=401*) fail "also matched http=401 -- the wrong check fired, proving nothing: $honeypot_cross" ;;
+  *) ok "not 401 -- the credential itself is fine, the route refused it" ;;
+esac
+
+step "the scanner's own credential is refused on the honeypot's route (403, not 401)"
+scanner_cross="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
+  --cert /work/scanner-cert.pem --key /work/scanner-key.pem \
+  -H \"Authorization: Bearer \$(cat /work/scanner-token)\" \
+  -X POST '$BIRDCAGE_INGEST_URL/ingest/events' -d '{\"events\":[]}'")" \
+  || fail "the scanner's cross-post to /ingest/events could not be sent: $scanner_cross"
+case "$scanner_cross" in
+  *http=403*) ;;
+  *) fail "the scanner's cross-post to /ingest/events was not refused with 403: $scanner_cross" ;;
+esac
+case "$scanner_cross" in
+  *'{"error":"forbidden"}'*) ok "403 and the kind-refusal body" ;;
+  *) fail "the refusal body was not {\"error\":\"forbidden\"}: $scanner_cross" ;;
+esac
+case "$scanner_cross" in
+  *http=401*) fail "also matched http=401 -- the wrong check fired, proving nothing: $scanner_cross" ;;
+  *) ok "not 401 -- the credential itself is fine, the route refused it" ;;
+esac
+
+# The contrast, so neither 403 above can be explained by anything else
+# about the request: the identical scanner call against its own route
+# gets past authorisation and is answered by the scan handler --
+# deterministic 400 on {}, "taken_at must be an RFC3339 timestamp"
+# (handleScan's own validation order in internal/ingest/scans.go parses
+# taken_at before it ever looks at status, so that -- not the "status
+# must be ..." message a first read of the body might expect -- is the
+# message an empty object actually gets; verified against the real
+# handler rather than assumed). The honeypot's own-route contrast
+# already exists above (400, "at least one event").
+contrast="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
+  --cert /work/scanner-cert.pem --key /work/scanner-key.pem \
+  -H \"Authorization: Bearer \$(cat /work/scanner-token)\" \
+  -X POST '$BIRDCAGE_INGEST_URL/ingest/scans' -d '{}'")" \
+  || fail "the scanner's own-route contrast request could not be sent: $contrast"
+case "$contrast" in
+  *http=400*'RFC3339'*|*'RFC3339'*http=400*)
+    ok "the scanner's own credential authenticates on its own route (400 from the scan handler)" ;;
+  *) fail "the scanner's own-route contrast did not reach the scan handler, so the 403s above prove nothing: $contrast" ;;
+esac
+
+step "nothing was stored by either refused cross-post"
+noscan="$("$E2E_STACK" query "select count(*) from scan_snapshots where canary_id = '$E2E_CANARY_ID'")" \
+  || fail "could not query scan_snapshots: $noscan"
+case "$noscan" in
+  0) ok "no scan_snapshots row for the honeypot's canary id" ;;
+  *) fail "scan_snapshots holds a row for the honeypot's canary id ($E2E_CANARY_ID) despite the 403: $noscan" ;;
+esac
+
+noalert="$("$E2E_STACK" query "select count(*) from alerts where instance_id = '$scanner_canary'")" \
+  || fail "could not query alerts: $noalert"
+case "$noalert" in
+  0) ok "no alerts row for the scanner's canary id" ;;
+  *) fail "alerts holds a row for the scanner's canary id ($scanner_canary) despite the 403: $noalert" ;;
+esac
+
+step "the operator can see it: ingest.kind_refused audit rows for both refusals"
+# There is no API for the audit log yet, so this reads the database
+# directly through stack.sh query, which speaks to whichever engine is
+# underneath -- proving itself on Postgres as well as SQLite, same as
+# the ingest.client_cert_mismatch check above.
+audit_honeypot="$("$E2E_STACK" query "select reason from audit_log where action = 'ingest.kind_refused' and target = '$E2E_CANARY_ID' order by id desc limit 1")" \
+  || fail "could not read the audit log for the honeypot's refusal: $audit_honeypot"
+case "$audit_honeypot" in
+  *honeypot*"/ingest/scans"*) ok "audited: $audit_honeypot" ;;
+  *) fail "no ingest.kind_refused entry naming honeypot and /ingest/scans for $E2E_CANARY_ID; got: ${audit_honeypot:-<nothing>}" ;;
+esac
+
+audit_scanner="$("$E2E_STACK" query "select reason from audit_log where action = 'ingest.kind_refused' and target = '$scanner_canary' order by id desc limit 1")" \
+  || fail "could not read the audit log for the scanner's refusal: $audit_scanner"
+case "$audit_scanner" in
+  *scanner*"/ingest/events"*) ok "audited: $audit_scanner" ;;
+  *) fail "no ingest.kind_refused entry naming scanner and /ingest/events for $scanner_canary; got: ${audit_scanner:-<nothing>}" ;;
+esac
+
 finish

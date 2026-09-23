@@ -28,7 +28,7 @@ const (
 func TestHandleBatchRejectsOversizedBody(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		oversizedRaw := strings.Repeat("x", maxBodyBytes+1)
 		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":%q}]}`,
@@ -47,9 +47,30 @@ func TestHandleBatchRejectsOversizedBody(t *testing.T) {
 func TestHandleBatchRejectsUnknownField(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[%s],"unexpected_field":true}`, validEventJSON(validEventID1))
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+	})
+}
+
+// TestHandleBatchRejectsUnknownEventField is #46 slice 3's regression
+// check: adding self_test_marker to ingestEvent must not have loosened
+// DisallowUnknownFields for anything else -- a field this package still
+// does not recognise, on one event inside an otherwise well-formed
+// batch, is still rejected outright.
+func TestHandleBatchRejectsUnknownEventField(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":"hit","not_a_real_field":true}]}`,
+			validEventID1)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, batchRequest(raw, body))
@@ -68,7 +89,7 @@ func TestHandleBatchOverLimitReturns429AndIsRecorded(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
-		h := newHandler(database, nil, time.Now, tiny)
+		h := newHandler(database, nil, time.Now, tiny, store.NewSelfTestIndex(), nil)
 		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID1))
 
 		var last *httptest.ResponseRecorder
@@ -104,7 +125,7 @@ func TestHandleBatchChargesRequestLimitExactlyOnce(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
-		h := newHandler(database, nil, time.Now, tiny)
+		h := newHandler(database, nil, time.Now, tiny, store.NewSelfTestIndex(), nil)
 		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID1))
 
 		for i := 1; i <= 2; i++ {
@@ -130,7 +151,7 @@ func TestHandleBatchChargesRequestLimitExactlyOnce(t *testing.T) {
 func TestHandleBatchOneBadEventRejectedRestStored(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		badEventID := "not-a-valid-event-id"
 		body := fmt.Sprintf(`{"events":[%s,{"event_id":%q,"source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":"hit"}]}`,
@@ -170,7 +191,7 @@ func TestHandleBatchOneBadEventRejectedRestStored(t *testing.T) {
 func TestHandleBatchPayloadNodeIDMismatchStoresUnderTokenCanary(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"node_id":"canary-b","events":[%s]}`, validEventJSON(validEventID1))
 
@@ -205,7 +226,7 @@ func TestHandleBatchPayloadNodeIDMismatchStoresUnderTokenCanary(t *testing.T) {
 func TestHandleBatchAckListsExactlyStoredAndRejected(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		goodID := validEventID1
 		badID := "not-a-valid-event-id"
@@ -254,7 +275,7 @@ func TestHandleBatchAckListsExactlyStoredAndRejected(t *testing.T) {
 func TestHandleBatchSameMultiEventBatchTwiceStoresOneCopyEach(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[%s,%s]}`, validEventJSON(validEventID1), validEventJSON(validEventID2))
 
@@ -284,7 +305,7 @@ func TestHandleBatchSameMultiEventBatchTwiceStoresOneCopyEach(t *testing.T) {
 func TestHandleBatchDuplicateEventIDAcksAsStored(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 		body := fmt.Sprintf(`{"events":[%s]}`, validEventJSON(validEventID2))
 
 		for i := 0; i < 2; i++ {
@@ -322,7 +343,7 @@ func TestHandleBatchDuplicateEventIDAcksAsStored(t *testing.T) {
 func TestHandleBatchPortlessEventStores(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":-1,"service":"ssh","raw":"hit"}]}`,
 			validEventID1)
@@ -349,7 +370,7 @@ func TestHandleBatchPortlessEventStores(t *testing.T) {
 func TestHandleBatchAddresslessEventStores(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"","dest_port":22,"service":"ssh","raw":"hit"}]}`,
 			validEventID1)
@@ -377,7 +398,7 @@ func TestHandleBatchAddresslessEventStores(t *testing.T) {
 func TestHandleBatchPortZeroEventStores(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":0,"service":"ssh","raw":"hit"}]}`,
 			validEventID1)
@@ -406,7 +427,7 @@ func TestHandleBatchPortZeroEventStores(t *testing.T) {
 func TestHandleBatchZonedIPv6SourceEventStores(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"fe80::1%%eth0","dest_port":22,"service":"ssh","raw":"hit"}]}`,
 			validEventID1)
@@ -434,7 +455,7 @@ func TestHandleBatchZonedIPv6SourceEventStores(t *testing.T) {
 func TestHandleBatchStillRejectsMalformedEventsByID(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		cases := []struct {
 			name    string

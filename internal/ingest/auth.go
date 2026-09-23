@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -47,29 +49,42 @@ func bearerToken(header string) (string, bool) {
 	return raw, true
 }
 
-// requireBearerToken wraps next so it is only ever reached by a request
-// carrying a live canary token: missing, unknown and revoked tokens all
-// get the identical 401 (issue #32 fail-closed: "uniform 401, identical
-// in status and shape across all three, before the request body is
-// read") -- store.LookupCanaryTokenByHash already can't distinguish
-// unknown from revoked (slice 1: a revoked row never resolves), and a
-// missing/malformed header is rejected before any lookup happens at all,
-// so all three paths converge on the same response with no lookup ever
-// running for the first case and identical output for the other two.
+// requireBearerToken wraps route.handler so it is only ever reached by a
+// request carrying a live canary token whose kind route allows: missing,
+// unknown and revoked tokens all get the identical 401 (issue #32
+// fail-closed: "uniform 401, identical in status and shape across all
+// three, before the request body is read") -- store.LookupCanaryTokenByHash
+// already can't distinguish unknown from revoked (slice 1: a revoked row
+// never resolves), and a missing/malformed header is rejected before any
+// lookup happens at all, so all three paths converge on the same
+// response with no lookup ever running for the first case and identical
+// output for the other two.
 //
 // The body is never touched here or before this returns -- database is
 // consulted with a hash lookup only, matching the threat model's "the
 // pre-auth cost of a junk request is deliberately tiny: one SHA-256 and
 // one indexed lookup".
 //
+// Order of checks past the token lookup (issue #106, design note section
+// 2): certificate CN matches the token's canary, then the two kind
+// checks, then token-use bookkeeping, rotation completion and the rate
+// limiter. A cross-kind post must not advance last_used_at or trigger
+// completeRotation's revocation sweep, so both kind checks sit ahead of
+// that bookkeeping, not after it.
+//
 // This is also where issue #32 item 8's per-canary requests/min cap is
 // charged, once every request that authenticates on any of this mux's
-// three routes -- not only POST /ingest/events. Charged here rather than
-// in each handler because the limit is per canary and this is the one
-// place every route shares that already has the resolved identity;
-// handleBatch used to charge it itself and no longer does, so a batch is
-// still charged exactly once.
-func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, next http.HandlerFunc) http.HandlerFunc {
+// routes -- not only POST /ingest/events. Charged here rather than in
+// each handler because the limit is per canary and this is the one place
+// every route shares that already has the resolved identity; handleBatch
+// used to charge it itself and no longer does, so a batch is still
+// charged exactly once.
+//
+// hook (issue #47 step 8) is threaded straight through to completeRotation
+// below, which is the only place it's ever called -- nil disables the
+// first-contact self-test entirely, the same stance handleRotate already
+// takes on RotationSucceeded.
+func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, hook SelfTestRotationHook, route ingestRoute) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -123,6 +138,43 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 			}
 		}
 
+		// Kind check 1 of 2, the registry: does this canary's registered
+		// kind (tok.Kind, from LookupCanaryTokenByHash's own LEFT JOIN)
+		// belong on this route at all? Deliberately unconditional --
+		// never nested inside the r.TLS != nil block above, or the
+		// httptest exemption that block grants for certificate carriage
+		// would double as an authorisation hole for every handler test
+		// in this package (issue #106, design note section 7's own
+		// trap). A live token whose canaries row is missing resolves
+		// with tok.Kind == "" (store.CanaryToken's own doc comment),
+		// which kindAllowed refuses here rather than a handler ever
+		// seeing it -- deliberate: this route now refuses 403 instead of
+		// (for /ingest/heartbeat) reaching handleHeartbeat's own 404 for
+		// the same unregistered-canary case.
+		if !kindAllowed(route.kinds, tok.Kind) {
+			recordKindRefused(r.Context(), database, now, coalescer, tok.CanaryID, tok.Kind, route.pattern, route.kinds)
+			writeIngestError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+
+		// Kind check 2 of 2, the certificate (ADR-0009 decision 3, the
+		// defence in depth): when a real client certificate is present,
+		// its subject OU must name exactly one registered kind and that
+		// kind must equal the registry's own tok.Kind -- never merely
+		// "one of the route's allowed kinds", so a tampered registry row
+		// disagreeing with the immutable certificate refuses even when
+		// both individually look like they'd pass. r.TLS == nil is the
+		// same httptest exemption the CN check above takes, for
+		// certificate carriage only.
+		if r.TLS != nil {
+			certKind, ok := certificateKind(r.TLS.PeerCertificates)
+			if !ok || certKind != tok.Kind {
+				recordKindMismatch(r.Context(), database, now, coalescer, tok.CanaryID, presentedOrganizationalUnit(r.TLS.PeerCertificates))
+				writeIngestError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+		}
+
 		// Recovered before RecordCanaryTokenUse below overwrites it: nil
 		// here means this is the token's first use (issue #32 slice 5),
 		// the trigger for completeRotation's revoke-every-older-token
@@ -139,7 +191,7 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		}
 
 		if firstUse {
-			completeRotation(r.Context(), database, now, tok)
+			completeRotation(database, now, tok, r, hook)
 		}
 
 		if !limiters.allowRequest(tok.CanaryID) {
@@ -149,8 +201,50 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		}
 
 		ctx := context.WithValue(r.Context(), canaryTokenCtxKey{}, tok)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		route.handler(w, r.WithContext(ctx))
 	}
+}
+
+// kindAllowed reports whether k is one of allowed -- the registry kind
+// check's own comparison (issue #106). k == "" (a token whose canaries
+// row is missing, or was never given a kind) never matches, since
+// allowed only ever holds registered kinds.
+func kindAllowed(allowed []agentkind.Kind, k agentkind.Kind) bool {
+	for _, a := range allowed {
+		if a == k {
+			return true
+		}
+	}
+	return false
+}
+
+// certificateKind extracts the single registered kind a peer
+// certificate's subject OU carries (issue #106, design note section 1):
+// ok is false for any shape other than exactly one registered value --
+// zero (every pre-#106 certificate), more than one, or a string
+// agentkind.Valid rejects. Never a "contains" check over the slice.
+func certificateKind(certs []*x509.Certificate) (agentkind.Kind, bool) {
+	if len(certs) == 0 {
+		return "", false
+	}
+	ou := certs[0].Subject.OrganizationalUnit
+	if len(ou) != 1 {
+		return "", false
+	}
+	k := agentkind.Kind(ou[0])
+	return k, agentkind.Valid(k)
+}
+
+// presentedOrganizationalUnit reads back the raw OU value(s) a peer
+// certificate presented, for recordKindMismatch's audit reason -- a
+// certificate subject, safe to log verbatim, matching
+// recordClientCertMismatch's own stance on the presented CN. Returns nil
+// (renders as "[]") when there is no certificate to read at all.
+func presentedOrganizationalUnit(certs []*x509.Certificate) []string {
+	if len(certs) == 0 {
+		return nil
+	}
+	return certs[0].Subject.OrganizationalUnit
 }
 
 // recordTokenConflictIfSuccessorActive is issue #32 slice 5's separate
@@ -232,6 +326,72 @@ func recordClientCertMismatch(ctx context.Context, database *db.DB, now func() t
 	}
 }
 
+// recordKindRefused writes ingest.kind_refused (issue #106): canaryID's
+// registered kind is not among the kinds route allows -- a honeypot
+// posting to the scanner's route, or the reverse. Routed through
+// coalescer like every other caller-triggered write in this file:
+// reaching this check costs nothing but a live token, so an attacker
+// holding one honeypot's credential could otherwise flood audit_log for
+// the price of retrying its own (correctly refused) requests --
+// auditcoalesce.go's own rationale.
+func recordKindRefused(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID string, kind agentkind.Kind, route string, allowed []agentkind.Kind) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, "ingest.kind_refused", at)
+	if !write {
+		return
+	}
+
+	reason := fmt.Sprintf("canary %s (kind %q) posted to %s, which allows kind(s) %s", canaryID, kind, route, formatKinds(allowed))
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "ingest.kind_refused",
+		Target:      canaryID,
+		Reason:      coalescedReason(reason, occurrences, "refusals"),
+		TriggeredBy: canaryID,
+		CreatedAt:   at,
+	}); err != nil {
+		slog.Error("ingest: record kind refusal", "canary", canaryID, "route", route, "err", err)
+	}
+}
+
+// recordKindMismatch writes ingest.kind_mismatch (issue #106): the
+// certificate on this connection did not carry exactly one registered
+// kind equal to the registry's own tok.Kind -- a legacy pre-#106
+// certificate (no OU at all), a malformed one (more than one OU), an
+// unregistered string, or one that simply disagrees with what the
+// database says this canary is. presentedOU is logged verbatim -- a
+// certificate subject, safe to log and audit, matching
+// recordClientCertMismatch's own stance on the presented CN. Coalesced
+// for the same reason recordKindRefused is.
+func recordKindMismatch(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID string, presentedOU []string) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, "ingest.kind_mismatch", at)
+	if !write {
+		return
+	}
+
+	reason := fmt.Sprintf("certificate for canary %s carries organizational unit %v, want exactly one value naming its registered kind", canaryID, presentedOU)
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "ingest.kind_mismatch",
+		Target:      canaryID,
+		Reason:      coalescedReason(reason, occurrences, "presentations"),
+		TriggeredBy: canaryID,
+		CreatedAt:   at,
+	}); err != nil {
+		slog.Error("ingest: record kind mismatch", "canary", canaryID, "err", err)
+	}
+}
+
+// formatKinds renders a route's allowed kinds for an audit reason, e.g.
+// "honeypot, scanner" -- never Go's %v slice syntax, which would read
+// like a debug dump rather than prose.
+func formatKinds(kinds []agentkind.Kind) string {
+	strs := make([]string, len(kinds))
+	for i, k := range kinds {
+		strs[i] = string(k)
+	}
+	return strings.Join(strs, ", ")
+}
+
 // completeRotation applies issue #32 slice 5's central rule (owner,
 // 2026-09-14): "first use of the new token revokes every older token for
 // that canary, not just the one presented". It runs on every route this
@@ -243,7 +403,25 @@ func recordClientCertMismatch(ctx context.Context, database *db.DB, now func() t
 // for it -- but item 10 ("every mint, first use and revocation" is
 // audited) still wants the first use itself recorded, which the
 // no-older-tokens branch below now does.
-func completeRotation(ctx context.Context, database *db.DB, now func() time.Time, tok store.CanaryToken) {
+//
+// r and hook are issue #47 step 8's addition, used only inside that same
+// no-older-tokens branch: revoked == 0 can only mean tok is the canary's
+// first token and this is that token's first use, which happens at most
+// once per canary's lifetime -- exactly "the first successful mTLS
+// request from that canary after provisioning" #47 asks for. r's own
+// source address is recorded as this canary's last-seen address (the
+// same store.SetCanaryLastSeenAddr internal/ingest/heartbeat.go's own
+// last-seen write uses) before the hook fires, so the self-test scheduler
+// has an address to probe before any heartbeat has ever landed; an
+// ordinary heartbeat overwrites it moments later with the same or an
+// updated value regardless, so this is a harmless head start, not a new
+// source of truth for the field. hook is nil in every test in this
+// package and any deployment that hasn't started a scheduler, and its
+// call must never affect this request's own response either way -- any
+// error inside it is the hook's own to log, the same contract
+// handleRotate's own RotationSucceeded call already keeps.
+func completeRotation(database *db.DB, now func() time.Time, tok store.CanaryToken, r *http.Request, hook SelfTestRotationHook) {
+	ctx := r.Context()
 	revoked, err := store.RevokeCanaryTokensSupersededBy(ctx, database, tok, now().UTC())
 	if err != nil {
 		slog.Error("ingest: revoke superseded tokens failed", "canary", tok.CanaryID, "err", err)
@@ -262,6 +440,10 @@ func completeRotation(ctx context.Context, database *db.DB, now func() time.Time
 			CreatedAt:   now().UTC(),
 		}); err != nil {
 			slog.Error("ingest: record first token use", "canary", tok.CanaryID, "err", err)
+		}
+		if hook != nil {
+			recordLastSeenAddr(r, database, tok.CanaryID)
+			hook.FirstContact(ctx, tok.CanaryID, now().UTC())
 		}
 		return
 	}

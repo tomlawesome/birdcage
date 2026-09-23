@@ -156,6 +156,7 @@ func TestCommandPollAndRunnerStopOnContextCancel(t *testing.T) {
 	c := newTestClient(t, ts)
 	tokStore := &TokenStore{current: "tok"}
 	commands := make(chan *client.Command, commandRunnerBuffer)
+	in, _ := newTestIntake(t, queue.Config{})
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	pollDone := make(chan struct{})
@@ -165,7 +166,7 @@ func TestCommandPollAndRunnerStopOnContextCancel(t *testing.T) {
 		close(pollDone)
 	}()
 	go func() {
-		runCommandRunner(runCtx, commands)
+		runCommandRunner(runCtx, in, commands)
 		close(runnerDone)
 	}()
 

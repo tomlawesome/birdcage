@@ -22,7 +22,10 @@ var (
 // does not knock in the same second" -- 60 s +/- 10 s (#46's own
 // stagger decision narrows the jitter to this bound rather than
 // spreading across the whole minute).
-const (
+// var, not const: TestRunCommandPollLoopDispatchesAndHandlesErrors
+// shrinks these for the duration of one test rather than waiting out
+// the real 60s +/- 10s cadence to reach runCommandPollLoop's poll body.
+var (
 	commandPollInterval = 60 * time.Second
 	commandPollJitter   = 10 * time.Second
 )
@@ -94,13 +97,13 @@ func jitteredInterval(base, jitter time.Duration) time.Duration {
 // runCommandRunner executes commands from run one at a time, in arrival
 // order (#48's process-composition note: "executes dispatched commands
 // sequentially"), until ctx is done.
-func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
+func runCommandRunner(ctx context.Context, in *Intake, run <-chan *client.Command) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case cmd := <-run:
-			if err := runCommand(ctx, cmd); err != nil {
+			if err := runCommand(ctx, in, cmd); err != nil {
 				commandLog.Warn(fmt.Sprintf("%s (%s): refused, executing nothing: %s", cmd.ID, cmd.Kind, safeErr(err)))
 			}
 		}
@@ -114,10 +117,10 @@ func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
 // and the command is never partially executed either way (#48
 // fail-closed: "a command the agent cannot fully parse is an attack or
 // version skew; both end in refusal").
-func runCommand(ctx context.Context, cmd *client.Command) error {
+func runCommand(ctx context.Context, in *Intake, cmd *client.Command) error {
 	switch cmd.Kind {
 	case kindSelfTest:
-		return runSelfTest(ctx, cmd)
+		return runSelfTest(ctx, in, cmd)
 	default:
 		return fmt.Errorf("unknown command kind %q", cmd.Kind)
 	}
@@ -138,16 +141,49 @@ func runCommand(ctx context.Context, cmd *client.Command) error {
 // correctly-reported case, not a refusal. probe.Sweep also never writes
 // into the event path itself (see its own doc comment): the probes
 // produce ordinary OpenCanary events that reach birdcage by the normal
-// two roads, and this function's job ends at firing them and logging
-// what happened for the operator and, eventually, the heartbeat's
-// counters.
-func runSelfTest(ctx context.Context, cmd *client.Command) error {
+// two roads, and this function's job ends at firing them, watching a
+// claim window for every attributed-grade target (#46 slice 3), and
+// logging what happened for the operator and, eventually, the
+// heartbeat's counters.
+//
+// The claim windows open before the sweep, not after it: an attributed
+// probe's event is produced while the probe runs (the portscan detector
+// fires on the fifth SYN, mid-sweep), and a window that only opened once
+// probe.Sweep returned found nothing to claim -- the event had already
+// passed through intake unclaimed, and the run never settled (MR !60
+// pipeline 1524, e2e:enrol-and-hit). Every window stays open until
+// selfTestClaimWindow after the sweep returns, so a late detector event
+// still lands inside it; a target whose probe then fails simply closes
+// with no candidate.
+//
+// in is the same Intake the sender and every intake road share -- its
+// claims tracker (claim.go) is what turns an attributed probe's own fact
+// into a claimed event, by watching the events those same roads are
+// pushing concurrently with the sweep.
+func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 	params, err := selftest.DecodeParams(cmd.Params)
 	if err != nil {
 		return fmt.Errorf("selftest params: %w", err)
 	}
 
+	var windows []*claimWindow
+	for _, t := range params.Targets {
+		if probe.Attributed(t.Service) {
+			windows = append(windows, in.claims.startWindow(t.Service, params.Address, t.Marker))
+		}
+	}
+
 	outcomes := probe.Sweep(ctx, params)
+
+	if len(windows) > 0 {
+		select {
+		case <-time.After(selfTestClaimWindow):
+		case <-ctx.Done():
+		}
+		for _, w := range windows {
+			in.claims.resolveWindow(w)
+		}
+	}
 
 	var ok, failed, noCarrier, notProbeable int
 	for _, o := range outcomes {

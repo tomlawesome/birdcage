@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -15,7 +16,7 @@ import (
 // internal/store.
 func TestRotateTokenReturnsFreshToken(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		oldToken := mintToken(t, database, "canary-a")
 
 		newToken, err := c.RotateToken(ctx(), oldToken)
@@ -44,7 +45,7 @@ func TestRotateTokenReturnsFreshToken(t *testing.T) {
 // surfaces as ErrUnauthorized.
 func TestRotateTokenUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
 		_, err := c.RotateToken(ctx(), "not-a-real-token")
 		if !IsUnauthorized(err) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 const (
@@ -70,7 +71,7 @@ func countAuditRows(t *testing.T, database *db.DB, action, target string) int {
 func TestRotateOldTokenStopsWorkingOnlyAfterNewTokenFirstUsed(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw1 := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1)
 		if raw2 == raw1 {
@@ -107,7 +108,7 @@ func TestTokenUnusedForAWeekStillAuthenticates(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		aWeekLater := func() time.Time { return time.Now().UTC().Add(7 * 24 * time.Hour) }
-		h := newHandler(database, nil, aWeekLater, defaultLimiterLimits)
+		h := newHandler(database, nil, aWeekLater, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw, batchBody(rotateEventIDA)))
@@ -126,7 +127,7 @@ func TestTokenUnusedForAWeekStillAuthenticates(t *testing.T) {
 func TestIssuedNeverUsedTokenDiesWhenLaterTokenFirstUsed(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw1 := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1) // issued, left unused
 		raw3 := mustRotate(t, h, raw1) // raw1 is still live, so this rotation succeeds too
@@ -161,7 +162,7 @@ func TestIssuedNeverUsedTokenDiesWhenLaterTokenFirstUsed(t *testing.T) {
 func TestOldTokenInFlightDoesNotKillTheNewerOne(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw1 := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1) // issued; the agent has not switched yet
 
@@ -195,7 +196,7 @@ func TestOldTokenInFlightDoesNotKillTheNewerOne(t *testing.T) {
 func TestRevokedTokenAfterSuccessorActiveRecordsTokenConflict(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw1 := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		raw2 := mustRotate(t, h, raw1)
 
@@ -230,7 +231,7 @@ func TestRevokedTokenAfterSuccessorActiveRecordsTokenConflict(t *testing.T) {
 // internal any-status lookup must tell the two apart.
 func TestUnknownTokenNeverRecordsAConflict(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", "never-minted-token", batchBody(rotateEventIDA)))
@@ -258,7 +259,7 @@ func TestRevokedTokenWithNoActiveSuccessorRecordsNoConflict(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		revokeAllTokens(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw, batchBody(rotateEventIDA)))
@@ -285,7 +286,7 @@ func TestRevokedTokenWithNoActiveSuccessorRecordsNoConflict(t *testing.T) {
 func TestRotateMintFailureReturns503NotARejection(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		if err := database.Close(); err != nil {
 			t.Fatalf("close database: %v", err)
@@ -310,7 +311,7 @@ func TestRotateOverLimitReturns429AndIsRecorded(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
-		h := newHandler(database, nil, time.Now, tiny)
+		h := newHandler(database, nil, time.Now, tiny, store.NewSelfTestIndex(), nil)
 
 		var last *httptest.ResponseRecorder
 		for i := 0; i < 3; i++ {
@@ -342,7 +343,7 @@ func TestRotateOverLimitReturns429AndIsRecorded(t *testing.T) {
 func TestRotateAuditFailureReturns503LeavesPresentedTokenWorkingAndNoUsableNewToken(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw1 := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		if _, err := database.Exec(`DROP TABLE audit_log`); err != nil {
 			t.Fatalf("drop audit_log: %v", err)
@@ -382,7 +383,7 @@ func TestRotateAuditFailureReturns503LeavesPresentedTokenWorkingAndNoUsableNewTo
 func TestFirstEverUseOfATokenIsAudited(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/events", raw, batchBody(rotateEventIDA)))

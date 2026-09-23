@@ -299,3 +299,206 @@ func TestRecordCanaryAgentHeartbeatUnknownCanary(t *testing.T) {
 		}
 	})
 }
+
+// TestRecordCanaryCommonHeartbeatStoresVersionAndLastSeen is issue
+// #106's own required proof for the common-only write path: last-seen
+// and agent_version advance, exactly RecordHeartbeat's own contract.
+func TestRecordCanaryCommonHeartbeatStoresVersionAndLastSeen(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-scanner", Name: "canary-scanner", Lane: "lan",
+			Kind: agentkind.Scanner, HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordCanaryCommonHeartbeat(context.Background(), database, "canary-scanner", beatAt, "1.2.3"); err != nil {
+			t.Fatalf("RecordCanaryCommonHeartbeat: %v", err)
+		}
+
+		canaries := listCanaries(t, database, beatAt, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-scanner")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(beatAt) {
+			t.Errorf("LastHeartbeatAt = %v, want %v", c.LastHeartbeatAt, beatAt)
+		}
+
+		var version string
+		if err := database.QueryRow(`SELECT agent_version FROM canaries WHERE id = ?`, "canary-scanner").Scan(&version); err != nil {
+			t.Fatalf("scan agent_version: %v", err)
+		}
+		if version != "1.2.3" {
+			t.Errorf("agent_version = %q, want %q", version, "1.2.3")
+		}
+	})
+}
+
+// TestRecordCanaryCommonHeartbeatLeavesLogTailerColumnsAlone is issue
+// #106's own required proof for the trap its design note names: the
+// common-only write must never zero out (or otherwise touch) the
+// log-tailer columns RecordCanaryAgentHeartbeat writes, or a scanner's
+// heartbeat would make it -- or a real Honeypot it somehow shares a row
+// with -- look like a healthy log tailer with an empty queue.
+func TestRecordCanaryCommonHeartbeatLeavesLogTailerColumnsAlone(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		// A prior log-tailer self-report, as a real Honeypot would send.
+		firstBeat := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", firstBeat,
+			AgentHeartbeat{QueueDepth: 7, LogReadOK: true, LastEventID: "abc123", AgentVersion: "1.0.0"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		// A later common-only heartbeat -- not a shape a real deployment
+		// would send for the same canary id, but the point of this test
+		// is exactly that the write path itself makes no assumption
+		// about which kind called it: it must leave these columns alone
+		// regardless.
+		secondBeat := mustParse(t, "2026-01-01T02:00:00Z")
+		if err := RecordCanaryCommonHeartbeat(context.Background(), database, "canary-a", secondBeat, "2.0.0"); err != nil {
+			t.Fatalf("RecordCanaryCommonHeartbeat: %v", err)
+		}
+
+		var (
+			version    string
+			queueDepth int
+			logReadOK  int
+			lastEvent  string
+		)
+		row := database.QueryRow(
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
+			t.Fatalf("scan self-report columns: %v", err)
+		}
+		if version != "2.0.0" {
+			t.Errorf("agent_version = %q, want %q (the common heartbeat's own value)", version, "2.0.0")
+		}
+		if queueDepth != 7 || logReadOK != 1 || lastEvent != "abc123" {
+			t.Errorf("log-tailer columns = (%d, %d, %q), want the untouched first heartbeat's own (7, 1, \"abc123\")",
+				queueDepth, logReadOK, lastEvent)
+		}
+
+		canaries := listCanaries(t, database, secondBeat, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(secondBeat) {
+			t.Errorf("LastHeartbeatAt = %v, want %v (the common heartbeat's own time)", c.LastHeartbeatAt, secondBeat)
+		}
+	})
+}
+
+// TestRecordCanaryCommonHeartbeatUnknownCanary mirrors
+// RecordCanaryAgentHeartbeat's own contract.
+func TestRecordCanaryCommonHeartbeatUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := RecordCanaryCommonHeartbeat(context.Background(), database, "no-such-canary",
+			mustParse(t, "2026-01-01T00:00:00Z"), "1.0.0")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("RecordCanaryCommonHeartbeat(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestSetCanaryLastSeenAddrRecordsAndReads is issue #46 item 1's store-
+// level test: SetCanaryLastSeenAddr writes canaries.last_seen_addr, read
+// back through ListCanaries as Canary.LastSeenAddr.
+func TestSetCanaryLastSeenAddrRecordsAndReads(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", EnrolledAt: time.Now()})
+
+		canaries := listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		if got := findCanary(t, canaries, "canary-a").LastSeenAddr; got != nil {
+			t.Fatalf("LastSeenAddr before any call = %v, want nil", *got)
+		}
+
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "203.0.113.5"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		canaries = listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		got := findCanary(t, canaries, "canary-a").LastSeenAddr
+		if got == nil || *got != "203.0.113.5" {
+			t.Fatalf("LastSeenAddr = %v, want 203.0.113.5", got)
+		}
+	})
+}
+
+// TestSetCanaryLastSeenAddrUnknownCanary mirrors RecordHeartbeat's own
+// ErrCanaryNotFound contract.
+func TestSetCanaryLastSeenAddrUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := SetCanaryLastSeenAddr(context.Background(), database, "no-such-canary", "203.0.113.5")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("SetCanaryLastSeenAddr(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestWellKnownServiceForPort covers both branches: a port
+// wellKnownPortNames carries, and one it doesn't.
+func TestWellKnownServiceForPort(t *testing.T) {
+	if name, ok := WellKnownServiceForPort(22); !ok || name != "ssh" {
+		t.Fatalf("WellKnownServiceForPort(22) = %q, %v, want \"ssh\", true", name, ok)
+	}
+	if _, ok := WellKnownServiceForPort(59999); ok {
+		t.Fatal("WellKnownServiceForPort(59999) = true, want false (not a well-known port)")
+	}
+}
+
+// TestListHoneypotCanariesForSelfTest is issue #46 item 5's store-level
+// test: only kind-honeypot canaries come back, each with its raw ports
+// parsed to ints (not portsDisplay's joined string) and its
+// last-seen address.
+func TestListHoneypotCanariesForSelfTest(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "honeypot-a", Name: "a", Lane: "l", Ports: "22,80", EnrolledAt: time.Now()})
+		insertCanary(t, database, Canary{ID: "scanner-a", Name: "s", Lane: "l", Kind: agentkind.Scanner, EnrolledAt: time.Now()})
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "honeypot-a", "192.0.2.10"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+
+		canaries, err := ListHoneypotCanariesForSelfTest(context.Background(), database)
+		if err != nil {
+			t.Fatalf("ListHoneypotCanariesForSelfTest: %v", err)
+		}
+		if len(canaries) != 1 {
+			t.Fatalf("got %d canaries, want 1 (the scanner must be excluded): %+v", len(canaries), canaries)
+		}
+		c := canaries[0]
+		if c.ID != "honeypot-a" || c.Kind != agentkind.Honeypot {
+			t.Fatalf("got %+v, want honeypot-a/Honeypot", c)
+		}
+		if len(c.Ports) != 2 || c.Ports[0] != 22 || c.Ports[1] != 80 {
+			t.Fatalf("Ports = %v, want [22 80]", c.Ports)
+		}
+		if c.LastSeenAddr == nil || *c.LastSeenAddr != "192.0.2.10" {
+			t.Fatalf("LastSeenAddr = %v, want 192.0.2.10", c.LastSeenAddr)
+		}
+	})
+}
+
+// TestSelfTestCanaryByID covers both the found and not-found cases.
+func TestSelfTestCanaryByID(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+
+		sc, ok, err := SelfTestCanaryByID(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID: %v", err)
+		}
+		if !ok || sc.ID != "canary-a" || sc.Kind != agentkind.Honeypot || len(sc.Ports) != 1 || sc.Ports[0] != 22 {
+			t.Fatalf("got %+v, %v, want canary-a/Honeypot/[22]/true", sc, ok)
+		}
+
+		_, ok, err = SelfTestCanaryByID(context.Background(), database, "no-such-canary")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID(unknown): %v", err)
+		}
+		if ok {
+			t.Fatal("SelfTestCanaryByID(unknown canary) = true, want false")
+		}
+	})
+}

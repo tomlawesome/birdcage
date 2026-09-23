@@ -103,6 +103,62 @@ Nothing about this step needs an operator's attention -- it happens
 automatically, seconds after the `docker run` command starts the
 container.
 
+### The certificate carries the agent's kind
+
+Since [ADR-0011](adr/0011-certificate-kind-authorisation.md), the
+certificate's subject also carries the agent's kind (`--kind honeypot`
+or `--kind scanner`, whichever this node enrolled as) in its
+Organizational Unit -- one value, fixed for the life of this identity.
+The ingest listener authorises every route on it: a honeypot's
+certificate cannot post vulnerability findings, and a scanner's cannot
+post honeypot alerts. A refused kind reads as `403` in the agent's own
+logs, never `401` -- the credential itself is fine, it is simply not the
+right one for that route.
+
+**Every node enrolled before this landed needs re-enrolling.** Its
+certificate carries no kind at all, and is refused at every ingest
+route the moment this ships -- there is no grace period and no
+grandfather clause (the reasoning is in ADR-0011: nothing renews a
+client certificate today, so "trust it until it renews" would mean
+trusting it forever). The fix is the same `birdcage canary enrol`
+command and printed `docker run` line described above; there is nothing
+else to do.
+
+## Pending until the first self-test passes
+
+Provisioning hands the agent working credentials, but the dashboard
+doesn't call the canary healthy yet -- it shows **pending**. A canary
+that installs cleanly and never actually reports is exactly the failure
+this whole design exists to prevent, and it looks identical to a healthy,
+quiet one unless something proves the chain works.
+
+So birdcage proves it once, automatically, the moment the agent's new
+credential is first used for anything: it mints a self-test run for that
+canary -- the same round trip [issue #46](https://gitlab.tomlawson.io/-/issues/46)
+runs daily thereafter -- regardless of whether the operator has the daily
+self-test schedule turned on. The agent picks the command up on its
+ordinary poll and probes its own services. Most targets answer with a
+marker OpenCanary logs verbatim; portscan is always one of them (it is
+the agent's own detector, not a listening service, so every honeypot
+canary gets one regardless of which ports it offers) and, like ntp when
+enabled, carries no marker of its own -- the agent claims that hit
+locally, from the network facts of its own probe, and birdcage
+corroborates the claim independently before treating it the same as a
+marked hit. Only once every target answers -- marked or claimed -- does
+the canary flip from **pending** to registered; from then on it's an
+ordinary canary, subject to the daily schedule like any other.
+
+If that first run times out unanswered, the canary stays pending -- and
+also shows self-test failed -- and birdcage mints another run every ten
+minutes until one passes, whether or not the daily self-test is switched
+on, with nothing to rebuild on the box. There is no operator action that
+skips this step; it is the proof, not a formality.
+
+A scanner has no self-test yet, so nothing could ever prove it this way:
+it registers on provisioning, and its first heartbeat is the only proof
+it works. [Issue #116](https://gitlab.tomlawson.io/ai/birdcage/-/issues/116)
+gives the scanner kind a proof of its own.
+
 ## Why the token is single-use and five minutes
 
 The deploy token is a bearer credential: whoever has it can claim the

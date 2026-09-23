@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/event"
+	"github.com/tomlawesome/birdcage/internal/agent/portscan"
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
 )
 
@@ -300,5 +301,22 @@ func TestRunPortscanRoadNilDetectorIsANoOp(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("runPortscanRoad(nil, ...) did not return")
+	}
+}
+
+// TestRunPortscanRoadLogsWhenDetectorFails proves runPortscanRoad's
+// other branch: a non-nil detector whose Run refuses is logged, not
+// swallowed or panicked on. A detector built via portscan.New but never
+// Open-ed is exactly that -- Run's own doc comment calls skipping Open
+// "a programming error, reported rather than papered over" -- and gives
+// this branch deterministically without needing CAP_NET_RAW at all.
+func TestRunPortscanRoadLogsWhenDetectorFails(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
+	detector, _ := portscan.New(portscan.Config{}, in.SubmitPortscanEvent, discardLogger())
+
+	log, buf := captureLogger()
+	runPortscanRoad(context.Background(), detector, log)
+	if out := buf.String(); !strings.Contains(out, "port-scan detection stopped") {
+		t.Errorf("log output = %q, want a port-scan detection stopped warning", out)
 	}
 }

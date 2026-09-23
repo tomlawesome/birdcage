@@ -35,9 +35,11 @@ const RANK: Record<CanaryStatus, number> = {
   token_conflict: 0,
   silent: 1,
   not_delivering: 2,
-  throttled: 3,
-  rotation_stalled: 4,
-  ok: 5,
+  self_test_failed: 3,
+  throttled: 4,
+  rotation_stalled: 5,
+  pending: 6,
+  ok: 7,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {
@@ -58,6 +60,10 @@ function label(c: Canary): string {
       return `${c.name} token conflict ${durationCoarse(c.token_conflict_for_s ?? 0)} — look at the box now`
     case 'not_delivering':
       return `${c.name} not delivering`
+    case 'self_test_failed': {
+      const services = c.self_test_failed_services ?? []
+      return `${c.name} self-test failed${services.length > 0 ? `: ${services.join(', ')}` : ''}`
+    }
     case 'throttled':
       return `${c.name} throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
@@ -87,7 +93,12 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
       silentFor: durationCoarse(worst.silent_for_s ?? 0),
     }
   }
-  if (worst?.status === 'token_conflict' || worst?.status === 'not_delivering' || worst?.status === 'throttled') {
+  if (
+    worst?.status === 'token_conflict' ||
+    worst?.status === 'not_delivering' ||
+    worst?.status === 'self_test_failed' ||
+    worst?.status === 'throttled'
+  ) {
     return { kind: 'critical', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
   if (worst?.status === 'rotation_stalled') {

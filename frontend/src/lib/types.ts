@@ -6,11 +6,23 @@
 
 export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
 /** issue #45's ordered health state -- worst-first: token_conflict,
- * silent, not_delivering, throttled, rotation_stalled, ok. The other
- * three states the issue names (self_test_failed, pending,
- * agent_out_of_date) don't appear here yet: #46/#47/#48 haven't shipped
- * the data they'd read from. */
-export type CanaryStatus = 'token_conflict' | 'silent' | 'not_delivering' | 'throttled' | 'rotation_stalled' | 'ok'
+ * silent, not_delivering, self_test_failed, throttled, rotation_stalled,
+ * pending, ok. 'pending' (issue #47 steps 7-9) is
+ * provisioned-but-not-yet-registered: not a fault, not health -- #45's
+ * own third category, outside both the critical and degraded tiers.
+ * 'self_test_failed' (issue #46, health.go's StateTestFailed) ranks
+ * between not_delivering and throttled, the slot health.go gives it. One
+ * state the issue names, agent_out_of_date, still doesn't appear here:
+ * #48 hasn't shipped the frontend data it would read from. */
+export type CanaryStatus =
+  | 'token_conflict'
+  | 'silent'
+  | 'not_delivering'
+  | 'self_test_failed'
+  | 'throttled'
+  | 'rotation_stalled'
+  | 'pending'
+  | 'ok'
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
 export type Range = '15m' | '1h' | '24h' | '14d' | '90d'
 
@@ -34,6 +46,14 @@ export interface Canary {
   rotation_stalled_for_s?: number
   rotation_stalled_escalated?: boolean
   token_conflict_for_s?: number
+  /** issue #46: the most recently *completed* self-test run, or
+   * null/undefined when none has ever completed (store/canary.go's
+   * LastSelfTestAt/LastSelfTestPassed). SelfTestFailedServices names the
+   * targets that never matched, populated only when
+   * last_self_test_passed is false. */
+  last_self_test_at?: string | null
+  last_self_test_passed?: boolean
+  self_test_failed_services?: string[]
   hits: number
 }
 
@@ -107,15 +127,20 @@ export interface TraceResponse {
   last_hit: LastHit | null
 }
 
-/** What a canary's history remembers: CanaryStatus's five unhealthy
- * states, plus 'unobserved' -- birdcage itself was not watching, which
- * is neither a fault of the canary's nor a clean bill of health. */
+/** What a canary's history remembers: CanaryStatus's unhealthy states,
+ * plus 'pending' (issue #47: provisioned but not yet registered -- not a
+ * fault, not health, internal/history records every ActiveStates entry
+ * so a pending stretch shows too) and 'unobserved' -- birdcage itself
+ * was not watching, which is neither a fault of the canary's nor a clean
+ * bill of health. */
 export type HistoryState =
   | 'token_conflict'
   | 'silent'
   | 'not_delivering'
+  | 'self_test_failed'
   | 'throttled'
   | 'rotation_stalled'
+  | 'pending'
   | 'unobserved'
 
 /** Why a period ended: the state cleared, a quiet period covered it, or

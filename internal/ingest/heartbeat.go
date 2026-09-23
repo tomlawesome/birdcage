@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -43,19 +46,26 @@ type ingestHeartbeat struct {
 	PositionFound     *bool  `json:"position_found,omitempty"`
 }
 
+// ingestCommonHeartbeat is POST /ingest/heartbeat's body for every kind
+// other than Honeypot (issue #106, ADR-0009's own promise: "the small
+// common part -- agent version, last contact -- is shared; the rest
+// belongs to the kind"). DisallowUnknownFields below refuses a scanner
+// that sends queue_depth or log_read_ok outright -- it would be lying
+// about having a log tailer at all -- with no bespoke field-by-field
+// check to forget.
+type ingestCommonHeartbeat struct {
+	CanaryID     string `json:"canary_id,omitempty"`
+	AgentVersion string `json:"agent_version,omitempty"`
+}
+
 // handleHeartbeat serves POST /ingest/heartbeat, reached only through
-// requireBearerToken. Issue #32 item 6 (owner, 2026-09-14): heartbeat
-// moves off the dashboard's human-auth seam onto this submux,
-// authenticated by the canary token, identity from the token. The
-// dashboard's POST /api/heartbeat (internal/api/handlers.go) is left
-// exactly as it is -- see this file's package doc and the commit message
-// for what still depends on it -- this is a second, independent write
-// path onto the same canaries/heartbeats registry.
-//
-// Fail-closed (issue #32): an invalid body is a 4xx and the canary's
-// last-seen does NOT advance -- a broken agent must look broken, never
-// healthy. That falls out of the ordering below: store.RecordCanaryAgentHeartbeat
-// is only ever reached after the body has decoded cleanly.
+// requireBearerToken -- which has already resolved tok.Kind to one this
+// route allows (http.go's ingestRoutes: Honeypot or Scanner today). The
+// body shape is per kind (issue #106): Honeypot keeps the original
+// log-tailer shape, wire-unchanged; every other kind gets the common-only
+// shape above. default below is unreachable in production -- defended
+// the same way canaryTokenFromContext's own missing-token case is,
+// against a wiring bug rather than a client error.
 func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	tok, ok := canaryTokenFromContext(r.Context())
 	if !ok {
@@ -64,6 +74,32 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	switch tok.Kind {
+	case agentkind.Honeypot:
+		h.handleHoneypotHeartbeat(w, r, tok)
+	case agentkind.Scanner:
+		h.handleCommonHeartbeat(w, r, tok)
+	default:
+		slog.Error("ingest: handleHeartbeat reached with a kind this route should have refused", "kind", tok.Kind)
+		writeIngestError(w, http.StatusInternalServerError, "internal error")
+	}
+}
+
+// handleHoneypotHeartbeat is issue #32 slice 5a's original handler,
+// unchanged in shape: Honeypot's own log-tailer self-report. Issue #106
+// item 6 (owner, 2026-09-14): heartbeat moves off the dashboard's
+// human-auth seam onto this submux, authenticated by the canary token,
+// identity from the token. The dashboard's POST /api/heartbeat
+// (internal/api/handlers.go) is left exactly as it is -- see this file's
+// package doc and the commit message for what still depends on it --
+// this is a second, independent write path onto the same
+// canaries/heartbeats registry.
+//
+// Fail-closed (issue #32): an invalid body is a 4xx and the canary's
+// last-seen does NOT advance -- a broken agent must look broken, never
+// healthy. That falls out of the ordering below: store.RecordCanaryAgentHeartbeat
+// is only ever reached after the body has decoded cleanly.
+func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.Request, tok store.CanaryToken) {
 	r.Body = http.MaxBytesReader(w, r.Body, heartbeatMaxBodyBytes)
 	var body ingestHeartbeat
 	dec := json.NewDecoder(r.Body)
@@ -101,7 +137,11 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 			// implies the canary_tokens row exists, but that table
 			// carries no foreign key into canaries (0004's own comment),
 			// so an unregistered canary id is a real, if unusual, state
-			// -- not birdcage's own storage trouble.
+			// -- not birdcage's own storage trouble. In practice, issue
+			// #106's registry kind check already refuses a token with no
+			// canaries row before this handler is ever reached; this
+			// stays as the defended case for a token store bug that
+			// somehow resolved one anyway.
 			writeIngestError(w, http.StatusNotFound, "unknown canary")
 			return
 		}
@@ -109,5 +149,65 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
+	recordLastSeenAddr(r, h.db, tok.CanaryID)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// recordLastSeenAddr stores r's peer host as canaryID's
+// canaries.last_seen_addr (issue #46 item 1), from r.RemoteAddr's own
+// net.SplitHostPort -- never a payload value, the same "identity from
+// the transport" rule the rest of this package already follows. Called
+// only after the heartbeat itself has already been accepted and
+// recorded, and deliberately best-effort: a failure here is logged and
+// does not turn an otherwise-accepted heartbeat into a failed response,
+// since this is a secondary signal (internal/selftestsched's own address
+// to probe) rather than part of what "accepted" means for #45's health
+// states.
+func recordLastSeenAddr(r *http.Request, database *db.DB, canaryID string) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		slog.Warn("ingest: could not parse peer address for last-seen", "canary", canaryID, "remote_addr", r.RemoteAddr, "err", err)
+		return
+	}
+	if err := store.SetCanaryLastSeenAddr(r.Context(), database, canaryID, host); err != nil {
+		slog.Warn("ingest: record last-seen address failed", "canary", canaryID, "err", err)
+	}
+}
+
+// handleCommonHeartbeat serves every kind other than Honeypot (Scanner
+// today): the common-only shape, and a common-only store write
+// (store.RecordCanaryCommonHeartbeat) that touches last-seen and
+// agent_version and leaves every log-tailer column exactly as it was --
+// see that function's own doc comment for why a scanner must never
+// surface as a log tailer with an empty queue.
+func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Request, tok store.CanaryToken) {
+	r.Body = http.MaxBytesReader(w, r.Body, heartbeatMaxBodyBytes)
+	var body ingestCommonHeartbeat
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeIngestError(w, http.StatusBadRequest, "malformed heartbeat body")
+		return
+	}
+	if dec.More() {
+		writeIngestError(w, http.StatusBadRequest, "malformed heartbeat body: trailing data")
+		return
+	}
+
+	if body.CanaryID != "" && body.CanaryID != tok.CanaryID {
+		slog.Warn("ingest: heartbeat payload named a different canary than its token; ignoring",
+			"token_canary", tok.CanaryID, "payload_canary_id", body.CanaryID)
+	}
+
+	if err := store.RecordCanaryCommonHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), body.AgentVersion); err != nil {
+		if errors.Is(err, store.ErrCanaryNotFound) {
+			writeIngestError(w, http.StatusNotFound, "unknown canary")
+			return
+		}
+		slog.Error("ingest: record common heartbeat failed", "canary", tok.CanaryID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+	recordLastSeenAddr(r, h.db, tok.CanaryID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

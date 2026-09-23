@@ -36,6 +36,9 @@
         rotation_stalled_for_s: c.rotation_stalled_for_s,
         rotation_stalled_escalated: c.rotation_stalled_escalated,
         token_conflict_for_s: c.token_conflict_for_s,
+        last_self_test_at: c.last_self_test_at,
+        last_self_test_passed: c.last_self_test_passed,
+        self_test_failed_services: c.self_test_failed_services,
       },
       trace.now,
       trace.last_hit,
@@ -43,9 +46,13 @@
     <div
       class="tile k-{c.lane}"
       class:silent={c.status === 'silent'}
-      class:critical={c.status === 'token_conflict' || c.status === 'not_delivering' || c.status === 'throttled'}
+      class:critical={c.status === 'token_conflict' ||
+        c.status === 'not_delivering' ||
+        c.status === 'self_test_failed' ||
+        c.status === 'throttled'}
       class:conflict={c.status === 'token_conflict'}
       class:degraded={c.status === 'rotation_stalled'}
+      class:pending={c.status === 'pending'}
     >
       <div class="n">{c.name}<small>on {c.lane}</small></div>
       <div class="st">
@@ -115,7 +122,14 @@
     background: color-mix(in srgb, var(--alarm) 18%, var(--raised));
     box-shadow: 0 0 26px color-mix(in srgb, var(--alarm) 35%, transparent);
   }
-  .tile.degraded {
+  /* issue #47 steps 7-9: pending shares degraded's muted outline rather
+     than inventing a new hue -- #45 places it as its own third category
+     (not a fault, not health), and the tile's own status line already
+     tells "pending" apart from "rotation stalled" up close, the same way
+     the three critical states share one outline and differ only in their
+     own text. */
+  .tile.degraded,
+  .tile.pending {
     border-color: color-mix(in srgb, var(--repeat) 55%, var(--raised));
   }
   .tile.k-lan {

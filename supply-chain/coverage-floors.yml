@@ -96,53 +96,44 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 43           # 44.0% measured (was 37), 2026-09-22 (#108,
-                             # slice 1 commit 4): the scanner-kind enrol
-                             # renderer (printScannerEnrolRunCommand) and its
-                             # own trap regression test
-                             # (TestCanaryEnrolScannerKindPrintsScannerCommand,
-                             # proving --kind scanner reaches the scanner
-                             # renderer rather than the "no install
-                             # instructions registered" default) gained tests.
-                             # Measured against real Postgres, matching
-                             # test:go.
-                             # Main binary; RouterOS/CrowdSec credential-wiring
-                             # path is still largely untested.
-  cmd/nightjar: 50           # 50.4% measured, 2026-09-22 (#108, slice 1
-                             # commit 4). New binary: the scan loop's own
-                             # branches (mount-check failure, a runScan Go
-                             # error, the ok path) are driven directly via
-                             # buildSnapshot's injected checkMounts/runScan
-                             # functions, but main()'s own wiring and the
-                             # real checkMounts/realScan implementations
-                             # (which need a real container's
-                             # /proc/self/mountinfo and a real grype binary)
-                             # are not unit-testable and stay below the 70%
-                             # band, same as the other two agent binaries.
-  cmd/mockingbird: 65       # 66.0% measured (was 60, and the package had
-                             # slipped to 59.9% under it -- pipeline 1405's
-                             # test:go caught that). The SNMP and port-scan
-                             # roads, the Intake status accessors and
-                             # currentSelfReport gained tests rather than the
-                             # floor being lowered. Measured with -race, as
-                             # test:go runs it, and as a non-root uid.
-                             # Set at 65 rather than 66 on purpose. This
-                             # package needs neither Postgres nor root, so a
-                             # workstation ought to agree with CI -- but
-                             # pipeline 1409 read 65.9% where this host read
-                             # 65.7%, because one test asked for a bind to
-                             # fail on a privileged port and the runner's
-                             # containers set ip_unprivileged_port_start=0, so
-                             # it bound instead. That test no longer depends on
-                             # the host (see snmp_test.go), and the figure is
-                             # 66.0% here now. One point of slack still costs
-                             # nothing and absorbs the next such difference
-                             # rather than turning the build red over it.
-                             # Still below the 70% band; the rest is main() and
-                             # the detector branches that need CAP_NET_RAW.
-  internal/db: 67           # 67.6% measured against real Postgres (see
-                             # header) -- was floored at 44 from a SQLite-only
-                             # local run; still below the 70% band, but close.
+  cmd/mockingbird: 71       # 71.5% measured with -race and Postgres,
+                             # 2026-09-23 (#46 slice 3, was floored at 69):
+                             # the claim window (claim.go, new file) and
+                             # its wiring into intake.go's three push
+                             # sites, command.go's runSelfTest and
+                             # sender.go's hold-back/attach logic are
+                             # covered by unit tests (claim_test.go) and
+                             # two real-birdcage end-to-end tests
+                             # (claim_e2e_test.go). Prior measurement
+                             # (70.3%, 2026-09-23, #74) below still
+                             # applies to everything this slice didn't
+                             # touch, stable across five consecutive
+                             # -coverprofile runs (zero statements flipped
+                             # covered/not).
+                             # runCommandPollLoop/runCommandRunner (both
+                             # previously only reached by their own
+                             # ctx-cancel shutdown test, never through a real
+                             # poll or dispatch), the token bucket and pacer
+                             # (pacing.go had no test file at all),
+                             # defaultReadinessConfig, waitForRoom's own
+                             # ctx-cancel and queue-drains branches, and
+                             # boot's three dependency-failure returns gained
+                             # tests. Two of the backpressure-timing tests
+                             # already here (TestBackpressureEvictsAnd...,
+                             # TestRunSenderLoopStopsOnContextCancel) were
+                             # themselves the source of a wobbling
+                             # measurement -- their real goroutine-scheduling
+                             # races sometimes reached a branch and sometimes
+                             # didn't -- fixed by adding a same-behavior
+                             # deterministic test alongside each rather than
+                             # touching the racy one. Set at 69 rather than
+                             # 70 on purpose, one point of slack under a
+                             # figure inside the 70-85% band now, same
+                             # reasoning as every other floor here. What
+                             # remains uncovered is main() itself (out of
+                             # scope -- not a real process) and the
+                             # port-scan/SNMP detector branches that need
+                             # CAP_NET_RAW, unchanged from before.
 
   # --- no test files at all: floor 0, listed rather than silently absent ---
   cmd/seed-story: 0         # dev-data seeding CLI, not shipped; no _test.go.
@@ -154,6 +145,45 @@ floors:
                              # tests; has no tests of its own.
 
   # --- inside or above the 70-85% band ---
+  cmd/birdcage: 73           # 74.8% measured with -race, 2026-09-23 (#74).
+                             # Moved out of the below-70% section this pass:
+                             # runSubcommand's canary/settings/approval
+                             # dispatch switches, runCanaryAdd, serveAll's
+                             # ingest/enrol-listener and unix-socket branches,
+                             # openCanaryDB's migrate-failure path and
+                             # runApprovalCheck's missing-file/database-open
+                             # refusals all gained tests. Still untested:
+                             # main() itself (0%, not unit-testable without a
+                             # self-exec harness this codebase does not use
+                             # elsewhere) and a handful of os-level failure
+                             # branches (closeCanaryDB's Close error,
+                             # checkStartupFiles' remaining branch) that need
+                             # a filesystem failure this pass did not find a
+                             # deterministic way to induce.
+  cmd/nightjar: 82           # 82.2% measured with -race, 2026-09-23 (#74).
+                             # Moved out of the below-70% section this pass:
+                             # main() is now factored the way
+                             # cmd/mockingbird/main.go's own boot/run split
+                             # does -- boot (build the birdcage client, load
+                             # the token) and run (start the scan and
+                             # heartbeat loops, wait for both) are pulled
+                             # out of main and are each 100% covered,
+                             # tested directly against the real TLS
+                             # test-server fixture scanner_real_test.go and
+                             # heartbeat_test.go already use, and (for run)
+                             # against a context cancelled before the call
+                             # so its shutdown path is proved without a
+                             # sleep. What remains uncovered: main() itself
+                             # (now just log level, the version argument,
+                             # loadConfig, the exit-code decisions and the
+                             # signal context -- still needs a real process
+                             # exit, no self-exec harness this codebase uses
+                             # elsewhere) and the same 4 statements inside
+                             # checkMounts as before (an unreadable or
+                             # malformed mountinfo, and the exists closure,
+                             # only invoked when /host is actually a mount
+                             # point) -- unreachable without adding a seam,
+                             # which stays out of scope.
   internal/agentkind: 100     # 100.0% measured, 2026-09-22 (#105). A closed
                               # enum and a lookup table: every value and both
                               # sides of Valid() are exercised by construction,
@@ -195,7 +225,29 @@ floors:
   internal/api: 84
   internal/audit: 94
   internal/ca: 76
-  internal/enrol: 80
+  internal/db: 87           # 88.3% measured with -race and Postgres, 2026-09-23
+                             # (#74). db.go's Engine.String, Rebind's quoted-
+                             # literal branch, Open's "sqlite:" prefix, and
+                             # Begin/Tx (commit and rollback both proved by
+                             # after-the-fact row absence, not just a nil
+                             # error) plus migrate.go's closed-DB, foreign-
+                             # schema-shape and non-idempotent-reapply error
+                             # paths gained tests rather than the floor being
+                             # lowered. Remaining gaps (openSQLite/openPostgres
+                             # error returns, MigrationNames' ReadDir error,
+                             # applyMigration's ReadFile/BeginTx/insert/commit
+                             # failures) are dead code under the current
+                             # drivers: sql.Open never touches the network or
+                             # disk for either (verified empirically, matching
+                             # Open's own doc comment), and the embedded
+                             # migration names always exist for a defined
+                             # Engine, so nothing reaches them without fault
+                             # injection this package doesn't have a seam for.
+  internal/enrol: 84         # 84.6% measured with -race and Postgres,
+                             # 2026-09-23 (#47 steps 7-9: rate limiting
+                             # POST /enrol/hello by source address gained
+                             # its own tests, raising this package's
+                             # coverage from the previous 80% floor).
   internal/hostmask: 96      # 96.9% measured, 2026-09-22 (#108, slice 1
                              # commit 4). The shared mask-list constant and
                              # its startup mount check (Check, ParseMountinfo)
@@ -212,7 +264,23 @@ floors:
                               # its failure classification -- every branch
                               # is driven by a recorded-fixture unit test
                               # (a real grype binary is never required).
-  internal/selftest: 96
+  internal/selftest: 97      # 97.2% measured with -race, 2026-09-23 (#46
+                              # slice 3, was floored at 96): the portscan
+                              # DestPort-0 carve-out in Validate gained
+                              # its own tests.
+  internal/selftestsched: 100 # 100.0% measured with -race on SQLite and
+                             # Postgres, 2026-09-23 (#46 slice 1, #74).
+                             # Every error branch -- a settings read that
+                             # fails part-way through a tick, the
+                             # double-mint guard's read, the mint itself,
+                             # the rotation hook's lookups -- has a
+                             # deterministic test (a table dropped or a
+                             # NULL planted where a string is scanned).
+                             # It was floored at 86 first, and swung
+                             # 85-92 run to run because those branches
+                             # were only reached when the Run-loop test's
+                             # cancel landed mid-tick; a floor below 100
+                             # here now means a branch lost its test.
   internal/startcheck: 88   # 88.9% measured (was floored at 86). #93's
                              # non-root fix made the permission-refusal tests
                              # actually run in CI, and this is the first CI

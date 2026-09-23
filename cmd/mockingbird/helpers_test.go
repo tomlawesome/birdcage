@@ -8,7 +8,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http/httptest"
@@ -78,15 +80,20 @@ func newTestClient(t *testing.T, ts *httptest.Server) *client.Client {
 // ingest listener runs ClientAuth: RequireAndVerifyClientCert, and
 // requireBearerToken binds the certificate's CommonName to the token's
 // canary), so the Client presents one for testCanaryID -- the canary
-// every test in this package mints its tokens for.
+// every test in this package mints its tokens for. Its subject OU is
+// Honeypot (issue #106: every canary this binary is ever built into is
+// one) -- ensureCanary registers testCanaryID with that same kind, a
+// no-op if a test already called enrollCanary itself, so the registry
+// check and the certificate check agree.
 func newIngestServer(t *testing.T, database *db.DB) (*client.Client, *httptest.Server) {
 	t.Helper()
-	clientCert, clientKey := selfSignedKeyPair(t, testCanaryID)
+	ensureCanary(t, database, testCanaryID, agentkind.Honeypot)
+	clientCert, clientKey := selfSignedKeyPair(t, testCanaryID, string(agentkind.Honeypot))
 	clientCAs := x509.NewCertPool()
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
 	}
-	handler := ingest.NewHandler(database, nil)
+	handler := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	ts := httptest.NewUnstartedServer(handler)
 	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
 	ts.StartTLS()
@@ -103,8 +110,11 @@ func newIngestServer(t *testing.T, database *db.DB) (*client.Client, *httptest.S
 const testCanaryID = "canary-a"
 
 // selfSignedKeyPair mints a self-signed client certificate for cn, the
-// same helper internal/agent/client's client_test.go carries.
-func selfSignedKeyPair(t *testing.T, cn string) (certPEM, keyPEM []byte) {
+// same helper internal/agent/client's client_test.go carries. ou is
+// variadic and normally omitted; newIngestServer passes Honeypot's
+// string (issue #106), since its server enforces the same
+// certificate-kind check internal/ingest's real listener does.
+func selfSignedKeyPair(t *testing.T, cn string, ou ...string) (certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -112,7 +122,7 @@ func selfSignedKeyPair(t *testing.T, cn string) (certPEM, keyPEM []byte) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: cn},
+		Subject:               pkix.Name{CommonName: cn, OrganizationalUnit: ou},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(time.Hour),
 		IsCA:                  true,
@@ -144,9 +154,33 @@ func enrollCanary(t *testing.T, database *db.DB, id string) {
 	}
 }
 
-// mintToken mints a fresh, active bearer token for canaryID.
+// ensureCanary registers canaryID with kind if (and only if) no canaries
+// row for it exists yet -- idempotent, so a test that already called
+// enrollCanary for canaryID before minting a token doesn't collide with
+// a second, conflicting insert here.
+func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
+	t.Helper()
+	var exists int
+	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("check canary %s exists: %v", canaryID, err)
+	}
+	if err := store.InsertCanary(ctx(), database, store.Canary{
+		ID: canaryID, Name: canaryID, Lane: "lan", Kind: kind, EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", canaryID, err)
+	}
+}
+
+// mintToken mints a fresh, active bearer token for canaryID, registering
+// it as a Honeypot (issue #106: every ingest route now refuses a token
+// whose canary is unregistered) unless a canaries row already exists.
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
+	ensureCanary(t, database, canaryID, agentkind.Honeypot)
 	raw, _, err := store.MintCanaryToken(ctx(), database, canaryID, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("MintCanaryToken: %v", err)
