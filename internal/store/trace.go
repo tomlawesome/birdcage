@@ -194,9 +194,12 @@ func buildLastHit(ctx context.Context, database *db.DB, internalRanges []*net.IP
 // id, which -- per ListAlerts' own doc comment -- agrees with received_at
 // order), or ok=false when the table is empty.
 func newestAlert(ctx context.Context, database *db.DB) (Alert, bool, error) {
+	// synthetic = 0 (issue #46 item 2): buildLastHit's "quiet for N
+	// days" hero sentence must never be answered by birdcage's own
+	// self-test traffic.
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at
-		FROM alerts ORDER BY id DESC LIMIT 1`)
+		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at, synthetic
+		FROM alerts WHERE synthetic = 0 ORDER BY id DESC LIMIT 1`)
 	if err != nil {
 		return Alert{}, false, fmt.Errorf("query: %w", err)
 	}
@@ -216,9 +219,12 @@ func newestAlert(ctx context.Context, database *db.DB) (Alert, bool, error) {
 // first, with no time bound -- buildLastHit's own use is the only one
 // that needs a source's whole history rather than one range.
 func alertsForSource(ctx context.Context, database *db.DB, sourceIP string) ([]Alert, error) {
+	// synthetic = 0 (issue #46 item 2): buildLastHit classifies this
+	// source's kind (VisitorKind) from its whole history, which must be
+	// its whole history of *real* hits.
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at
-		FROM alerts WHERE source_ip = ? ORDER BY id DESC`, sourceIP)
+		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at, synthetic
+		FROM alerts WHERE source_ip = ? AND synthetic = 0 ORDER BY id DESC`, sourceIP)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

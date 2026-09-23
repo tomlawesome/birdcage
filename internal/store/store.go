@@ -25,6 +25,14 @@ import (
 const receivedAtLayout = time.RFC3339Nano
 
 // Alert is one OpenCanary hit as read back from the alerts table.
+//
+// Synthetic (issue #46 item 2) is true for a hit store.MatchSelfTest
+// recognised as one of birdcage's own scheduled self-test probes.
+// scanAlerts always reads it back, but only GET /api/alerts (the
+// raw-alert admin listing, ListAlerts below) ever returns a row where
+// it can be true -- every other read path in this package filters
+// "synthetic = 0" before a row reaches Go at all, so the field reads
+// false there by construction, not by convention.
 type Alert struct {
 	ID         int64     `json:"id"`
 	InstanceID string    `json:"instance_id"`
@@ -33,6 +41,7 @@ type Alert struct {
 	Service    string    `json:"service"`
 	Raw        string    `json:"raw"`
 	ReceivedAt time.Time `json:"received_at"`
+	Synthetic  bool      `json:"synthetic"`
 }
 
 // AlertInsert is the row InsertAlertIfNew writes: instance_id,
@@ -53,6 +62,12 @@ type AlertInsert struct {
 	Raw        string    `json:"raw"`
 	ReceivedAt time.Time `json:"received_at"`
 	EventID    string    `json:"event_id,omitempty"`
+
+	// Synthetic (issue #46 item 3) is set by internal/ingest/batch.go
+	// from store.MatchSelfTest's result before this reaches
+	// InsertAlertIfNew -- never by anything in this package itself,
+	// which only ever writes the value it is handed.
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 // InsertAlertIfNew inserts a into alerts and reports whether it actually
@@ -72,11 +87,15 @@ func InsertAlertIfNew(ctx context.Context, database *db.DB, a AlertInsert) (stor
 	if a.EventID != "" {
 		eventID = a.EventID
 	}
+	synthetic := 0
+	if a.Synthetic {
+		synthetic = 1
+	}
 	res, err := database.ExecContext(ctx, `
-		INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at, event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO alerts (instance_id, source_ip, dest_port, service, raw, received_at, event_id, synthetic)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (instance_id, event_id) DO NOTHING`,
-		a.InstanceID, a.SourceIP, a.DestPort, a.Service, a.Raw, a.ReceivedAt.UTC().Format(receivedAtLayout), eventID)
+		a.InstanceID, a.SourceIP, a.DestPort, a.Service, a.Raw, a.ReceivedAt.UTC().Format(receivedAtLayout), eventID, synthetic)
 	if err != nil {
 		return false, fmt.Errorf("insert alert: %w", err)
 	}
@@ -200,7 +219,7 @@ func ListAlerts(ctx context.Context, database *db.DB, filter AlertFilter) ([]Ale
 		args = append(args, filter.Before)
 	}
 
-	query := "SELECT id, instance_id, source_ip, dest_port, service, raw, received_at FROM alerts"
+	query := "SELECT id, instance_id, source_ip, dest_port, service, raw, received_at, synthetic FROM alerts"
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -230,8 +249,9 @@ func scanAlerts(rows *sql.Rows, initial []Alert) ([]Alert, error) {
 		var (
 			a          Alert
 			receivedAt string
+			synthetic  int64
 		)
-		if err := rows.Scan(&a.ID, &a.InstanceID, &a.SourceIP, &a.DestPort, &a.Service, &a.Raw, &receivedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.InstanceID, &a.SourceIP, &a.DestPort, &a.Service, &a.Raw, &receivedAt, &synthetic); err != nil {
 			return nil, fmt.Errorf("scan alert: %w", err)
 		}
 		t, err := time.Parse(receivedAtLayout, receivedAt)
@@ -239,6 +259,7 @@ func scanAlerts(rows *sql.Rows, initial []Alert) ([]Alert, error) {
 			return nil, fmt.Errorf("parse received_at %q: %w", receivedAt, err)
 		}
 		a.ReceivedAt = t
+		a.Synthetic = synthetic != 0
 		alerts = append(alerts, a)
 	}
 	if err := rows.Err(); err != nil {
@@ -257,9 +278,13 @@ func scanAlerts(rows *sql.Rows, initial []Alert) ([]Alert, error) {
 // callers apply their own bound afterward instead (visitor cursor paging,
 // trace's per-canary maxHitsPerCanary cap).
 func alertsInRange(ctx context.Context, database *db.DB, since, until time.Time) ([]Alert, error) {
+	// synthetic = 0 (issue #46 item 2): both this function's callers
+	// (GET /api/visitors' grouping and GET /api/trace's per-canary hit
+	// lists) feed the dashboard directly, so a self-test's own traffic
+	// must never appear there.
 	query := fmt.Sprintf(`
-		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at
-		FROM alerts WHERE %s AND %s ORDER BY id DESC`,
+		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at, synthetic
+		FROM alerts WHERE %s AND %s AND synthetic = 0 ORDER BY id DESC`,
 		receivedAtCompare(database.Engine, ">="), receivedAtCompare(database.Engine, "<="))
 
 	rows, err := database.QueryContext(ctx, query,
@@ -289,12 +314,18 @@ type Instance struct {
 // reason given in ListAlerts' doc comment: id order already agrees with
 // receipt order.
 func ListInstances(ctx context.Context, database *db.DB) ([]Instance, error) {
+	// synthetic = 0 (issue #46 item 2), on both the outer query and the
+	// correlated subquery: GET /api/instances is a per-canary summary
+	// the dashboard reads, not the raw-alert admin listing (that
+	// exception is ListAlerts/GET /api/alerts alone), so a self-test's
+	// own count and last-seen must not show through it either.
 	const query = `
 SELECT instance_id, COUNT(*),
     (SELECT received_at FROM alerts newest
-        WHERE newest.instance_id = alerts.instance_id
+        WHERE newest.instance_id = alerts.instance_id AND newest.synthetic = 0
         ORDER BY newest.id DESC LIMIT 1)
 FROM alerts
+WHERE synthetic = 0
 GROUP BY instance_id
 ORDER BY instance_id`
 
@@ -338,8 +369,12 @@ type Stats struct {
 // supplies rather than this function reading time.Now() itself, so tests
 // can pin it.
 func GetStats(ctx context.Context, database *db.DB, now time.Time) (Stats, error) {
+	// synthetic = 0 everywhere below (issue #46 item 2): GetStats feeds
+	// the dashboard's top-line tiles and hero sentence directly, so a
+	// self-test's own traffic must never inflate any of these four
+	// numbers.
 	var s Stats
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`).Scan(&s.Total); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE synthetic = 0`).Scan(&s.Total); err != nil {
 		return Stats{}, fmt.Errorf("count total: %w", err)
 	}
 
@@ -350,17 +385,17 @@ func GetStats(ctx context.Context, database *db.DB, now time.Time) (Stats, error
 	now = now.UTC()
 	cutoff := now.Add(-24 * time.Hour).Format(receivedAtLayout)
 	nowStr := now.Format(receivedAtLayout)
-	last24hQuery := fmt.Sprintf("SELECT COUNT(*) FROM alerts WHERE %s AND %s",
+	last24hQuery := fmt.Sprintf("SELECT COUNT(*) FROM alerts WHERE %s AND %s AND synthetic = 0",
 		receivedAtCompare(database.Engine, ">="), receivedAtCompare(database.Engine, "<="))
 	if err := database.QueryRowContext(ctx, last24hQuery, cutoff, nowStr).Scan(&s.Last24h); err != nil {
 		return Stats{}, fmt.Errorf("count last 24h: %w", err)
 	}
 
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_ip) FROM alerts`).Scan(&s.DistinctSources); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_ip) FROM alerts WHERE synthetic = 0`).Scan(&s.DistinctSources); err != nil {
 		return Stats{}, fmt.Errorf("count distinct sources: %w", err)
 	}
 
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT instance_id) FROM alerts`).Scan(&s.Instances); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(DISTINCT instance_id) FROM alerts WHERE synthetic = 0`).Scan(&s.Instances); err != nil {
 		return Stats{}, fmt.Errorf("count instances: %w", err)
 	}
 	return s, nil

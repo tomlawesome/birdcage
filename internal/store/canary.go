@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +61,27 @@ type Canary struct {
 	AgentRejected          *int64 `json:"-"`
 	AgentEventIDCollisions *int64 `json:"-"`
 	AgentPositionFound     *bool  `json:"-"`
+
+	// LastSeenAddr (issue #46 item 1) is the peer host of this canary's
+	// most recent accepted ingest heartbeat, set by
+	// store.SetCanaryLastSeenAddr from internal/ingest/heartbeat.go's
+	// own net.SplitHostPort(r.RemoteAddr) -- never a payload value. nil
+	// means no ingest-token heartbeat has ever arrived. This is the
+	// address internal/selftestsched probes (#46 settled decision 2:
+	// probing the LAN address, not loopback, also proves each service
+	// is bound to the network).
+	LastSeenAddr *string `json:"-"`
+
+	// LastSelfTestAt and LastSelfTestPassed (issue #46 item 6) are the
+	// most recently *completed* self-test run's completed_at and
+	// passed, or nil/nil when no run has ever completed for this
+	// canary. SelfTestFailedServices names the targets that never
+	// matched ("service dest_port" strings), populated only when
+	// LastSelfTestPassed is false -- see ListCanaries' own self-test
+	// section and health.go's StateTestFailed.
+	LastSelfTestAt         *time.Time `json:"last_self_test_at,omitempty"`
+	LastSelfTestPassed     *bool      `json:"last_self_test_passed,omitempty"`
+	SelfTestFailedServices []string   `json:"self_test_failed_services,omitempty"`
 
 	// Status is issue #45's ordered health state -- "token_conflict",
 	// "silent", "not_delivering", "throttled", "rotation_stalled" or
@@ -162,6 +185,107 @@ func portsDisplay(raw string) string {
 	return strings.Join(display, " · ")
 }
 
+// WellKnownServiceForPort exposes wellKnownPortNames to
+// internal/selftestsched (issue #46 item 5), which must derive one
+// self-test target's service name per raw port the same way
+// portsDisplay does, without either duplicating this table or being
+// handed portsDisplay's already-joined human string.
+func WellKnownServiceForPort(port int) (string, bool) {
+	name, ok := wellKnownPortNames[strconv.Itoa(port)]
+	return name, ok
+}
+
+// SelfTestCanary is the minimal projection internal/selftestsched needs
+// to mint a self-test command (issue #46 item 5): a honeypot's id, raw
+// ports (not portsDisplay's joined display string) and last-seen
+// address. A nil LastSeenAddr or empty Ports means the scheduler must
+// skip this canary -- see ListHoneypotCanariesForSelfTest and
+// SelfTestCanaryByID's own doc comments.
+type SelfTestCanary struct {
+	ID           string
+	Kind         agentkind.Kind
+	Ports        []int
+	LastSeenAddr *string
+}
+
+// parsePorts parses canaries.ports (a comma-separated list of bare port
+// numbers, e.g. "22,80,445" -- see 0003_canaries.sql) the same way
+// portsDisplay does, but into ints rather than a display string.
+// Malformed entries (should never happen; this column is only ever
+// written by this package) are skipped rather than failing the whole
+// row.
+func parsePorts(raw string) []int {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	ports := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			continue
+		}
+		ports = append(ports, n)
+	}
+	return ports
+}
+
+// ListHoneypotCanariesForSelfTest returns every kind-honeypot canary's
+// SelfTestCanary projection (issue #46 item 5b), for the scheduler's
+// per-minute tick to filter down to the ones with a LastSeenAddr and at
+// least one port.
+func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
+	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr FROM canaries WHERE kind = ?`, string(agentkind.Honeypot))
+	if err != nil {
+		return nil, fmt.Errorf("query honeypot canaries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SelfTestCanary
+	for rows.Next() {
+		var (
+			sc       SelfTestCanary
+			portsRaw string
+		)
+		if err := rows.Scan(&sc.ID, &portsRaw, &sc.LastSeenAddr); err != nil {
+			return nil, fmt.Errorf("scan honeypot canary: %w", err)
+		}
+		sc.Kind = agentkind.Honeypot
+		sc.Ports = parsePorts(portsRaw)
+		out = append(out, sc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate honeypot canaries: %w", err)
+	}
+	return out, nil
+}
+
+// SelfTestCanaryByID is ListHoneypotCanariesForSelfTest narrowed to one
+// canary regardless of kind, for internal/selftestsched's
+// rotation-coupled path (issue #46 item 5c): the rotation success hook
+// already knows which canary just rotated and needs only that one row,
+// not a full table scan. ok is false when canaryID names no row.
+func SelfTestCanaryByID(ctx context.Context, database *db.DB, canaryID string) (sc SelfTestCanary, ok bool, err error) {
+	var (
+		portsRaw string
+		kind     string
+	)
+	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM canaries WHERE id = ?`, canaryID)
+	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SelfTestCanary{}, false, nil
+		}
+		return SelfTestCanary{}, false, fmt.Errorf("scan canary %s: %w", canaryID, err)
+	}
+	sc.Kind = agentkind.Kind(kind)
+	sc.Ports = parsePorts(portsRaw)
+	return sc, true, nil
+}
+
 // InsertCanary registers a new canary. It is the write path both
 // cmd/birdcage's `canary add` subcommand and a future enrollment flow
 // (#1) go through. c.HeartbeatIntervalS <= 0 defaults to
@@ -234,6 +358,32 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 		timeCompare(database.Engine, "at", "<"))
 	if _, err := database.ExecContext(ctx, pruneQuery, canaryID, cutoff); err != nil {
 		return fmt.Errorf("prune heartbeats: %w", err)
+	}
+	return nil
+}
+
+// SetCanaryLastSeenAddr records the peer host of canaryID's most recent
+// accepted ingest heartbeat (issue #46 item 1) -- canaries.last_seen_addr,
+// the address internal/selftestsched probes. Called from
+// internal/ingest/heartbeat.go's two handlers with
+// net.SplitHostPort(r.RemoteAddr)'s host, never a payload value, on
+// both the honeypot and the common heartbeat shape. Separate from
+// RecordHeartbeat/RecordCanaryAgentHeartbeat/RecordCanaryCommonHeartbeat
+// above: those are also reached from the dashboard's own POST
+// /api/heartbeat (issue #34), which has no peer address worth recording
+// here, so this is its own narrow write rather than a parameter added to
+// three existing functions one of whose callers could never supply it.
+func SetCanaryLastSeenAddr(ctx context.Context, database *db.DB, canaryID, addr string) error {
+	res, err := database.ExecContext(ctx, `UPDATE canaries SET last_seen_addr = ? WHERE id = ?`, addr, canaryID)
+	if err != nil {
+		return fmt.Errorf("update last_seen_addr: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrCanaryNotFound
 	}
 	return nil
 }
@@ -371,7 +521,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
-			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found
+			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -388,11 +538,13 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			lastHeartbeatAt    *string
 			agentLogReadOK     *int64
 			agentPositionFound *int64
+			lastSeenAddr       *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
-			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound); err != nil {
+			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
+		c.LastSeenAddr = lastSeenAddr
 		// c.Kind is opaque on read, like scanEnrolmentSession's own kind
 		// field -- see that function's doc comment.
 		c.Kind = agentkind.Kind(kind)
@@ -443,7 +595,13 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if err != nil {
 			return nil, fmt.Errorf("rotation signal for %s: %w", canaries[i].ID, err)
 		}
-		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, now)
+
+		testFailed, err := applySelfTestState(ctx, database, &canaries[i])
+		if err != nil {
+			return nil, fmt.Errorf("self-test state for %s: %w", canaries[i].ID, err)
+		}
+
+		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, now)
 	}
 	return canaries, nil
 }
@@ -483,11 +641,14 @@ func applyStatus(c *Canary, now time.Time) {
 // window is simply absent from the map, which a zero-value map lookup
 // already reads back as 0.
 func hitsSinceByInstance(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration) (map[string]int64, error) {
+	// synthetic = 0 (issue #46 item 2): this is the Hits count
+	// ListCanaries attaches to every tile, which must never count
+	// birdcage's own scheduled self-test as a hit.
 	since := now.Add(-rangeWindow).Format(receivedAtLayout)
 	nowStr := now.Format(receivedAtLayout)
 	query := fmt.Sprintf(`
 		SELECT instance_id, COUNT(*) FROM alerts
-		WHERE %s AND %s
+		WHERE %s AND %s AND synthetic = 0
 		GROUP BY instance_id`,
 		receivedAtCompare(database.Engine, ">="), receivedAtCompare(database.Engine, "<="))
 
