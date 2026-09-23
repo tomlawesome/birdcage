@@ -31,6 +31,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 )
 
 const (
@@ -40,11 +42,13 @@ const (
 	caCommonName = "birdcage-ca"
 	caValidity   = 10 * 365 * 24 * time.Hour
 
-	// caServerCommonName/caClientCommonNamePrefix name the leaf
-	// certificates IssueServer/IssueClient mint -- cosmetic only, since
-	// nothing in this codebase authorizes on CommonName; SANs (server)
-	// and the enrolment record keyed by canary ID (client, a later
-	// slice) do that.
+	// caServerCommonName names the server leaf IssueServer mints --
+	// cosmetic only, since nothing authorizes on it; its SANs are what a
+	// client verifies. The client leaf's own CommonName (IssueClient) is
+	// not cosmetic: internal/ingest's requireBearerToken compares it
+	// against the resolved bearer token's canary, and (issue #106) its
+	// Subject.OrganizationalUnit now carries the kind an ingest route
+	// authorises on -- see IssueClient's own doc comment.
 	caServerCommonName = "birdcage-ingest"
 
 	// dirPerm is the exact mode Load requires of the CA directory --
@@ -353,11 +357,23 @@ func (c *CA) IssueServer(hosts []string, ttl time.Duration) (tls.Certificate, er
 }
 
 // IssueClient mints a fresh ECDSA P-256 key and client-auth leaf
-// certificate for canaryID (used as the certificate's CommonName),
-// valid for ttl. Returned as PEM, nothing written to disk -- for a
-// later slice's enrolment endpoint to hand a canary once mTLS lands;
-// this slice does not call it from anywhere.
-func (c *CA) IssueClient(canaryID string, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
+// certificate for canaryID (used as the certificate's CommonName), valid
+// for ttl. The subject's OrganizationalUnit carries kind, and exactly
+// kind -- one value, nothing else (issue #106, design note section 1):
+// the fleet's authorisation attribute, fixed for the life of this
+// identity, read back by internal/ingest's requireBearerToken as
+// Subject.OrganizationalUnit[0] when (and only when) that slice has
+// length exactly 1. There is no kindless variant of this function --
+// every caller must state a kind, which is what makes "every future
+// issuance path states a kind" true by construction rather than by
+// convention (design note section 4). A caller needing a legacy
+// (pre-#106) or malformed certificate for a test builds one with its own
+// throwaway CA instead; this function never produces one.
+//
+// Returned as PEM, nothing written to disk -- for the enrolment
+// endpoint (internal/enrol) to hand a canary once it has been
+// provisioned.
+func (c *CA) IssueClient(canaryID string, kind agentkind.Kind, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ca: generate client key: %w", err)
@@ -371,7 +387,7 @@ func (c *CA) IssueClient(canaryID string, ttl time.Duration) (certPEM, keyPEM []
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: canaryID},
+		Subject:      pkix.Name{CommonName: canaryID, OrganizationalUnit: []string{string(kind)}},
 		NotBefore:    now.Add(-5 * time.Minute),
 		NotAfter:     now.Add(ttl),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 )
 
 // newTestDir returns a fresh directory at the exact mode Load requires
@@ -209,7 +211,7 @@ func TestIssueClientReturnsClientAuthCertificate(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	certPEM, keyPEM, err := c.IssueClient("canary-1", time.Hour)
+	certPEM, keyPEM, err := c.IssueClient("canary-1", agentkind.Honeypot, time.Hour)
 	if err != nil {
 		t.Fatalf("IssueClient: %v", err)
 	}
@@ -236,5 +238,39 @@ func TestIssueClientReturnsClientAuthCertificate(t *testing.T) {
 	}
 	if !found {
 		t.Error("leaf does not have ExtKeyUsageClientAuth")
+	}
+}
+
+// TestIssueClientSetsOrganizationalUnitToKind is issue #106's own
+// required unit test (design note section 6, commit 1): parse an issued
+// certificate and assert exactly one OU, naming the kind IssueClient was
+// given -- the fail-closed shape internal/ingest's requireBearerToken
+// later reads back (design note section 1: "never a 'contains' check").
+func TestIssueClientSetsOrganizationalUnitToKind(t *testing.T) {
+	dir := newTestDir(t)
+	c, _, err := Load(dir, nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	certPEM, keyPEM, err := c.IssueClient("canary-1", agentkind.Scanner, time.Hour)
+	if err != nil {
+		t.Fatalf("IssueClient: %v", err)
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+
+	ou := leaf.Subject.OrganizationalUnit
+	if len(ou) != 1 {
+		t.Fatalf("OrganizationalUnit = %v, want exactly one value", ou)
+	}
+	if ou[0] != string(agentkind.Scanner) {
+		t.Errorf("OrganizationalUnit[0] = %q, want %q", ou[0], agentkind.Scanner)
 	}
 }

@@ -8,16 +8,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
-// clientCertificate mints a client cert/key pair for canaryID via
-// testCA.IssueClient and parses it into a tls.Certificate an
+// clientCertificate mints a client cert/key pair for canaryID and kind
+// via testCA.IssueClient and parses it into a tls.Certificate an
 // http.Client's TLSClientConfig can present.
-func clientCertificate(t *testing.T, testCA *ca.CA, canaryID string) tls.Certificate {
+func clientCertificate(t *testing.T, testCA *ca.CA, canaryID string, kind agentkind.Kind) tls.Certificate {
 	t.Helper()
-	certPEM, keyPEM, err := testCA.IssueClient(canaryID, time.Hour)
+	certPEM, keyPEM, err := testCA.IssueClient(canaryID, kind, time.Hour)
 	if err != nil {
 		t.Fatalf("IssueClient(%s): %v", canaryID, err)
 	}
@@ -47,8 +48,8 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 		testCA := newTestCA(t)
 		raw := mintToken(t, database, "right-canary")
 
-		rightCert := clientCertificate(t, testCA, "right-canary")
-		wrongCert := clientCertificate(t, testCA, "wrong-canary")
+		rightCert := clientCertificate(t, testCA, "right-canary", agentkind.Honeypot)
+		wrongCert := clientCertificate(t, testCA, "wrong-canary", agentkind.Honeypot)
 
 		limiters := newLimiterRegistry(defaultLimiterLimits)
 		coalescer := newAuditCoalescer()
