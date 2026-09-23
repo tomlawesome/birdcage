@@ -70,4 +70,16 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(plainText(result.lines[0])).toContain('silent')
     expect(result.lines[0][0].cls).toBe('off')
   })
+
+  // Issue #47 steps 7-9.
+  it('pending: names the state and its own detail line, not a fault colour', () => {
+    const result = computeTileStatus({ ...base, status: 'pending' }, '2026-01-01T00:00:00Z')
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toContain('pending')
+    expect(text).toContain('self-test')
+    // The degraded-tier colour ('wn'), never the critical-tier alarm
+    // colour ('al') -- pending is #45's own third category, not a fault.
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
 })

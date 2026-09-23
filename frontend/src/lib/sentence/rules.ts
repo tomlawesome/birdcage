@@ -257,7 +257,8 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   not_delivering: 2,
   throttled: 3,
   rotation_stalled: 4,
-  ok: 5,
+  pending: 5,
+  ok: 6,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the

@@ -124,6 +124,29 @@ trusting it forever). The fix is the same `birdcage canary enrol`
 command and printed `docker run` line described above; there is nothing
 else to do.
 
+## Pending until the first self-test passes
+
+Provisioning hands the agent working credentials, but the dashboard
+doesn't call the canary healthy yet -- it shows **pending**. A canary
+that installs cleanly and never actually reports is exactly the failure
+this whole design exists to prevent, and it looks identical to a healthy,
+quiet one unless something proves the chain works.
+
+So birdcage proves it once, automatically, the moment the agent's new
+credential is first used for anything: it mints a self-test run for that
+canary -- the same round trip [issue #46](https://gitlab.tomlawson.io/-/issues/46)
+runs daily thereafter -- regardless of whether the operator has the daily
+self-test schedule turned on. The agent picks the command up on its
+ordinary poll, probes its own services, and the matching hits come back
+marked. Only once every target answers does the canary flip from
+**pending** to registered; from then on it's an ordinary canary, subject
+to the daily schedule like any other.
+
+If that first run times out unanswered, the canary stays pending -- and
+also shows self-test failed -- and is retried the same way over the
+command channel, with nothing to rebuild on the box. There is no operator
+action that skips this step; it is the proof, not a formality.
+
 ## Why the token is single-use and five minutes
 
 The deploy token is a bearer credential: whoever has it can claim the

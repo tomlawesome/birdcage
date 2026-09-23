@@ -41,6 +41,23 @@ type Canary struct {
 	EnrolledAt         time.Time      `json:"-"`
 	LastHeartbeatAt    *time.Time     `json:"last_heartbeat_at"`
 
+	// RegisteredAt (issue #47 steps 7-9) is when this canary's first
+	// self-test round trip passed (store.SettlePending), or nil while it
+	// is still pending (#45 state 5): provisioned, but not yet proven to
+	// work end to end. Read back by ListCanaries; never set directly by
+	// a caller -- see Pending below for how InsertCanary decides it.
+	RegisteredAt *time.Time `json:"-"`
+
+	// Pending is InsertCanary's own instruction, not a read-back value
+	// (RegisteredAt above is that): true leaves registered_at NULL, i.e.
+	// this canary starts out pending. The zero value (false) is
+	// "register immediately", so store.Provision -- the only caller that
+	// ever sets it true -- is the only path onto #45's pending state;
+	// `birdcage canary add`, cmd/seed-story and every existing test
+	// fixture built before this field existed keep registering
+	// immediately, unchanged.
+	Pending bool `json:"-"`
+
 	// AgentLogReadOK is the agent's own last self-reported log-read
 	// status (#32 slice 5a, canaries.agent_log_read_ok). nil means no
 	// self-report has ever arrived, distinct from an explicit false --
@@ -317,10 +334,19 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	if !agentkind.Valid(c.Kind) {
 		return fmt.Errorf("store: InsertCanary: unregistered kind %q", c.Kind)
 	}
+	// registeredAt is NULL exactly when c.Pending is set -- see Pending's
+	// own doc comment. Every existing caller leaves Pending at its zero
+	// value (false) and so keeps registering immediately, byte-for-byte
+	// what this INSERT did before registered_at existed.
+	var registeredAt *string
+	if !c.Pending {
+		s := c.EnrolledAt.UTC().Format(receivedAtLayout)
+		registeredAt = &s
+	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO canaries (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout))
+		INSERT INTO canaries (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt)
 	if err != nil {
 		return fmt.Errorf("insert canary: %w", err)
 	}
@@ -521,7 +547,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
-			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr
+			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -539,9 +565,10 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agentLogReadOK     *int64
 			agentPositionFound *int64
 			lastSeenAddr       *string
+			registeredAt       *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
-			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr); err != nil {
+			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.LastSeenAddr = lastSeenAddr
@@ -568,6 +595,13 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if agentPositionFound != nil {
 			found := *agentPositionFound != 0
 			c.AgentPositionFound = &found
+		}
+		if registeredAt != nil {
+			t, err := time.Parse(receivedAtLayout, *registeredAt)
+			if err != nil {
+				return nil, fmt.Errorf("parse registered_at %q: %w", *registeredAt, err)
+			}
+			c.RegisteredAt = &t
 		}
 		applyStatus(&c, now)
 		canaries = append(canaries, c)
@@ -601,7 +635,13 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			return nil, fmt.Errorf("self-test state for %s: %w", canaries[i].ID, err)
 		}
 
-		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, now)
+		// Issue #47 step 9: RegisteredAt nil is #45 state 5, computed
+		// straight off the column ListCanaries already scanned above --
+		// no further query needed, the same shape testFailed's own signal
+		// takes.
+		pending := canaries[i].RegisteredAt == nil
+
+		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
 	}
 	return canaries, nil
 }

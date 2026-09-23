@@ -115,7 +115,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}}
 		mux := http.NewServeMux()
-		mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, route))
+		mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, nil, route))
 
 		srv := newMTLSServer(t, testCA, testCA.Pool(), mux)
 		defer srv.Close()
@@ -294,7 +294,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}}
 			mux := http.NewServeMux()
-			mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, route))
+			mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, nil, route))
 			return newMTLSServer(t, testCA, clientCAs, mux)
 		}
 

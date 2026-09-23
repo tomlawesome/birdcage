@@ -78,6 +78,12 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
           cls: 'al',
         },
       ]
+    case 'pending':
+      // Issue #47 steps 7-9: provisioned but not yet proven end to end
+      // -- #45's own third category, not a fault. No duration field: a
+      // pending canary has no "since" the API carries (registered_at is
+      // null by definition), unlike every other state's own *_for_s.
+      return [{ text: `◌ pending · waiting on its first self-test to confirm the chain works`, cls: 'wn' }]
     case 'rotation_stalled': {
       // Not escalated is signal A only (a freshly issued token unused for
       // 15 min to 24 h). Escalated is either signal A past 24 h or signal

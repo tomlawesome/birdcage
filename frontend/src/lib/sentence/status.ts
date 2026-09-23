@@ -37,7 +37,8 @@ const RANK: Record<CanaryStatus, number> = {
   not_delivering: 2,
   throttled: 3,
   rotation_stalled: 4,
-  ok: 5,
+  pending: 5,
+  ok: 6,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {

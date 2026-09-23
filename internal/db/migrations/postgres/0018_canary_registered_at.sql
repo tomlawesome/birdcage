@@ -1,0 +1,25 @@
+-- canaries gains registered_at (issue #47 steps 7-9): nullable, set the
+-- instant a canary's first self-test round trip passes
+-- (store.SettlePending, internal/store/pending.go, called from
+-- recordSelfTestMatch in internal/store/selftest.go the moment a run's
+-- last target matches). NULL means pending (#45 state 5): provisioned
+-- through POST /enrol/provision, holding a bearer token and a client
+-- certificate, but not yet proven to work end to end -- #47's own
+-- principle, "only then is the canary registered ... until that round
+-- trip completes it is visibly pending, never a healthy canary on the
+-- dashboard". A run that expires unmatched (store.SweepExpiredSelfTestRuns)
+-- leaves registered_at NULL: the canary stays pending, retried over the
+-- command channel, never registered by a timer or an operator action.
+--
+-- Backfilled to enrolled_at, not left NULL, for every row that already
+-- exists when this migration runs: a fleet enrolled before this slice
+-- shipped has never run a self-test round trip either, but demoting an
+-- entire existing fleet to pending on an upgrade would be a false
+-- regression, not a more honest read -- those canaries have been
+-- operating under the old rules all along. store.InsertCanary is the
+-- only writer of new rows and defaults every caller but store.Provision
+-- (Canary.Pending, store/canary.go) to registered immediately, the same
+-- reasoning: only a canary provisioned through the real "paste one
+-- command" flow starts out pending.
+ALTER TABLE canaries ADD COLUMN registered_at TEXT;
+UPDATE canaries SET registered_at = enrolled_at WHERE registered_at IS NULL;

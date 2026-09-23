@@ -251,7 +251,7 @@ func TestApplyHealthStateActiveStates(t *testing.T) {
 	conflictSince := now.Add(-time.Hour)
 
 	c := Canary{Status: string(StateSilent)}
-	applyHealthState(&c, true, &throttledSince, false, false, 0, &conflictSince, false, now)
+	applyHealthState(&c, true, &throttledSince, false, false, 0, &conflictSince, false, false, now)
 
 	want := []string{
 		string(StateTokenConflict),
@@ -274,7 +274,7 @@ func TestApplyHealthStateActiveStates(t *testing.T) {
 	// Nothing active: "ok", and an empty set rather than a set holding
 	// "ok" (which is the absence of a state, not one of them).
 	healthy := Canary{Status: "ok"}
-	applyHealthState(&healthy, false, nil, false, false, 0, nil, false, now)
+	applyHealthState(&healthy, false, nil, false, false, 0, nil, false, false, now)
 	if healthy.Status != string(StateOK) || len(healthy.ActiveStates) != 0 {
 		t.Errorf("healthy canary = status %q, states %v; want ok and no states", healthy.Status, healthy.ActiveStates)
 	}

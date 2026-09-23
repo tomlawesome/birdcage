@@ -7,11 +7,11 @@
 // schema (audit_log, canary_tokens, canaries.agent_log_read_ok).
 //
 // Scope note: of the issue's eight states, silent (already built,
-// #34/#38), throttled, not-delivering, rotation-stalled, token conflict
-// and -- as of #46 -- self-test-failed are computed here. Pending (#47)
-// and agent-out-of-date (#48) still read data that doesn't exist in this
-// schema yet -- their slots in healthStateRank remain reserved, not
-// emitted, so wiring them in later stays an insertion, not a
+// #34/#38), throttled, not-delivering, rotation-stalled, token conflict,
+// -- as of #46 -- self-test-failed and -- as of #47 -- pending are
+// computed here. Agent-out-of-date (#48) still reads data that doesn't
+// exist in this schema yet -- its slot in healthStateRank remains
+// reserved, not emitted, so wiring it in later stays an insertion, not a
 // renumbering.
 package store
 
@@ -42,19 +42,28 @@ const (
 	StateTestFailed      HealthState = "self_test_failed"
 	StateThrottled       HealthState = "throttled"
 	StateRotationStalled HealthState = "rotation_stalled"
-	StateOK              HealthState = "ok"
+	// StatePending (issue #47 steps 7-9) is a canary provisioned through
+	// POST /enrol/provision whose first self-test round trip has not yet
+	// passed -- store.Canary.RegisteredAt nil. Ranked last of the fault
+	// states, after rotation-stalled and before ok, exactly the slot the
+	// issue's own precedence list gives it ("... rotation stalled, agent
+	// out of date, pending") once agent-out-of-date (still unbuilt, #48)
+	// is removed -- the same "relative order preserved, gap not filled"
+	// reasoning healthStateRank's own doc comment already gives for
+	// self-test-failed's slot.
+	StatePending HealthState = "pending"
+	StateOK      HealthState = "ok"
 )
 
 // healthStateRank orders HealthState worst-first: issue #45's own
 // proposed precedence ("token conflict, silent, not delivering, self-test
 // failed, throttled, rotation stalled, agent out of date, pending") with
-// the three states this slice doesn't build removed. Removing them
-// doesn't change the relative order of what's left -- self-test-failed
-// sat between not-delivering and throttled, agent-out-of-date and
-// pending sat after rotation-stalled, and none of those gaps are filled
-// by anything built here. The issue itself calls this order "proposed,
-// not yet ratified"; it is implemented as specified and flagged as
-// contested, not silently finalized.
+// the one state this slice still doesn't build (agent-out-of-date, #48)
+// removed. Removing it doesn't change the relative order of what's left
+// -- agent-out-of-date sat between rotation-stalled and pending, and that
+// gap isn't filled by anything built here. The issue itself calls this
+// order "proposed, not yet ratified"; it is implemented as specified and
+// flagged as contested, not silently finalized.
 var healthStateRank = map[HealthState]int{
 	StateTokenConflict:   0,
 	StateSilent:          1,
@@ -62,7 +71,8 @@ var healthStateRank = map[HealthState]int{
 	StateTestFailed:      3,
 	StateThrottled:       4,
 	StateRotationStalled: 5,
-	StateOK:              6,
+	StatePending:         6,
+	StateOK:              7,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -223,14 +233,23 @@ func rotationSignal(ctx context.Context, database *db.DB, canaryID string, now t
 
 // applyHealthState computes c's ordered HealthState (issue #45) from the
 // silent/ok status applyStatus already derived, plus the throttled,
-// not-delivering, rotation-stalled, token-conflict and (#46) self-test-
-// failed signals passed in.
+// not-delivering, rotation-stalled, token-conflict, (#46) self-test-
+// failed and (#47) pending signals passed in.
 // c.ActiveStates is filled with every active state, worst first, and
 // c.Status with the head of that list ("one state on the tile, the
 // worst; the rest in its detail" -- issue #45); every other active
 // signal's own detail fields are still populated, so a caller that
 // wants to show more than the headline state can.
-func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Time, rotationStalled, rotationEscalated bool, rotationSinceS int64, tokenConflictSince *time.Time, testFailed bool, now time.Time) {
+//
+// pending never overrides a genuinely worse state (silent, throttled,
+// self-test-failed and the rest all rank above it), so a pending canary
+// that is also, say, self-test-failed (a run that expired unmatched --
+// #47 step 3's own "leaves the canary pending, and self_test_failed")
+// shows the worse headline with pending still present in ActiveStates.
+// What pending guarantees on its own is issue #47's "never a healthy
+// canary on the dashboard": with nothing worse active, Status still
+// reads "pending", never "ok".
+func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Time, rotationStalled, rotationEscalated bool, rotationSinceS int64, tokenConflictSince *time.Time, testFailed, pending bool, now time.Time) {
 	if notDeliveringNow {
 		c.NotDelivering = true
 	}
@@ -266,6 +285,7 @@ func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Tim
 	add(StateTestFailed, testFailed)
 	add(StateThrottled, throttledSince != nil)
 	add(StateRotationStalled, rotationStalled)
+	add(StatePending, pending)
 	sort.SliceStable(active, func(i, j int) bool {
 		return healthStateRank[active[i]] < healthStateRank[active[j]]
 	})

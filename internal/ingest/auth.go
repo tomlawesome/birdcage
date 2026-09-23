@@ -79,7 +79,12 @@ func bearerToken(header string) (string, bool) {
 // every route shares that already has the resolved identity; handleBatch
 // used to charge it itself and no longer does, so a batch is still
 // charged exactly once.
-func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, route ingestRoute) http.HandlerFunc {
+//
+// hook (issue #47 step 8) is threaded straight through to completeRotation
+// below, which is the only place it's ever called -- nil disables the
+// first-contact self-test entirely, the same stance handleRotate already
+// takes on RotationSucceeded.
+func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, hook SelfTestRotationHook, route ingestRoute) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -186,7 +191,7 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		}
 
 		if firstUse {
-			completeRotation(r.Context(), database, now, tok)
+			completeRotation(database, now, tok, r, hook)
 		}
 
 		if !limiters.allowRequest(tok.CanaryID) {
@@ -398,7 +403,25 @@ func formatKinds(kinds []agentkind.Kind) string {
 // for it -- but item 10 ("every mint, first use and revocation" is
 // audited) still wants the first use itself recorded, which the
 // no-older-tokens branch below now does.
-func completeRotation(ctx context.Context, database *db.DB, now func() time.Time, tok store.CanaryToken) {
+//
+// r and hook are issue #47 step 8's addition, used only inside that same
+// no-older-tokens branch: revoked == 0 can only mean tok is the canary's
+// first token and this is that token's first use, which happens at most
+// once per canary's lifetime -- exactly "the first successful mTLS
+// request from that canary after provisioning" #47 asks for. r's own
+// source address is recorded as this canary's last-seen address (the
+// same store.SetCanaryLastSeenAddr internal/ingest/heartbeat.go's own
+// last-seen write uses) before the hook fires, so the self-test scheduler
+// has an address to probe before any heartbeat has ever landed; an
+// ordinary heartbeat overwrites it moments later with the same or an
+// updated value regardless, so this is a harmless head start, not a new
+// source of truth for the field. hook is nil in every test in this
+// package and any deployment that hasn't started a scheduler, and its
+// call must never affect this request's own response either way -- any
+// error inside it is the hook's own to log, the same contract
+// handleRotate's own RotationSucceeded call already keeps.
+func completeRotation(database *db.DB, now func() time.Time, tok store.CanaryToken, r *http.Request, hook SelfTestRotationHook) {
+	ctx := r.Context()
 	revoked, err := store.RevokeCanaryTokensSupersededBy(ctx, database, tok, now().UTC())
 	if err != nil {
 		slog.Error("ingest: revoke superseded tokens failed", "canary", tok.CanaryID, "err", err)
@@ -417,6 +440,10 @@ func completeRotation(ctx context.Context, database *db.DB, now func() time.Time
 			CreatedAt:   now().UTC(),
 		}); err != nil {
 			slog.Error("ingest: record first token use", "canary", tok.CanaryID, "err", err)
+		}
+		if hook != nil {
+			recordLastSeenAddr(r, database, tok.CanaryID)
+			hook.FirstContact(ctx, tok.CanaryID, now().UTC())
 		}
 		return
 	}

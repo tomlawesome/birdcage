@@ -255,6 +255,9 @@ func recordSelfTestMatch(ctx context.Context, database *db.DB, hash string, now 
 		WHERE command_id = ? AND completed_at IS NULL`, nowStr, commandID); err != nil {
 		return fmt.Errorf("mark self_test_runs passed: %w", err)
 	}
+	if err := settlePendingForCommand(ctx, database, commandID, now); err != nil { // issue #47 step 9
+		return fmt.Errorf("settle pending canary: %w", err)
+	}
 	return nil
 }
 

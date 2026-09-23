@@ -46,6 +46,7 @@
       class:critical={c.status === 'token_conflict' || c.status === 'not_delivering' || c.status === 'throttled'}
       class:conflict={c.status === 'token_conflict'}
       class:degraded={c.status === 'rotation_stalled'}
+      class:pending={c.status === 'pending'}
     >
       <div class="n">{c.name}<small>on {c.lane}</small></div>
       <div class="st">
@@ -115,7 +116,14 @@
     background: color-mix(in srgb, var(--alarm) 18%, var(--raised));
     box-shadow: 0 0 26px color-mix(in srgb, var(--alarm) 35%, transparent);
   }
-  .tile.degraded {
+  /* issue #47 steps 7-9: pending shares degraded's muted outline rather
+     than inventing a new hue -- #45 places it as its own third category
+     (not a fault, not health), and the tile's own status line already
+     tells "pending" apart from "rotation stalled" up close, the same way
+     the three critical states share one outline and differ only in their
+     own text. */
+  .tile.degraded,
+  .tile.pending {
     border-color: color-mix(in srgb, var(--repeat) 55%, var(--raised));
   }
   .tile.k-lan {

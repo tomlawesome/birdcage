@@ -590,3 +590,105 @@ func TestRotationSucceededCanaryLookupErrorDoesNothing(t *testing.T) {
 		s.RotationSucceeded(context.Background(), "canary-a", now)
 	})
 }
+
+// TestFirstContactMintsRegardlessOfSettings is issue #47 step 8's
+// required test: enrolment proof is not the daily schedule, so
+// FirstContact mints even with selftest_enabled false and with the
+// rotation-coupled schedule off -- both settings RotationSucceeded
+// itself is gated on.
+func TestFirstContactMintsRegardlessOfSettings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "false")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		insertHoneypotCanary(t, database, "canary-a", "22", "192.0.2.10")
+
+		now := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.FirstContact(context.Background(), "canary-a", now)
+
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("self_test_runs for canary-a after FirstContact = %d, want 1 (selftest_enabled=false, rotation-coupled=false must not stop it)", n)
+		}
+	})
+}
+
+// TestFirstContactSkipsNonHoneypotCanary mirrors
+// TestRotationSucceededSkipsNonHoneypotCanary: a self-test command is
+// never delivered to any kind but Honeypot, so a Scanner's own first
+// contact must not mint one it can never pass.
+func TestFirstContactSkipsNonHoneypotCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		if err := store.InsertCanary(context.Background(), database, store.Canary{
+			ID: "scanner-a", Name: "scanner-a", Lane: "lan", Kind: agentkind.Scanner, EnrolledAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("InsertCanary: %v", err)
+		}
+		if err := store.SetCanaryLastSeenAddr(context.Background(), database, "scanner-a", "192.0.2.20"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+
+		now := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.FirstContact(context.Background(), "scanner-a", now)
+
+		if n := selfTestRunCount(t, database, "scanner-a"); n != 0 {
+			t.Fatalf("self_test_runs for scanner-a = %d, want 0 (self-test is honeypot-only)", n)
+		}
+	})
+}
+
+// TestFirstContactSkipsCanaryWithNoAddressOrUnknownCanary mirrors
+// TestRotationSucceededSkipsCanaryWithNoAddressOrUnknownCanary: a canary
+// with no last-seen address, and a canary id FirstContact has never
+// heard of, are both silent no-ops, never a panic or a mint.
+func TestFirstContactSkipsCanaryWithNoAddressOrUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertHoneypotCanary(t, database, "canary-no-addr", "22", "")
+
+		now := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+
+		s.FirstContact(context.Background(), "canary-no-addr", now)
+		if n := selfTestRunCount(t, database, "canary-no-addr"); n != 0 {
+			t.Fatalf("self_test_runs for canary-no-addr = %d, want 0 (no last-seen address)", n)
+		}
+
+		s.FirstContact(context.Background(), "no-such-canary", now) // must not panic or error
+		if n := selfTestRunCount(t, database, "no-such-canary"); n != 0 {
+			t.Fatalf("self_test_runs for no-such-canary = %d, want 0", n)
+		}
+	})
+}
+
+// TestFirstContactNeverMintsTwice: FirstContact reuses mintForCanary's
+// own double-mint guard, so a caller invoking it more than once for the
+// same canary (should never happen in production -- "first use" can only
+// fire once per canary -- but nothing here relies on the caller getting
+// that right) still leaves exactly one run.
+func TestFirstContactNeverMintsTwice(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertHoneypotCanary(t, database, "canary-a", "22", "192.0.2.10")
+
+		now := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.FirstContact(context.Background(), "canary-a", now)
+		s.FirstContact(context.Background(), "canary-a", now)
+
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("self_test_runs for canary-a after two FirstContact calls = %d, want 1", n)
+		}
+	})
+}
+
+// TestFirstContactCanaryLookupErrorDoesNothing mirrors
+// TestRotationSucceededCanaryLookupErrorDoesNothing: with the canaries
+// table gone, FirstContact logs and returns rather than minting for a
+// canary it cannot see.
+func TestFirstContactCanaryLookupErrorDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		dropTable(t, database, "canaries")
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.FirstContact(context.Background(), "canary-a", now)
+	})
+}
