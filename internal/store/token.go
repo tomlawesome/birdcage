@@ -142,26 +142,7 @@ func scanCanaryToken(row rowScanner) (CanaryToken, error) {
 		}
 		return CanaryToken{}, fmt.Errorf("scan canary token: %w", err)
 	}
-	parsed, err := time.Parse(receivedAtLayout, createdAt)
-	if err != nil {
-		return CanaryToken{}, fmt.Errorf("parse created_at %q: %w", createdAt, err)
-	}
-	t.CreatedAt = parsed
-	if lastUsedAt != nil {
-		parsed, err := time.Parse(receivedAtLayout, *lastUsedAt)
-		if err != nil {
-			return CanaryToken{}, fmt.Errorf("parse last_used_at %q: %w", *lastUsedAt, err)
-		}
-		t.LastUsedAt = &parsed
-	}
-	if revokedAt != nil {
-		parsed, err := time.Parse(receivedAtLayout, *revokedAt)
-		if err != nil {
-			return CanaryToken{}, fmt.Errorf("parse revoked_at %q: %w", *revokedAt, err)
-		}
-		t.RevokedAt = &parsed
-	}
-	return t, nil
+	return finishCanaryToken(t, createdAt, lastUsedAt, revokedAt)
 }
 
 // scanCanaryTokenWithKind is scanCanaryToken plus the LEFT JOINed
@@ -186,6 +167,17 @@ func scanCanaryTokenWithKind(row rowScanner) (CanaryToken, error) {
 		}
 		return CanaryToken{}, fmt.Errorf("scan canary token: %w", err)
 	}
+	if kind != nil {
+		t.Kind = agentkind.Kind(*kind)
+	}
+	return finishCanaryToken(t, createdAt, lastUsedAt, revokedAt)
+}
+
+// finishCanaryToken parses the three timestamp columns both scanners
+// above read as text and sets them on t. Shared so the two scanners
+// differ only in the columns they select, not in how a timestamp is
+// read.
+func finishCanaryToken(t CanaryToken, createdAt string, lastUsedAt, revokedAt *string) (CanaryToken, error) {
 	parsed, err := time.Parse(receivedAtLayout, createdAt)
 	if err != nil {
 		return CanaryToken{}, fmt.Errorf("parse created_at %q: %w", createdAt, err)
@@ -204,9 +196,6 @@ func scanCanaryTokenWithKind(row rowScanner) (CanaryToken, error) {
 			return CanaryToken{}, fmt.Errorf("parse revoked_at %q: %w", *revokedAt, err)
 		}
 		t.RevokedAt = &parsed
-	}
-	if kind != nil {
-		t.Kind = agentkind.Kind(*kind)
 	}
 	return t, nil
 }
