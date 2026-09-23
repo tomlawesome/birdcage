@@ -22,7 +22,10 @@ var (
 // does not knock in the same second" -- 60 s +/- 10 s (#46's own
 // stagger decision narrows the jitter to this bound rather than
 // spreading across the whole minute).
-const (
+// var, not const: TestRunCommandPollLoopDispatchesAndHandlesErrors
+// shrinks these for the duration of one test rather than waiting out
+// the real 60s +/- 10s cadence to reach runCommandPollLoop's poll body.
+var (
 	commandPollInterval = 60 * time.Second
 	commandPollJitter   = 10 * time.Second
 )

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
+	"github.com/tomlawesome/birdcage/internal/agent/tailer"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -261,6 +262,75 @@ func TestIntakeLogReadOKAndPositionFoundDefaultTrue(t *testing.T) {
 	}
 	if !in.PositionFound() {
 		t.Error("PositionFound() = false before RunLogRoad ever ran, want true")
+	}
+}
+
+// TestHandleLogLineRefusesOnCanceledContext pins waitForRoom's
+// ctx-cancellation branch (the select alongside backpressurePollInterval's
+// time.After) with an already-canceled context, rather than relying on
+// TestBackpressureEvictsAndRecoversAfterDrain's real timing to reach it
+// -- that test's own deferred cancel() races the log-road goroutine's
+// exact position at teardown, and repeated -coverprofile runs showed
+// this branch covered on some and not on others (coverage-floor.py's
+// "measure three times" check caught it). An already-canceled context
+// makes the select's ctx.Done() case the only one ready at entry, so
+// there is nothing left to race: time.After's 100ms tick has no chance
+// to fire first.
+func TestHandleLogLineRefusesOnCanceledContext(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{MaxEvents: 2, MaxBytes: 1 << 20})
+	ldg := in.Ledger()
+
+	// Fill the queue to its cap so waitForRoom's gate actually engages;
+	// below cap it returns immediately without ever reaching the select.
+	in.Queue.Push(queue.Event{ID: "fill-1", Payload: []byte("{}")})
+	in.Queue.Push(queue.Event{ID: "fill-2", Payload: []byte("{}")})
+	before := in.Queue.Depth()
+	if before < 2 {
+		t.Fatalf("queue depth = %d after filling to MaxEvents, want >= 2", before)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	in.handleLogLine(ctx, ldg, tailer.Line{Data: []byte(fixtureEvent(999))})
+
+	if got := in.Queue.Depth(); got != before {
+		t.Errorf("Queue.Depth() = %d after handleLogLine with an already-canceled context, want unchanged %d -- a refused line must not be queued", got, before)
+	}
+}
+
+// TestWaitForRoomReturnsNilAfterQueueDrains pins waitForRoom's ordinary
+// exit -- the queue drains below the low-water mark and the loop's own
+// condition, not a canceled context, is what lets it return nil -- for
+// the same reason TestHandleLogLineRefusesOnCanceledContext above pins
+// the ctx.Done() branch: coverage-floor.py's "measure three times" check
+// caught this one wobbling too, since
+// TestBackpressureEvictsAndRecoversAfterDrain's real drain races its own
+// goroutine's exact position against the 100ms poll tick. Acking both
+// filler events 20ms after waitForRoom starts blocking guarantees the
+// drain lands inside a real poll wait, not before it or racing
+// cancellation.
+func TestWaitForRoomReturnsNilAfterQueueDrains(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{MaxEvents: 2, MaxBytes: 1 << 20})
+	in.Queue.Push(queue.Event{ID: "fill-1", Payload: []byte("{}")})
+	in.Queue.Push(queue.Event{ID: "fill-2", Payload: []byte("{}")})
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		in.Queue.Ack("fill-1")
+		in.Queue.Ack("fill-2")
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- in.waitForRoom(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("waitForRoom() = %v, want nil once the queue drains below the low-water mark", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForRoom did not return after the queue drained")
 	}
 }
 

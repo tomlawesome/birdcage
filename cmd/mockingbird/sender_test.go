@@ -155,3 +155,31 @@ func TestRunSenderLoopMalformedResponseLeavesPositionUnmoved(t *testing.T) {
 		t.Fatalf("PositionStore.Load() = (ok=%v, err=%v), want (false, nil)", ok, err)
 	}
 }
+
+// TestRunSenderLoopReturnsImmediatelyWhenCtxAlreadyDone pins the loop's
+// own top-of-iteration guard (`if ctx.Err() != nil { return }`, ahead of
+// even the first Queue.Peek) with an already-canceled context, rather
+// than relying on TestRunSenderLoopStopsOnContextCancel's real timing to
+// land there: that test's cancel() races the loop's exact position
+// between an iteration's top check and the idle select's own ctx.Done()
+// case further down, and repeated -coverprofile runs showed the top
+// check covered on some and not on others. An already-canceled context
+// makes ctx.Err() non-nil on the very first check, before the loop ever
+// touches c or ts -- both left nil here since nothing reaches them.
+func TestRunSenderLoopReturnsImmediatelyWhenCtxAlreadyDone(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		runSenderLoop(ctx, nil, nil, in, newPacer())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSenderLoop did not return immediately with an already-canceled context")
+	}
+}
