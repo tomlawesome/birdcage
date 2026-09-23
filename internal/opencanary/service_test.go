@@ -130,3 +130,23 @@ func TestSentinels(t *testing.T) {
 		t.Errorf("NoSourceAddress = %q, want %q", NoSourceAddress, "")
 	}
 }
+
+// TestIsBaseMatchesOnlyTheStartUpRange: issue #117 filters OpenCanary's
+// start-up lines by the service name the 1000-1006 range produces and by
+// nothing else, so every other range's service must read as not-base,
+// and so must an empty or unknown service.
+func TestIsBaseMatchesOnlyTheStartUpRange(t *testing.T) {
+	for _, r := range logTypeRanges {
+		lt := r.min
+		got := IsBase(ServiceForLogType(&lt))
+		want := r.min == 1000
+		if got != want {
+			t.Errorf("IsBase(ServiceForLogType(%d)=%q) = %v, want %v", r.min, r.service, got, want)
+		}
+	}
+	for _, s := range []string{"", UnknownService, "Base", "base "} {
+		if IsBase(s) {
+			t.Errorf("IsBase(%q) = true, want false", s)
+		}
+	}
+}
