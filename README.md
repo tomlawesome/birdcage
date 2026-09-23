@@ -26,6 +26,8 @@ dashboard HTTP API (`cmd/birdcage`). See:
   (SQLite/Postgres) and backup/restore for both.
 - [docs/adr/](docs/adr/) — the decisions behind the stack, storage, and
   branching model.
+- [docs/testing.md](docs/testing.md) — the test layers, the coverage
+  ratchet, and what a test has to prove.
 - [SECURITY.md](SECURITY.md) — threat model and deployment hardening.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — branching and testing expectations.
 
