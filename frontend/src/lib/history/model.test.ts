@@ -154,6 +154,7 @@ describe('tierFor -- which colour a state carries', () => {
     expect(tierFor('token_conflict')).toBe('crit')
     expect(tierFor('silent')).toBe('crit')
     expect(tierFor('not_delivering')).toBe('crit')
+    expect(tierFor('self_test_failed')).toBe('crit')
     expect(tierFor('throttled')).toBe('crit')
   })
 
@@ -164,6 +165,39 @@ describe('tierFor -- which colour a state carries', () => {
     expect(tierFor('unobserved')).toBe('unobs')
     expect(tierFor('unobserved')).not.toBe('crit')
     expect(tierFor('unobserved')).not.toBe('warn')
+  })
+
+  // Issue #47: pending shares unobserved's neutral tier -- provisioned
+  // but not yet proven is not a fault, same reasoning as birdcage not
+  // watching.
+  it('pending is neutral, same tier as unobserved', () => {
+    expect(tierFor('pending')).toBe('unobs')
+    expect(tierFor('pending')).not.toBe('crit')
+    expect(tierFor('pending')).not.toBe('warn')
+  })
+})
+
+describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
+  it('self_test_failed reads "self-test failed"', () =>
+    expect(summaryLine([entry({ state: 'self_test_failed', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'self-test failed once, 1 m',
+    ))
+
+  it('pending reads "pending"', () =>
+    expect(summaryLine([entry({ state: 'pending', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'pending once, 1 m',
+    ))
+
+  it('ordering: self_test_failed sits between not_delivering and throttled, pending sits after rotation_stalled', () => {
+    const line = summaryLine([
+      entry({ state: 'throttled', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'pending', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'self_test_failed', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'not_delivering', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe(
+      'not delivering once, 1 m · self-test failed once, 1 m · throttled once, 1 m · pending once, 1 m',
+    )
   })
 })
 

@@ -39,16 +39,50 @@ export interface TileCanaryInput {
   rotation_stalled_for_s?: number
   rotation_stalled_escalated?: boolean
   token_conflict_for_s?: number
+  // issue #46: the most recently completed self-test round, carried the
+  // same independent way -- present whether or not it is what made
+  // `status` self_test_failed, since a passing run still earns its own
+  // line on an otherwise-healthy tile (note 22577).
+  last_self_test_at?: string | null
+  last_self_test_passed?: boolean
+  self_test_failed_services?: string[]
 }
 
 export interface TileStatusResult {
-  /** One or two lines; a second line is a line break, never inline. */
+  /** One to three lines; each further line is a line break, never inline. */
   lines: Segment[][]
 }
 
 function beatAgoSeconds(lastHeartbeatAt: string | null, now: string): number {
   if (!lastHeartbeatAt) return 0
   return Math.max(0, Math.round((Date.parse(now) - Date.parse(lastHeartbeatAt)) / 1000))
+}
+
+/** "passed" or "failed: vnc, ntp" (no colon-list when the list is empty)
+ * -- the self-test line's verdict clause, shared by the failed tile's own
+ * line and the honest-render appendix below. */
+function selfTestVerdict(canary: TileCanaryInput): string {
+  if (canary.last_self_test_passed === false) {
+    const services = canary.self_test_failed_services ?? []
+    return services.length > 0 ? `failed: ${services.join(', ')}` : 'failed'
+  }
+  return 'passed'
+}
+
+/** Issue #46, note 22577: on an otherwise-healthy tile, one more line
+ * naming the last completed self-test -- "self-test 04:00 · passed".
+ * Only on the three healthy returns computeTileStatus names below (not
+ * silent, not any other-state line -- those already carry their own
+ * self-test line, or none applies). null when no run has ever
+ * completed, so a freshly provisioned canary's tile stays as it was. */
+function selfTestAppendix(canary: TileCanaryInput): Segment[] | null {
+  if (!canary.last_self_test_at) return null
+  return [{ text: `self-test ${formatClockShort(canary.last_self_test_at)} · ${selfTestVerdict(canary)}` }]
+}
+
+function withSelfTest(lines: Segment[][], canary: TileCanaryInput): TileStatusResult {
+  const appendix = selfTestAppendix(canary)
+  return { lines: appendix ? [...lines, appendix] : lines }
 }
 
 /** issue #45's critical/degraded states other than silent, one line each
@@ -71,6 +105,19 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
       ]
     case 'not_delivering':
       return [{ text: `⚠ not delivering · the agent can't read its log`, cls: 'al' }]
+    case 'self_test_failed':
+      // Issue #46 (health.go's StateTestFailed, note 22577's tile line):
+      // birdcage's own daily self-test found a service that never
+      // answered its probe. The list names exactly the targets that
+      // never matched (SelfTestFailedServices), never every service the
+      // canary runs -- an empty list still reads as a whole clause,
+      // never a dangling colon.
+      return [
+        {
+          text: `⚠ self-test ${formatClockShort(canary.last_self_test_at ?? '')} · ${selfTestVerdict(canary)} — check those services on the box`,
+          cls: 'al',
+        },
+      ]
     case 'throttled':
       return [
         {
@@ -134,9 +181,7 @@ export function computeTileStatus(
 
   if (hits.length === 0) {
     const days = computeQuietDays(now, buildQuietStory(lastHit))
-    return {
-      lines: [[{ text: `● ${beat} s`, cls: 'ok' }, { text: ` · every minute · quiet ${days} d` }]],
-    }
+    return withSelfTest([[{ text: `● ${beat} s`, cls: 'ok' }, { text: ` · every minute · quiet ${days} d` }]], canary)
   }
 
   const primary: Segment[] = [{ text: `● ${beat} s`, cls: 'ok' }]
@@ -147,18 +192,19 @@ export function computeTileStatus(
   }
 
   const others = hits.filter((h) => h.kind !== 'sweep')
-  if (others.length === 0) return { lines: [primary] }
+  if (others.length === 0) return withSelfTest([primary], canary)
 
   const rep = others.reduce((a, b) => (Date.parse(b.at) > Date.parse(a.at) ? b : a))
   if (rep.kind === 'repeat') {
     const port = portForService(canary.ports, rep.service)
-    return {
-      lines: [[...primary, { text: ' · ' }, { text: `repeat${port ? ` :${port}` : ''}`, cls: 'rp' }]],
-    }
+    return withSelfTest(
+      [[...primary, { text: ' · ' }, { text: `repeat${port ? ` :${port}` : ''}`, cls: 'rp' }]],
+      canary,
+    )
   }
   const secondary: Segment[] =
     rep.kind === 'inside'
       ? [{ text: `from inside ${formatClockShort(rep.at)}` }]
       : [{ text: `one touch ${relativeDayLabel(rep.at, now)}` }]
-  return { lines: [primary, secondary] }
+  return withSelfTest([primary, secondary], canary)
 }
