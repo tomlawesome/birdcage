@@ -20,9 +20,11 @@ type carrierFunc func(ctx context.Context, address string, port int, marker stri
 // clearly-labelled outcome rather than guessing."
 //
 // vnc, ntp and portscan are #46 slice 2 (notes 19854/19855/19897):
-// vnc.go's challenge-marked HMAC, and attribution.go's ntp/portscan
-// touches for birdcage's own exactly-one correlation
-// (internal/store/selftest_attribution.go).
+// vnc.go's challenge-marked HMAC is matched and claimed today
+// (internal/store/selftest_vnc.go). attribution.go's ntp/portscan
+// touches fire the trigger a real self-test needs, but nothing yet
+// claims the resulting event -- note 19897's ratified agent-side claim
+// is #46 slice 3, gated on #47's wire and sender changes.
 var carriers = map[string]carrierFunc{
 	"ftp":      probeFTP,
 	"telnet":   probeTelnet,

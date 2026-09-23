@@ -38,13 +38,19 @@ const (
 	GradeChallengeMarked Grade = "challenge_marked"
 
 	// GradeAttributed: ntp, portscan, llmnr. Nothing attacker-supplied
-	// is logged, so birdcage claims a target only when exactly one
-	// candidate event of that service arrives from the canary's own
-	// reported address inside the run's whole window --
-	// resolveAttributedTargets in selftest_attribution.go, run once the
-	// window provably closes. Two or more candidates, or none, and
-	// nothing is claimed; every candidate stays a real alert (note
-	// 19855's exactly-one rule, deliberately failing toward real).
+	// is logged, so a target can only be claimed by matching the
+	// arriving event against the run birdcage itself issued -- never by
+	// content. Note 19897's ratified design has the *agent* make that
+	// match locally (recording the exact network facts of its own probe
+	// and watching its own outgoing intake for a bounded window) and
+	// claim the event before it ever leaves the container, so what
+	// reaches birdcage already carries the claim and is stored
+	// synthetic from the start, the same instant every other grade
+	// decides -- never real-then-hidden. That claim needs #47's wire
+	// and sender changes and is not built yet (#46 slice 3, tracked
+	// there); until it lands, an attributed target simply has no way to
+	// match and its run fails on the deadline sweep like any other
+	// unanswered target.
 	GradeAttributed Grade = "attributed"
 )
 

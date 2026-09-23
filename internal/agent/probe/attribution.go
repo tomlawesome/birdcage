@@ -9,9 +9,12 @@ import "context"
 // `len(data) >= 4 and d[3] == '*'`: byte 3 (request code 42, historic
 // "ntpdc monlist") happens to equal ASCII '*' (0x2A), which is what that
 // check is actually testing. This carrier plants nothing; marker exists
-// only to satisfy carrierFunc's shared signature -- birdcage attributes
-// the resulting event by correlating its arrival against the run it
-// issued (internal/store/selftest_attribution.go), never by content.
+// only to satisfy carrierFunc's shared signature -- attribution never
+// works by content. The other half, claiming the resulting event, is
+// note 19897's ratified agent-side match against this probe's own
+// network facts, not built yet (#47's wire and sender changes gate it;
+// #46 slice 3). Until then this carrier fires the trigger and nothing
+// downstream can yet claim what it produces.
 func probeNTP(ctx context.Context, address string, port int, marker string) error {
 	conn, err := dialUDP(ctx, address, port)
 	if err != nil {
