@@ -58,4 +58,8 @@ the legend.
 
 ## Verdicts
 
-Open.
+Owner, 2026-09-23, verbatim: **"22 O"**.
+
+O (the line, alone · ledger) is the ratified canary page; N dropped.
+Recorded as an extension of `../../../adr/0004-dashboard-shell.md`. The
+visioning for #115 ends here; the build follows O.
