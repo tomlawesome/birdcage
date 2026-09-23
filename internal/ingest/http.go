@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/stream"
 )
@@ -45,6 +46,46 @@ func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
 	return newHandler(database, hub, time.Now, defaultLimiterLimits)
 }
 
+// ingestRoute is the whole registration surface for this mux (issue
+// #106, design note section 2): a pattern, the kinds allowed to post to
+// it, and its handler. ingestRoutes below is the only place one of these
+// is built, and newHandler's loop is the only place one is wired onto
+// the mux -- there is no other way for a handler to reach it, and
+// therefore no way to add a route that forgets requireBearerToken.
+//
+// kinds == nil (the zero value) refuses every request: a route added
+// without thinking about which kinds may use it fails closed by
+// construction, not by whoever wrote it remembering a line -- caught by
+// TestEveryIngestRouteNamesARegisteredKind in http_test.go, in go test,
+// not in the field.
+type ingestRoute struct {
+	pattern string
+	kinds   []agentkind.Kind
+	handler http.HandlerFunc
+}
+
+// ingestRoutes is the one table every route on this mux is registered
+// from. Kind assignments (design note section 2):
+//
+//   - /ingest/events -- honeypot only, the alert route.
+//   - /ingest/scans -- scanner only, its sole write path.
+//   - /ingest/rotate and /ingest/heartbeat -- both kinds: rotation and
+//     the heartbeat's common part are generic across every kind.
+//   - /ingest/commands -- honeypot only, for now: the only command kind
+//     that exists is the self-test, a honeypot concept, and nightjar
+//     never polls this route. The set widens in the same commit that
+//     ever mints a scanner command -- minimum grant, not maximum
+//     convenience.
+func ingestRoutes(h *ingestHandler) []ingestRoute {
+	return []ingestRoute{
+		{"POST /ingest/events", []agentkind.Kind{agentkind.Honeypot}, h.handleBatch},
+		{"POST /ingest/rotate", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleRotate},
+		{"POST /ingest/heartbeat", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleHeartbeat},
+		{"POST /ingest/commands", []agentkind.Kind{agentkind.Honeypot}, h.handleCommands},
+		{"POST /ingest/scans", []agentkind.Kind{agentkind.Scanner}, h.handleScan},
+	}
+}
+
 // newHandler is NewHandler with now and limits injectable, for tests
 // that need a pinned clock or (far more often) rate limits small enough
 // to cross in a handful of calls rather than thousands -- mirroring
@@ -52,21 +93,20 @@ func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
 	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer()}
 
-	// Five routes are registered on this mux, all behind
-	// requireBearerToken. Mirrors internal/api's dashboardRoutes doc
-	// comment: a request that doesn't match one of them -- including
-	// every dashboard path -- falls through to notFoundJSON, never to
-	// any dashboard handler, because no dashboard handler is ever
-	// registered here. This mux registered with a dashboard path never
-	// matches one either, for the same reason in reverse: see
-	// TestIngestMuxCannotReachDashboardRoutes and
+	// Every route on this mux is behind requireBearerToken, extended
+	// with the route's own allowed kinds (issue #106) -- ingestRoute's
+	// own doc comment is why this loop is the only wiring. Mirrors
+	// internal/api's dashboardRoutes doc comment: a request that doesn't
+	// match one of them -- including every dashboard path -- falls
+	// through to notFoundJSON, never to any dashboard handler, because
+	// no dashboard handler is ever registered here. This mux registered
+	// with a dashboard path never matches one either, for the same
+	// reason in reverse: see TestIngestMuxCannotReachDashboardRoutes and
 	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
-	mux.Handle("POST /ingest/events", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleBatch))
-	mux.Handle("POST /ingest/rotate", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleRotate))
-	mux.Handle("POST /ingest/heartbeat", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleHeartbeat))
-	mux.Handle("POST /ingest/commands", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleCommands))
-	mux.Handle("POST /ingest/scans", requireBearerToken(database, now, h.limiters, h.coalescer, h.handleScan))
+	for _, route := range ingestRoutes(h) {
+		mux.Handle(route.pattern, requireBearerToken(database, now, h.limiters, h.coalescer, route))
+	}
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
 }

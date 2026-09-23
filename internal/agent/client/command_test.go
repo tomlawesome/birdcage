@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -15,7 +16,7 @@ import (
 func TestPollCommandEmptyQueueReturnsNil(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		cmd, err := c.PollCommand(ctx(), token)
@@ -34,7 +35,7 @@ func TestPollCommandEmptyQueueReturnsNil(t *testing.T) {
 func TestPollCommandDeliversOnce(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		now := time.Now().UTC()
@@ -78,7 +79,7 @@ func TestPollCommandDeliversOnce(t *testing.T) {
 // ErrUnauthorized.
 func TestPollCommandUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
 		_, err := c.PollCommand(ctx(), "not-a-real-token")
 		if !IsUnauthorized(err) {

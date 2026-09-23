@@ -12,10 +12,18 @@ import (
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
+// enrollCanary registers id as a Honeypot -- the kind almost every test
+// in this package wants; enrollCanaryKind is the same with the kind
+// explicit, for scans_test.go's scanner-only route.
 func enrollCanary(t *testing.T, database *db.DB, id string) {
 	t.Helper()
+	enrollCanaryKind(t, database, id, agentkind.Honeypot)
+}
+
+func enrollCanaryKind(t *testing.T, database *db.DB, id string, kind agentkind.Kind) {
+	t.Helper()
 	if err := store.InsertCanary(context.Background(), database, store.Canary{
-		ID: id, Name: id, Lane: "lan", Kind: agentkind.Honeypot, EnrolledAt: time.Now().UTC(),
+		ID: id, Name: id, Lane: "lan", Kind: kind, EnrolledAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("InsertCanary(%s): %v", id, err)
 	}
@@ -239,20 +247,35 @@ func TestHandleHeartbeatUnknownFieldRejected(t *testing.T) {
 	})
 }
 
-// TestHandleHeartbeatUnknownCanaryReturns404 mirrors internal/api's own
-// handleHeartbeat: canary_tokens carries no foreign key into canaries
-// (0004_canary_tokens.sql's own comment), so a live token for an
-// unregistered canary id is a real, distinct case from birdcage's own
-// storage trouble.
-func TestHandleHeartbeatUnknownCanaryReturns404(t *testing.T) {
+// TestHandleHeartbeatUnknownCanaryReturns403AtTheSeam used to prove
+// handleHeartbeat's own 404 for a live token whose canaries row is
+// missing (canary_tokens carries no foreign key into canaries --
+// 0004_canary_tokens.sql's own comment -- so that is a real, distinct
+// case from birdcage's own storage trouble). Issue #106 moves that
+// refusal earlier: LookupCanaryTokenByHash's LEFT JOIN resolves such a
+// token with Kind == "", which the registry kind check refuses before
+// the request ever reaches handleHeartbeat at all (design note section
+// 7's own trap, called out deliberately in this package's commit
+// history) -- 403 "forbidden" now, never handleHeartbeat's 404. The 404
+// path in handleHeartbeat itself is dead code against a live token as of
+// this commit; it stays, defended, for a token store bug that resolved
+// one anyway.
+//
+// mintToken is not used here on purpose: it would register the canary
+// (issue #106's own default), which is exactly the row this test needs
+// absent.
+func TestHandleHeartbeatUnknownCanaryReturns403AtTheSeam(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		raw := mintToken(t, database, "canary-never-enrolled")
+		raw, _, err := store.MintCanaryToken(context.Background(), database, "canary-never-enrolled", time.Now().UTC())
+		if err != nil {
+			t.Fatalf("MintCanaryToken: %v", err)
+		}
 		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"1.0.0"}`))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusNotFound, rec.Body.String())
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusForbidden, rec.Body.String())
 		}
 	})
 }

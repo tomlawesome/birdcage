@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
 	"github.com/tomlawesome/birdcage/internal/ingest"
@@ -69,10 +70,16 @@ func newTestClient(t *testing.T, ts *httptest.Server) *Client {
 // ingest listener runs ClientAuth: RequireAndVerifyClientCert, and
 // requireBearerToken binds the certificate's CommonName to the token's
 // canary), so the Client presents one for testCanaryID -- the canary
-// every test in this package mints its tokens for.
-func newIngestServer(t *testing.T, database *db.DB) (*Client, *httptest.Server) {
+// every test in this package mints its tokens for. Its subject OU is
+// kind (issue #106): the registry check now needs a canaries row
+// registered with the same kind (ensureCanary below, a no-op if the
+// caller already registered testCanaryID itself), and the certificate
+// check needs the presented OU to agree with it, or every route in this
+// package's tests would be refused as a kind mismatch.
+func newIngestServer(t *testing.T, database *db.DB, kind agentkind.Kind) (*Client, *httptest.Server) {
 	t.Helper()
-	clientCert, clientKey := selfSignedKeyPair(t, testCanaryID)
+	ensureCanary(t, database, testCanaryID, kind)
+	clientCert, clientKey := selfSignedKeyPair(t, testCanaryID, string(kind))
 	clientCAs := x509.NewCertPool()
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
@@ -273,7 +280,13 @@ func TestClientCertificateVerificationFails(t *testing.T) {
 // same PEM both as the leaf a Client presents and as the trust anchor a
 // test server's ClientCAs pool checks it against, without a separate CA
 // key to manage.
-func selfSignedKeyPair(t *testing.T, cn string) (certPEM, keyPEM []byte) {
+// ou is variadic and normally omitted -- every existing caller wants a
+// plain self-signed certificate with no OU at all. newIngestServer is
+// the one caller that passes kind's string (issue #106): its server
+// enforces the same certificate-kind check internal/ingest's real
+// listener does, so a self-signed certificate carrying no OU would be
+// refused as a legacy (pre-#106) shape.
+func selfSignedKeyPair(t *testing.T, cn string, ou ...string) (certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -281,7 +294,7 @@ func selfSignedKeyPair(t *testing.T, cn string) (certPEM, keyPEM []byte) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: cn},
+		Subject:               pkix.Name{CommonName: cn, OrganizationalUnit: ou},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(time.Hour),
 		IsCA:                  true,

@@ -11,10 +11,18 @@ import (
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
+// enrollCanary registers id as a Honeypot -- the kind almost every test
+// in this package wants; enrollCanaryKind is the same with the kind
+// explicit, for scans_test.go's scanner-only route.
 func enrollCanary(t *testing.T, database *db.DB, id string) {
 	t.Helper()
+	enrollCanaryKind(t, database, id, agentkind.Honeypot)
+}
+
+func enrollCanaryKind(t *testing.T, database *db.DB, id string, kind agentkind.Kind) {
+	t.Helper()
 	if err := store.InsertCanary(ctx(), database, store.Canary{
-		ID: id, Name: id, Lane: "lan", Kind: agentkind.Honeypot,
+		ID: id, Name: id, Lane: "lan", Kind: kind,
 		EnrolledAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("InsertCanary(%s): %v", id, err)
@@ -32,7 +40,7 @@ func enrollCanary(t *testing.T, database *db.DB, id string) {
 func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		err := c.SendHeartbeat(ctx(), token, SelfReport{
@@ -87,7 +95,7 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 // ErrUnauthorized.
 func TestSendHeartbeatUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
 		err := c.SendHeartbeat(ctx(), "not-a-real-token", SelfReport{AgentVersion: "1.0.0"})
 		if !IsUnauthorized(err) {

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -22,13 +25,42 @@ var (
 
 const badID = "not-a-valid-event-id"
 
+// mintToken mints a bearer token for canaryID, registering it as a
+// Honeypot -- the kind almost every test in this package wants -- unless
+// a canaries row already exists for it (issue #106: every ingest route
+// now refuses a token whose canary is unregistered, so a token minted
+// for a test has to have a row behind it to reach a handler at all).
+// scans_test.go's enrollCanaryKind registers "canary-a" as a Scanner
+// before calling this, for the one route here that needs it.
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
+	ensureCanary(t, database, canaryID, agentkind.Honeypot)
 	raw, _, err := store.MintCanaryToken(ctx(), database, canaryID, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("MintCanaryToken: %v", err)
 	}
 	return raw
+}
+
+// ensureCanary registers canaryID with kind if (and only if) no canaries
+// row for it exists yet -- idempotent, so a test that already called
+// enrollCanary/enrollCanaryKind for canaryID before minting a token
+// doesn't collide with a second, conflicting insert here.
+func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
+	t.Helper()
+	var exists int
+	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("check canary %s exists: %v", canaryID, err)
+	}
+	if err := store.InsertCanary(ctx(), database, store.Canary{
+		ID: canaryID, Name: canaryID, Lane: "lan", Kind: kind, EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", canaryID, err)
+	}
 }
 
 // TestPushBatchStoredAndRejected proves this package's ack/reject split
@@ -38,7 +70,7 @@ func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 // shape this package invented.
 func TestPushBatchStoredAndRejected(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		result, err := c.PushBatch(ctx(), token, []Event{
@@ -67,7 +99,7 @@ func TestPushBatchStoredAndRejected(t *testing.T) {
 // handler and its actual dedup index.
 func TestPushBatchDuplicateAcksAsStored(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 		events := []Event{{ID: validID1, SourceIP: "203.0.113.9", DestPort: 22, Service: "ssh", Raw: "hit"}}
 
@@ -97,7 +129,7 @@ func TestPushBatchDuplicateAcksAsStored(t *testing.T) {
 // birdcage" apart from "try again".
 func TestPushBatchUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
 		_, err := c.PushBatch(ctx(), "not-a-real-token", []Event{{ID: validID1, DestPort: -1, Raw: "{}"}})
 		if !IsUnauthorized(err) {
@@ -118,7 +150,7 @@ func TestPushBatchUnauthorized(t *testing.T) {
 // rejected even sent alone, the other is ordinary and stored.
 func TestPushBatchEnvelopeRejectionFallsBackToSingly(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		c, _ := newIngestServer(t, database)
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
 		oversizedRaw := strings.Repeat("x", 310*1024)

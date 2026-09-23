@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -33,6 +34,18 @@ type CanaryToken struct {
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+
+	// Kind is canaries.kind for this token's CanaryID, read via a LEFT
+	// JOIN (issue #106) -- populated only by LookupCanaryTokenByHash,
+	// the one caller on the ingest auth seam that needs it to authorise
+	// a route. Every other lookup in this file leaves it at its zero
+	// value (""). LEFT, not INNER: canary_tokens carries no foreign key
+	// into canaries (migration 0004_canary_tokens.sql's own comment), so
+	// a live token whose canaries row is missing (or was deleted out
+	// from under it) resolves with Kind == "", which refuses every
+	// kind-gated route -- agentkind.Valid("") is false -- rather than
+	// the join silently dropping the row instead.
+	Kind agentkind.Kind
 }
 
 // ErrTokenNotFound is returned by LookupCanaryTokenByHash when hash
@@ -90,16 +103,22 @@ func MintCanaryToken(ctx context.Context, database db.Conn, canaryID string, cre
 }
 
 // LookupCanaryTokenByHash resolves hash (as produced by HashToken) to its
-// CanaryToken row. A revoked row (revoked_at set) is excluded at the SQL
-// level -- WHERE revoked_at IS NULL, not an application-level check
-// after the fact -- so it is indistinguishable from a hash that matches
-// no row at all: both return ErrTokenNotFound.
+// CanaryToken row, with its canary's registered kind (issue #106) LEFT
+// JOINed in -- see CanaryToken.Kind's own doc comment for why LEFT and
+// why a missing row still resolves rather than failing the lookup: an
+// unknown kind is this function's caller's problem (it refuses at the
+// route), not this function's. A revoked row (revoked_at set) is
+// excluded at the SQL level -- WHERE revoked_at IS NULL, not an
+// application-level check after the fact -- so it is indistinguishable
+// from a hash that matches no row at all: both return ErrTokenNotFound.
 func LookupCanaryTokenByHash(ctx context.Context, database *db.DB, hash string) (CanaryToken, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT id, canary_id, created_at, last_used_at, revoked_at
+		SELECT canary_tokens.id, canary_tokens.canary_id, canary_tokens.created_at,
+			canary_tokens.last_used_at, canary_tokens.revoked_at, canaries.kind
 		FROM canary_tokens
-		WHERE token_hash = ? AND revoked_at IS NULL`, hash)
-	return scanCanaryToken(row)
+		LEFT JOIN canaries ON canaries.id = canary_tokens.canary_id
+		WHERE canary_tokens.token_hash = ? AND canary_tokens.revoked_at IS NULL`, hash)
+	return scanCanaryTokenWithKind(row)
 }
 
 // rowScanner is the common surface of *sql.Row and *sql.Rows that
@@ -141,6 +160,53 @@ func scanCanaryToken(row rowScanner) (CanaryToken, error) {
 			return CanaryToken{}, fmt.Errorf("parse revoked_at %q: %w", *revokedAt, err)
 		}
 		t.RevokedAt = &parsed
+	}
+	return t, nil
+}
+
+// scanCanaryTokenWithKind is scanCanaryToken plus the LEFT JOINed
+// canaries.kind column LookupCanaryTokenByHash's own query adds (issue
+// #106) -- a separate function, not a parameter threaded through
+// scanCanaryToken, because every other caller in this file selects no
+// such column and must not be made to guess one. kind is scanned as a
+// nullable string (the LEFT JOIN's own NULL, for a token whose canaries
+// row is missing) and converted to agentkind.Kind's zero value ("") in
+// that case, never guessed at.
+func scanCanaryTokenWithKind(row rowScanner) (CanaryToken, error) {
+	var (
+		t          CanaryToken
+		createdAt  string
+		lastUsedAt *string
+		revokedAt  *string
+		kind       *string
+	)
+	if err := row.Scan(&t.ID, &t.CanaryID, &createdAt, &lastUsedAt, &revokedAt, &kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CanaryToken{}, ErrTokenNotFound
+		}
+		return CanaryToken{}, fmt.Errorf("scan canary token: %w", err)
+	}
+	parsed, err := time.Parse(receivedAtLayout, createdAt)
+	if err != nil {
+		return CanaryToken{}, fmt.Errorf("parse created_at %q: %w", createdAt, err)
+	}
+	t.CreatedAt = parsed
+	if lastUsedAt != nil {
+		parsed, err := time.Parse(receivedAtLayout, *lastUsedAt)
+		if err != nil {
+			return CanaryToken{}, fmt.Errorf("parse last_used_at %q: %w", *lastUsedAt, err)
+		}
+		t.LastUsedAt = &parsed
+	}
+	if revokedAt != nil {
+		parsed, err := time.Parse(receivedAtLayout, *revokedAt)
+		if err != nil {
+			return CanaryToken{}, fmt.Errorf("parse revoked_at %q: %w", *revokedAt, err)
+		}
+		t.RevokedAt = &parsed
+	}
+	if kind != nil {
+		t.Kind = agentkind.Kind(*kind)
 	}
 	return t, nil
 }
