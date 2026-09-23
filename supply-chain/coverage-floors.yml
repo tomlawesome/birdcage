@@ -96,21 +96,30 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 63           # 64.3% measured with -race, 2026-09-23 (#94:
-                             # main() split into startup.go)
-                             # Main binary; RouterOS/CrowdSec credential-wiring
-                             # path is still largely untested.
-  cmd/nightjar: 50           # 50.4% measured, 2026-09-22 (#108, slice 1
-                             # commit 4). New binary: the scan loop's own
-                             # branches (mount-check failure, a runScan Go
-                             # error, the ok path) are driven directly via
-                             # buildSnapshot's injected checkMounts/runScan
-                             # functions, but main()'s own wiring and the
-                             # real checkMounts/realScan implementations
-                             # (which need a real container's
-                             # /proc/self/mountinfo and a real grype binary)
-                             # are not unit-testable and stay below the 70%
-                             # band, same as the other two agent binaries.
+  cmd/nightjar: 66           # 67.1% measured with -race, 2026-09-23 (#74).
+                             # The real checkMounts and realScan (not just
+                             # buildSnapshot's injected stand-ins) are now
+                             # exercised directly: mountinfoPath, hostRoot
+                             # and grypeBin are fixed constants with no
+                             # env-var seam, but checkMounts genuinely
+                             # refuses in any test/CI environment (no
+                             # /host bind) and realScan genuinely fails
+                             # closed (no grype binary at its pinned
+                             # path), so both are real, deterministic
+                             # refusal-path tests, not fixtures. runScanOnce
+                             # and runScanLoop are proved end-to-end against
+                             # a real TLS test server. What remains
+                             # uncovered: main()'s own wiring (50 of the
+                             # package's 164 statements -- needs a real
+                             # process exit, not unit-testable without a
+                             # self-exec test harness this codebase does not
+                             # use elsewhere) and 4 statements inside
+                             # checkMounts/ParseMountinfo reachable only by
+                             # making mountinfoPath unreadable or malformed,
+                             # or by /host actually being a mount point --
+                             # none reachable without adding a seam, which
+                             # was out of scope for this pass. 67.1% is the
+                             # ceiling on this checkout without either.
   cmd/mockingbird: 65       # 66.0% measured (was 60, and the package had
                              # slipped to 59.9% under it -- pipeline 1405's
                              # test:go caught that). The SNMP and port-scan
@@ -146,6 +155,21 @@ floors:
                              # tests; has no tests of its own.
 
   # --- inside or above the 70-85% band ---
+  cmd/birdcage: 73           # 74.8% measured with -race, 2026-09-23 (#74).
+                             # Moved out of the below-70% section this pass:
+                             # runSubcommand's canary/settings/approval
+                             # dispatch switches, runCanaryAdd, serveAll's
+                             # ingest/enrol-listener and unix-socket branches,
+                             # openCanaryDB's migrate-failure path and
+                             # runApprovalCheck's missing-file/database-open
+                             # refusals all gained tests. Still untested:
+                             # main() itself (0%, not unit-testable without a
+                             # self-exec harness this codebase does not use
+                             # elsewhere) and a handful of os-level failure
+                             # branches (closeCanaryDB's Close error,
+                             # checkStartupFiles' remaining branch) that need
+                             # a filesystem failure this pass did not find a
+                             # deterministic way to induce.
   internal/agentkind: 100     # 100.0% measured, 2026-09-22 (#105). A closed
                               # enum and a lookup table: every value and both
                               # sides of Valid() are exercised by construction,
