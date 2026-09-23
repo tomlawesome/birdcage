@@ -46,6 +46,11 @@ type Event struct {
 	// Raw is the verbatim emitted JSON message this event's ID was
 	// hashed from.
 	Raw string
+	// SelfTestMarker is #46 slice 3's one wire addition: set only when
+	// cmd/mockingbird's claim window decided this event is the single
+	// candidate an attributed-grade probe (ntp, portscan) produced.
+	// Empty for every ordinary event.
+	SelfTestMarker string
 }
 
 // wireEvent, wireBatch and wireAck mirror internal/ingest/batch.go's
@@ -55,11 +60,12 @@ type Event struct {
 // package's tests (run against internal/ingest's real handler) exist to
 // catch.
 type wireEvent struct {
-	EventID  string `json:"event_id"`
-	SourceIP string `json:"source_ip"`
-	DestPort int    `json:"dest_port"`
-	Service  string `json:"service"`
-	Raw      string `json:"raw"`
+	EventID        string `json:"event_id"`
+	SourceIP       string `json:"source_ip"`
+	DestPort       int    `json:"dest_port"`
+	Service        string `json:"service"`
+	Raw            string `json:"raw"`
+	SelfTestMarker string `json:"self_test_marker,omitempty"`
 }
 
 type wireBatch struct {
@@ -174,11 +180,12 @@ func (c *Client) pushOnce(ctx context.Context, token string, events []Event) (re
 	wire := wireBatch{Events: make([]wireEvent, len(events))}
 	for i, e := range events {
 		wire.Events[i] = wireEvent{
-			EventID:  e.ID,
-			SourceIP: e.SourceIP,
-			DestPort: e.DestPort,
-			Service:  e.Service,
-			Raw:      e.Raw,
+			EventID:        e.ID,
+			SourceIP:       e.SourceIP,
+			DestPort:       e.DestPort,
+			Service:        e.Service,
+			Raw:            e.Raw,
+			SelfTestMarker: e.SelfTestMarker,
 		}
 	}
 	body, mErr := json.Marshal(wire)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
@@ -97,13 +98,13 @@ func jitteredInterval(base, jitter time.Duration) time.Duration {
 // runCommandRunner executes commands from run one at a time, in arrival
 // order (#48's process-composition note: "executes dispatched commands
 // sequentially"), until ctx is done.
-func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
+func runCommandRunner(ctx context.Context, in *Intake, run <-chan *client.Command) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case cmd := <-run:
-			if err := runCommand(ctx, cmd); err != nil {
+			if err := runCommand(ctx, in, cmd); err != nil {
 				commandLog.Warn(fmt.Sprintf("%s (%s): refused, executing nothing: %s", cmd.ID, cmd.Kind, safeErr(err)))
 			}
 		}
@@ -117,10 +118,10 @@ func runCommandRunner(ctx context.Context, run <-chan *client.Command) {
 // and the command is never partially executed either way (#48
 // fail-closed: "a command the agent cannot fully parse is an attack or
 // version skew; both end in refusal").
-func runCommand(ctx context.Context, cmd *client.Command) error {
+func runCommand(ctx context.Context, in *Intake, cmd *client.Command) error {
 	switch cmd.Kind {
 	case kindSelfTest:
-		return runSelfTest(ctx, cmd)
+		return runSelfTest(ctx, in, cmd)
 	default:
 		return fmt.Errorf("unknown command kind %q", cmd.Kind)
 	}
@@ -141,10 +142,16 @@ func runCommand(ctx context.Context, cmd *client.Command) error {
 // correctly-reported case, not a refusal. probe.Sweep also never writes
 // into the event path itself (see its own doc comment): the probes
 // produce ordinary OpenCanary events that reach birdcage by the normal
-// two roads, and this function's job ends at firing them and logging
-// what happened for the operator and, eventually, the heartbeat's
-// counters.
-func runSelfTest(ctx context.Context, cmd *client.Command) error {
+// two roads, and this function's job ends at firing them, opening a
+// claim window for every attributed-grade probe that reached the wire
+// (#46 slice 3), and logging what happened for the operator and,
+// eventually, the heartbeat's counters.
+//
+// in is the same Intake the sender and every intake road share -- its
+// claims tracker (claim.go) is what turns an attributed probe's own fact
+// into a claimed event, by watching the events those same roads are
+// pushing concurrently with this function's own claim windows.
+func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 	params, err := selftest.DecodeParams(cmd.Params)
 	if err != nil {
 		return fmt.Errorf("selftest params: %w", err)
@@ -152,11 +159,24 @@ func runSelfTest(ctx context.Context, cmd *client.Command) error {
 
 	outcomes := probe.Sweep(ctx, params)
 
+	// Every attributed-grade outcome's claim window runs concurrently
+	// (not one after another): each blocks for up to selfTestClaimWindow,
+	// and a self-test with both ntp and portscan targets must not pay
+	// that cost twice over.
+	var claims sync.WaitGroup
 	var ok, failed, noCarrier, notProbeable int
-	for _, o := range outcomes {
+	for i, o := range outcomes {
 		switch o.Status {
 		case probe.StatusOK:
 			ok++
+			if o.Fact != nil {
+				marker := params.Targets[i].Marker
+				claims.Add(1)
+				go func(service, marker string) {
+					defer claims.Done()
+					in.claims.open(ctx.Done(), service, params.Address, marker)
+				}(o.Fact.Service, marker)
+			}
 		case probe.StatusFailed:
 			failed++
 			selftestLog.Warn(fmt.Sprintf("%s: target %s:%d failed: %s", params.RunID, o.Service, o.DestPort, safeErr(o.Err)))
@@ -166,6 +186,7 @@ func runSelfTest(ctx context.Context, cmd *client.Command) error {
 			notProbeable++
 		}
 	}
+	claims.Wait()
 	selftestLog.Info(fmt.Sprintf("command %s: %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
 		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes)))
 	return nil

@@ -120,9 +120,20 @@ floors:
                              # none reachable without adding a seam, which
                              # was out of scope for this pass. 67.1% is the
                              # ceiling on this checkout without either.
-  cmd/mockingbird: 69       # 70.3% measured with -race, 2026-09-23 (#74),
-                             # stable across five consecutive -coverprofile
-                             # runs (zero statements flipped covered/not).
+  cmd/mockingbird: 71       # 71.5% measured with -race and Postgres,
+                             # 2026-09-23 (#46 slice 3, was floored at 69):
+                             # the claim window (claim.go, new file) and
+                             # its wiring into intake.go's three push
+                             # sites, command.go's runSelfTest and
+                             # sender.go's hold-back/attach logic are
+                             # covered by unit tests (claim_test.go) and
+                             # two real-birdcage end-to-end tests
+                             # (claim_e2e_test.go). Prior measurement
+                             # (70.3%, 2026-09-23, #74) below still
+                             # applies to everything this slice didn't
+                             # touch, stable across five consecutive
+                             # -coverprofile runs (zero statements flipped
+                             # covered/not).
                              # runCommandPollLoop/runCommandRunner (both
                              # previously only reached by their own
                              # ctx-cancel shutdown test, never through a real
@@ -253,7 +264,10 @@ floors:
                               # its failure classification -- every branch
                               # is driven by a recorded-fixture unit test
                               # (a real grype binary is never required).
-  internal/selftest: 96
+  internal/selftest: 97      # 97.2% measured with -race, 2026-09-23 (#46
+                              # slice 3, was floored at 96): the portscan
+                              # DestPort-0 carve-out in Validate gained
+                              # its own tests.
   internal/selftestsched: 100 # 100.0% measured with -race on SQLite and
                              # Postgres, 2026-09-23 (#46 slice 1, #74).
                              # Every error branch -- a settings read that

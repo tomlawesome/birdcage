@@ -374,3 +374,150 @@ func TestHasRecentSelfTestRun(t *testing.T) {
 		}
 	})
 }
+
+// mintAttributedSelfTestCommand mints one portscan target (attributed
+// grade) for canaryID, and sets its last-seen address to addr --
+// matchSelfTestClaim's own "source" check reads that column, the same
+// one selftest.Params.Address supplied and every carrier in a real run
+// would have dialed.
+func mintAttributedSelfTestCommand(t *testing.T, database *db.DB, idx *SelfTestIndex, canaryID, addr string, createdAt time.Time, ttl time.Duration) string {
+	t.Helper()
+	if err := SetCanaryLastSeenAddr(context.Background(), database, canaryID, addr); err != nil {
+		t.Fatalf("SetCanaryLastSeenAddr(%s): %v", canaryID, err)
+	}
+	cmd, err := MintSelfTestCommand(context.Background(), database, idx, canaryID, addr,
+		[]SelfTestTarget{{Service: "portscan", DestPort: 0}}, createdAt, createdAt.Add(ttl))
+	if err != nil {
+		t.Fatalf("MintSelfTestCommand(%s): %v", canaryID, err)
+	}
+	return mustDecodeParams(t, cmd).Targets[0].Marker
+}
+
+// TestMatchSelfTestClaim_GoodClaimMarksSynthetic is #46 slice 3's
+// positive case: a claim naming a live attributed-grade marker, the
+// right service and the canary's own last-seen address as source_ip is
+// corroborated -- matched, no refusal.
+func TestMatchSelfTestClaim_GoodClaimMarksSynthetic(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		marker := mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+
+		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10"}
+		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if !matched {
+			t.Fatalf("a good claim was refused: %q", refusal)
+		}
+		if refusal != "" {
+			t.Errorf("matched claim carries a refusal reason: %q", refusal)
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_WrongSourceAddressRefused: a claim whose
+// event's source_ip does not equal the canary's own last-seen address is
+// refused -- corroboration never trusts the agent's own claim, so a
+// claim that could only have come from somewhere else is real.
+func TestMatchSelfTestClaim_WrongSourceAddressRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		marker := mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+
+		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "198.51.100.7"}
+		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if matched {
+			t.Fatal("a claim with the wrong source address was corroborated")
+		}
+		if refusal == "" {
+			t.Error("a refused claim carries no reason")
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_MarkedGradeTargetRefused: a self_test_marker
+// naming a marked-grade target (proves itself with raw, never a claim)
+// is refused rather than silently treated as attributed.
+func TestMatchSelfTestClaim_MarkedGradeTargetRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "192.0.2.10"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		cmd := mintSelfTestCommand(t, database, idx, "canary-a", now, time.Hour) // ssh, marked grade
+		marker := mustDecodeParams(t, cmd).Targets[0].Marker
+
+		alert := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "192.0.2.10"}
+		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if matched {
+			t.Fatal("a claim naming a marked-grade target was corroborated")
+		}
+		if refusal == "" {
+			t.Error("a refused claim carries no reason")
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_ExpiredRunRefused: a claim presented after its
+// run's deadline has passed finds no live marker -- the marker index's
+// own expiry, which a run's deadline_at shares (both derive from the
+// same MintSelfTestCommand call), and the safe direction: stored real.
+func TestMatchSelfTestClaim_ExpiredRunRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		createdAt := time.Now().Add(-time.Hour)
+		marker := mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", createdAt, time.Minute) // expired 59 minutes ago
+
+		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10"}
+		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, time.Now())
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if matched {
+			t.Fatal("a claim on an expired run was corroborated")
+		}
+		if refusal == "" {
+			t.Error("a refused claim carries no reason")
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_UnknownMarkerRefused mirrors
+// TestMatchSelfTestNeverIssuedMarkerIsReal for the claim path: a
+// plausible-looking marker birdcage never minted is refused, not
+// corroborated.
+func TestMatchSelfTestClaim_UnknownMarkerRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+
+		guessed := "0123456789abcdef0123456789abcdef"[:selftest.MarkerBytes*2]
+		alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10"}
+		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, guessed, now)
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if matched {
+			t.Fatal("an unissued marker was corroborated as a claim")
+		}
+		if refusal == "" {
+			t.Error("a refused claim carries no reason")
+		}
+	})
+}

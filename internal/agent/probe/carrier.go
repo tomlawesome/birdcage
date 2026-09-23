@@ -11,20 +11,16 @@ import "context"
 type carrierFunc func(ctx context.Context, address string, port int, marker string) error
 
 // carriers maps birdcage's service name (internal/opencanary's mapping,
-// as carried on the wire by selftest.Target.Service) to the carrier
-// that plants a marker for it, or -- for vnc, ntp and portscan -- that
-// does whatever that service's own grade needs instead (see each
-// carrier's own doc comment). A service named by a target but absent
-// here -- other than the notProbeable set below -- gets StatusNoCarrier
-// rather than a guess, per #46's instruction: "skip it and return a
+// as carried on the wire by selftest.Target.Service) to the carrier that
+// plants a marker for it, or -- for vnc -- does whatever that service's
+// own grade needs instead (see vnc.go's own doc comment). A service
+// named by a target but absent here -- other than the notProbeable set
+// below and attributionCarriers below -- gets StatusNoCarrier rather
+// than a guess, per #46's instruction: "skip it and return a
 // clearly-labelled outcome rather than guessing."
 //
-// vnc, ntp and portscan are #46 slice 2 (notes 19854/19855/19897):
-// vnc.go's challenge-marked HMAC is matched and claimed today
-// (internal/store/selftest_vnc.go). attribution.go's ntp/portscan
-// touches fire the trigger a real self-test needs, but nothing yet
-// claims the resulting event -- note 19897's ratified agent-side claim
-// is #46 slice 3, gated on #47's wire and sender changes.
+// vnc is #46 slice 2 (notes 19854/19855/19897): its challenge-marked
+// HMAC is matched and claimed today (internal/store/selftest_vnc.go).
 var carriers = map[string]carrierFunc{
 	"ftp":      probeFTP,
 	"telnet":   probeTelnet,
@@ -39,6 +35,14 @@ var carriers = map[string]carrierFunc{
 	"rdp":      probeRDP,
 	"ssh":      probeSSH,
 	"vnc":      probeVNC,
+}
+
+// attributionCarriers maps the two "attributed" grade services (notes
+// 19854/19855/19897) to their carrier: nothing attacker-supplied is
+// logged for either, so instead of planting a marker they report what
+// they sent, and probeOne hands that on as the outcome's Fact for
+// cmd/mockingbird's claim window to watch for (#46 slice 3).
+var attributionCarriers = map[string]attributionCarrierFunc{
 	"ntp":      probeNTP,
 	"portscan": probePortscan,
 }

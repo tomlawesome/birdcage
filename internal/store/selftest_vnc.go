@@ -104,8 +104,8 @@ func (idx *SelfTestIndex) matchVNCChallenge(canaryID, raw string, now time.Time)
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	markers := idx.byCanary[canaryID]
-	for m, expiresAt := range markers {
-		if !expiresAt.After(now) {
+	for m, info := range markers {
+		if !info.ExpiresAt.After(now) {
 			delete(markers, m)
 			continue
 		}

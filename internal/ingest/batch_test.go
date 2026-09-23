@@ -59,6 +59,27 @@ func TestHandleBatchRejectsUnknownField(t *testing.T) {
 	})
 }
 
+// TestHandleBatchRejectsUnknownEventField is #46 slice 3's regression
+// check: adding self_test_marker to ingestEvent must not have loosened
+// DisallowUnknownFields for anything else -- a field this package still
+// does not recognise, on one event inside an otherwise well-formed
+// batch, is still rejected outright.
+func TestHandleBatchRejectsUnknownEventField(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"203.0.113.9","dest_port":22,"service":"ssh","raw":"hit","not_a_real_field":true}]}`,
+			validEventID1)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+	})
+}
+
 // TestHandleBatchOverLimitReturns429AndIsRecorded is slice 3's third
 // required test: "over-limit returns 429 and is recorded". It uses a
 // tiny requests/min limit (via newHandler's injectable limiterLimits, not

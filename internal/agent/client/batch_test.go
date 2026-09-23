@@ -12,6 +12,7 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -89,6 +90,57 @@ func TestPushBatchStoredAndRejected(t *testing.T) {
 		}
 		if len(result.Retry) != 0 {
 			t.Errorf("retry = %v, want none", result.Retry)
+		}
+	})
+}
+
+// TestPushBatchSelfTestMarkerReachesBirdcageSynthetic is #46 slice 3's
+// wire-field proof at this package's own level: an Event carrying
+// SelfTestMarker for a live, attributed-grade target birdcage itself
+// minted is stored synthetic by the real handler -- possible only if
+// PushBatch actually serialises SelfTestMarker onto the wire as
+// self_test_marker, since store.MatchSelfTestClaim has nothing else to
+// corroborate against.
+func TestPushBatchSelfTestMarkerReachesBirdcageSynthetic(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
+		token := mintToken(t, database, testCanaryID)
+
+		addr := "198.51.100.5"
+		if err := store.SetCanaryLastSeenAddr(ctx(), database, testCanaryID, addr); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		// A throwaway index for the mint call only -- the real handler's
+		// own index (built inside newIngestServer) loads this command
+		// from canary_commands on its first use, the same lazy-load path
+		// a restarted birdcage process relies on.
+		cmd, err := store.MintSelfTestCommand(ctx(), database, store.NewSelfTestIndex(), testCanaryID, addr,
+			[]store.SelfTestTarget{{Service: "portscan", DestPort: 0}}, time.Now().UTC(), time.Now().UTC().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
+		params, err := selftest.DecodeParams([]byte(cmd.Params))
+		if err != nil {
+			t.Fatalf("decode minted params: %v", err)
+		}
+		marker := params.Targets[0].Marker
+
+		result, err := c.PushBatch(ctx(), token, []Event{
+			{ID: validID1, SourceIP: addr, DestPort: 54321, Service: "portscan", Raw: "scan", SelfTestMarker: marker},
+		})
+		if err != nil {
+			t.Fatalf("PushBatch: %v", err)
+		}
+		if len(result.Stored) != 1 || result.Stored[0] != validID1 {
+			t.Fatalf("stored = %v, rejected = %v, want [%s] stored", result.Stored, result.Rejected, validID1)
+		}
+
+		alerts, err := store.ListAlerts(ctx(), database, store.AlertFilter{InstanceID: testCanaryID})
+		if err != nil {
+			t.Fatalf("ListAlerts: %v", err)
+		}
+		if len(alerts) != 1 || !alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = true", alerts)
 		}
 	})
 }

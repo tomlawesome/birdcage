@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/queue"
 )
 
 // validSelfTestParams is one well-formed selftest.Params, matching the
@@ -25,7 +26,8 @@ var validSelfTestParams = []byte(`{"run_id":"r1","address":"127.0.0.1","targets"
 // executed -- runCommand's non-nil return is the caller's cue to log the
 // refusal rather than act on it.
 func TestRunCommandUnknownKindRefused(t *testing.T) {
-	err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: "upgrade"})
+	in, _ := newTestIntake(t, queue.Config{})
+	err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: "upgrade"})
 	if err == nil {
 		t.Fatal("runCommand(unknown kind) = nil, want a refusal")
 	}
@@ -37,7 +39,8 @@ func TestRunCommandUnknownKindRefused(t *testing.T) {
 // refusal (#46: a self-test measuring a dead service is a correct
 // result, not an error).
 func TestRunCommandSelfTestAccepted(t *testing.T) {
-	err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	in, _ := newTestIntake(t, queue.Config{})
+	err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
 	if err != nil {
 		t.Errorf("runCommand(selftest, params=%s) = %v, want nil", validSelfTestParams, err)
 	}
@@ -50,6 +53,7 @@ func TestRunCommandSelfTestAccepted(t *testing.T) {
 // are refused rather than silently ignored or partially run, even for
 // the one kind this agent knows.
 func TestRunCommandSelfTestUnparseableParamsRefused(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
 	for _, params := range [][]byte{
 		nil,
 		[]byte(`{}`),
@@ -59,7 +63,7 @@ func TestRunCommandSelfTestUnparseableParamsRefused(t *testing.T) {
 		[]byte(`[1,2,3]`),
 		[]byte(`{not valid json`),
 	} {
-		err := runCommand(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
+		err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
 		if err == nil {
 			t.Errorf("runCommand(selftest, params=%s) = nil, want a refusal", params)
 		}
@@ -88,7 +92,8 @@ func TestJitteredIntervalStaysInBound(t *testing.T) {
 // (probe.Sweep's outcomes are exercised directly in
 // internal/agent/probe's own tests).
 func TestRunSelfTestLogsOutcomesAndReturnsNil(t *testing.T) {
-	err := runSelfTest(context.Background(), &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	in, _ := newTestIntake(t, queue.Config{})
+	err := runSelfTest(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
 	if err != nil {
 		t.Fatalf("runSelfTest(%s) = %v, want nil", validSelfTestParams, err)
 	}
@@ -206,11 +211,12 @@ func TestRunCommandPollLoopDropsOnFullBuffer(t *testing.T) {
 // to know the runner actually processed each one before the next line
 // runs.
 func TestRunCommandRunnerDispatchesCommands(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
 	run := make(chan *client.Command)
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runCommandRunner(runCtx, run)
+		runCommandRunner(runCtx, in, run)
 		close(done)
 	}()
 

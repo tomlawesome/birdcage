@@ -65,6 +65,33 @@ func TestValidate_RejectsMissingFields(t *testing.T) {
 	}
 }
 
+// TestValidate_PortscanAcceptsOnlyDestPortZero pins #46 slice 3's
+// carve-out: portscan names no real socket, so its target's DestPort
+// must be exactly 0, unlike every other service.
+func TestValidate_PortscanAcceptsOnlyDestPortZero(t *testing.T) {
+	p := validParams()
+	p.Targets = append(p.Targets, Target{Service: "portscan", DestPort: 0, Marker: "cccc"})
+	if err := p.Validate(); err != nil {
+		t.Fatalf("portscan target with dest_port 0 rejected: %v", err)
+	}
+
+	p.Targets[2].DestPort = 1
+	if err := p.Validate(); err == nil {
+		t.Fatal("portscan target with a nonzero dest_port was accepted")
+	}
+}
+
+// TestValidate_NonPortscanStillRejectsDestPortZero proves the portscan
+// carve-out above did not loosen the 1-65535 bound for any other
+// service.
+func TestValidate_NonPortscanStillRejectsDestPortZero(t *testing.T) {
+	p := validParams()
+	p.Targets[0].DestPort = 0
+	if err := p.Validate(); err == nil {
+		t.Fatal("a non-portscan target with dest_port 0 was accepted")
+	}
+}
+
 func TestValidate_RejectsMoreTargetsThanTheCap(t *testing.T) {
 	p := validParams()
 	p.Targets = nil

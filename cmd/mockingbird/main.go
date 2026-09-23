@@ -200,7 +200,7 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		runCommandRunner(ctx, commands)
+		runCommandRunner(ctx, in, commands)
 	}()
 	go func() {
 		defer wg.Done()

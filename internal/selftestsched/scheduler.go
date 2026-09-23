@@ -231,10 +231,15 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 		}
 		targets = append(targets, store.SelfTestTarget{Service: service, DestPort: port})
 	}
-	if len(targets) == 0 {
-		s.log.Warn("self-test: no probeable targets after filtering ports, skipping canary", "canary", c.ID)
-		return
-	}
+	// portscan is the agent's own detector (#65), not an OpenCanary
+	// module with a listening port of its own -- always on for every
+	// honeypot canary, regardless of what c.Ports lists (#46 slice 3).
+	// DestPort 0 is selftest.Params.Validate's own carve-out for it. This
+	// also means targets is never empty by the time it reaches
+	// MintSelfTestCommand: the "no probeable targets" case this used to
+	// guard against can no longer happen, now that every honeypot always
+	// gets at least this one target.
+	targets = append(targets, store.SelfTestTarget{Service: "portscan", DestPort: 0})
 
 	deadline := now.Add(selfTestWindow)
 	cmd, err := store.MintSelfTestCommand(ctx, s.db, s.idx, c.ID, *c.LastSeenAddr, targets, now, deadline)

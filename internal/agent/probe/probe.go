@@ -101,12 +101,16 @@ func (s Status) String() string {
 }
 
 // Outcome is the result of probing one target. Err is non-nil only when
-// Status is StatusFailed.
+// Status is StatusFailed. Fact is non-nil only when Status is StatusOK
+// and Service is one of attributionCarriers' two entries (ntp,
+// portscan) -- cmd/mockingbird's runSelfTest hands it to the claim
+// window (#46 slice 3); every other outcome leaves it nil.
 type Outcome struct {
 	Service  string
 	DestPort int
 	Status   Status
 	Err      error
+	Fact     *AttributionFact
 }
 
 // Sweep probes every target in params with DefaultConfig. See
@@ -167,14 +171,26 @@ func probeOne(ctx context.Context, probeTimeout time.Duration, address string, t
 		return o
 	}
 
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	if ac, ok := attributionCarriers[t.Service]; ok {
+		fact, err := ac(probeCtx, address, t.DestPort)
+		if err != nil {
+			o.Status = StatusFailed
+			o.Err = err
+			return o
+		}
+		o.Status = StatusOK
+		o.Fact = &fact
+		return o
+	}
+
 	carrier, ok := carriers[t.Service]
 	if !ok {
 		o.Status = StatusNoCarrier
 		return o
 	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
 
 	if err := carrier(probeCtx, address, t.DestPort, t.Marker); err != nil {
 		o.Status = StatusFailed

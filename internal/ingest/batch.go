@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,10 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"time"
 
+	"github.com/tomlawesome/birdcage/internal/audit"
+	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -48,6 +52,17 @@ type ingestEvent struct {
 	DestPort int    `json:"dest_port"`
 	Service  string `json:"service"`
 	Raw      string `json:"raw"`
+
+	// SelfTestMarker is #46 slice 3's one addition to the wire: an
+	// attributed-grade claim (ntp, portscan) the agent made locally,
+	// before this event ever left the canary (note 19897 -- see
+	// cmd/mockingbird/claim.go). Optional and empty for every other
+	// event, exactly like Raw it carries no dedicated length bound of
+	// its own -- both ride on maxBodyBytes and maxEventsPerBatch, the
+	// batch's own caps, since a marker that is simply too long to match
+	// anything is no more dangerous than one that is merely wrong (it is
+	// refused by store.MatchSelfTestClaim the same way).
+	SelfTestMarker string `json:"self_test_marker,omitempty"`
 }
 
 // ingestBatch is POST /ingest/events' request body. NodeID is accepted
@@ -167,7 +182,24 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 		// real, continue. Never drop" (brief for this slice): losing
 		// the self-test/real distinction on a bookkeeping failure is
 		// far cheaper than losing the event entirely.
-		if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
+		//
+		// #46 slice 3: an event carrying self_test_marker is an
+		// attributed-grade claim the agent made locally (note 19897) --
+		// corroborated independently by MatchSelfTestClaim, never taken
+		// on trust, and never falling back to a raw substring match (a
+		// marked-grade service proves itself with raw; a claim naming
+		// one is refused, not silently reinterpreted). A refusal is
+		// audited once, by canary/service/reason -- never the marker.
+		if ev.SelfTestMarker != "" {
+			matched, refusal, err := store.MatchSelfTestClaim(r.Context(), h.db, h.selfTestIndex, insert, ev.SelfTestMarker, receivedAt)
+			if err != nil {
+				slog.Error("ingest: self-test claim corroboration failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
+			} else if matched {
+				insert.Synthetic = true
+			} else {
+				recordSelfTestClaimRefused(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, service, refusal)
+			}
+		} else if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
 			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
 		} else if matched {
 			insert.Synthetic = true
@@ -233,4 +265,37 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 		return "invalid dest_port", false
 	}
 	return "", true
+}
+
+// recordSelfTestClaimRefused writes selftest.claim_refused (#46 slice
+// 3): an event carried self_test_marker, but store.MatchSelfTestClaim
+// could not corroborate it -- refusal names which of its four checks
+// failed. The event is still stored, as an ordinary real alert; this is
+// only the audit trail of the refusal.
+//
+// Routed through the same coalescer as recordRateLimitCrossed and
+// recordKindRefused, and for the same reason: reaching this path costs
+// an attacker nothing but a live token and an events/min budget it
+// already has, so without coalescing a flood of bogus claims becomes a
+// flood against audit_log (issue #57). canaryID and action share one
+// bucket regardless of which service or check failed, matching those two
+// callers' own choice not to split buckets finer than a health state
+// could ever read.
+func recordSelfTestClaimRefused(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID, service, refusal string) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, "selftest.claim_refused", at)
+	if !write {
+		return
+	}
+
+	_, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "selftest.claim_refused",
+		Target:      canaryID,
+		Reason:      coalescedReason(fmt.Sprintf("service %s: %s", service, refusal), occurrences, "refusals"),
+		TriggeredBy: canaryID,
+		CreatedAt:   at,
+	})
+	if err != nil {
+		slog.Error("ingest: record self-test claim refusal", "canary", canaryID, "service", service, "err", err)
+	}
 }
