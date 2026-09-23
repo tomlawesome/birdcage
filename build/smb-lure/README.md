@@ -183,7 +183,10 @@ on this container is empty: read `/audit/smb.log` instead.
 Two things worth knowing:
 
 - One `get` of one file writes about five lines: closes on the share
-  root, the directory and the file, some of them twice. Each is an alert.
+  root, the directory and the file, some of them twice. They reach the
+  operator as **one** alert naming the file — the agent collapses the
+  walk (#123, `internal/agent/smbaudit/collapse.go`). Two files opened in
+  the same second stay two alerts.
 - Samba creates an empty `cores` directory next to the log file. Nothing
   is ever written into it (`--ulimit core=0`), and it is not
   configurable separately from the log path.

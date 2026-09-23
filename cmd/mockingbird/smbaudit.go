@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,15 +37,18 @@ const (
 // the other's.
 const smbPositionFileName = "smb-position"
 
-// smbPositionSaveInterval is how often the read position is persisted
-// while lines are arriving. Not once per line: queue.PositionStore.Save
-// writes, fsyncs and renames, and one audited file fetch is several lines
-// (a real `get` of one file produced five). Not much longer either: this
-// interval is how far behind the saved position can be when the process
-// dies, and every line before it is read again on the next start -- which
-// costs nothing but a repeat parse, because a re-read line mints the same
-// event id and the queue drops the duplicate.
-const smbPositionSaveInterval = 2 * time.Second
+// smbTickInterval is how often the road, with no new line to react to,
+// releases a visit that has gone quiet (#123) and persists its read
+// position. Well under the collapse window, so a single access becomes an
+// alert promptly rather than waiting out a whole tick after its window;
+// and not per line, because queue.PositionStore.Save writes, fsyncs and
+// renames, while one audited file fetch is five lines.
+//
+// Everything between the last save and a crash is read again, which costs
+// nothing: the collapser groups a re-read stretch exactly as it grouped it
+// the first time and smbaudit.Encode derives the event bytes from the
+// lines alone, so the re-read mints ids the queue already knows.
+const smbTickInterval = 500 * time.Millisecond
 
 // smbAuditInventory is the one startup fact this road states about
 // itself, the same shape as agentInventory in portscan.go and
@@ -76,9 +80,20 @@ type smbAuditRoad struct {
 	nodeID    string
 	log       *slog.Logger
 
-	// pending is the position after the most recently handled line, and
-	// saved is what has actually reached disk. Split so the periodic save
-	// can skip writing a position that has not moved.
+	// mu guards collapser and lastPos. The tailer calls handle on its own
+	// goroutine while this road's timer releases quiet visits on another,
+	// and smbaudit.Collapser is deliberately not safe for both at once --
+	// serialising them is the caller's job, and this is the caller.
+	mu        sync.Mutex
+	collapser *smbaudit.Collapser
+	// lastPos is the position after the most recently handled line,
+	// whether or not it has become an event yet.
+	lastPos queue.Position
+
+	// pending is the position it is safe to save -- after the last line
+	// for which nothing is still held -- and saved is what has actually
+	// reached disk. Split so the periodic save can skip writing a
+	// position that has not moved.
 	pending      atomic.Uint64
 	pendingInode atomic.Uint64
 	saved        queue.Position
@@ -116,6 +131,7 @@ func newSMBAuditRoad(cfg Config, in *Intake, log *slog.Logger) (*smbAuditRoad, s
 		submit:    in.SubmitSMBEvent,
 		nodeID:    nodeID,
 		log:       log,
+		collapser: smbaudit.NewCollapser(smbaudit.CollapseConfig{}),
 	}, smbAuditInventory{Active: true}
 }
 
@@ -155,69 +171,104 @@ func (r *smbAuditRoad) run(ctx context.Context, log *slog.Logger) {
 		}
 	}()
 
-	ticker := time.NewTicker(smbPositionSaveInterval)
+	ticker := time.NewTicker(smbTickInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			<-done
+			// Nothing the collapser still holds is flushed here. The
+			// context is already cancelled, so a push would be refused
+			// anyway, and the read position never advanced past those
+			// lines -- so the next start reads them again and groups them
+			// the same way. Abandoning them is #48 decision 1's
+			// "queued-but-unsent events are abandoned rather than
+			// flushed", one level down.
 			r.savePosition(log)
 			return
 		case <-done:
 			r.savePosition(log)
 			return
 		case <-ticker.C:
+			r.release(ctx)
 			r.savePosition(log)
 		}
 	}
 }
 
-// handle is the tailer's emit callback: parse one line, queue whatever it
-// turned out to be, and record the position after it.
+// handle is the tailer's emit callback: parse one line and hand it to the
+// collapser, which decides whether it is an alert on its own, part of one
+// already being assembled, or the last piece of one now ready to go
+// (#123).
 //
-// The position is recorded for every line, including one the parse has
-// nothing to say about -- Samba's own start-up banner, say. Otherwise an
-// audit file whose last line is not an event would be re-read from the
-// same offset on every start for the life of the canary.
-//
-// It is not recorded when the queue push was abandoned: that only happens
-// when ctx ends while waiting for queue room, and the line then has to be
-// read again next start, which is #48's fail-closed rule (uncertainty
-// resolves to re-reading, never to skipping) applied to this road.
+// A line the parse has nothing to say about -- Samba's own start-up
+// banner, say -- still settles the read position. Otherwise an audit file
+// whose last line is not an event would be re-read from the same offset on
+// every start for the life of the canary.
 func (r *smbAuditRoad) handle(ctx context.Context, line tailer.Line) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.lastPos = line.Pos
 	ev, ok := smbaudit.Parse(line.Data)
 	if !ok {
-		r.note(line.Pos)
+		r.settle()
 		return
 	}
+	r.dispatch(ctx, r.collapser.Offer(ev, time.Now()))
+}
 
-	body, err := smbaudit.Encode(ev, r.nodeID)
-	if err != nil {
-		// Encoding a fixed-shape struct can only fail on something
-		// unencodable, which none of these fields is; counted rather
-		// than dropped silently, and the line is still acknowledged
-		// because reading it again would fail the same way for ever.
-		r.unreadable.Add(1)
-		r.log.Warn(fmt.Sprintf("could not encode an smb audit event: %v", err))
-		r.note(line.Pos)
-		return
-	}
+// release queues whatever the collapser has been holding long enough
+// (#123): a single access nobody followed becomes an alert a tick after
+// its window closes, rather than waiting for the next visitor.
+func (r *smbAuditRoad) release(ctx context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dispatch(ctx, r.collapser.Due(time.Now()))
+}
 
-	if err := r.submit(ctx, body); err != nil {
-		if ctx.Err() != nil {
-			// Shutting down. Deliberately no position record: the line
-			// is read again on the next start.
-			return
+// dispatch encodes and queues a batch of events, then settles the read
+// position. Called with mu held.
+func (r *smbAuditRoad) dispatch(ctx context.Context, events []smbaudit.Event) {
+	for _, ev := range events {
+		body, err := smbaudit.Encode(ev, r.nodeID)
+		if err != nil {
+			// Encoding a fixed-shape struct can only fail on something
+			// unencodable, which none of these fields is; counted rather
+			// than dropped silently, and not retried, because reading the
+			// line again would fail the same way for ever.
+			r.unreadable.Add(1)
+			r.log.Warn(fmt.Sprintf("could not encode an smb audit event: %v", err))
+			continue
 		}
-		r.log.Warn(fmt.Sprintf("could not queue an smb audit event: %v", err))
-		r.note(line.Pos)
+
+		if err := r.submit(ctx, body); err != nil {
+			if ctx.Err() != nil {
+				// Shutting down. Deliberately nothing settled: these
+				// lines are read again on the next start.
+				return
+			}
+			r.log.Warn(fmt.Sprintf("could not queue an smb audit event: %v", err))
+			continue
+		}
+		if ev.Kind == smbaudit.KindUnparseable {
+			r.unreadable.Add(1)
+		}
+		r.events.Add(1)
+	}
+	r.settle()
+}
+
+// settle records the read position, but only while the collapser is
+// holding nothing. A held line has been read and has not become an event
+// yet, so a position past it would let a crash lose it; waiting until the
+// collapser is empty means the position only ever names a point with
+// nothing outstanding behind it. Called with mu held.
+func (r *smbAuditRoad) settle() {
+	if r.collapser.Len() != 0 {
 		return
 	}
-	if ev.Kind == smbaudit.KindUnparseable {
-		r.unreadable.Add(1)
-	}
-	r.events.Add(1)
-	r.note(line.Pos)
+	r.note(r.lastPos)
 }
 
 // note records the position after a handled line, for the periodic save
@@ -246,9 +297,11 @@ func (r *smbAuditRoad) savePosition(log *slog.Logger) {
 	r.saved = pos
 }
 
-// Events is how many audit events this road has queued, and Unreadable
-// how many of them were lines it could not make sense of. Read by the
-// tests; not heartbeat fields yet, the same caveat portscan.Detected and
-// snmp.Logged carry.
+// Events is how many audit events this road has queued, Unreadable how
+// many of them were lines it could not make sense of, and Collapsed how
+// many lines were folded into another event rather than becoming one
+// (#123). Read by the tests; not heartbeat fields yet, the same caveat
+// portscan.Detected and snmp.Logged carry.
 func (r *smbAuditRoad) Events() uint64     { return r.events.Load() }
 func (r *smbAuditRoad) Unreadable() uint64 { return r.unreadable.Load() }
+func (r *smbAuditRoad) Collapsed() uint64  { return r.collapser.Collapsed() }

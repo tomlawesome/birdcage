@@ -146,6 +146,12 @@ type Event struct {
 	// wrong time in the alert body -- and it is only the body, because
 	// birdcage timestamps what it receives itself.
 	Timestamp string
+
+	// At is the same moment as Timestamp, decoded, and the zero time
+	// when the header carried nothing readable. Only the collapser
+	// (collapse.go) reads it, for deciding which closes belong to one
+	// visit; nothing encodes it, so it is not part of the wire form.
+	At time.Time
 }
 
 // Parse reads one line from the lure's log. ok is false for a line this
@@ -156,7 +162,7 @@ type Event struct {
 // newline. It is not modified, and every string in the returned Event is
 // a fresh copy, so the caller may reuse the buffer.
 func Parse(line []byte) (Event, bool) {
-	msg, stamp, ok := stripDebugHeader(line)
+	msg, stamp, at, ok := stripDebugHeader(line)
 	if !ok {
 		// No debug header: a continuation line of a multi-line record, a
 		// blank line, or something else smbd wrote straight to the file
@@ -165,7 +171,7 @@ func Parse(line []byte) (Event, bool) {
 	}
 
 	if isPanic(msg) {
-		return Event{Kind: KindPanic, Timestamp: stamp, Message: clip(string(msg), MaxMessageLen)}, true
+		return Event{Kind: KindPanic, Timestamp: stamp, At: at, Message: clip(string(msg), MaxMessageLen)}, true
 	}
 
 	fields := strings.Split(string(msg), "|")
@@ -177,6 +183,7 @@ func Parse(line []byte) (Event, bool) {
 		return Event{
 			Kind:      KindUnparseable,
 			Timestamp: stamp,
+			At:        at,
 			Message:   "audit line has " + strconv.Itoa(len(fields)) + " fields, expected at least " + strconv.Itoa(minAuditFields),
 		}, true
 	}
@@ -197,6 +204,7 @@ func Parse(line []byte) (Event, bool) {
 		return Event{
 			Kind:      KindUnparseable,
 			Timestamp: stamp,
+			At:        at,
 			Message: "audit line has " + quote(clip(result, 32)) +
 				" where the result belongs, expected \"ok\" or \"fail\"",
 		}, true
@@ -205,6 +213,7 @@ func Parse(line []byte) (Event, bool) {
 		return Event{
 			Kind:      KindUnparseable,
 			Timestamp: stamp,
+			At:        at,
 			Message: "audit line has " + quote(clip(operation, 32)) +
 				" where the operation belongs",
 		}, true
@@ -213,6 +222,7 @@ func Parse(line []byte) (Event, bool) {
 	ev := Event{
 		Kind:      KindAccess,
 		Timestamp: stamp,
+		At:        at,
 		User:      clip(user, MaxFieldLen),
 		SourceIP:  clip(sourceIP, MaxFieldLen),
 		Share:     clip(share, MaxFieldLen),
@@ -236,9 +246,9 @@ func Parse(line []byte) (Event, bool) {
 // "starts with '[', has a ']' within the first few dozen bytes", which is
 // two scans over a short prefix, in a function on the hot path of a file
 // a hostile process writes.
-func stripDebugHeader(line []byte) (msg []byte, stamp string, ok bool) {
+func stripDebugHeader(line []byte) (msg []byte, stamp string, at time.Time, ok bool) {
 	if len(line) == 0 || line[0] != '[' {
-		return nil, "", false
+		return nil, "", time.Time{}, false
 	}
 	// The header Samba writes is `[2026/09/23 22:01:53.987124,  1]` --
 	// 32 bytes. The cap is generous against a wider level number or a
@@ -247,31 +257,35 @@ func stripDebugHeader(line []byte) (msg []byte, stamp string, ok bool) {
 	const maxHeaderLen = 64
 	end := bytes.IndexByte(line[:min(len(line), maxHeaderLen)], ']')
 	if end < 0 {
-		return nil, "", false
+		return nil, "", time.Time{}, false
 	}
-	return bytes.TrimLeft(line[end+1:], " \t"), headerStamp(line[1:end]), true
+	at = headerTime(line[1:end])
+	if !at.IsZero() {
+		stamp = at.Format(openCanaryTimeLayout)
+	}
+	return bytes.TrimLeft(line[end+1:], " \t"), stamp, at, true
 }
 
 // sambaTimeLayout is the timestamp Samba writes into a debug header.
 const sambaTimeLayout = "2006/01/02 15:04:05.000000"
 
-// headerStamp rewrites the timestamp out of a debug header into the
-// layout OpenCanary puts in its events. header is everything between the
-// brackets, timestamp first and the debug level after a comma.
+// headerTime decodes the timestamp out of a debug header. header is
+// everything between the brackets, timestamp first and the debug level
+// after a comma.
 //
-// An unreadable timestamp gives "", not the current time: see
-// Event.Timestamp for why every byte of an emitted event has to come from
-// the line and not from the agent's own clock.
-func headerStamp(header []byte) string {
+// An unreadable timestamp gives the zero time, never the current time:
+// see Event.Timestamp for why every byte of an emitted event has to come
+// from the line and not from the agent's own clock.
+func headerTime(header []byte) time.Time {
 	comma := bytes.IndexByte(header, ',')
 	if comma < 0 {
 		comma = len(header)
 	}
 	t, err := time.Parse(sambaTimeLayout, string(bytes.TrimSpace(header[:comma])))
 	if err != nil {
-		return ""
+		return time.Time{}
 	}
-	return t.UTC().Format(openCanaryTimeLayout)
+	return t.UTC()
 }
 
 // isPanic reports whether msg is smbd's own panic or internal-error

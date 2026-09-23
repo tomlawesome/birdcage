@@ -55,6 +55,14 @@
 // never a silent skip -- because a line this package cannot read is
 // itself something an operator needs to know about.
 //
+// # One visit is one alert
+//
+// A single file fetch writes five audit lines -- the directories SMB
+// walked to reach the file, the file, and several of them again. Issue
+// #123 settles that those are one alert naming the file, and collapse.go
+// is that decision and the reasoning behind it, including why the grouping
+// is measured on the lines' own clock rather than the agent's.
+//
 // # Everything here is hostile input
 //
 // The share holds nothing but what the image put there, so a path in an

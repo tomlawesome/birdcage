@@ -19,6 +19,9 @@ import (
 // /audit/smb.log on 2026-09-23 while a real smbclient fetched one file:
 // the start-up banner and its continuation line, then the closes for the
 // share root, the directory and the file itself.
+//
+// The three closes are one visit, so they are one alert (#123). The number
+// every test below waits for is that one, not the three lines.
 var capturedAuditLines = []string{
 	`[2026/09/23 21:59:09.210719,  0]   smbd version 4.23.8 started.`,
 	`  Copyright Andrew Tridgell and the Samba Team 1992-2025`,
@@ -123,14 +126,15 @@ func TestSMBAuditRoadQueuesAnAccessWithShareAndPath(t *testing.T) {
 	road, auditPath, _ := newTestSMBRoad(t, in)
 
 	writeLines(t, auditPath, capturedAuditLines)
-	// Three closes; the banner and its continuation line are not events.
-	runRoadUntil(t, road, in, 3)
+	// One alert: the three closes of one file fetch collapse into the
+	// longest path, and the banner is not an event at all (#123).
+	runRoadUntil(t, road, in, 1)
 
-	if got := in.Queue.Depth(); got != 3 {
-		t.Fatalf("queue depth = %d, want 3 (one per close, nothing for the banner)", got)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Fatalf("queue depth = %d, want 1 -- one visit is one alert", got)
 	}
 	var paths []string
-	for _, queued := range in.Queue.Peek(3) {
+	for _, queued := range in.Queue.Peek(1) {
 		fields, err := event.ExtractFields(queued.Payload)
 		if err != nil {
 			t.Fatalf("ExtractFields on a queued event: %v", err)
@@ -162,11 +166,14 @@ func TestSMBAuditRoadQueuesAnAccessWithShareAndPath(t *testing.T) {
 	if !found {
 		t.Errorf("no queued event named %s; got %v", wantPath, paths)
 	}
-	if got := road.Events(); got != 3 {
-		t.Errorf("road.Events() = %d, want 3", got)
+	if got := road.Events(); got != 1 {
+		t.Errorf("road.Events() = %d, want 1", got)
 	}
 	if got := road.Unreadable(); got != 0 {
 		t.Errorf("road.Unreadable() = %d, want 0", got)
+	}
+	if got := road.Collapsed(); got != 2 {
+		t.Errorf("road.Collapsed() = %d, want the 2 directory closes folded away", got)
 	}
 }
 
@@ -183,10 +190,10 @@ func TestSMBAuditRoadReadsWhatWasWrittenBeforeItStarted(t *testing.T) {
 	// A pause, so there is no chance the road's first read happens to
 	// coincide with the write.
 	time.Sleep(50 * time.Millisecond)
-	runRoadUntil(t, road, in, 3)
+	runRoadUntil(t, road, in, 1)
 
-	if got := in.Queue.Depth(); got != 3 {
-		t.Fatalf("queue depth = %d, want 3 -- lines written before the road started must not be lost", got)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Fatalf("queue depth = %d, want 1 -- lines written before the road started must not be lost", got)
 	}
 }
 
@@ -198,9 +205,9 @@ func TestSMBAuditRoadResumesWhereItLeftOff(t *testing.T) {
 	road, auditPath, stateDir := newTestSMBRoad(t, in)
 
 	writeLines(t, auditPath, capturedAuditLines)
-	runRoadUntil(t, road, in, 3)
-	if got := in.Queue.Depth(); got != 3 {
-		t.Fatalf("first run queued %d events, want 3", got)
+	runRoadUntil(t, road, in, 1)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Fatalf("first run queued %d events, want 1", got)
 	}
 
 	// The position must have reached disk by the time the road stopped:
@@ -245,9 +252,9 @@ func TestSMBAuditRoadRereadIsNotADuplicateAlert(t *testing.T) {
 	road, auditPath, stateDir := newTestSMBRoad(t, in)
 
 	writeLines(t, auditPath, capturedAuditLines)
-	runRoadUntil(t, road, in, 3)
-	if got := in.Queue.Depth(); got != 3 {
-		t.Fatalf("first run queued %d events, want 3", got)
+	runRoadUntil(t, road, in, 1)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Fatalf("first run queued %d events, want 1", got)
 	}
 
 	// Throw the saved position away, the worst case a crash can produce,
@@ -263,8 +270,8 @@ func TestSMBAuditRoadRereadIsNotADuplicateAlert(t *testing.T) {
 	defer cancel()
 	runSMBAuditRoad(ctx, again, discardLogger())
 
-	if got := in.Queue.Depth(); got != 3 {
-		t.Errorf("queue depth = %d after re-reading the whole file, want 3 -- a re-read line must mint the id it already had", got)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Errorf("queue depth = %d after re-reading the whole file, want 1 -- a re-read visit must mint the id it already had", got)
 	}
 }
 
@@ -429,12 +436,21 @@ func newBareSMBRoad(t *testing.T, submit func(context.Context, []byte) error) (*
 		submit:    submit,
 		nodeID:    smbaudit.DefaultNodeID,
 		log:       discardLogger(),
+		collapser: smbaudit.NewCollapser(smbaudit.CollapseConfig{}),
 	}, stateDir
 }
 
 var oneAuditLine = tailer.Line{
 	Data: []byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`),
 	Pos:  queue.Position{Inode: 7, Offset: 120},
+}
+
+// onePanicLine is a line the collapser never holds (#123: panics are never
+// collapsed), so handle reaches the queue with it on the first call --
+// which is what the tests about queueing failures need.
+var onePanicLine = tailer.Line{
+	Data: []byte(`[2026/09/23 22:06:57.659891,  0]   PANIC (pid 1): sys_setgroups failed in 4.23.8`),
+	Pos:  queue.Position{Inode: 7, Offset: 240},
 }
 
 // TestSMBAuditRoadAcknowledgesALineItCouldNotQueue: a push that failed for
@@ -446,12 +462,12 @@ func TestSMBAuditRoadAcknowledgesALineItCouldNotQueue(t *testing.T) {
 		return errors.New("queue refused it")
 	})
 
-	road.handle(context.Background(), oneAuditLine)
+	road.handle(context.Background(), onePanicLine)
 
 	if got := road.Events(); got != 0 {
 		t.Errorf("road.Events() = %d, want 0 -- nothing was queued", got)
 	}
-	if got := (queue.Position{Inode: road.pendingInode.Load(), Offset: int64(road.pending.Load())}); got != oneAuditLine.Pos {
+	if got := (queue.Position{Inode: road.pendingInode.Load(), Offset: int64(road.pending.Load())}); got != onePanicLine.Pos {
 		t.Errorf("pending position = %+v, want the position after the line", got)
 	}
 }
@@ -464,7 +480,7 @@ func TestSMBAuditRoadDoesNotAcknowledgeOnShutdown(t *testing.T) {
 	cancel()
 	road, _ := newBareSMBRoad(t, func(ctx context.Context, _ []byte) error { return ctx.Err() })
 
-	road.handle(ctx, oneAuditLine)
+	road.handle(ctx, onePanicLine)
 
 	if got := road.pending.Load(); got != 0 {
 		t.Errorf("pending offset = %d, want 0 -- an abandoned line must not be acknowledged", got)
@@ -484,7 +500,7 @@ func TestSMBAuditRoadSavesOnlyWhatMoved(t *testing.T) {
 		t.Errorf("a position file exists before any line was read (err %v)", err)
 	}
 
-	road.handle(context.Background(), oneAuditLine)
+	road.handle(context.Background(), onePanicLine)
 	road.savePosition(discardLogger())
 	info, err := os.Stat(positionPath)
 	if err != nil {
@@ -516,7 +532,7 @@ func TestSMBAuditRoadKeepsGoingWhenThePositionCannotBeSaved(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(stateDir, 0o700) })
 
-	road.handle(context.Background(), oneAuditLine)
+	road.handle(context.Background(), onePanicLine)
 	road.savePosition(discardLogger())
 
 	if (road.saved != queue.Position{}) {
@@ -536,9 +552,78 @@ func TestSMBAuditRoadReadsFromTheStartWhenThePositionIsUnreadable(t *testing.T) 
 		t.Fatalf("write a corrupt position: %v", err)
 	}
 	writeLines(t, auditPath, capturedAuditLines)
-	runRoadUntil(t, road, in, 3)
+	runRoadUntil(t, road, in, 1)
 
-	if got := in.Queue.Depth(); got != 3 {
-		t.Errorf("queue depth = %d, want 3 -- an unreadable position must re-read the file, not skip it", got)
+	if got := in.Queue.Depth(); got != 1 {
+		t.Errorf("queue depth = %d, want 1 -- an unreadable position must re-read the file, not skip it", got)
+	}
+}
+
+// TestSMBAuditRoadHoldsThePositionWhileAVisitIsOpen: a line that has been
+// read but not yet turned into an event must not be behind the saved
+// position, or a crash would lose it. The position only moves once the
+// collapser is holding nothing (#123).
+func TestSMBAuditRoadHoldsThePositionWhileAVisitIsOpen(t *testing.T) {
+	road, _ := newBareSMBRoad(t, func(context.Context, []byte) error { return nil })
+
+	road.handle(context.Background(), oneAuditLine)
+	if got := road.pending.Load(); got != 0 {
+		t.Fatalf("pending offset = %d while a visit is still open, want 0", got)
+	}
+
+	// The tick that releases the quiet visit is also what lets the
+	// position move.
+	time.Sleep(smbaudit.DefaultCollapseWindow)
+	road.release(context.Background())
+	if got := road.pending.Load(); got != uint64(oneAuditLine.Pos.Offset) {
+		t.Errorf("pending offset = %d after the visit was released, want %d", got, oneAuditLine.Pos.Offset)
+	}
+	if got := road.Events(); got != 1 {
+		t.Errorf("road.Events() = %d, want the released access", got)
+	}
+}
+
+// TestSMBAuditRoadKeepsTwoFilesAsTwoAlerts is the other half of #123: the
+// collapsing is about the walk to a file, never about how much a visitor
+// did.
+func TestSMBAuditRoadKeepsTwoFilesAsTwoAlerts(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{MaxEvents: 64, MaxBytes: 1 << 20})
+	road, auditPath, _ := newTestSMBRoad(t, in)
+
+	writeLines(t, auditPath, []string{
+		`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
+		`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
+		`[2026/09/23 22:01:53.300000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+		`[2026/09/23 22:01:53.400000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR`,
+		`[2026/09/23 22:01:53.500000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR/salaries-2025.xlsx`,
+	})
+	runRoadUntil(t, road, in, 2)
+
+	if got := in.Queue.Depth(); got != 2 {
+		t.Fatalf("queue depth = %d, want 2 -- two files opened is two alerts", got)
+	}
+	var paths []string
+	for _, queued := range in.Queue.Peek(2) {
+		var decoded struct {
+			LogData map[string]string `json:"logdata"`
+		}
+		if err := json.Unmarshal(queued.Payload, &decoded); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		paths = append(paths, decoded.LogData["FILENAME"])
+	}
+	for _, want := range []string{
+		"/srv/shares/public/IT/vpn-setup.pdf",
+		"/srv/shares/public/HR/salaries-2025.xlsx",
+	} {
+		found := false
+		for _, got := range paths {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no alert named %s; got %v", want, paths)
+		}
 	}
 }
