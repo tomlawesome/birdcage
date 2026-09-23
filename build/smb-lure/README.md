@@ -68,7 +68,7 @@ docker run -d --name smb-lure --restart unless-stopped \
   --network container:<mockingbird> \
   --read-only \
   --cap-drop ALL \
-  --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
+  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
   --security-opt no-new-privileges \
   --pids-limit 128 \
   --memory 192m \
@@ -127,9 +127,9 @@ with each one removed (2026-09-23, Docker 29.7.2 rootless):
   not a privileged port there. Kept in the command because that default
   is Docker's, not the kernel's, and another runtime binding 445 without
   it would fail.
-- `CHOWN` — **not needed**: the share is read-only and already owned by
-  root. It is in the list because decision 5 names it. Dropping it is a
-  one-line change and wants the owner's word first.
+- `CHOWN` — **not needed** and deliberately absent: the share is
+  read-only and already owned by root. Decision 5 listed it before the
+  image was run; the running image proved it unused, so it went.
 - `DAC_OVERRIDE` — **not needed**, and deliberately absent. The bait
   files are world-readable (0444), so the guest account reads them
   without it.
