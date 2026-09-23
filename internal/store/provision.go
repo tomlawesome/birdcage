@@ -173,6 +173,13 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		Ports:              profile.Ports,
 		HeartbeatIntervalS: DefaultHeartbeatIntervalS,
 		EnrolledAt:         now,
+		// Issue #47 steps 7-9: a canary provisioned through this path is
+		// pending (#45 state 5) until its first self-test round trip
+		// passes -- store.SettlePending, fired from recordSelfTestMatch
+		// the moment that happens. Every other InsertCanary caller
+		// (`birdcage canary add`, cmd/seed-story) leaves Pending false
+		// and keeps registering immediately.
+		Pending: true,
 	}); err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("insert canary: %w", err)
 	}

@@ -125,7 +125,7 @@ func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits l
 	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
 	for _, route := range ingestRoutes(h) {
-		mux.Handle(route.pattern, requireBearerToken(database, now, h.limiters, h.coalescer, route))
+		mux.Handle(route.pattern, requireBearerToken(database, now, h.limiters, h.coalescer, h.rotationHook, route))
 	}
 	mux.HandleFunc("/", notFoundJSON)
 	return mux

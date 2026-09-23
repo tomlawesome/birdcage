@@ -563,6 +563,13 @@ func buildDashboardServer(cfg startupConfig, birdcageCA *ca.CA, handler http.Han
 // "disabled" Info line, when it is unset. Once set, both listeners mint
 // their serving certificates from birdcageCA -- #47 slice 1, #62 "Drop
 // them".
+//
+// hook (main.go's *selftestsched.Scheduler) is what turns a rotation
+// completing, and -- #47 steps 7-9 -- a provisioned canary's very first
+// authenticated request, into a self-test mint; nothing here has to
+// change when the hook interface grows a method, since Scheduler already
+// implements both and this parameter's static type is the interface, not
+// the concrete package.
 func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, hub *stream.Hub, idx *store.SelfTestIndex, hook ingest.SelfTestRotationHook, configLog, ingestLog, enrolLog *slog.Logger) (ingestServer, enrolServer *http.Server, err error) {
 	if cfg.ingestAddr == "" {
 		ingestLog.Info(fmt.Sprintf("%s not set; HTTPS ingest and enrolment listeners disabled", envIngestAddr))

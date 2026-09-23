@@ -6,11 +6,20 @@
 
 export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
 /** issue #45's ordered health state -- worst-first: token_conflict,
- * silent, not_delivering, throttled, rotation_stalled, ok. The other
- * three states the issue names (self_test_failed, pending,
- * agent_out_of_date) don't appear here yet: #46/#47/#48 haven't shipped
- * the data they'd read from. */
-export type CanaryStatus = 'token_conflict' | 'silent' | 'not_delivering' | 'throttled' | 'rotation_stalled' | 'ok'
+ * silent, not_delivering, throttled, rotation_stalled, pending, ok.
+ * 'pending' (issue #47 steps 7-9) is provisioned-but-not-yet-registered:
+ * not a fault, not health -- #45's own third category, outside both the
+ * critical and degraded tiers. The two remaining states the issue names
+ * (self_test_failed, agent_out_of_date) still don't appear here: #46/#48
+ * haven't shipped the frontend data they'd read from. */
+export type CanaryStatus =
+  | 'token_conflict'
+  | 'silent'
+  | 'not_delivering'
+  | 'throttled'
+  | 'rotation_stalled'
+  | 'pending'
+  | 'ok'
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
 export type Range = '15m' | '1h' | '24h' | '14d' | '90d'
 

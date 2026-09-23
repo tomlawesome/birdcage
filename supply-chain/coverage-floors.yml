@@ -232,7 +232,11 @@ floors:
                              # migration names always exist for a defined
                              # Engine, so nothing reaches them without fault
                              # injection this package doesn't have a seam for.
-  internal/enrol: 80
+  internal/enrol: 84         # 84.6% measured with -race and Postgres,
+                             # 2026-09-23 (#47 steps 7-9: rate limiting
+                             # POST /enrol/hello by source address gained
+                             # its own tests, raising this package's
+                             # coverage from the previous 80% floor).
   internal/hostmask: 96      # 96.9% measured, 2026-09-22 (#108, slice 1
                              # commit 4). The shared mask-list constant and
                              # its startup mount check (Check, ParseMountinfo)

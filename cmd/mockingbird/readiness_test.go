@@ -147,6 +147,42 @@ func TestRunReadinessCheckIsQuietWhenEverythingAnswers(t *testing.T) {
 	}
 }
 
+// TestRunReadinessCheckLogsReadyWhenEverythingAnswers is issue #47 step
+// 7's required test: the agent's own "I believe I am ready" signal is an
+// INFO line naming #47, present only when every enabled module answered.
+func TestRunReadinessCheckLogsReadyWhenEverythingAnswers(t *testing.T) {
+	t.Parallel()
+
+	a := listenAndAccept(t)
+	conf := writeConf(t, map[string]int{"ftp": a})
+
+	log, buf := captureLogger()
+	runReadinessCheck(context.Background(), fastReadinessConfig(conf), log)
+
+	out := buf.String()
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "believes it is ready") {
+		t.Errorf("expected an INFO line saying the agent believes it is ready, got log:\n%s", out)
+	}
+}
+
+// TestRunReadinessCheckDoesNotLogReadyWhenSomethingFailed proves the
+// ready signal is all-or-nothing: a canary with one module down never
+// claims readiness alongside the WARN naming it.
+func TestRunReadinessCheckDoesNotLogReadyWhenSomethingFailed(t *testing.T) {
+	t.Parallel()
+
+	up := listenAndAccept(t)
+	down := closedLoopbackPort(t)
+	conf := writeConf(t, map[string]int{"ftp": up, "https": down})
+
+	log, buf := captureLogger()
+	runReadinessCheck(context.Background(), fastReadinessConfig(conf), log)
+
+	if out := buf.String(); strings.Contains(out, "believes it is ready") {
+		t.Errorf("expected no readiness claim with a module down, got log:\n%s", out)
+	}
+}
+
 // TestRunReadinessCheckSurvivesAnUnreadableConf: a missing or unreadable
 // configuration must not panic or hang this road -- the same fail-soft
 // contract newPortscanRoad and newSNMPRoad both already have with a

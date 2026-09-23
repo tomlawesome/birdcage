@@ -346,4 +346,29 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
     expect(plainText(s.sub)).toContain('The other one is fine.')
   })
+
+  // Issue #47 steps 7-9: rule 2's switch has no case for 'pending' --
+  // #45's own "hero-sentence prose is a separate design call" applies
+  // here too, so a fleet whose only issue is one pending canary falls
+  // through to rule 4's ordinary quiet story, not a fault sentence. The
+  // dashboard tile still says "pending" (Tiles.svelte); this pins that
+  // the hero voice deliberately does not, until that copy is written.
+  it('a lone pending canary does not trigger rule 2', () => {
+    const s = computeSentence([canary('canary-iot', 'pending')], [], '14d', now, lastHit)
+    expect(s.rule).toBe(4)
+  })
+
+  it('rotation stalled still outranks pending', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'pending'),
+        canary('canary-srv', 'rotation_stalled', { rotation_stalled: true, rotation_stalled_for_s: 1200 }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's token rotation has stalled")
+  })
 })

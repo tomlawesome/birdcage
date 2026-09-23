@@ -211,6 +211,47 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	s.log.Info("minted self-test command", "canary", c.ID, "command_id", cmd.ID, "targets", len(targets))
 }
 
+// FirstContact implements internal/ingest.SelfTestRotationHook's second
+// method (issue #47 step 8): mints a self-test run the instant a
+// provisioned canary's very first authenticated request lands --
+// internal/ingest's requireBearerToken, the "first use of a canary's
+// first token" branch of completeRotation, which can fire at most once
+// per canary's lifetime. Unlike Tick and RotationSucceeded, this is
+// unconditional: no selftest_enabled or schedule-setting read at all,
+// because enrolment proof is not the daily schedule (#47's own "Step 8
+// is the part that matters"). Reuses mintForCanary -- the same
+// double-mint guard, target derivation and MintSelfTestCommand call
+// every mint path shares -- so a first contact landing moments before or
+// after a scheduled tick can never mint the run twice.
+//
+// Honeypot-only, the same restriction RotationSucceeded applies and for
+// the same reason: a self-test command is only ever delivered to a
+// kind-honeypot canary (internal/ingest's ingestRoutes gates POST
+// /ingest/commands to Honeypot alone), so minting one for any other kind
+// would only ever expire unmatched -- and here specifically would leave
+// that canary's tile stuck on both "pending" and "self_test_failed" for
+// a proof it can never pass. A canary of a kind with no self-test
+// mechanism has no path off pending through this hook; see this build's
+// report.
+//
+// c.LastSeenAddr would ordinarily still be nil at this exact moment (no
+// heartbeat, and no earlier request, has ever run for this canary) -- the
+// call site in internal/ingest/auth.go's completeRotation records the
+// connection's own source address first, via the same
+// store.SetCanaryLastSeenAddr internal/ingest/heartbeat.go's own
+// last-seen write uses, so the lookup below already finds it set.
+func (s *Scheduler) FirstContact(ctx context.Context, canaryID string, at time.Time) {
+	c, ok, err := store.SelfTestCanaryByID(ctx, s.db, canaryID)
+	if err != nil {
+		s.log.Error("look up canary for first-contact self-test", "canary", canaryID, "err", err)
+		return
+	}
+	if !ok || c.Kind != agentkind.Honeypot || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
+		return
+	}
+	s.mintForCanary(ctx, c, at.UTC())
+}
+
 // RotationSucceeded implements internal/ingest.SelfTestRotationHook
 // (issue #46 item 5c): mints the rotation-coupled self-test the instant
 // a canary's token rotation succeeds, when the operator has chosen

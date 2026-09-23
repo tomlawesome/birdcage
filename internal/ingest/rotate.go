@@ -26,8 +26,20 @@ import (
 // RotationSucceeded must not block or fail handleRotate's own response:
 // it is called after the rotation has already committed, and any error
 // it hits is the hook's own to log.
+//
+// FirstContact (issue #47 step 8) is this interface's second method,
+// added without touching the first: it fires once per canary, from
+// requireBearerToken's completeRotation (auth.go), the instant the very
+// first authenticated request from a newly provisioned canary lands --
+// "first use of a canary's first token", the same branch that already
+// writes the ingest.token_first_use audit entry. Unlike RotationSucceeded
+// it is never gated on selftest_enabled or the rotation-coupled schedule
+// setting: enrolment proof is not the daily self-test schedule. Same
+// contract as RotationSucceeded otherwise -- must not block or fail the
+// request it rides in on, and any error it hits is the hook's own to log.
 type SelfTestRotationHook interface {
 	RotationSucceeded(ctx context.Context, canaryID string, at time.Time)
+	FirstContact(ctx context.Context, canaryID string, at time.Time)
 }
 
 // rotateResponse is POST /ingest/rotate's response body: the freshly

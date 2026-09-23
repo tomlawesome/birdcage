@@ -251,17 +251,25 @@ func TestApplyHealthStatePrecedence(t *testing.T) {
 		throttled        bool
 		rotationStalled  bool
 		tokenConflict    bool
+		pending          bool
 		want             HealthState
 	}{
-		{"ok alone", "ok", false, false, false, false, StateOK},
-		{"throttled alone", "ok", false, true, false, false, StateThrottled},
-		{"rotation stalled alone", "ok", false, false, true, false, StateRotationStalled},
-		{"throttled beats rotation stalled", "ok", false, true, true, false, StateThrottled},
-		{"not delivering beats throttled", "ok", true, true, false, false, StateNotDelivering},
-		{"silent beats not delivering", "silent", true, false, false, false, StateSilent},
-		{"silent beats rotation stalled", "silent", false, false, true, false, StateSilent},
-		{"token conflict beats silent", "silent", false, false, false, true, StateTokenConflict},
-		{"token conflict beats everything", "silent", true, true, true, true, StateTokenConflict},
+		{"ok alone", "ok", false, false, false, false, false, StateOK},
+		{"throttled alone", "ok", false, true, false, false, false, StateThrottled},
+		{"rotation stalled alone", "ok", false, false, true, false, false, StateRotationStalled},
+		{"throttled beats rotation stalled", "ok", false, true, true, false, false, StateThrottled},
+		{"not delivering beats throttled", "ok", true, true, false, false, false, StateNotDelivering},
+		{"silent beats not delivering", "silent", true, false, false, false, false, StateSilent},
+		{"silent beats rotation stalled", "silent", false, false, true, false, false, StateSilent},
+		{"token conflict beats silent", "silent", false, false, false, true, false, StateTokenConflict},
+		{"token conflict beats everything", "silent", true, true, true, true, false, StateTokenConflict},
+		// Issue #47 step 9: pending ranks last of the fault states --
+		// worse than nothing (it beats "ok", per "never a healthy canary
+		// on the dashboard"), but every other signal here still outranks
+		// it, including the degraded tier (rotation stalled).
+		{"pending alone", "ok", false, false, false, false, true, StatePending},
+		{"rotation stalled beats pending", "ok", false, false, true, false, true, StateRotationStalled},
+		{"token conflict beats pending", "silent", false, false, false, true, true, StateTokenConflict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,7 +283,7 @@ func TestApplyHealthStatePrecedence(t *testing.T) {
 				t0 := now.Add(-time.Minute)
 				tokenConflictSince = &t0
 			}
-			applyHealthState(&c, tc.notDeliveringNow, throttledSince, tc.rotationStalled, false, 60, tokenConflictSince, false, now)
+			applyHealthState(&c, tc.notDeliveringNow, throttledSince, tc.rotationStalled, false, 60, tokenConflictSince, false, tc.pending, now)
 			if c.Status != string(tc.want) {
 				t.Errorf("Status = %q, want %q", c.Status, tc.want)
 			}
@@ -290,7 +298,7 @@ func TestApplyHealthStateKeepsDetailForNonWinningStates(t *testing.T) {
 	now := mustParse(t, "2026-01-01T00:00:00Z")
 	c := Canary{Status: "ok"}
 	throttledSince := now.Add(-2 * time.Minute)
-	applyHealthState(&c, true /* not delivering wins */, &throttledSince, true, false, 900, nil, false, now)
+	applyHealthState(&c, true /* not delivering wins */, &throttledSince, true, false, 900, nil, false, false, now)
 
 	if c.Status != string(StateNotDelivering) {
 		t.Fatalf("Status = %q, want %q", c.Status, StateNotDelivering)

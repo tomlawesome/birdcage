@@ -101,6 +101,21 @@ func runReadinessCheck(ctx context.Context, cfg readinessConfig, log *slog.Logge
 		}
 	}
 
+	if len(up) == len(ports) {
+		// Issue #47 step 7: the agent's own "I believe I am ready"
+		// signal -- every module opencanary.conf enables answered before
+		// the deadline. Logged only, never sent to birdcage: the wire
+		// shape this signal would ride (client.SelfReport, the heartbeat
+		// body) already carries a narrower field (LogReadOK) for a
+		// different check, and adding a new one is a larger change than
+		// this slice's "keep it small" -- birdcage does not trust this
+		// line in any case (#47's own "does not take its word for it"),
+		// so the operator reading container logs is this signal's only
+		// audience. See this build's report.
+		log.Info(fmt.Sprintf("readiness: every enabled module answered within %s -- agent believes it is ready (#47)", cfg.Window))
+		return
+	}
+
 	for module, port := range ports {
 		if up[module] {
 			continue
