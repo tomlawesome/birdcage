@@ -19,7 +19,19 @@ set -eu
 
 . "$(dirname "$0")/journey.sh"
 
-step "GET /api/canaries shows the canary ok with a recent heartbeat"
+step "GET /api/canaries shows the canary ok with a recent heartbeat, once its first self-test has passed"
+# Issue #47 steps 7-9: a freshly enrolled honeypot is "pending" until the
+# self-test birdcage mints on its first authenticated request has passed
+# -- every target answered, the portscan one included (#46 slice 3's
+# attributed claim, over loopback: #46 note 22641, #78 note 22643). The
+# agent polls for that command every 60 s give or take 10
+# (cmd/mockingbird/command.go), then runs the probes and ships the
+# events, so "ok" is a minute or two away from enrol-and-hit's hit, not
+# instant: pipeline 1521 read "pending" 29 s after the mint. Three
+# minutes is the bound; a canary still pending after that has a
+# self-test target that never matched, and the failure prints which.
+poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
+  || fail "canary $E2E_CANARY_ID never became ok within 180 s of its first self-test (self_test names the target that did not answer): $(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" "$E2E_BIRDCAGE"
 canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
   || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
 case "$canary_json" in

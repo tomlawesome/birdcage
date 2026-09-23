@@ -43,10 +43,16 @@ fail() {
 # stderr via internal/logging, but this greps stdout+stderr together so
 # a message landing on either still counts.
 refuseTimeout=15
+refusal_count=0
 run_refused() {
   local name="$1" want_substring="$2"
   shift 2
-  local container="birdcage-e2e-startup-refusal-$$"
+  # Named from E2E_PREFIX (the job id in CI), never from $$: a fresh CI
+  # container starts its shell at the same pid every time, so two jobs
+  # on one Docker host collided on "-63" (pipeline 1521). The counter
+  # keeps consecutive refusals in one run apart too.
+  refusal_count=$((refusal_count + 1))
+  local container="${E2E_PREFIX:-birdcage-e2e}-startup-refusal-$refusal_count"
   local out status
   # A refusal exiting non-zero is the success case this function is
   # testing for, so the capture below must not trip `set -e` itself --
