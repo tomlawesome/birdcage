@@ -1,6 +1,6 @@
 # ADR-0007: Agent upgrades need a DKIM-signed email from the admin and a published checksum
 
-**Status:** Accepted
+**Status:** Accepted; amended 2026-09-23 (remote apply deferred to #120)
 **Date:** 2026-09-16
 **Relates to:** #54 (the design and everything rejected on the way),
 #47 (enrolment pins the admin address and release address), #48 (the
@@ -57,6 +57,31 @@ in DNS.
   built and tested against real provider signatures.
 - Per-canary credentials (token, mTLS certificate) are untouched; the
   admin's approval is never per canary.
+
+## Amendment (owner, 2026-09-23)
+
+ADR-0008 made the agent a container, and a container cannot replace
+its own image: only the host can pull a new one and restart it. Any
+birdcage-driven apply therefore needs a helper on every host holding
+the Docker socket, which on the rootful daemon that macvlan requires
+is root on that VM. Rootless Docker would make such a helper safe but
+cannot attach a container to the real network (probed 2026-09-23:
+a rootless daemon cannot see the host interface for `-d macvlan`).
+
+So in M1 **birdcage does not apply upgrades**. The agent reports its
+build version on every heartbeat; birdcage compares it with its own
+release train, shows the canary as behind on the canary page and in
+the summary email with the exact pull command, and the operator pulls.
+The human doing the pull is the approval, and "a hacked birdcage cannot
+install an agent of its choosing" holds by construction.
+
+What stays: decisions 1-3 as the design for remote apply *if* it
+returns; the mailbox and approval code already built (slice 1), which
+is also the confirmation path for changing the pinned admin address;
+the `upgrade` command kind, still unmintable. Lock 2 becomes the
+registry image digest, per ADR-0008. The route back to remote apply
+is a privilege-split host helper -- unprivileged listener, fixed
+root-side pull-and-restart unit -- explored in #120 (M3).
 
 ## Superseded
 
