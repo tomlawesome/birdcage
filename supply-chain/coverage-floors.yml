@@ -213,11 +213,14 @@ floors:
                               # is driven by a recorded-fixture unit test
                               # (a real grype binary is never required).
   internal/selftest: 96
-  internal/selftestsched: 81 # 82.8% measured with -race, 2026-09-23 (#46 slice 1). New
+  internal/selftestsched: 86 # 87.4-89.7% measured with -race and Postgres, 2026-09-23 (#46 slice 1). New
                              # package this slice adds: the scheduled
                              # self-test's tick, deadline sweep and
                              # rotation-coupled mint hook, against sqlite and
-                             # Postgres both.
+                             # Postgres both. The 2-point spread is one
+                             # error branch the Run-loop test reaches only
+                             # when cancel() lands mid-tick; every other
+                             # branch has a deterministic test.
   internal/startcheck: 88   # 88.9% measured (was floored at 86). #93's
                              # non-root fix made the permission-refusal tests
                              # actually run in CI, and this is the first CI

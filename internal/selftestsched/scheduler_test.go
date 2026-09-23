@@ -408,3 +408,24 @@ func TestTickSweepErrorIsLoggedNotFatal(t *testing.T) {
 		s.Tick(context.Background())
 	})
 }
+
+// TestTickCanaryListErrorIsLoggedNotFatal pins the canary-list error
+// path on the scheduled minute: with the canaries table gone the
+// settings reads succeed, the minute matches, and the list failure ends
+// the mint quietly -- the tick still goes on to the sweep.
+func TestTickCanaryListErrorIsLoggedNotFatal(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, now.Format(scheduleTimeLayout))
+		if _, err := database.ExecContext(context.Background(), `DROP TABLE canaries CASCADE`); err != nil {
+			// SQLite has no CASCADE; the plain form is enough there.
+			if _, err := database.ExecContext(context.Background(), `DROP TABLE canaries`); err != nil {
+				t.Fatalf("drop canaries: %v", err)
+			}
+		}
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+	})
+}
