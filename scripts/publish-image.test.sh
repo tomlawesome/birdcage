@@ -144,10 +144,22 @@ fi
 reset_fixtures
 RESOLVED_REPO_DIGEST="ghcr.io/someone-else/other@${good_digest}"
 split "$(run "$ref" "$tested_id")"
-if [ "$GOT" = 2 ] && [[ "$OUT" == *"not the repository being published"* ]]; then
-  ok "a resolved digest belonging to a different repository is refused (exit 2), naming the cause"
+if [ "$GOT" = 2 ] && [[ "$OUT" == *"no RepoDigests entry for ${repo}"* ]]; then
+  ok "a resolved digest belonging only to a different repository is refused (exit 2), naming the cause"
 else
-  bad "a resolved digest belonging to a different repository is refused (exit 2), naming the cause" "exit $GOT: $OUT"
+  bad "a resolved digest belonging only to a different repository is refused (exit 2), naming the cause" "exit $GOT: $OUT"
+fi
+
+# The containerd image store lists a RepoDigests entry for every name the
+# image carries, local build tag included, so the published repository's
+# entry is not necessarily first (pipeline #1476, #112).
+reset_fixtures
+RESOLVED_REPO_DIGEST="$(printf 'birdcage-build@%s\n%s@%s\n' "$good_digest" "$repo" "$good_digest")"
+split "$(run "$ref" "$tested_id")"
+if [ "$GOT" = 0 ] && [ "$OUT" = "$good_digest" ]; then
+  ok "the published repository's entry is picked when a local tag's entry comes first"
+else
+  bad "the published repository's entry is picked when a local tag's entry comes first" "exit $GOT: $OUT"
 fi
 
 # --- pull-back failure -------------------------------------------------------

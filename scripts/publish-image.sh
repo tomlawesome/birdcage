@@ -82,14 +82,18 @@ run_docker_push() {
   docker push "$image_reference" >&2
 }
 
-# resolve_pushed_digest <image-reference> -- asks the daemon what digest it
+# resolve_pushed_digest <image-reference> -- asks the daemon what digests it
 # now associates with the just-pushed reference, rather than scraping
-# `docker push`'s human-readable progress output. Prints the raw
-# "<repo>@sha256:..." RepoDigests entry on stdout; the caller validates its
-# shape and that the repo matches the one being published.
+# `docker push`'s human-readable progress output. Prints every raw
+# "<repo>@sha256:..." RepoDigests entry, one per line; the caller picks the
+# one for the repository being published and validates its shape. Not
+# entry 0: with the containerd image store every name the image carries
+# gets an entry, so a build tagged birdcage-build:ci-N locally and pushed
+# as registry/.../birdcage-build:ci-N lists "birdcage-build@sha256:..."
+# first (pipeline #1476, #112).
 resolve_pushed_digest() {
   local image_reference="$1"
-  docker image inspect --format '{{index .RepoDigests 0}}' "$image_reference"
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_reference"
 }
 
 # pull_digest <repo@digest> -- pulls the given digest back down so its
@@ -120,10 +124,15 @@ main() {
   run_docker_push "$image_reference" ||
     refuse "docker push failed for ${image_reference}; nothing was published"
 
-  local pushed_repo_digest
-  pushed_repo_digest="$(resolve_pushed_digest "$image_reference")" || pushed_repo_digest=""
+  local all_repo_digests pushed_repo_digest="" entry
+  all_repo_digests="$(resolve_pushed_digest "$image_reference")" || all_repo_digests=""
+  while IFS= read -r entry; do
+    case "$entry" in
+      "${repo}@"*) pushed_repo_digest="$entry"; break ;;
+    esac
+  done <<< "$all_repo_digests"
   [ -n "$pushed_repo_digest" ] ||
-    refuse "could not resolve a pushed digest for ${image_reference}; the daemon reported no RepoDigests entry after the push"
+    refuse "could not resolve a pushed digest for ${image_reference}; the daemon reported no RepoDigests entry for ${repo} after the push"
 
   [[ "$pushed_repo_digest" =~ ^([A-Za-z0-9._-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)+)@(sha256:[0-9a-f]{64})$ ]] ||
     refuse "the pushed digest is malformed: ${pushed_repo_digest}"
