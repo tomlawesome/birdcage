@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
 	"github.com/tomlawesome/birdcage/internal/agent/probe"
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
+	"github.com/tomlawesome/birdcage/internal/opencanary"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 )
 
 // swapSelftestLog points the package's selftest logger at log for one
@@ -361,16 +364,46 @@ func (f *fakeBait) LookupOnce(_ context.Context, proto poisoner.Protocol, name s
 	return f.answers, f.err
 }
 
+// selfTestParams builds a one-target selftest.Params naming service, with a
+// marker, the way birdcage mints one.
+func selfTestParams(service, marker string) selftest.Params {
+	return selftest.Params{
+		RunID:   "run-1",
+		Address: "10.0.0.5",
+		Targets: []selftest.Target{{Service: service, DestPort: 0, Marker: marker}},
+	}
+}
+
+// queuedResult decodes the one self-test result event on the queue, failing
+// if there is not exactly one.
+func queuedResult(t *testing.T, in *Intake) selfTestResultEvent {
+	t.Helper()
+	if got := in.Queue.Depth(); got != 1 {
+		t.Fatalf("queue depth = %d, want exactly one self-test result", got)
+	}
+	queued := in.Queue.Peek(1)
+	if len(queued) != 1 {
+		t.Fatal("the queue reported a depth of one but Peek found nothing")
+	}
+	var out selfTestResultEvent
+	if err := json.Unmarshal(queued[0].Payload, &out); err != nil {
+		t.Fatalf("the queued result does not parse: %v", err)
+	}
+	return out
+}
+
 // TestRunAgentHandledTargetGradesSilenceAsAPass is #86 slice C's grading,
-// which is inverted from every other self-test target: the names the
-// detector asks for do not exist, so the only correct answer is none.
+// inverted from every other self-test target: the names the detector asks
+// for do not exist, so the only correct answer is none -- and that has to
+// reach birdcage, which is what the result event is for.
 func TestRunAgentHandledTargetGradesSilenceAsAPass(t *testing.T) {
 	log, buf := captureLogger()
-	restore := swapSelftestLog(log)
-	defer restore()
+	defer swapSelftestLog(log)()
+	in, _ := newTestIntake(t, queue.Config{})
 
 	bait := &fakeBait{}
-	runAgentHandledTarget(context.Background(), bait, "run-1", poisoner.Service())
+	params := selfTestParams(poisoner.Service(), "m-silence")
+	runAgentHandledTarget(context.Background(), in, bait, params, params.Targets[0])
 
 	if bait.calls != 1 {
 		t.Fatalf("LookupOnce called %d times, want 1 -- a self-test is one lookup, not a burst", bait.calls)
@@ -380,22 +413,46 @@ func TestRunAgentHandledTargetGradesSilenceAsAPass(t *testing.T) {
 	if bait.proto != "" || bait.name != "" {
 		t.Errorf("LookupOnce called with (%q, %q), want both empty", bait.proto, bait.name)
 	}
+
+	got := queuedResult(t, in)
+	if got.LogType != LogTypeSelfTestResult {
+		t.Errorf("logtype = %d, want %d", got.LogType, LogTypeSelfTestResult)
+	}
+	if got.LogData.OUTCOME != selfTestOutcomeSilence {
+		t.Errorf("OUTCOME = %q, want %q", got.LogData.OUTCOME, selfTestOutcomeSilence)
+	}
+	if got.LogData.TARGET != poisoner.Service() {
+		t.Errorf("TARGET = %q, want %q", got.LogData.TARGET, poisoner.Service())
+	}
+	// The marker has to be in the payload: birdcage finds it by substring
+	// over the whole raw event, and without it the target never passes.
+	if got.LogData.MARKER != "m-silence" {
+		t.Errorf("MARKER = %q, want the marker birdcage minted", got.LogData.MARKER)
+	}
+	// A self-test result is the canary talking about itself, not a visitor.
+	if got.SrcHost != "" || got.DstHost != "" {
+		t.Errorf("the result names a source or destination (%q, %q); it must name neither", got.SrcHost, got.DstHost)
+	}
+
 	line := buf.String()
 	if !strings.Contains(line, "nothing answered") {
 		t.Errorf("silence was not reported as the pass: %q", line)
 	}
-	if strings.Contains(line, "ANSWERED") {
-		t.Errorf("silence was reported as an answer: %q", line)
+	// The marker is never logged: one in a log line is one an attacker who
+	// reads logs could replay to have their own traffic classified as
+	// synthetic.
+	if strings.Contains(line, "m-silence") {
+		t.Errorf("the log names the marker: %q", line)
 	}
 }
 
 // TestRunAgentHandledTargetReportsAnAnswer: an answer is the worst result
-// there is, not a better one than silence, and the log names the
-// answering address without naming the bait.
+// there is, not a better one than silence. It is still reported, so the run
+// settles rather than hanging on the deadline -- but as "answered".
 func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
 	log, buf := captureLogger()
-	restore := swapSelftestLog(log)
-	defer restore()
+	defer swapSelftestLog(log)()
+	in, _ := newTestIntake(t, queue.Config{})
 
 	bait := &fakeBait{answers: []poisoner.Answer{{
 		Source:   "10.0.0.66",
@@ -403,7 +460,12 @@ func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
 		Name:     "fs-lon-02",
 		MAC:      "aa:bb:cc:dd:ee:ff",
 	}}}
-	runAgentHandledTarget(context.Background(), bait, "run-1", poisoner.Service())
+	params := selfTestParams(poisoner.Service(), "m-answered")
+	runAgentHandledTarget(context.Background(), in, bait, params, params.Targets[0])
+
+	if got := queuedResult(t, in).LogData.OUTCOME; got != selfTestOutcomeAnswered {
+		t.Errorf("OUTCOME = %q, want %q", got, selfTestOutcomeAnswered)
+	}
 
 	line := buf.String()
 	if !strings.Contains(line, "ANSWERED") || !strings.Contains(line, "10.0.0.66") {
@@ -419,56 +481,120 @@ func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
 	}
 }
 
-// TestRunAgentHandledTargetWithNoDetector: the poisoner road being off
-// must read as skipped, never as a pass. A canary that never asked must
-// not report the silence that means "asked, and nothing answered".
-func TestRunAgentHandledTargetWithNoDetector(t *testing.T) {
-	log, buf := captureLogger()
-	restore := swapSelftestLog(log)
-	defer restore()
-
-	runAgentHandledTarget(context.Background(), nil, "run-1", poisoner.Service())
-	line := buf.String()
-	if !strings.Contains(line, "skipped") {
-		t.Errorf("a missing detector was not reported as skipped: %q", line)
+// TestRunAgentHandledTargetReportsNothingWhenItDidNotRun is the rule that
+// keeps the pass honest: a canary that never ran the probe must not report
+// the silence that means it ran and heard nothing. The run then fails on
+// birdcage's deadline sweep like any other unanswered target.
+func TestRunAgentHandledTargetReportsNothingWhenItDidNotRun(t *testing.T) {
+	tests := []struct {
+		name string
+		bait baitLookup
+		want string
+	}{
+		{name: "the poisoner road is off", bait: nil, want: "skipped"},
+		{name: "the lookup never reached the wire", bait: &fakeBait{err: poisoner.ErrNotSending}, want: "did not go out"},
 	}
-	if strings.Contains(line, "nothing answered") {
-		t.Errorf("a missing detector was graded as a pass: %q", line)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			log, buf := captureLogger()
+			defer swapSelftestLog(log)()
+			in, _ := newTestIntake(t, queue.Config{})
+
+			params := selfTestParams(poisoner.Service(), "m-notrun")
+			runAgentHandledTarget(context.Background(), in, tc.bait, params, params.Targets[0])
+
+			if got := in.Queue.Depth(); got != 0 {
+				t.Errorf("queue depth = %d, want 0 -- nothing may be reported for a probe that did not run", got)
+			}
+			line := buf.String()
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("the log does not say %q: %q", tc.want, line)
+			}
+			if strings.Contains(line, "nothing answered") {
+				t.Errorf("a probe that did not run was graded as a pass: %q", line)
+			}
+		})
 	}
 }
 
-// TestRunAgentHandledTargetWithALookupFailure: a bait lookup that never
-// reached the wire is not silence either.
-func TestRunAgentHandledTargetWithALookupFailure(t *testing.T) {
+// TestRunAgentHandledTargetWithNoMarker: a target with no marker cannot be
+// reported, because the marker is the only thing that makes the result
+// recognisable as birdcage's own. Reported as a warning and dropped, never
+// queued as an event nothing could match.
+func TestRunAgentHandledTargetWithNoMarker(t *testing.T) {
 	log, buf := captureLogger()
-	restore := swapSelftestLog(log)
-	defer restore()
+	defer swapSelftestLog(log)()
+	in, _ := newTestIntake(t, queue.Config{})
 
-	runAgentHandledTarget(context.Background(), &fakeBait{err: poisoner.ErrNotSending}, "run-1", poisoner.Service())
-	line := buf.String()
-	if !strings.Contains(line, "did not go out") {
-		t.Errorf("a failed lookup was not reported: %q", line)
+	params := selfTestParams(poisoner.Service(), "")
+	runAgentHandledTarget(context.Background(), in, &fakeBait{}, params, params.Targets[0])
+
+	if got := in.Queue.Depth(); got != 0 {
+		t.Errorf("queue depth = %d, want 0", got)
 	}
-	if strings.Contains(line, "nothing answered") {
-		t.Errorf("a failed lookup was graded as a pass: %q", line)
+	if !strings.Contains(buf.String(), "no marker") {
+		t.Errorf("the missing marker was not reported: %q", buf.String())
 	}
 }
 
-// TestRunAgentHandledTargetRefusesAnUnknownService guards the dispatch:
-// if probe ever reports another service as agent-handled, this binary says
-// so rather than running a bait lookup for it.
+// TestRunAgentHandledTargetRefusesAnUnknownService guards the dispatch: if
+// probe ever reports another service as agent-handled, this binary says so
+// rather than running a bait lookup for it.
 func TestRunAgentHandledTargetRefusesAnUnknownService(t *testing.T) {
 	log, buf := captureLogger()
-	restore := swapSelftestLog(log)
-	defer restore()
+	defer swapSelftestLog(log)()
+	in, _ := newTestIntake(t, queue.Config{})
 
 	bait := &fakeBait{}
-	runAgentHandledTarget(context.Background(), bait, "run-1", "smb")
+	params := selfTestParams("smb", "m-smb")
+	runAgentHandledTarget(context.Background(), in, bait, params, params.Targets[0])
 	if bait.calls != 0 {
 		t.Error("a bait lookup ran for a service that is not the poisoner")
 	}
+	if got := in.Queue.Depth(); got != 0 {
+		t.Errorf("queue depth = %d, want 0", got)
+	}
 	if !strings.Contains(buf.String(), "nothing to run") {
 		t.Errorf("the unknown service was not reported: %q", buf.String())
+	}
+}
+
+// TestTargetForPairsByService: probe.Sweep returns one outcome per target in
+// order, and the service is what pairs them back up.
+func TestTargetForPairsByService(t *testing.T) {
+	params := selftest.Params{
+		RunID:   "run-1",
+		Address: "10.0.0.5",
+		Targets: []selftest.Target{
+			{Service: "ssh", DestPort: 22, Marker: "m-ssh"},
+			{Service: "poisoner", DestPort: 0, Marker: "m-poisoner"},
+		},
+	}
+	if got := targetFor(params, "poisoner"); got.Marker != "m-poisoner" {
+		t.Errorf("targetFor(poisoner).Marker = %q, want m-poisoner", got.Marker)
+	}
+	// A service not in the run yields an empty marker, which
+	// reportSelfTestResult refuses rather than queueing something nothing
+	// could match.
+	if got := targetFor(params, "ntp"); got.Marker != "" {
+		t.Errorf("targetFor(ntp).Marker = %q, want empty", got.Marker)
+	}
+}
+
+// TestSelfTestResultServiceIsNeverStoredAsAnAlert ties the agent's logtype
+// to the service name the ingest side refuses to store, through the mapping
+// both use -- so this fails if either end moves without the other.
+func TestSelfTestResultServiceIsNeverStoredAsAnAlert(t *testing.T) {
+	if got := selfTestResultService(); got != "selftest" {
+		t.Errorf("selfTestResultService() = %q, want %q", got, "selftest")
+	}
+	if !opencanary.IsSelfTestResult(selfTestResultService()) {
+		t.Errorf("IsSelfTestResult(%q) = false: the ingest side would store it as an alert", selfTestResultService())
+	}
+	// And it is not confused with the poisoner alert's own service, which
+	// very much is stored.
+	if opencanary.IsSelfTestResult(poisoner.Service()) {
+		t.Error("IsSelfTestResult(poisoner) = true: real poisoner alerts would be dropped")
 	}
 }
 

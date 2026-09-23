@@ -235,6 +235,31 @@ func (in *Intake) SubmitPoisonerEvent(message []byte) error {
 	return nil
 }
 
+// SubmitSelfTestResultEvent is the sixth road into the queue (#86 slice C):
+// this agent's own report of how one self-test target turned out, which
+// exists because one target grades SILENCE as a pass and silence produces no
+// other event to carry the marker birdcage matches on.
+//
+// Same id scheme as every other road -- SHA-256 of the emitted bytes,
+// verbatim -- so Push's deduplication works across all six without knowing
+// which produced a given event. Like the port-scan, snmp and poisoner roads,
+// it appends no ledger entry: this event was never a line in OpenCanary's log
+// file, so it has no log position to record.
+//
+// It deliberately does not call observeClaim. An attributed-grade claim is
+// the agent saying "that other event over there was mine"; this event is the
+// self-test result itself, carrying its own marker, and birdcage matches it
+// by the ordinary substring path. Feeding it to the claim tracker as well
+// would offer it as a candidate for some other target's window.
+func (in *Intake) SubmitSelfTestResultEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that
