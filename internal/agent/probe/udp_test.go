@@ -107,3 +107,27 @@ func TestProbeSIP_PlantsMarkerInFromHeader(t *testing.T) {
 		t.Errorf("request %q does not carry the marker in its From header", pkt)
 	}
 }
+
+// TestBerLength_LongForm covers berLength's own doc comment: the long
+// form is untested by every carrier that calls it today, because
+// selftest.MarkerBytes-derived markers never need it, but the function
+// is written to handle it correctly regardless of what currently calls
+// it. 0x80 (128) is the smallest length berTLV's own tag-length-value
+// encoding forces into long form (ASN.1 BER: bit 7 of the first length
+// byte set means "the low 7 bits count how many following bytes hold
+// the actual length").
+func TestBerLength_LongForm(t *testing.T) {
+	got := berLength(0x0141) // 321, needs two length-of-length bytes
+	want := []byte{0x82, 0x01, 0x41}
+	if !bytes.Equal(got, want) {
+		t.Errorf("berLength(0x0141) = % x, want % x", got, want)
+	}
+}
+
+func TestBerLength_ShortForm(t *testing.T) {
+	got := berLength(0x10)
+	want := []byte{0x10}
+	if !bytes.Equal(got, want) {
+		t.Errorf("berLength(0x10) = % x, want % x", got, want)
+	}
+}

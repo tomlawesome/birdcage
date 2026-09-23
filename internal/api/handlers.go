@@ -116,9 +116,23 @@ func (h *handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// canaryWithSelfTest extends store.Canary with #46 slice 2's per-service
+// self-test breakdown (item 4: "the API can say, per service,
+// pass-at-grade / failed / untested"). store.Canary (internal/store/
+// canary.go, slice 1's file, not this slice's to change) already carries
+// the run-level summary -- LastSelfTestAt, LastSelfTestPassed,
+// SelfTestFailedServices; this adds the per-service grade breakdown
+// alongside it without touching that type. The embedded field's own
+// fields are promoted to the top level by encoding/json, so the wire
+// shape is store.Canary's fields plus one more, "self_test".
+type canaryWithSelfTest struct {
+	store.Canary
+	SelfTest []store.SelfTestServiceResult `json:"self_test,omitempty"`
+}
+
 // canariesResponse is GET /api/canaries' body.
 type canariesResponse struct {
-	Canaries []store.Canary `json:"canaries"`
+	Canaries []canaryWithSelfTest `json:"canaries"`
 }
 
 // handleCanaries serves GET /api/canaries?range=<Range>, defaulting to
@@ -137,7 +151,25 @@ func (h *handler) handleCanaries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, canariesResponse{Canaries: canaries})
+
+	out := make([]canaryWithSelfTest, len(canaries))
+	for i, c := range canaries {
+		out[i] = canaryWithSelfTest{Canary: c}
+		// One lookup per canary, the same shape ListCanaries' own
+		// applySelfTestState call already makes per canary for the
+		// run-level summary -- fleets this build targets are small
+		// enough (#46's own module survey: "~50 canaries") that this
+		// costs nothing worth a join.
+		results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, c.ID)
+		if err != nil {
+			log.Printf("api: self-test service results for %s: %v", c.ID, err)
+			continue // the run-level summary above still renders; per-service detail is best-effort
+		}
+		if ok {
+			out[i].SelfTest = results
+		}
+	}
+	writeJSON(w, http.StatusOK, canariesResponse{Canaries: out})
 }
 
 // scansResponse is GET /api/scans' body.

@@ -147,9 +147,9 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestInde
 
 	for _, tgt := range params.Targets {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO self_test_targets (command_id, service, dest_port, marker_hash)
-			VALUES (?, ?, ?, ?)`,
-			cmd.ID, tgt.Service, tgt.DestPort, markerHash(tgt.Marker)); err != nil {
+			INSERT INTO self_test_targets (command_id, service, dest_port, marker_hash, grade)
+			VALUES (?, ?, ?, ?, ?)`,
+			cmd.ID, tgt.Service, tgt.DestPort, markerHash(tgt.Marker), string(gradeForService(tgt.Service))); err != nil {
 			return CanaryCommand{}, fmt.Errorf("insert self_test_targets: %w", err)
 		}
 	}
@@ -184,6 +184,14 @@ func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, ale
 		return false, fmt.Errorf("load selftest index: %w", err)
 	}
 	matched, marker := idx.match(alert.InstanceID, alert.Raw, now.UTC())
+	if !matched && alert.Service == "vnc" {
+		// Challenge-marked grade (#46 slice 2, notes 19854/19855/19897):
+		// vnc's carrier never puts the marker in raw where idx.match's
+		// substring check could find it -- see selftest_vnc.go's own
+		// doc comment for why a challenge-response verification is a
+		// different check, not a variant of the same one.
+		matched, marker = idx.matchVNCChallenge(alert.InstanceID, alert.Raw, now.UTC())
+	}
 	if !matched {
 		return false, nil
 	}
@@ -264,20 +272,87 @@ func recordSelfTestMatch(ctx context.Context, database *db.DB, hash string, now 
 // bad as one that answers none, so a run birdcage stops waiting on must
 // resolve to passed=false, not linger "still running" forever. Returns
 // how many runs it swept, for the scheduler's own log line.
+//
+// Before a run is finalized, resolveAttributedTargets (#46 slice 2) gets
+// one chance to claim its still-unmatched attributed-grade targets: that
+// grade's exactly-one rule can only be judged once the run's whole
+// window has closed (a second candidate can arrive at any point up to
+// the deadline), so the deadline sweep -- the one moment birdcage can
+// prove the window is over -- is also the only correct place to run it.
+// A run that ends up fully matched there already has completed_at set
+// by recordSelfTestMatch, so the UPDATE below leaves it alone.
 func SweepExpiredSelfTestRuns(ctx context.Context, database *db.DB, now time.Time) (int, error) {
+	expiring, err := expiringSelfTestRuns(ctx, database, now)
+	if err != nil {
+		return 0, err
+	}
+
+	swept := 0
+	for _, run := range expiring {
+		if err := resolveAttributedTargets(ctx, database, run.commandID, run.canaryID, run.issuedAt, run.deadlineAt, now); err != nil {
+			return swept, fmt.Errorf("resolve attributed self-test targets for run %s: %w", run.commandID, err)
+		}
+		res, err := database.ExecContext(ctx, `
+			UPDATE self_test_runs SET completed_at = ?, passed = 0
+			WHERE command_id = ? AND completed_at IS NULL`,
+			now.UTC().Format(receivedAtLayout), run.commandID)
+		if err != nil {
+			return swept, fmt.Errorf("mark self_test_runs failed: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return swept, fmt.Errorf("rows affected: %w", err)
+		}
+		swept += int(n)
+	}
+	return swept, nil
+}
+
+// expiringSelfTestRun is one row expiringSelfTestRuns reads back: enough
+// to resolve its attributed targets before it is finalized.
+type expiringSelfTestRun struct {
+	commandID  string
+	canaryID   string
+	issuedAt   time.Time
+	deadlineAt time.Time
+}
+
+// expiringSelfTestRuns returns every still-open run whose deadline_at is
+// at or before now, for SweepExpiredSelfTestRuns to resolve and finalize
+// one at a time -- reading them all up front means the resolve/finalize
+// pass below never has a cursor open on the table it is also writing to.
+func expiringSelfTestRuns(ctx context.Context, database *db.DB, now time.Time) ([]expiringSelfTestRun, error) {
 	query := fmt.Sprintf(`
-		UPDATE self_test_runs SET completed_at = ?, passed = 0
+		SELECT command_id, canary_id, issued_at, deadline_at FROM self_test_runs
 		WHERE completed_at IS NULL AND %s`,
 		timeCompare(database.Engine, "deadline_at", "<="))
-	res, err := database.ExecContext(ctx, query, now.UTC().Format(receivedAtLayout), now.UTC().Format(receivedAtLayout))
+	rows, err := database.QueryContext(ctx, query, now.UTC().Format(receivedAtLayout))
 	if err != nil {
-		return 0, fmt.Errorf("sweep expired selftest runs: %w", err)
+		return nil, fmt.Errorf("query expiring self_test_runs: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("rows affected: %w", err)
+	defer func() { _ = rows.Close() }()
+
+	var out []expiringSelfTestRun
+	for rows.Next() {
+		var (
+			run                  expiringSelfTestRun
+			issuedAt, deadlineAt string
+		)
+		if err := rows.Scan(&run.commandID, &run.canaryID, &issuedAt, &deadlineAt); err != nil {
+			return nil, fmt.Errorf("scan expiring self_test_run: %w", err)
+		}
+		if run.issuedAt, err = time.Parse(receivedAtLayout, issuedAt); err != nil {
+			return nil, fmt.Errorf("parse issued_at %q: %w", issuedAt, err)
+		}
+		if run.deadlineAt, err = time.Parse(receivedAtLayout, deadlineAt); err != nil {
+			return nil, fmt.Errorf("parse deadline_at %q: %w", deadlineAt, err)
+		}
+		out = append(out, run)
 	}
-	return int(n), nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expiring self_test_runs: %w", err)
+	}
+	return out, nil
 }
 
 // SelfTestRun is one self_test_runs row, as read back by
