@@ -96,10 +96,6 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/birdcage: 63           # 64.3% measured with -race, 2026-09-23 (#94:
-                             # main() split into startup.go)
-                             # Main binary; RouterOS/CrowdSec credential-wiring
-                             # path is still largely untested.
   cmd/nightjar: 66           # 67.1% measured with -race, 2026-09-23 (#74).
                              # The real checkMounts and realScan (not just
                              # buildSnapshot's injected stand-ins) are now
@@ -159,6 +155,21 @@ floors:
                              # tests; has no tests of its own.
 
   # --- inside or above the 70-85% band ---
+  cmd/birdcage: 73           # 74.8% measured with -race, 2026-09-23 (#74).
+                             # Moved out of the below-70% section this pass:
+                             # runSubcommand's canary/settings/approval
+                             # dispatch switches, runCanaryAdd, serveAll's
+                             # ingest/enrol-listener and unix-socket branches,
+                             # openCanaryDB's migrate-failure path and
+                             # runApprovalCheck's missing-file/database-open
+                             # refusals all gained tests. Still untested:
+                             # main() itself (0%, not unit-testable without a
+                             # self-exec harness this codebase does not use
+                             # elsewhere) and a handful of os-level failure
+                             # branches (closeCanaryDB's Close error,
+                             # checkStartupFiles' remaining branch) that need
+                             # a filesystem failure this pass did not find a
+                             # deterministic way to induce.
   internal/agentkind: 100     # 100.0% measured, 2026-09-22 (#105). A closed
                               # enum and a lookup table: every value and both
                               # sides of Valid() are exercised by construction,
