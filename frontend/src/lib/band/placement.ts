@@ -15,6 +15,12 @@ export interface Rise {
   l2: string
   /** Only the widest cluster for a given (canary, visitor, kind) is labelled; the rest are ripples. */
   labelled: boolean
+  /** The height to try first, where the caller has a scale of its own.
+   * The band leaves it unset and every rise starts at START_H; the
+   * canary page (issue #118) has one line and room above it, so it asks
+   * for gen.py's round-7 heights directly. The growth loop is unchanged
+   * either way -- this is where a rise starts, not a height it keeps. */
+  h?: number
 }
 
 export interface PlacedBump {
@@ -59,7 +65,24 @@ const RIPPLE_BW = 12
 const START_H = 34
 const H_STEP = 30
 
-export function placeRises(rises: Rise[], x0: number, x1: number, bandTop: number): TraceLayout {
+/** Scale options, for a caller whose line is not one of many (issue
+ * #118's canary page): the unlabelled ripples are drawn taller there,
+ * because there is no neighbouring line for them to run into. Omitted,
+ * every number is the band's own. */
+export interface PlacementOptions {
+  rippleH?: number
+  rippleBw?: number
+}
+
+export function placeRises(
+  rises: Rise[],
+  x0: number,
+  x1: number,
+  bandTop: number,
+  options: PlacementOptions = {},
+): TraceLayout {
+  const rippleH = options.rippleH ?? RIPPLE_H
+  const rippleBw = options.rippleBw ?? RIPPLE_BW
   const sorted = [...rises].sort((a, b) => a.xFrom - b.xFrom)
   const bumps: PlacedBump[] = []
   const labels: PlacedLabel[] = []
@@ -71,17 +94,17 @@ export function placeRises(rises: Rise[], x0: number, x1: number, bandTop: numbe
         xFrom: r.xFrom,
         xTo: r.xTo,
         y: r.y,
-        h: RIPPLE_H,
-        bw: RIPPLE_BW,
+        h: rippleH,
+        bw: rippleBw,
         kind: r.kind,
-        d: bumpPath(r.xFrom, r.xTo, r.y, RIPPLE_H, x1, RIPPLE_BW),
+        d: bumpPath(r.xFrom, r.xTo, r.y, rippleH, x1, rippleBw),
         labelled: false,
       })
       continue
     }
 
     const w = labelWidth(r.l1, r.l2)
-    let h = START_H
+    let h = r.h ?? START_H
     let chosen: { anchor: Anchor; ax: number; bx0: number; bx1: number } | null = null
 
     while (!chosen) {
