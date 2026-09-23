@@ -146,6 +146,10 @@ floors:
 
   # --- no test files at all: floor 0, listed rather than silently absent ---
   cmd/seed-story: 0         # dev-data seeding CLI, not shipped; no _test.go.
+  cmd/e2e-live-hit: 0       # test-only helper: runs the real enrol ->
+                             # provision -> push handshake so the dashboard
+                             # smoke test has a live SSE event (#81). Not
+                             # shipped; exercised by test:smoke, not go test.
   internal/db/dbtest: 0     # test-fixture helper used by other packages'
                              # tests; has no tests of its own.
 
