@@ -120,3 +120,39 @@ func TestSendHeartbeatRetryableOn429(t *testing.T) {
 		t.Fatalf("err = %v, want a *RetryableError", err)
 	}
 }
+
+// TestSendCommonHeartbeatStoresAgentVersion proves the common-only
+// heartbeat (issue #106) decodes into internal/ingest's real handler
+// correctly against a Scanner-kind token, mirroring
+// TestSendHeartbeatStoresSelfReport's own shape for the richer one.
+func TestSendCommonHeartbeatStoresAgentVersion(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
+		token := mintToken(t, database, "canary-a")
+
+		if err := c.SendCommonHeartbeat(ctx(), token, CommonHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+			t.Fatalf("SendCommonHeartbeat: %v", err)
+		}
+
+		var version string
+		if err := database.QueryRow(`SELECT agent_version FROM canaries WHERE id = ?`, "canary-a").Scan(&version); err != nil {
+			t.Fatalf("scan agent_version: %v", err)
+		}
+		if version != "1.2.3" {
+			t.Errorf("agent_version = %q, want %q", version, "1.2.3")
+		}
+	})
+}
+
+// TestSendCommonHeartbeatUnauthorized mirrors TestSendHeartbeatUnauthorized.
+func TestSendCommonHeartbeatUnauthorized(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		c, _ := newIngestServer(t, database, agentkind.Scanner)
+
+		err := c.SendCommonHeartbeat(ctx(), "not-a-real-token", CommonHeartbeat{AgentVersion: "1.0.0"})
+		if !IsUnauthorized(err) {
+			t.Fatalf("err = %v, want ErrUnauthorized", err)
+		}
+	})
+}

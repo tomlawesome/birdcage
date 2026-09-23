@@ -247,6 +247,61 @@ func TestHandleHeartbeatUnknownFieldRejected(t *testing.T) {
 	})
 }
 
+// TestHandleHeartbeatScannerCommonShapeStored is issue #106's own
+// required proof for the per-kind body split: a Scanner-kind token's
+// heartbeat is decoded as the common-only shape and stored through
+// store.RecordCanaryCommonHeartbeat, advancing last-seen and
+// agent_version exactly like a Honeypot's own heartbeat does.
+func TestHandleHeartbeatScannerCommonShapeStored(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-scanner", agentkind.Scanner)
+		raw := mintTokenForKind(t, database, "canary-scanner", agentkind.Scanner)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"9.9.9"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var (
+			version         string
+			lastHeartbeatAt *string
+		)
+		row := database.QueryRow(`SELECT agent_version, last_heartbeat_at FROM canaries WHERE id = ?`, "canary-scanner")
+		if err := row.Scan(&version, &lastHeartbeatAt); err != nil {
+			t.Fatalf("scan canaries row: %v", err)
+		}
+		if version != "9.9.9" {
+			t.Errorf("agent_version = %q, want %q", version, "9.9.9")
+		}
+		if lastHeartbeatAt == nil {
+			t.Error("last_heartbeat_at is nil, want it advanced")
+		}
+	})
+}
+
+// TestHandleHeartbeatScannerRejectsLogTailerFields proves
+// ingestCommonHeartbeat's own DisallowUnknownFields: a Scanner-kind
+// token sending queue_depth or log_read_ok would be lying about having a
+// log tailer at all, and the decoder refuses it outright rather than the
+// handler needing a bespoke field-by-field check.
+func TestHandleHeartbeatScannerRejectsLogTailerFields(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-scanner", agentkind.Scanner)
+		raw := mintTokenForKind(t, database, "canary-scanner", agentkind.Scanner)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+
+		for _, body := range []string{`{"queue_depth":5}`, `{"log_read_ok":true}`} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("body %s: status = %d, want %d (body %q)", body, rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+		}
+	})
+}
+
 // TestHandleHeartbeatUnknownCanaryReturns403AtTheSeam used to prove
 // handleHeartbeat's own 404 for a live token whose canaries row is
 // missing (canary_tokens carries no foreign key into canaries --

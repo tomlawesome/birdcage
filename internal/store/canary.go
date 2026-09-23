@@ -306,6 +306,30 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 	return nil
 }
 
+// RecordCanaryCommonHeartbeat records that canaryID's agent phoned home
+// at at, with only the common self-report every agent kind can send
+// (issue #106, ADR-0009: "the small common part -- agent version, last
+// contact -- is shared; the rest belongs to the kind") -- exactly
+// RecordHeartbeat's own contract, including ErrCanaryNotFound, plus
+// agent_version. It never touches agent_queue_depth, agent_log_read_ok,
+// agent_last_event_id, agent_dropped, agent_rejected,
+// agent_event_id_collisions or agent_position_found -- the log-tailer
+// columns RecordCanaryAgentHeartbeat writes -- so a scanner's heartbeat
+// never zeroes them out from under a real Honeypot; a canary that has
+// never sent a log-tailer self-report at all (a scanner, always) simply
+// leaves those columns at whatever they already were (NULL, for a
+// canary that was always this kind), never a fabricated zero that would
+// read as a healthy, empty log tailer.
+func RecordCanaryCommonHeartbeat(ctx context.Context, database *db.DB, canaryID string, at time.Time, agentVersion string) error {
+	if err := RecordHeartbeat(ctx, database, canaryID, at); err != nil {
+		return err
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE canaries SET agent_version = ? WHERE id = ?`, agentVersion, canaryID); err != nil {
+		return fmt.Errorf("update agent version: %w", err)
+	}
+	return nil
+}
+
 // rangeDurations maps every Range GET /api/canaries (and #35's
 // GET /api/trace) accept to the window ListCanaries' hits count looks
 // back over. Kept as the one place both handlers and tests read it from.

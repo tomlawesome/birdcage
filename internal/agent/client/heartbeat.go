@@ -99,3 +99,50 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 		return retryable(fmt.Errorf("client: heartbeat: unexpected status %d (%s)", resp.StatusCode, errorMessage(resp)))
 	}
 }
+
+// CommonHeartbeat is the heartbeat body every agent kind can send (issue
+// #106, ADR-0009's own promise: "the small common part -- agent version,
+// last contact -- is shared; the rest belongs to the kind"). A kind with
+// a richer self-report -- Honeypot's SelfReport, above -- sends that
+// instead; this is for a kind with nothing more honest to say, Nightjar
+// today (cmd/nightjar has no log tailer, no queue, nothing SelfReport's
+// other fields could report truthfully).
+type CommonHeartbeat struct {
+	AgentVersion string
+}
+
+// wireCommonHeartbeat mirrors internal/ingest/heartbeat.go's own
+// ingestCommonHeartbeat field-for-field -- deliberately, matching
+// wireHeartbeat's own stance on never importing internal/ingest.
+// CanaryID is not carried here for the same reason wireHeartbeat omits
+// it: identity comes from the token on every route on this submux.
+type wireCommonHeartbeat struct {
+	AgentVersion string `json:"agent_version,omitempty"`
+}
+
+// SendCommonHeartbeat posts report to POST /ingest/heartbeat on token,
+// in the common-only shape internal/ingest's handler requires of every
+// kind but Honeypot -- DisallowUnknownFields there refuses a body
+// carrying any of SelfReport's own fields, so this function must never
+// be used to send one. Same status handling as SendHeartbeat.
+func (c *Client) SendCommonHeartbeat(ctx context.Context, token string, report CommonHeartbeat) error {
+	body, err := json.Marshal(wireCommonHeartbeat{AgentVersion: report.AgentVersion})
+	if err != nil {
+		return fmt.Errorf("client: encode common heartbeat: %w", err)
+	}
+
+	resp, doErr := c.post(ctx, "/ingest/heartbeat", token, body)
+	if doErr != nil {
+		return doErr
+	}
+	defer closeBody(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized:
+		return ErrUnauthorized
+	default:
+		return retryable(fmt.Errorf("client: common heartbeat: unexpected status %d (%s)", resp.StatusCode, errorMessage(resp)))
+	}
+}
