@@ -141,10 +141,10 @@ run_scanner() { # run_scanner <container-name> <state-vol> <db-vol> <workfile> [
 # follows (tail -1: a name can repeat if a prior down did not reach the
 # database, which only scanner-stack.sh's/stack.sh's own down touches).
 wait_for_scanner() { # wait_for_scanner <name> <container>
-  local name="$1" container="$2" attempt status line
-  for attempt in $(seq 1 60); do
+  local name="$1" container="$2" status line
+  for _ in $(seq 1 60); do
     status="$(docker exec "$E2E_BIRDCAGE" /birdcage canary enrol --status 2>/dev/null || true)"
-    line="$(printf '%s\n' "$status" | grep "name=$name[[:space:]]" | tail -1 || true)"
+    line="$(printf '%s\n' "$status" | grep "name=${name}[[:space:]]" | tail -1 || true)"
     case "$line" in
       *state=provisioned*)
         SCANNER_CANARY_ID="$(printf '%s\n' "$line" | sed -n 's/.*[[:space:]]canary=\([^[:space:]]*\).*/\1/p')"
