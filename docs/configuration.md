@@ -643,6 +643,35 @@ normally. A state directory holding *some* but not all of those four fails
 closed at startup, naming which are missing, rather than guessing whether
 to enrol or to boot.
 
+### `MOCKINGBIRD_SMB_AUDIT_PATH`
+
+Where Mockingbird reads the SMB lure's audit file. **Unset means the SMB
+road does not run**, which is what a canary deployed without the lure looks
+like -- no warning, nothing started, because nothing is missing.
+
+Set it only when you have also deployed the lure beside that canary
+(`build/smb-lure`, issue #87), and set it to the path of the *read-only*
+mount of the volume the lure writes:
+
+```
+  -v smb-audit:/audit:ro \
+  -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log \
+```
+
+Read-only is not decoration. The lure is the one container the design
+expects to be attacked, and this volume is the only thing it shares with
+the canary agent; one-way means a compromised Samba can forge SMB alerts on
+its own canary and nothing else -- and a forged alert is itself an alarm.
+`birdcage canary enrol` prints both lines for you unless you pass
+`--lure smb=off`; see [docs/enrolment.md](enrolment.md).
+
+Either container may start first. The agent's tailer waits for the file to
+appear and resumes from a saved position it keeps in
+`MOCKINGBIRD_STATE_DIR/smb-position`, so restarting either side loses
+nothing -- unlike OpenCanary's own SMB module, which starts reading at the
+end of the file and is not used here (see
+[docs/opencanary.md](opencanary.md)).
+
 ### `BIRDCAGE_INTERNAL_RANGES`
 
 `GET /api/visitors` and `GET /api/trace` (issue #35) classify a source as

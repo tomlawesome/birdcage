@@ -51,10 +51,19 @@ docker run -d --name mockingbird --restart unless-stopped --init \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --cap-add NET_RAW \
   -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \
+  -v smb-audit:/audit:ro \
+  -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log \
   -e MOCKINGBIRD_BIRDCAGE_URL=https://203.0.113.10:8444 \
   -e MOCKINGBIRD_CA_PIN=<64 hex characters -- the CA's SHA-256 pin> \
   -e MOCKINGBIRD_DEPLOY_TOKEN=<64 hex characters -- shown once, single-use> \
   mockingbird:latest
+```
+
+followed by a second block for the SMB lure (see ["The SMB
+lure"](#the-smb-lure) below), and then the line saying how long the token
+is valid:
+
+```
 token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 ```
 
@@ -76,6 +85,98 @@ Docker would otherwise create do not. Lose the state volume and the
 canary cannot start -- it refuses loudly rather than coming back healthy
 with no credentials -- and has to be enrolled again. Lose the log volume
 and any hits not yet delivered are gone.
+
+### The SMB lure
+
+A canary that offers a file share is the most ordinary thing on an office
+network, and it is the thing an intruder looks for first. So `birdcage
+canary enrol` also prints a second container: a real Samba, serving
+read-only guest shares on the canary's own address.
+
+Run these **after** the canary's own `docker run`, in this order. The
+volume has to exist before either container touches it, and the lure joins
+the canary container's network namespace, so that container has to be
+there first.
+
+```
+docker volume create --driver local \
+  --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=0755 \
+  smb-audit
+
+docker run -d --name smb-lure --restart unless-stopped \
+  --network container:mockingbird \
+  --read-only \
+  --cap-drop ALL \
+  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
+  --security-opt no-new-privileges \
+  --pids-limit 128 \
+  --memory 192m \
+  --ulimit core=0 \
+  --tmpfs /run:size=8m \
+  --tmpfs /var/lib/samba:size=8m \
+  --tmpfs /var/cache/samba:size=8m \
+  --tmpfs /var/log:size=8m \
+  -v smb-audit:/audit \
+  -e SMB_WORKGROUP=WORKGROUP \
+  -e SMB_SHARE_PUBLIC=public \
+  -e SMB_SHARE_BACKUP=backup \
+  -e SMB_SHARE_SCANS=scans \
+  smb-lure:latest
+```
+
+Port 445 then sits on the canary's own address beside telnet, ssh and
+http: one enrolment, one address, and a machine offering all four *is* a
+small NAS. The lure publishes no port of its own.
+
+#### Why nothing real is ever on the share
+
+Every file on those shares is invented, and is generated when the image is
+built. **Nothing you own is ever mounted there, and there is no setting
+that would let you.** Pointing a canary at a real file server was ruled
+out permanently.
+
+The reason is worth a sentence, because the temptation is real: bait made
+of real data turns the alarm into the breach. Whoever trips it walks away
+with something, and the thing that was supposed to warn you has cost you
+instead. What makes somebody open `IT/vpn-setup.pdf` is its **name**, and
+opening it is the whole alarm -- the contents do no further work. So the
+contents are fabricated, and deliberately contain nothing that is or even
+looks like a credential, a key or a token.
+
+You will see files with promising names -- a VPN setup document, a router
+configuration backup, a spreadsheet of salaries. All of them are invented.
+The addresses in them are the ranges reserved for documentation, the staff
+references have no names attached, and the one file that mentions
+passwords says they are kept somewhere else.
+
+#### Why every flag is there
+
+The Samba process inside runs as root and switches user for each
+connection -- there is no way to run it unprivileged. So the design makes
+that root worth as little as possible rather than pretending it is not
+root: a read-only filesystem, two capabilities out of about forty,
+no way to gain privileges, caps on processes and memory, no core dumps,
+and every path Samba writes to is memory that vanishes when the container
+restarts. Nothing an intruder changes in there survives.
+
+`build/smb-lure/README.md` has the per-flag table and the evidence for
+which capabilities are actually needed.
+
+#### Turning it off, and naming the shares
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--lure smb=off` | on | Deploy no SMB lure. The enrol output then prints no second block and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
+| `--smb-workgroup` | `WORKGROUP` | The workgroup the share announces. Use whatever the rest of your network uses; a share in a workgroup of its own is the one thing on the segment that looks odd. |
+| `--smb-shares` | `public,backup,scans` | The three share names, in that order: documents, configuration backups, scanner output. Names only -- what is on each share is part of the image. |
+
+A name outside `A-Z a-z 0-9 _ -` is refused when you enrol, rather than by
+a container that will not start.
+
+The lure's own NetBIOS name and description are not settable, on purpose:
+sharing the canary's network namespace shares its hostname, so the share
+already names itself after the canary, and a flag would only be a way to
+get that wrong.
 
 Copy the whole `docker run` block and paste it into a shell on the box
 you want to turn into a canary. That's it -- the canary's agent

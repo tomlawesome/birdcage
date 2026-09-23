@@ -67,6 +67,13 @@ Shipped as a binary in an agent image, never linked into birdcage:
   2026-09-22, #108. Chosen over Trivy against a verified comparison; the
   reasoning is in ADR-0010, "Engine: Grype". Its vulnerability database is
   fetched at runtime and cached, never vendored.
+- `samba-server` (Samba Team, via Alpine) — the SMB lure's whole reason to
+  exist, GPL-3.0-or-later; owner, 2026-09-23, #87 decision 1 ("Real Samba on
+  Alpine"). Pinned to an exact apk version in `build/smb-lure/Dockerfile` and
+  rebuilt on every Alpine security update to it. No apk licence gate exists,
+  so this entry and `supply-chain/dependency-inventory.md` row 223 are the
+  record; GPLv3 in a shipped image has the owner's precedent in
+  `hpfeeds@3.0.0`.
 
 Frontend (`frontend/package.json`), dev-only, never shipped:
 

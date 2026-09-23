@@ -24,7 +24,7 @@ import (
 // than with a diff nobody reads.
 func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 	var out strings.Builder
-	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest"); err != nil {
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", true); err != nil {
 		t.Fatalf("printEnrolRunCommand: %v", err)
 	}
 	got := out.String()
@@ -39,6 +39,8 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 		{"-v mockingbird-state:/var/lib/mockingbird", "credentials and the acknowledged log position must outlive the container"},
 		{"-v mockingbird-log:/var/log/opencanary", "OpenCanary's log is the durable event store the agent replays from"},
 		{"--restart unless-stopped", "a canary that stops reporting is a security event (SECURITY.md)"},
+		{"-v smb-audit:/audit:ro", "issue #87 decision 6: the lure's audit volume is shared one-way, so this container may only read it"},
+		{"-e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log", "issue #87: without it the agent's smb road does not run at all"},
 	}
 	for _, r := range required {
 		if !strings.Contains(got, r.flag) {
@@ -64,7 +66,7 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 // same rule every other command in cmd/birdcage follows.
 func TestEnrolRunCommandEscapesOperatorSuppliedValues(t *testing.T) {
 	var out strings.Builder
-	if err := printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name"); err != nil {
+	if err := printEnrolRunCommand(&out, "203.0.113.10\x1b[31m", "8444", "deadbeef", "cafebabe", "image\x07name", true); err != nil {
 		t.Fatalf("printEnrolRunCommand: %v", err)
 	}
 	got := out.String()

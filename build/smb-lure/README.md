@@ -61,11 +61,13 @@ docker volume create --driver local \
   smb-audit
 ```
 
-Then the lure. `<mockingbird>` is the canary container's name.
+Then the lure. `mockingbird` is the name `birdcage canary enrol` gives the
+canary container; the lure joins its network namespace, so that container
+has to exist first.
 
 ```
 docker run -d --name smb-lure --restart unless-stopped \
-  --network container:<mockingbird> \
+  --network container:mockingbird \
   --read-only \
   --cap-drop ALL \
   --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
@@ -78,8 +80,17 @@ docker run -d --name smb-lure --restart unless-stopped \
   --tmpfs /var/cache/samba:size=8m \
   --tmpfs /var/log:size=8m \
   -v smb-audit:/audit \
-  smb-lure
+  -e SMB_WORKGROUP=WORKGROUP \
+  -e SMB_SHARE_PUBLIC=public \
+  -e SMB_SHARE_BACKUP=backup \
+  -e SMB_SHARE_SCANS=scans \
+  smb-lure:latest
 ```
+
+This is the same text `birdcage canary enrol` prints and the same text
+`docs/enrolment.md` shows; `TestSMBLureRunCommandMatchesTheDocs` in
+`cmd/birdcage` fails if the three ever drift, because a hardening flag
+quietly dropped from one copy is a lure running without it.
 
 And Mockingbird mounts the same volume **read-only** and is told where to
 read (decision 6: the volume is the only thing shared, and it is
