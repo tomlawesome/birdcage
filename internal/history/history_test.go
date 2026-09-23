@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
@@ -48,7 +49,7 @@ func addCanary(t *testing.T, database *db.DB, id, name string, at time.Time) {
 	t.Helper()
 	ctx := context.Background()
 	if err := store.InsertCanary(ctx, database, store.Canary{
-		ID: id, Name: name, Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: at.Add(-time.Hour),
+		ID: id, Name: name, Lane: "lan", Kind: agentkind.Honeypot, HeartbeatIntervalS: 60, EnrolledAt: at.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("InsertCanary(%s): %v", id, err)
 	}

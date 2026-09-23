@@ -1,0 +1,91 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "CVE-2014-0160",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2014-0160",
+        "namespace": "debian:distro:debian:12",
+        "severity": "Critical",
+        "urls": [
+          "https://nvd.nist.gov/vuln/detail/CVE-2014-0160"
+        ],
+        "description": "The (1) TLS and (2) DTLS implementations in OpenSSL 1.0.1 before 1.0.1g do not properly handle Heartbeat Extension packets, which allows remote attackers to obtain sensitive information from process memory via crafted packets that trigger a buffer over-read, aka the Heartbleed bug.",
+        "cvss": [],
+        "fix": {
+          "versions": [
+            "1.0.1f-1ubuntu2.1"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 9.8
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "exact-indirect-match",
+          "matcher": "dpkg-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "debian",
+              "version": "12"
+            },
+            "package": {
+              "name": "openssl",
+              "version": "1.0.1f-1ubuntu2"
+            },
+            "namespace": "debian:distro:debian:12"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2014-0160",
+            "versionConstraint": "< 1.0.1f-1ubuntu2.1 (deb)"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "a1b2c3d4e5f6",
+        "name": "openssl",
+        "version": "1.0.1f-1ubuntu2",
+        "type": "deb",
+        "locations": [
+          {
+            "path": "/var/lib/dpkg/status"
+          }
+        ],
+        "language": "",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:openssl:openssl:1.0.1f\\-1ubuntu2:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:deb/debian/openssl@1.0.1f-1ubuntu2?arch=amd64",
+        "upstreams": []
+      }
+    }
+  ],
+  "ignoredMatches": [],
+  "source": {
+    "type": "directory",
+    "target": "/host"
+  },
+  "distro": {
+    "name": "debian",
+    "version": "12",
+    "idLike": []
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "1.14.0",
+    "configuration": {},
+    "db": {
+      "status": {
+        "schemaVersion": "6.0.0",
+        "from": "https://grype.anchore.io/databases",
+        "built": "2026-09-20T01:12:07Z",
+        "path": "/root/.cache/grype/db",
+        "valid": true
+      },
+      "providers": {}
+    },
+    "timestamp": "2026-09-22T10:00:00-00:00"
+  }
+}

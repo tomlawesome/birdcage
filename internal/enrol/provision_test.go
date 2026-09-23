@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -23,7 +24,7 @@ func provisionRequestBody(secret string) *bytes.Buffer {
 // raw enrolment secret POST /enrol/provision consumes.
 func contactedSecret(t *testing.T, database *db.DB, mintedAt, contactAt time.Time) string {
 	t.Helper()
-	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}
@@ -40,9 +41,10 @@ func contactedSecret(t *testing.T, database *db.DB, mintedAt, contactAt time.Tim
 // TestHandleProvisionSuccess is the happy path: a contacted session,
 // presented within its window, gets 200 with a bearer token, a client
 // certificate/key pair issued by the handler's own CA, and the default
-// heartbeat interval -- and the canary row it created uses
-// MockingbirdPorts, proving that constant and store's own private mirror
-// haven't drifted apart.
+// heartbeat interval -- and the canary row it created uses the honeypot
+// kind's agentkind.Profile.Ports, the one place that port list now lives
+// (issue #105 deleted the two constants this test used to compare
+// against each other).
 func TestHandleProvisionSuccess(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		testCA := newTestCA(t)
@@ -90,13 +92,20 @@ func TestHandleProvisionSuccess(t *testing.T) {
 			t.Errorf("token CanaryID = %q, want %q", tok.CanaryID, resp.CanaryID)
 		}
 
-		var ports string
-		row := database.QueryRow(`SELECT ports FROM canaries WHERE id = ?`, resp.CanaryID)
-		if err := row.Scan(&ports); err != nil {
-			t.Fatalf("scan canaries.ports: %v", err)
+		honeypotProfile, ok := agentkind.Lookup(agentkind.Honeypot)
+		if !ok {
+			t.Fatal("agentkind.Lookup(Honeypot) ok = false")
 		}
-		if ports != MockingbirdPorts {
-			t.Errorf("canaries.ports = %q, want MockingbirdPorts = %q", ports, MockingbirdPorts)
+		var kind, ports string
+		row := database.QueryRow(`SELECT kind, ports FROM canaries WHERE id = ?`, resp.CanaryID)
+		if err := row.Scan(&kind, &ports); err != nil {
+			t.Fatalf("scan canaries.kind/ports: %v", err)
+		}
+		if kind != string(agentkind.Honeypot) {
+			t.Errorf("canaries.kind = %q, want %q", kind, agentkind.Honeypot)
+		}
+		if ports != honeypotProfile.Ports {
+			t.Errorf("canaries.ports = %q, want the honeypot profile's %q", ports, honeypotProfile.Ports)
 		}
 
 		// The secret cannot be provisioned a second time.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -104,7 +105,7 @@ func TestFloodedRateLimitStillReadsThrottled(t *testing.T) {
 		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		if err := store.InsertCanary(ctx, database, store.Canary{
-			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			ID: "canary-a", Name: "canary-a", Lane: "lan", Kind: agentkind.Honeypot,
 			HeartbeatIntervalS: 3600, EnrolledAt: base,
 		}); err != nil {
 			t.Fatalf("InsertCanary: %v", err)
@@ -174,7 +175,7 @@ func TestFloodedTokenConflictStillReadsTokenConflict(t *testing.T) {
 		enrolledAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		if err := store.InsertCanary(ctx, database, store.Canary{
-			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			ID: "canary-a", Name: "canary-a", Lane: "lan", Kind: agentkind.Honeypot,
 			HeartbeatIntervalS: 3600, EnrolledAt: enrolledAt,
 		}); err != nil {
 			t.Fatalf("InsertCanary: %v", err)

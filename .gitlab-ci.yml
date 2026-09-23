@@ -216,7 +216,11 @@ lint:agent-deps:
   image: golang:1.27
   <<: [*gate, *git_safe]
   script:
-    - scripts/agent-deps-check.sh
+    # Once per agent binary (ADR-0009 decision 6) -- each kind's own
+    # allowed set, checked separately so one kind's fence cannot cover
+    # for a hole in the other's.
+    - scripts/agent-deps-check.sh ./cmd/mockingbird
+    - scripts/agent-deps-check.sh ./cmd/nightjar
 
 # ---------------------------------------------------------------------------
 # TEST
@@ -556,7 +560,7 @@ build:images:
     # self-healing -- whatever was left behind goes on the next run.
     - |
       set -eu
-      for repo in birdcage-build mockingbird-build; do
+      for repo in birdcage-build mockingbird-build nightjar-build; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
           | grep -v ":${CI_PIPELINE_ID}$" \
           | xargs -r docker image rm --force >/dev/null 2>&1 || true
@@ -570,11 +574,9 @@ build:images:
       # every job in this pipeline can already reach.
       echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
       : > release.env
-      # One list entry per image. A third image (#112's "nightjar, arriving
-      # on another branch") is one more name here and nothing else -- the
-      # build, the local tag, the registry push and the dotenv lines below
-      # all read from $name.
-      for name in birdcage mockingbird; do
+      # One list entry per image -- the build, the local tag, the registry
+      # push and the dotenv lines below all read from $name.
+      for name in birdcage mockingbird nightjar; do
         local_tag="${name}-build:${CI_PIPELINE_ID}"
         # --provenance=false --sbom=false: with the containerd image store
         # (Docker 29's default on the runner) a build otherwise produces an
@@ -612,7 +614,7 @@ build:images:
       echo "BIRDCAGE_STAMP=$stamp" >> release.env
       cat release.env
   artifacts:
-    # dotenv rather than files: these are seven short strings every later
+    # dotenv rather than files: these are ten short strings every later
     # job needs as variables, and none of them is worth a download.
     reports:
       dotenv: release.env
@@ -797,6 +799,118 @@ test:image:mockingbird:
     - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
     - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
     - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# Nightjar's own equivalent of test:image:mockingbird above, #108 section
+# 8: proves non-root start under the exact run-command shape the enrol
+# renderer prints -- --read-only, every capability dropped, the full
+# internal/hostmask flag list, and a real Grype scan of the runner's own
+# filesystem with a real, freshly-fetched vulnerability database (no
+# fixture engine here, unlike scripts/e2e/scanner.sh's later, controlled
+# journey -- this job's job is the image, not the finding). Nightjar has
+# no listener to answer, so what stands in for test:image:mockingbird's
+# FTP banner check is proving the scan itself completes and is posted --
+# a throwaway birdcage TLS listener on loopback is stood up so SendScan
+# has somewhere real to reach, and its own log is what proves a snapshot
+# arrived, rather than trusting a closed-port warning to mean "the scan
+# itself was fine."
+test:image:nightjar:
+  stage: test
+  image: docker:29-cli
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: nightjar-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - docker tag "$NIGHTJAR_BUILD_IMAGE" "$APP"
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    - docker volume create "$APP-state" >/dev/null
+    - docker volume create "$APP-db" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-state:/s" alpine:3.24 sh -c '
+      apk add --no-cache openssl >/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/ca-key.pem -out /s/ca.pem -days 1 -subj /CN=ci-throwaway-ca 2>/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
+      rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      chown -R 65532:65532 /s && chmod 600 /s/*'
+    # No published port, no --cap-add, no --sysctl (#108 section 4): the
+    # printed run command's exact flag set, mask list included, so this
+    # job would fail if a future edit ever let the two drift apart.
+    - >-
+      docker run --detach --name "$APP" --restart unless-stopped
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      -v /:/host:ro
+      -v /dev/null:/host/etc/shadow:ro
+      -v /dev/null:/host/etc/gshadow:ro
+      --tmpfs /host/etc/ssh:ro
+      --tmpfs /host/root:ro
+      --tmpfs /host/proc:ro
+      --tmpfs /host/run:ro
+      --tmpfs /host/sys:ro
+      --tmpfs /host/dev:ro
+      --tmpfs /host/tmp:ro
+      --tmpfs /host/var/tmp:ro
+      --tmpfs /host/home:ro
+      --volume "$APP-state:/var/lib/nightjar"
+      --volume "$APP-db:/var/lib/nightjar-grype-db"
+      --pids-limit 64 --memory 768m --cpus 1.0
+      --env NIGHTJAR_BIRDCAGE_URL=https://127.0.0.1:1
+      --env NIGHTJAR_SCAN_INTERVAL_S=3600
+      "$APP"
+    # Nightjar posts nothing this job can read back without a real
+    # birdcage listening -- the closed port above proves nothing except
+    # that the process survives a send failure. So the check here is the
+    # one this job can make honestly: the process stays up (no
+    # crash-loop from a --read-only filesystem grype cannot get scratch
+    # space from -- exactly the failure this job would have caught
+    # before the image shipped) and it reaches the point of attempting
+    # to send, which only happens after a real mount check and a real
+    # grype run both returned.
+    - |
+      for attempt in $(seq 1 40); do
+        if docker logs "$APP" 2>&1 | grep -q "send scan"; then
+          echo "reached send-scan on attempt $attempt"
+          break
+        fi
+        if [ "$(docker inspect "$APP" --format '{{.State.Status}}')" != "running" ]; then
+          echo "container is not running; log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+        sleep 3
+        if [ "$attempt" = 40 ]; then
+          echo "never reached send-scan within the timeout; log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container must be uid 65532 -- a root process
+    # here is the failure this image exists to prevent, same assertion
+    # test:image:mockingbird makes.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "nightjar-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm "nightjar-test-$CI_JOB_ID-state" "nightjar-test-$CI_JOB_ID-db" >/dev/null 2>&1 || true
+    - docker image rm "nightjar-test-$CI_JOB_ID" >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
 # E2E -- the real stack, deployed and exercised (#78). Where the two
@@ -1061,6 +1175,58 @@ e2e:postgres-requires-tls:
   script:
     - scripts/e2e/postgres-requires-tls.sh
 
+# Issue #108 slice 1, commit 5: Nightjar (ADR-0010) enrolled by the real
+# `birdcage canary enrol --kind scanner` command and run from its own
+# printed line, exactly as e2e:smb runs mockingbird's. scripts/e2e/
+# scanner-stack.sh is the extra infrastructure only this journey needs
+# (the Nightjar image, a fixture tree standing in for the operator's
+# host filesystem, and Grype's real vulnerability database fetched once)
+# -- started here rather than by stack.sh up, the same split smb-stack.sh
+# uses. NIGHTJAR_BUILD_IMAGE is build:images' own dotenv name for the
+# tag it built from this exact commit (commit 94945df).
+e2e:scanner:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    # scanner-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/scanner-stack.sh down
+    - scripts/e2e/stack.sh down
+
 # The same journey against the other engine birdcage ships, at the higher
 # bar (#91, docs/ci-hops.md) rather than every merge request: a storage
 # engine difference here would show up in how the audit line was written,
@@ -1185,6 +1351,53 @@ e2e:dashboard-own-ca:postgres:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request: migration
+# 0014's own scan_snapshots table has a Postgres variant that deserves a
+# live run, and a storage-engine difference here would show up in how
+# the receipt was written, not in how Nightjar scanned.
+e2e:scanner:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    - scripts/e2e/scanner-stack.sh down
     - scripts/e2e/stack.sh down
 
 # ---------------------------------------------------------------------------

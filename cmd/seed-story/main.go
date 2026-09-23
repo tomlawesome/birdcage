@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -123,10 +124,14 @@ func main() {
 	enrolledAt := now.Add(-30 * 24 * time.Hour)
 
 	for _, c := range fx.Canaries.Canaries {
+		// Kind is always agentkind.Honeypot: this fixture (ADR-0004's
+		// sweep-night story) predates kinds entirely, and every canary in
+		// it is a Mockingbird honeypot.
 		if err := store.InsertCanary(ctx, database, store.Canary{
 			ID:         c.ID,
 			Name:       c.Name,
 			Lane:       c.Lane,
+			Kind:       agentkind.Honeypot,
 			Ports:      rawPorts(c.Ports),
 			EnrolledAt: enrolledAt,
 		}); err != nil {

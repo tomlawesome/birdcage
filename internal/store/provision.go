@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
@@ -19,22 +20,6 @@ import (
 // canary's id -- matching enrolmentSessionIDBytes' and tokenIDBytes' own
 // choice of 16.
 const provisionCanaryIDBytes = 16
-
-// mockingbirdPorts is the Mockingbird image's fixed port set, stored on
-// every canary row Provision creates -- issue #47 slice 3: a provisioned
-// canary was never told its own ports (there is no `birdcage canary add
-// --ports` step in this flow), so Provision supplies the one set every
-// Mockingbird image actually serves.
-//
-// This must equal internal/enrol.MockingbirdPorts exactly. It is
-// declared separately here, rather than imported, because internal/enrol
-// already imports internal/store (FirstContact, HashToken, Provision
-// itself, ...); the reverse import would be a cycle. Both were verified
-// against build/mockingbird/opencanary.conf's `"*.enabled": true`
-// entries when this slice was written -- ftp(21), ssh(22), telnet(23),
-// tftp(69), http(80), mssql(1433), mysql(3306), rdp(3389), sip(5060),
-// redis(6379) -- and a change to that file must update both constants.
-const mockingbirdPorts = "21,22,23,69,80,1433,3306,3389,5060,6379"
 
 // ProvisionOutcome is what Provision found the presented enrolment
 // secret to be -- mirroring FirstContactOutcome's uniform-refusal shape
@@ -101,7 +86,12 @@ type ProvisionResult struct {
 // (*ca.CA).IssueClient) and is called inside the transaction, so a CA
 // failure rolls back the canary row and token mint with it -- a caller
 // never sees a canary row with no client certificate to match.
-func Provision(ctx context.Context, database *db.DB, secretHash string, now time.Time, issue func(canaryID string) (certPEM, keyPEM []byte, err error)) (ProvisionResult, ProvisionOutcome, error) {
+//
+// issue's kind parameter (issue #105) is the session's own kind, in hand
+// at certificate-issuance time for #106 to carry into the certificate.
+// This function's own caller (internal/enrol's handleProvision) ignores
+// it for now -- #105 does not touch the certificate itself.
+func Provision(ctx context.Context, database *db.DB, secretHash string, now time.Time, issue func(canaryID string, kind agentkind.Kind) (certPEM, keyPEM []byte, err error)) (ProvisionResult, ProvisionOutcome, error) {
 	if now.IsZero() {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("store: Provision: now is zero; callers must set it")
 	}
@@ -155,6 +145,21 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		return ProvisionResult{}, WindowExpired, nil
 	}
 
+	// found.Kind names a registered profile or this is an invariant
+	// violation, not a client error (issue #105 delivery plan section
+	// 7): a session's kind is validated at mint (MintEnrolmentSession
+	// above) and never rewritten afterwards, so a session in state
+	// "contacted" carrying an unregistered kind means either a data
+	// invariant was broken directly against the database, or a
+	// rolled-back binary no longer registers a kind a newer one minted.
+	// Fail loudly rather than silently falling back to any one kind's
+	// profile -- the same stance the nil window_deadline check above
+	// takes.
+	profile, ok := agentkind.Lookup(found.Kind)
+	if !ok {
+		return ProvisionResult{}, UnknownSecret, fmt.Errorf("store: Provision: session %s carries unregistered kind %q", found.ID, found.Kind)
+	}
+
 	canaryID, err := randomHex(provisionCanaryIDBytes)
 	if err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("generate canary id: %w", err)
@@ -164,7 +169,8 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		ID:                 canaryID,
 		Name:               found.Name,
 		Lane:               found.Lane,
-		Ports:              mockingbirdPorts,
+		Kind:               found.Kind,
+		Ports:              profile.Ports,
 		HeartbeatIntervalS: DefaultHeartbeatIntervalS,
 		EnrolledAt:         now,
 	}); err != nil {
@@ -176,7 +182,7 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mint canary token: %w", err)
 	}
 
-	certPEM, keyPEM, err := issue(canaryID)
+	certPEM, keyPEM, err := issue(canaryID, found.Kind)
 	if err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("issue client certificate: %w", err)
 	}

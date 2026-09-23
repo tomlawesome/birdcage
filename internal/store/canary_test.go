@@ -6,11 +6,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
+// insertCanary defaults c.Kind to agentkind.Honeypot when the caller
+// left it unset -- InsertCanary itself (issue #105) requires a valid
+// kind and no longer defaults one, but every canary this package's own
+// tests have ever built is a honeypot, so this fixture helper carries
+// that default rather than every call site repeating it.
 func insertCanary(t *testing.T, database *db.DB, c Canary) {
 	t.Helper()
+	if c.Kind == "" {
+		c.Kind = agentkind.Honeypot
+	}
 	if err := InsertCanary(context.Background(), database, c); err != nil {
 		t.Fatalf("InsertCanary(%+v): %v", c, err)
 	}

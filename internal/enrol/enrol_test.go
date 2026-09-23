@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
@@ -71,7 +72,7 @@ func TestHandleHelloContactedReturnsSecretAndCAAndAddresses(t *testing.T) {
 		testCA := newTestCA(t)
 
 		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -137,7 +138,7 @@ func TestHandleHelloRefusalsAreByteIdentical(t *testing.T) {
 		hUnknown.ServeHTTP(recUnknown, httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody("never-minted")))
 
 		// Expired: minted, never contacted, presented after its deadline.
-		expiredRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		expiredRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession (expired fixture): %v", err)
 		}
@@ -147,7 +148,7 @@ func TestHandleHelloRefusalsAreByteIdentical(t *testing.T) {
 		hExpired.ServeHTTP(recExpired, httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(expiredRaw)))
 
 		// Reused: minted, contacted once, presented a second time.
-		reusedRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		reusedRaw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession (reused fixture): %v", err)
 		}
@@ -189,7 +190,7 @@ func TestHandleHelloReusedWritesAuditEntryNamingSessionNeverToken(t *testing.T) 
 		testCA := newTestCA(t)
 
 		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		raw, minted, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", mintedAt)
+		raw, minted, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}

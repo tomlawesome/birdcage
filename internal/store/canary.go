@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -29,13 +30,14 @@ const silenceThresholdMultiple = 3
 // with the status/hits snapshot ListCanaries computes as of the time and
 // range it was asked for.
 type Canary struct {
-	ID                 string     `json:"id"`
-	Name               string     `json:"name"`
-	Lane               string     `json:"lane"`
-	Ports              string     `json:"ports"` // display form, e.g. "ssh 22 · http 80 · smb 445"
-	HeartbeatIntervalS int        `json:"-"`
-	EnrolledAt         time.Time  `json:"-"`
-	LastHeartbeatAt    *time.Time `json:"last_heartbeat_at"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Lane               string         `json:"lane"`
+	Kind               agentkind.Kind `json:"kind"`
+	Ports              string         `json:"ports"` // display form, e.g. "ssh 22 · http 80 · smb 445"
+	HeartbeatIntervalS int            `json:"-"`
+	EnrolledAt         time.Time      `json:"-"`
+	LastHeartbeatAt    *time.Time     `json:"last_heartbeat_at"`
 
 	// AgentLogReadOK is the agent's own last self-reported log-read
 	// status (#32 slice 5a, canaries.agent_log_read_ok). nil means no
@@ -172,6 +174,14 @@ func portsDisplay(raw string) string {
 // MintCanaryToken and audit.Append already take the narrower interface.
 // Every existing caller passes a *db.DB, which satisfies db.Conn
 // unchanged.
+//
+// c.Kind must be a registered agentkind.Kind (issue #105) -- refused
+// here, at the write, the same stance MintEnrolmentSession takes on its
+// own kind parameter. Every caller (store.Provision, `birdcage canary
+// add`, cmd/seed-story) must set it explicitly; there is no default,
+// unlike HeartbeatIntervalS below, because a silently-defaulted kind on
+// a direct-insert path would be exactly the "invented kind" this
+// package's read paths are built never to do.
 func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	interval := c.HeartbeatIntervalS
 	if interval <= 0 {
@@ -180,10 +190,13 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	if c.EnrolledAt.IsZero() {
 		return fmt.Errorf("store: InsertCanary: EnrolledAt is zero; callers must set it")
 	}
+	if !agentkind.Valid(c.Kind) {
+		return fmt.Errorf("store: InsertCanary: unregistered kind %q", c.Kind)
+	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO canaries (id, name, lane, ports, heartbeat_interval_s, enrolled_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Lane, c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout))
+		INSERT INTO canaries (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout))
 	if err != nil {
 		return fmt.Errorf("insert canary: %w", err)
 	}
@@ -333,7 +346,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	now = now.UTC()
 
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, name, lane, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
+		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
 			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found
 		FROM canaries ORDER BY id`)
 	if err != nil {
@@ -345,16 +358,20 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	for rows.Next() {
 		var (
 			c                  Canary
+			kind               string
 			portsRaw           string
 			enrolledAt         string
 			lastHeartbeatAt    *string
 			agentLogReadOK     *int64
 			agentPositionFound *int64
 		)
-		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
+		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
+		// c.Kind is opaque on read, like scanEnrolmentSession's own kind
+		// field -- see that function's doc comment.
+		c.Kind = agentkind.Kind(kind)
 		c.Ports = portsDisplay(portsRaw)
 		t, err := time.Parse(receivedAtLayout, enrolledAt)
 		if err != nil {

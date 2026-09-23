@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -154,7 +155,7 @@ func TestListStatePeriodsWindowAndOrder(t *testing.T) {
 		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
 		for id, name := range map[string]string{"canary-b": "beta", "canary-a": "zulu"} {
 			if err := InsertCanary(ctx, database, Canary{
-				ID: id, Name: name, Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+				ID: id, Name: name, Lane: "lan", Kind: agentkind.Honeypot, HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
 			}); err != nil {
 				t.Fatalf("InsertCanary(%s): %v", id, err)
 			}

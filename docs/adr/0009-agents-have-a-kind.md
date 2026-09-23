@@ -52,6 +52,17 @@ Ten migrations is a cheap rename. Fifty is not.
    registry and on enrolment sessions, in both schemas. Changing kind
    means enrolling a new node.
 
+   The kind strings are role words, not product names, because a
+   certificate carries one for the life of that identity (decision 3) and
+   a role ages better than a brand. Owner, 2026-09-22:
+
+   - **`honeypot`** -- registered in #105. Mockingbird is the image that
+     implements it, not the kind itself.
+   - **`scanner`** -- reserved for ADR-0010's vulnerability agent. Naming
+     it here does not register it: no code carries it until that agent's
+     own first slice lands. The agent's product name is still open in
+     ADR-0010 and is a separate question from this string.
+
 3. **The kind lives in the client certificate, and is authorised on.**
    Each ingest route declares which kinds may post to it, and a
    certificate that does not carry a permitted kind is refused. A

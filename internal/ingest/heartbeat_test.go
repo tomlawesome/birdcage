@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -14,7 +15,7 @@ import (
 func enrollCanary(t *testing.T, database *db.DB, id string) {
 	t.Helper()
 	if err := store.InsertCanary(context.Background(), database, store.Canary{
-		ID: id, Name: id, Lane: "lan", EnrolledAt: time.Now().UTC(),
+		ID: id, Name: id, Lane: "lan", Kind: agentkind.Honeypot, EnrolledAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("InsertCanary(%s): %v", id, err)
 	}

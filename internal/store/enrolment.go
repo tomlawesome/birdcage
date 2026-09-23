@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -62,6 +63,7 @@ type EnrolmentSession struct {
 	ID                   string
 	Name                 string
 	Lane                 string
+	Kind                 agentkind.Kind
 	CreatedAt            time.Time
 	FirstContactDeadline time.Time
 	BurnedAt             *time.Time
@@ -87,12 +89,21 @@ var ErrEnrolmentSessionNotFound = errors.New("store: enrolment session not found
 // the operator again. Both must be non-empty -- the CLI already requires
 // them, but this is where the row itself is written, so it is the one
 // place that guarantee actually holds.
-func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, now time.Time) (raw string, session EnrolmentSession, err error) {
+//
+// kind must be a registered agentkind.Kind (issue #105): the closed enum
+// is validated here, at the write, exactly like name and lane -- an
+// unrecognised kind is refused rather than stored, since kind is an
+// authorisation input (#106) and this is the one place a session's kind
+// is ever chosen.
+func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, kind agentkind.Kind, now time.Time) (raw string, session EnrolmentSession, err error) {
 	if now.IsZero() {
 		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: now is zero; callers must set it")
 	}
 	if name == "" || lane == "" {
 		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: name and lane are required")
+	}
+	if !agentkind.Valid(kind) {
+		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: unregistered kind %q", kind)
 	}
 	id, err := randomHex(enrolmentSessionIDBytes)
 	if err != nil {
@@ -107,9 +118,9 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 	deadline := createdAt.Add(enrolmentFirstContactWindow)
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, created_at, first_contact_deadline, state)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, HashToken(raw), name, lane, createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
+		INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, kind, created_at, first_contact_deadline, state)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, HashToken(raw), name, lane, string(kind), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
 	if err != nil {
 		return "", EnrolmentSession{}, fmt.Errorf("insert enrolment session: %w", err)
 	}
@@ -117,6 +128,7 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 		ID:                   id,
 		Name:                 name,
 		Lane:                 lane,
+		Kind:                 kind,
 		CreatedAt:            createdAt,
 		FirstContactDeadline: deadline,
 		State:                EnrolmentStateMinted,
@@ -293,7 +305,7 @@ func FirstContact(ctx context.Context, database *db.DB, tokenHash string, now ti
 // by mistake.
 func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSession, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
 		FROM enrolment_sessions
 		ORDER BY created_at`)
 	if err != nil {
@@ -319,7 +331,7 @@ func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSes
 // row via conn, so FirstContact can run it inside its own transaction.
 func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
 		FROM enrolment_sessions
 		WHERE token_hash = ?`, tokenHash)
 	return scanEnrolmentSession(row)
@@ -337,7 +349,7 @@ func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash str
 // case wants.
 func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, canary_name, lane, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
 		FROM enrolment_sessions
 		WHERE enrolment_secret_hash = ? AND state = ?`, secretHash, string(EnrolmentStateContacted))
 	return scanEnrolmentSession(row)
@@ -350,18 +362,25 @@ func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretH
 func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 	var (
 		s                     EnrolmentSession
+		kind                  string
 		state                 string
 		createdAt             string
 		firstContactDeadline  string
 		burnedAt, windowDeadl *string
 		canaryID              *string
 	)
-	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID); err != nil {
+	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &kind, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return EnrolmentSession{}, ErrEnrolmentSessionNotFound
 		}
 		return EnrolmentSession{}, fmt.Errorf("scan enrolment session: %w", err)
 	}
+	// s.Kind is read back opaque, not validated here: a row written by a
+	// newer binary carrying a kind this one doesn't register must still
+	// scan and display, never crash (#105 delivery plan section 1) --
+	// only the write paths (MintEnrolmentSession above, store.Provision)
+	// refuse an unregistered kind.
+	s.Kind = agentkind.Kind(kind)
 	s.State = EnrolmentState(state)
 	s.CanaryID = canaryID
 

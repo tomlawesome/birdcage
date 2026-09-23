@@ -10,25 +10,16 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/hostmask"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/term"
-)
-
-const (
-	// envMockingbirdImage overrides the image `birdcage canary enrol`
-	// prints in its docker run command.
-	//
-	// TODO(#69 registry): birdcage doesn't publish this image anywhere
-	// yet, so defaultMockingbirdImage names a tag an operator has to
-	// build and load by hand until #69 lands a real registry to pull it
-	// from.
-	envMockingbirdImage     = "MOCKINGBIRD_IMAGE"
-	defaultMockingbirdImage = "mockingbird:latest"
 )
 
 // openCanaryDB opens and migrates the database these `birdcage canary`
@@ -100,8 +91,12 @@ func runCanaryAdd(args []string) error {
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
+	// Kind is always agentkind.Honeypot here: `canary add` is a
+	// dev/testing convenience that predates kinds entirely (issue #34's
+	// "Not in this slice"), with no --kind flag of its own, and every
+	// node it has ever registered has been a honeypot.
 	c := store.Canary{
-		ID: args[0], Name: args[1], Lane: args[2], Ports: args[3],
+		ID: args[0], Name: args[1], Lane: args[2], Kind: agentkind.Honeypot, Ports: args[3],
 		HeartbeatIntervalS: interval, EnrolledAt: time.Now().UTC(),
 	}
 	if err := store.InsertCanary(ctx, database, c); err != nil {
@@ -279,14 +274,30 @@ func runCanaryRevoke(args []string) error {
 	return nil
 }
 
+// kindNames renders agentkind.Kinds() as strings, for `--kind`'s
+// unknown-value error message (issue #105: "validated with an error
+// listing valid kinds").
+func kindNames() []string {
+	kinds := agentkind.Kinds()
+	names := make([]string, len(kinds))
+	for i, k := range kinds {
+		names[i] = string(k)
+	}
+	return names
+}
+
 // runCanaryEnrol implements `birdcage canary enrol --name <name> --lane
-// <lane>` (issue #47 slice 1b, "The flow" steps 1-2; --name/--lane added
-// slice 3) and, via --status, a read-only listing of every
-// enrolment_sessions row (issue #47 slice 1b item 6).
+// <lane> [--kind <kind>]` (issue #47 slice 1b, "The flow" steps 1-2;
+// --name/--lane added slice 3; --kind added issue #105) and, via
+// --status, a read-only listing of every enrolment_sessions row (issue
+// #47 slice 1b item 6).
 //
 // --name and --lane are required: they name the canary before it exists,
 // carried on the session until a later Provision call (store.Provision)
-// uses them to build its canaries row.
+// uses them to build its canaries row. --kind defaults to
+// agentkind.Honeypot, so every runbook written before #105 keeps working
+// unchanged; an unregistered kind is refused here, before any database
+// write, with an error naming the valid set.
 //
 // It refuses to mint a session until #54's two addresses are set (issue
 // #47 slice 1b item 3: "enrolment refuses to mint until both are set"),
@@ -299,10 +310,11 @@ func runCanaryEnrol(args []string) error {
 		return runCanaryEnrolStatus()
 	}
 
-	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> (or --status)"
+	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> [--kind <kind>] (or --status)"
 	fs := flag.NewFlagSet("canary enrol", flag.ContinueOnError)
 	name := fs.String("name", "", "canary name (required)")
 	lane := fs.String("lane", "", "canary lane (required)")
+	kindFlag := fs.String("kind", string(agentkind.Honeypot), "agent kind (issue #105)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -311,6 +323,11 @@ func runCanaryEnrol(args []string) error {
 	}
 	if *name == "" || *lane == "" {
 		return fmt.Errorf("%s: both flags are required", usage)
+	}
+	kind := agentkind.Kind(*kindFlag)
+	profile, ok := agentkind.Lookup(kind)
+	if !ok {
+		return fmt.Errorf("%s: unknown --kind %q (valid kinds: %s)", usage, *kindFlag, strings.Join(kindNames(), ", "))
 	}
 
 	advertiseHost := os.Getenv(envAdvertiseHost)
@@ -336,11 +353,6 @@ func runCanaryEnrol(args []string) error {
 		return fmt.Errorf("%s=%q is not a valid address: %w", envEnrolAddr, enrolAddr, err)
 	}
 
-	image := os.Getenv(envMockingbirdImage)
-	if image == "" {
-		image = defaultMockingbirdImage
-	}
-
 	database, err := openCanaryDB()
 	if err != nil {
 		return err
@@ -360,7 +372,7 @@ func runCanaryEnrol(args []string) error {
 	defer rollbackCanaryTx(tx, &committed)
 
 	now := time.Now().UTC()
-	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, now)
+	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, now)
 	if err != nil {
 		return fmt.Errorf("mint enrolment session: %w", err)
 	}
@@ -388,8 +400,35 @@ func runCanaryEnrol(args []string) error {
 	// never attacker- or even operator-influenced, so neither is
 	// escaped -- the same distinction runCanaryMint draws between
 	// canaryID and tok.ID/raw.
-	if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
-		return fmt.Errorf("print docker run command: %w", err)
+	//
+	// The switch is per kind, not just per image, because a future
+	// kind's install instructions may not be a `docker run` line at all
+	// (#105 delivery plan section 4: printEnrolRunCommand "stays
+	// honeypot-shaped; a future kind brings its own run-command
+	// renderer").
+	switch kind {
+	case agentkind.Honeypot:
+		image := os.Getenv(profile.ImageEnv)
+		if image == "" {
+			image = profile.DefaultImage
+		}
+		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+			return fmt.Errorf("print docker run command: %w", err)
+		}
+	case agentkind.Scanner:
+		// #108's own trap: this case has to land in the same commit as
+		// the profile, or --kind scanner mints a session here and then
+		// falls into default below, failing half-way through its own
+		// output with a live token already burned.
+		image := os.Getenv(profile.ImageEnv)
+		if image == "" {
+			image = profile.DefaultImage
+		}
+		if err := printScannerEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+			return fmt.Errorf("print docker run command: %w", err)
+		}
+	default:
+		return fmt.Errorf("no install instructions registered for kind %q", kind)
 	}
 	fmt.Printf("token valid for 5 minutes (until %s); single use\n", session.FirstContactDeadline.Format(time.RFC3339))
 
@@ -439,6 +478,55 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
+	return err
+}
+
+// printScannerEnrolRunCommand writes the `docker run` line for the
+// scanner kind (issue #108 slice 1) -- ADR-0010 decision 3's shape (own
+// image, no listener) plus the owner-ratified host-mount covering
+// (issue #108, "the host mount is whole-root read-only, with the
+// secret-bearing paths covered over"): a read-only whole-root bind, one
+// flag per hostmask.Masks entry so the printed command and Nightjar's
+// own startup check (internal/hostmask.Check, cmd/nightjar/scanner.go)
+// can never drift, and no sysctl, no added capability and no published
+// port -- Nightjar listens on nothing.
+//
+// One operational trap this command can hit, named in
+// docs/enrolment.md: a --tmpfs or -v /dev/null flag over a path the
+// target host does not have fails the container at start with a
+// read-only-filesystem error, because Docker cannot create a mountpoint
+// under a read-only bind for a path that was never there. The remedy is
+// to drop that one flag from the pasted command -- e.g. a host with no
+// /etc/ssh -- not to abandon the covering; internal/hostmask.Check
+// treats an absent mask path as nothing to cover, matching this.
+func printScannerEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
+	if _, err := fmt.Fprintf(w, "docker run -d --name nightjar --restart unless-stopped \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  --read-only --cap-drop ALL --security-opt no-new-privileges \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -v /:/host:ro \\\n"); err != nil {
+		return err
+	}
+	for _, flag := range hostmask.RunFlags("/host") {
+		if _, err := fmt.Fprintf(w, "  %s \\\n", flag); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "  -v nightjar-state:/var/lib/nightjar -v nightjar-grype-db:/var/lib/nightjar-grype-db \\\n"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_CA_PIN=%s \\\n", pin); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_DEPLOY_TOKEN=%s \\\n", token); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
@@ -505,13 +593,18 @@ func runCanaryEnrolStatus() error {
 			canaryID = term.Escape(*s.CanaryID)
 		}
 		// s.ID and s.State are, respectively, generated by this
-		// package's own random hex and a closed Go enum -- neither
-		// needs escaping, the same distinction the mint/list/revoke
-		// commands above draw. s.Name and s.Lane are operator-supplied
-		// (`--name`/`--lane`), escaped here at the point they reach this
-		// terminal.
-		fmt.Printf("%s\tname=%s\tlane=%s\tstate=%s\tcreated=%s\tfirst_contact_deadline=%s\tcontacted=%s\twindow_deadline=%s\tcanary=%s\n",
-			s.ID, term.Escape(s.Name), term.Escape(s.Lane), s.State, s.CreatedAt.Format(time.RFC3339), s.FirstContactDeadline.Format(time.RFC3339), contacted, window, canaryID)
+		// package's own random hex and a closed Go enum this binary
+		// itself writes -- neither needs escaping, the same distinction
+		// the mint/list/revoke commands above draw. s.Name and s.Lane
+		// are operator-supplied (`--name`/`--lane`), escaped here at the
+		// point they reach this terminal. s.Kind is escaped too, even
+		// though this binary only ever mints a registered one: a row
+		// this instance reads back may have been written by a newer
+		// binary carrying a kind this one doesn't register (issue #105
+		// delivery plan section 1, "opaque on read"), so it is treated
+		// like caller-supplied text, not like s.State.
+		fmt.Printf("%s\tname=%s\tlane=%s\tkind=%s\tstate=%s\tcreated=%s\tfirst_contact_deadline=%s\tcontacted=%s\twindow_deadline=%s\tcanary=%s\n",
+			s.ID, term.Escape(s.Name), term.Escape(s.Lane), term.Escape(string(s.Kind)), s.State, s.CreatedAt.Format(time.RFC3339), s.FirstContactDeadline.Format(time.RFC3339), contacted, window, canaryID)
 	}
 	return nil
 }

@@ -322,20 +322,35 @@ The 2026-09-20 table covered `.gitlab-ci.yml`'s `image:` and `services:` lines f
 | 218 | `jq (apk package)` | unpinned -- same `sync:mirror-to-github` job as #216 | Unverified this session. | MIT | direct | jq project (independent, stedolan/jqlang) | very high (mainstream, widely deployed) | CI-only -- same job as #216, never shipped | Predates the rule -- not individually recorded |
 | 219 | `cosign` | v3.1.3, checksum-pinned in `scripts/ensure-cosign.sh` (fetched by both the GitLab release jobs and GitHub's `countersign.yml`) | v3.1.3 -- confirmed current via GitHub releases (2026-08-06 release, no newer tag). | Apache-2.0 | direct | sigstore project (Linux Foundation-hosted, OpenSSF) | high (the standard tool for keyless/key-based container signing) | Build/release-only -- signs and verifies image digests, never shipped in a product image | Predates the rule -- not individually recorded |
 | 220 | `actions/checkout` (in `countersign.yml`) | `@v5` -- a floating major tag, NOT the SHA-pin `codeql.yml`/`dependency-review.yml` use for the same action | v7.0.1 (GitHub releases API, verified) -- two majors ahead of the pinned `v5` tag. | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- countersigning workflow checkout, never shipped | Predates the rule -- not individually recorded |
+### I. `build/nightjar/Dockerfile` (#108: the scanner agent's own image, landed in commit 4 of that issue's slice)
+
+The pinned Grype release binary, and its vulnerability database -- the latter
+is a **runtime feed, not a dependency**: never fetched by this Dockerfile,
+never vendored, never baked into the image. Grype fetches and refreshes it
+itself on the operator's own device, into the `nightjar-grype-db` volume
+(ADR-0010 decision 2, and the house rule against vendoring lookup datasets).
+It is listed here only so the feed itself, and the trust an operator places
+in it, is not invisible to this inventory.
+
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+|---|---|---|---|---|---|---|---|---|---|
+| 221 | `grype` (Anchore) | v0.119.0, `linux_amd64`, SHA-256 `3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b` -- pinned by both the version and the checksum in `build/nightjar/Dockerfile`'s `GRYPE_VERSION`/`GRYPE_SHA256` build args, verified against the release's own `grype_0.119.0_checksums.txt` and against a fresh download of the artefact itself (matched) | v0.119.0 -- current (GitHub releases API, verified 2026-09-22, same release the #108 engine-decision comment compared against) | Apache-2.0 | direct | Anchore | high (13k GitHub stars, ~147 contributors -- #108's own comparison record) | Shipped -- copied into the Nightjar runtime image as a pinned binary, never linked into any Go binary (AGENTS.md's approved-modules list) | Approved -- #108, 2026-09-22 |
+| 222 | Grype's vulnerability database | Not pinned by this repository at all -- fetched and refreshed by Grype itself at runtime into the `nightjar-grype-db` volume (`GRYPE_DB_CACHE_DIR`), never vendored or baked into the image. Grype's own default fail-closed behaviour (refuses a database older than five days) is kept unmodified. | N/A -- a live feed, not a versioned release this inventory tracks | Grype's own database build is Apache-2.0 per ADR-0010's engine comparison; the underlying vulnerability advisories it aggregates carry their own upstream licences (NVD, distro security trackers, GitHub advisories), which this repository never redistributes since the feed is fetched directly by the operator's own Nightjar instance, not by birdcage | direct (a runtime feed, not a code dependency) | Anchore (aggregates upstream vulnerability sources) | n/a -- not a popularity-ranked artefact | Runtime feed only -- never shipped in any image or binary | n/a -- a runtime feed, not a dependency in the sense this inventory otherwise tracks; recorded per this section's own header |
+
 ## Summary, by approval status
 
-220 rows total (210 from the issue's own table, 10 found in section H).
+222 rows total (210 from the issue's own table, 10 found in section H, 2 in section I).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 5 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74) |
+| Approved, with issue number | 6 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 47 (every other **direct** dependency) |
+| Runtime feed, not a dependency | 1 (Grype's vulnerability database, row 222) |
 | n/a -- transitive | 166 |
 
-`grype` (Anchore, Apache-2.0), approved on #108 for a future scanner-agent
-image, does not appear above: it is not in any manifest this issue names, so
-it is out of this inventory's scope until that image lands.
+`grype` (Anchore, Apache-2.0) now appears in section I, above: #108 commit 4
+landed `build/nightjar/Dockerfile`, the manifest this row was waiting on.
 
 ## What needs the owner's attention
 
