@@ -206,5 +206,5 @@ export function computeTileStatus(
     rep.kind === 'inside'
       ? [{ text: `from inside ${formatClockShort(rep.at)}` }]
       : [{ text: `one touch ${relativeDayLabel(rep.at, now)}` }]
-  return { lines: [primary, secondary] }
+  return withSelfTest([primary, secondary], canary)
 }

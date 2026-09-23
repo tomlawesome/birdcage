@@ -136,6 +136,22 @@ describe('computeTileStatus: issue #46 self-test line', () => {
     expect(result.lines[1][0].cls).toBeUndefined()
   })
 
+  it('a passing self-test appends a third line after a second visitor', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'ok',
+        hits: [{ at: '2026-01-01T04:01:00Z', kind: 'inside', service: 'ssh' }],
+        last_self_test_at: '2026-01-01T04:00:00Z',
+        last_self_test_passed: true,
+      },
+      '2026-01-01T04:05:09Z',
+    )
+    expect(result.lines).toHaveLength(3)
+    expect(plainText(result.lines[1])).toBe('from inside 04:01')
+    expect(plainText(result.lines[2])).toBe('self-test 04:00 · passed')
+  })
+
   it('no self-test line at all when last_self_test_at is null', () => {
     const result = computeTileStatus(
       { ...base, status: 'ok', last_self_test_at: null },
