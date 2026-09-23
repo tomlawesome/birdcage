@@ -182,3 +182,59 @@ func TestSweepWithConfig_AttributedTargetFailureReportsNoFact(t *testing.T) {
 		t.Error("Fact is non-nil for a failed probe")
 	}
 }
+
+// TestStatusString covers every Status's rendering, including the one #86
+// added. A Status only ever reaches an operator through this string, so a
+// new value that renders as "unknown" would make a self-test log unreadable
+// exactly when somebody is trying to work out what happened.
+func TestStatusString(t *testing.T) {
+	want := map[Status]string{
+		StatusOK:           "ok",
+		StatusFailed:       "failed",
+		StatusNoCarrier:    "no-carrier",
+		StatusNotProbeable: "not-probeable",
+		StatusAgentHandled: "agent-handled",
+		Status(0):          "unknown",
+		Status(1 << 20):    "unknown",
+	}
+	for status, text := range want {
+		if got := status.String(); got != text {
+			t.Errorf("Status(%d).String() = %q, want %q", int(status), got, text)
+		}
+	}
+}
+
+// TestProbeOneReportsAnAgentHandledTargetWithoutTouchingTheNetwork: a
+// poisoner target is cmd/mockingbird's to run, so this package must report
+// it and attempt nothing. Asserted with an address and port that would fail
+// loudly if anything did dial them.
+func TestProbeOneReportsAnAgentHandledTargetWithoutTouchingTheNetwork(t *testing.T) {
+	params := selftest.Params{
+		RunID:   "run-agent-handled",
+		Address: "203.0.113.1", // documentation range: nothing here routes to it
+		Targets: []selftest.Target{
+			{Service: "poisoner", DestPort: 0, Marker: "m-agenthandled"},
+		},
+	}
+	cfg := Config{ProbeTimeout: time.Second, SweepTimeout: 5 * time.Second, Concurrency: 1}
+
+	start := time.Now()
+	outcomes := SweepWithConfig(context.Background(), params, cfg)
+	if len(outcomes) != 1 {
+		t.Fatalf("got %d outcomes, want 1", len(outcomes))
+	}
+	if outcomes[0].Status != StatusAgentHandled {
+		t.Errorf("status = %s, want %s", outcomes[0].Status, StatusAgentHandled)
+	}
+	if outcomes[0].Err != nil {
+		t.Errorf("an agent-handled outcome carries Err: %v", outcomes[0].Err)
+	}
+	if outcomes[0].Fact != nil {
+		t.Error("an agent-handled outcome carries an AttributionFact: nothing was probed here")
+	}
+	// Nothing dialled: a dial to an unroutable address would have burned the
+	// probe timeout before returning.
+	if took := time.Since(start); took >= cfg.ProbeTimeout {
+		t.Errorf("the sweep took %v, which is long enough to have dialled something", took)
+	}
+}
