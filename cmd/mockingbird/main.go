@@ -9,11 +9,12 @@
 // path -- the loopback receiver, the log tailer, the memory queue, the
 // acknowledged-position ledger and the sender that ties them together
 // -- and the command poll/runner into the process skeleton the previous
-// slice built. Ten long-lived goroutines share one cancellation context
-// and one TokenStore: the receiver, the log road (tailer plus its
+// slice built. Eleven long-lived goroutines share one cancellation
+// context and one TokenStore: the receiver, the log road (tailer plus its
 // eviction-recovery restart), the sender, the heartbeat, the command
 // poll, the command runner, token rotation, (#69) the OpenCanary child
-// supervisor, (#65) the port-scan road, and (#88) the snmp road.
+// supervisor, (#65) the port-scan road, (#88) the snmp road, and (#86)
+// the poisoner road.
 //
 // The port-scan road (#65) is the third way an event reaches the queue,
 // alongside the webhook receiver and the log tailer, and the only one
@@ -29,6 +30,17 @@
 // never answers. OpenCanary's own snmp module stays disabled -- it
 // needs scapy, which #85 keeps out of this image -- so this is our own
 // reader, not a wrapper around theirs. See snmp.go.
+//
+// The poisoner road (#86) is the fifth, and the only one that speaks
+// first: internal/agent/poisoner asks the local segment for names nobody
+// should answer -- over LLMNR, NBT-NS and mDNS, shaped like the client
+// the segment expects -- and treats any answer as an intrusion, because a
+// name that does not exist has no correct answer but silence. It also
+// listens on those three ports to count how much the segment's own hosts
+// ask, so its rate is matched to theirs rather than being a timer an
+// attacker could spot. Those listening sockets are shut for writing when
+// they open, so the kernel, not this code, is what guarantees the canary
+// can never answer another machine's lookup. See poisoner.go.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -183,7 +195,18 @@ func main() {
 	snmpDetector, snmpInv := newSNMPRoad(in, snmpLog)
 	snmpLog.Info(snmpInv.line())
 
-	wg.Add(8)
+	// The poisoner road (#86): receive-only sockets on 5355, 5353 and 137
+	// counting the segment's own name lookups, and bait lookups for names
+	// nobody should answer. Opened here for the same reason as the two
+	// above -- the three ports are privileged, so an operator who ran the
+	// container without the sysctl sees one WARN at startup. A nil
+	// detector means the road is off or nothing bound, and
+	// runPoisonerRoad is then a no-op.
+	poisonerLog := logging.New("poisoner")
+	poisonerDetector, poisonerInv := newPoisonerRoad(in, poisonerLog)
+	poisonerLog.Info(poisonerInv.line())
+
+	wg.Add(9)
 	go func() {
 		defer wg.Done()
 		runSenderLoop(ctx, c, ts, in, pacer)
@@ -217,6 +240,10 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runSNMPRoad(ctx, snmpDetector, snmpLog)
+	}()
+	go func() {
+		defer wg.Done()
+		runPoisonerRoad(ctx, poisonerDetector, poisonerLog)
 	}()
 
 	// OpenCanary as mockingbird's child process (#69): the receiver above

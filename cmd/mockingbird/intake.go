@@ -214,6 +214,27 @@ func (in *Intake) SubmitSNMPEvent(message []byte) error {
 	return nil
 }
 
+// SubmitPoisonerEvent is the fifth road into the queue (#86): something
+// on the segment answered a bait lookup for a name that does not exist,
+// which internal/agent/poisoner caught itself. OpenCanary's own llmnr
+// module is not behind it -- #85 ruled that module out of this image --
+// and it covers NBT-NS and mDNS as well, which upstream's does not.
+//
+// Same id scheme as the webhook, port-scan and snmp roads -- SHA-256 of
+// the emitted bytes, verbatim -- so Push's deduplication works across all
+// five roads without knowing which produced a given event. Like the
+// port-scan and snmp roads, it appends no ledger entry: this event was
+// never a line in OpenCanary's log file, so it has no log position to
+// record.
+func (in *Intake) SubmitPoisonerEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that
