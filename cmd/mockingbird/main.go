@@ -9,11 +9,12 @@
 // path -- the loopback receiver, the log tailer, the memory queue, the
 // acknowledged-position ledger and the sender that ties them together
 // -- and the command poll/runner into the process skeleton the previous
-// slice built. Ten long-lived goroutines share one cancellation context
-// and one TokenStore: the receiver, the log road (tailer plus its
+// slice built. Eleven long-lived goroutines share one cancellation
+// context and one TokenStore: the receiver, the log road (tailer plus its
 // eviction-recovery restart), the sender, the heartbeat, the command
 // poll, the command runner, token rotation, (#69) the OpenCanary child
-// supervisor, (#65) the port-scan road, and (#88) the snmp road.
+// supervisor, (#65) the port-scan road, (#88) the snmp road, and (#87)
+// the smb audit road.
 //
 // The port-scan road (#65) is the third way an event reaches the queue,
 // alongside the webhook receiver and the log tailer, and the only one
@@ -29,6 +30,14 @@
 // never answers. OpenCanary's own snmp module stays disabled -- it
 // needs scapy, which #85 keeps out of this image -- so this is our own
 // reader, not a wrapper around theirs. See snmp.go.
+//
+// The smb audit road (#87) is the fifth, and the only one that reads a
+// file another container wrote: the SMB lure (build/smb-lure) serves a
+// read-only guest share on this canary's own address and writes an audit
+// line per file opened; this agent mounts that volume read-only, follows
+// it with a second internal/agent/tailer instance and parses it with
+// internal/agent/smbaudit. Off unless an audit file is named, which is
+// how a canary deployed without the lure behaves. See smbaudit.go.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -182,6 +191,21 @@ func main() {
 	snmpLog := logging.New("snmp")
 	snmpDetector, snmpInv := newSNMPRoad(in, snmpLog)
 	snmpLog.Info(snmpInv.line())
+
+	// The smb audit road (#87): the lure is a separate container, so this
+	// road has nothing to open at startup -- the tailer's own retry loop
+	// waits for the audit file to appear, which it does when the lure
+	// starts, in whichever order the two containers come up. A nil road
+	// means no audit file was named and runSMBAuditRoad is a no-op.
+	smbLog := logging.New("smb")
+	smbRoad, smbInv := newSMBAuditRoad(cfg, in, smbLog)
+	smbLog.Info(smbInv.line())
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runSMBAuditRoad(ctx, smbRoad, smbLog)
+	}()
 
 	wg.Add(8)
 	go func() {
