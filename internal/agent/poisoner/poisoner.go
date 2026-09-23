@@ -173,6 +173,26 @@ func (d *Detector) Profile() Profile { return d.profile }
 // line.
 func (d *Detector) NameCount() int { return len(d.names) }
 
+// BaitNames is the rotation itself, for the heartbeat to report to
+// birdcage so the canary page's facts column can show an operator what
+// their canaries are baiting with (#86 slice D).
+//
+// This is the one way a bait name leaves this package, and it is not a
+// contradiction of the rule in the package comment: that rule is about log
+// lines on the honeypot, whose stdout is readable by whoever breaks into
+// the box. The dashboard is the operator's own screen and is the one place
+// these names are meant to be visible. Nothing here may be handed to a
+// logger -- see cmd/mockingbird's currentSelfReport, which puts it straight
+// on the heartbeat.
+//
+// A copy, so a caller cannot reorder or extend the live rotation.
+func (d *Detector) BaitNames() Names {
+	if d == nil {
+		return nil
+	}
+	return d.names.clone()
+}
+
 // Bursts, Lookups and Answers are this detector's own counters, read for
 // the agent's accounting. Not heartbeat fields yet, the same caveat
 // portscan.Detected and snmp.Logged carry.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
@@ -244,4 +245,35 @@ func runPoisonerRoad(ctx context.Context, detector *poisoner.Detector, log *slog
 	if err := detector.Run(ctx); err != nil {
 		log.Warn(fmt.Sprintf("poisoner detection stopped: %s", safeErr(err)))
 	}
+}
+
+// baitNames is the one thing the heartbeat needs from the poisoner
+// detector. An interface so a test can drive it without a detector, and so
+// main does not have to branch on whether the road is running.
+type baitNames interface {
+	BaitNames() poisoner.Names
+}
+
+// reportedBaitNames renders the rotation for the heartbeat's
+// poisoner_names field (#86 slice D): the canary page's facts column shows
+// an operator what their canaries are baiting with, so the agent has to say.
+//
+// A nil detector -- the road off -- reports nothing rather than an empty
+// list, and birdcage stores that as NULL: "this canary reports no bait
+// names" and "this canary bait-tests with an empty list" are different
+// things, and only the first is true.
+//
+// This is the one place a bait name leaves the detector, and it goes
+// straight onto the heartbeat. It must never be handed to a logger: see
+// internal/agent/poisoner's package comment, and safelog.go for what this
+// binary may print.
+func reportedBaitNames(bait baitNames) string {
+	if bait == nil {
+		return ""
+	}
+	names := bait.BaitNames()
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, ",")
 }

@@ -214,7 +214,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runHeartbeatLoop(ctx, c, ts, func() client.SelfReport {
-			return currentSelfReport(version, in)
+			return currentSelfReport(version, in, poisonerDetector)
 		})
 	}()
 	go func() {
@@ -349,8 +349,9 @@ func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *Tok
 // reported" (the previous slice's honest zero SelfReport) stays distinct
 // from "reported zero," and an agent that has actually measured these
 // values must say so.
-func currentSelfReport(version string, in *Intake) client.SelfReport {
+func currentSelfReport(version string, in *Intake, bait baitNames) client.SelfReport {
 	return client.SelfReport{
+		PoisonerNames:     reportedBaitNames(bait),
 		QueueDepth:        in.Queue.Depth(),
 		LogReadOK:         in.LogReadOK(),
 		LastEventID:       in.LastEventID(),

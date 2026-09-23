@@ -36,6 +36,24 @@ describe('factRows', () => {
     expect(labels).not.toContain('token')
   })
 
+  it('lists the bait names the poisoner detector is asking for', () => {
+    const input = sceneInput('quiet')
+    input.page.facts.poisoner_names = 'old-fs-01,printer-7,wpad'
+    expect(factRows(input).find((r) => r.label === 'bait names')?.value).toBe(
+      'old-fs-01 · printer-7 · wpad',
+    )
+  })
+
+  it('leaves the bait names out when the canary reports none', () => {
+    // The detector off, an older agent, or a kind that is not a honeypot --
+    // all ordinary, and none of them a row saying nothing.
+    const input = sceneInput('quiet')
+    delete input.page.facts.poisoner_names
+    expect(factRows(input).map((r) => r.label)).not.toContain('bait names')
+    input.page.facts.poisoner_names = ''
+    expect(factRows(input).map((r) => r.label)).not.toContain('bait names')
+  })
+
   it('a switched-off self-test says off rather than a schedule it will not keep', () => {
     const input = sceneInput('quiet')
     input.page.facts.self_test_enabled = false

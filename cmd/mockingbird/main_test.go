@@ -31,7 +31,7 @@ func TestCurrentSelfReportMapsEveryLiveField(t *testing.T) {
 
 	in.setLastEventID("last-event-id")
 
-	report := currentSelfReport("v9.9.9", in)
+	report := currentSelfReport("v9.9.9", in, nil)
 
 	if report.AgentVersion != "v9.9.9" {
 		t.Errorf("AgentVersion = %q, want %q -- the version passed to currentSelfReport must pass through unchanged", report.AgentVersion, "v9.9.9")

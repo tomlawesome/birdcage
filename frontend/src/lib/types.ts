@@ -238,6 +238,11 @@ export interface CanaryFacts {
   enrolled_at: string
   registered_at?: string
   agent_version?: string
+  /** The bait names the poisoner detector is asking for (#86 slice D),
+   * comma-separated, as the agent last reported them. Absent for a canary
+   * that reports none: the detector off, an older agent, or a kind that is
+   * not a honeypot. */
+  poisoner_names?: string
   token_rotated_at?: string
   token_rotates_at?: string
 }

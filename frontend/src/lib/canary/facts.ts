@@ -44,6 +44,19 @@ export function factRows(input: CanaryPageInput): FactRow[] {
   if (facts.address) rows.push({ label: 'address', value: facts.address })
   if (facts.ports) rows.push({ label: 'listening', value: facts.ports })
 
+  // The bait names the poisoner detector is asking for (#86 slice D).
+  // Shown with the separator every other multi-value row here uses, so a
+  // reader can see at a glance how many there are.
+  //
+  // This screen is the only place these appear. The canary keeps them out
+  // of every log line on purpose -- the bait only works while nobody knows
+  // which names it uses, and a honeypot's stdout is readable by whoever
+  // breaks into it -- so an operator who wants to know what their canaries
+  // are baiting with reads it here.
+  if (facts.poisoner_names) {
+    rows.push({ label: 'bait names', value: facts.poisoner_names.split(',').join(' · ') })
+  }
+
   const lures = selfTestCards(canary)
     .filter((card) => card.lure)
     .map((card) => card.service)

@@ -485,3 +485,65 @@ func TestProbeReportsThePoisonerAsAgentHandled(t *testing.T) {
 		}
 	}
 }
+
+// fakeBaitNames stands in for the detector in the heartbeat tests.
+type fakeBaitNames struct{ names poisoner.Names }
+
+func (f fakeBaitNames) BaitNames() poisoner.Names { return f.names }
+
+// TestReportedBaitNames is #86 slice D's agent half: the canary page shows
+// an operator what their canaries are baiting with, so the heartbeat has to
+// carry it.
+func TestReportedBaitNames(t *testing.T) {
+	tests := []struct {
+		name string
+		bait baitNames
+		want string
+	}{
+		// A nil interface is the road switched off. Reporting nothing is not
+		// the same as reporting an empty list, and birdcage stores the
+		// difference (internal/store's poisoner_names is NULL for one and
+		// never the other), so the facts column can leave the row out.
+		{name: "the road off", bait: nil, want: ""},
+		{name: "a detector with no names", bait: fakeBaitNames{}, want: ""},
+		{name: "one name", bait: fakeBaitNames{names: poisoner.Names{"wpad"}}, want: "wpad"},
+		{
+			name: "the whole rotation, in order",
+			bait: fakeBaitNames{names: poisoner.Names{"old-fs-01", "printer-7", "wpad"}},
+			want: "old-fs-01,printer-7,wpad",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reportedBaitNames(tc.bait); got != tc.want {
+				t.Errorf("reportedBaitNames = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReportedBaitNamesHandlesATypedNilDetector: main hands the real
+// *poisoner.Detector straight in, and a nil one of those is not a nil
+// interface. The detector's own BaitNames is nil-safe, so this must come
+// back empty rather than panicking.
+func TestReportedBaitNamesHandlesATypedNilDetector(t *testing.T) {
+	var d *poisoner.Detector
+	if got := reportedBaitNames(d); got != "" {
+		t.Errorf("reportedBaitNames(typed nil) = %q, want the empty string", got)
+	}
+}
+
+// TestCurrentSelfReportCarriesTheBaitNames proves the wiring, not just the
+// helper: what main builds for the heartbeat has the names on it.
+func TestCurrentSelfReportCarriesTheBaitNames(t *testing.T) {
+	in, _ := newTestIntake(t, queue.Config{})
+	report := currentSelfReport("v9.9.9", in, fakeBaitNames{names: poisoner.Names{"old-fs-01", "wpad"}})
+	if report.PoisonerNames != "old-fs-01,wpad" {
+		t.Errorf("SelfReport.PoisonerNames = %q, want \"old-fs-01,wpad\"", report.PoisonerNames)
+	}
+	// And a canary with the road off reports none, rather than an empty list
+	// birdcage would have to store.
+	if got := currentSelfReport("v9.9.9", in, nil).PoisonerNames; got != "" {
+		t.Errorf("SelfReport.PoisonerNames with no detector = %q, want the empty string", got)
+	}
+}

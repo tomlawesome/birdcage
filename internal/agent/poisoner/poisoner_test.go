@@ -694,3 +694,34 @@ func TestLookupOnceRefusesAProtocolTheProfileDoesNotUse(t *testing.T) {
 		t.Error("an unusable bait name was accepted")
 	}
 }
+
+// TestBaitNamesReturnsACopy is the one way a bait name leaves this package
+// (#86 slice D: the canary page's facts column). A caller must not be able
+// to reorder or extend the live rotation through it.
+func TestBaitNamesReturnsACopy(t *testing.T) {
+	submit, _, _ := collect()
+	d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+
+	got := d.BaitNames()
+	if len(got) != d.NameCount() {
+		t.Fatalf("BaitNames returned %d names, NameCount says %d", len(got), d.NameCount())
+	}
+	if !got.contains(WPADName) {
+		t.Errorf("BaitNames %v does not include %q", got, WPADName)
+	}
+
+	// Mutating what came back must not touch the rotation the detector asks
+	// with.
+	before := d.names[0]
+	got[0] = "not-a-bait-name"
+	if d.names[0] != before {
+		t.Error("mutating the returned slice changed the live rotation")
+	}
+
+	// And a nil detector -- the road off -- reports none rather than
+	// panicking, because the heartbeat holds it in an interface.
+	var nilDetector *Detector
+	if names := nilDetector.BaitNames(); names != nil {
+		t.Errorf("a nil detector reported %v, want nil", names)
+	}
+}
