@@ -161,3 +161,25 @@ func TestRunReadinessCheckSurvivesAnUnreadableConf(t *testing.T) {
 		t.Errorf("expected a WARN about the unreadable config, got log:\n%s", out)
 	}
 }
+
+// TestDefaultReadinessConfigMatchesShippedDefaults pins the values #65's
+// own doc comment on defaultReadinessConfig documents -- a 10s window,
+// a 250ms poll, a 500ms dial timeout and 127.0.0.1 -- so a change to any
+// of them is a deliberate edit to this test, not a silent behavior
+// change nothing catches. ConfPath is read from envOpenCanaryConf,
+// unset here, matching a real boot before any override.
+func TestDefaultReadinessConfigMatchesShippedDefaults(t *testing.T) {
+	t.Setenv(envOpenCanaryConf, "")
+
+	got := defaultReadinessConfig()
+	want := readinessConfig{
+		ConfPath:    "",
+		Host:        "127.0.0.1",
+		Window:      10 * time.Second,
+		PollEvery:   250 * time.Millisecond,
+		DialTimeout: 500 * time.Millisecond,
+	}
+	if got != want {
+		t.Errorf("defaultReadinessConfig() = %+v, want %+v", got, want)
+	}
+}

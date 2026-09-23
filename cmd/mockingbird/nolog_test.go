@@ -154,6 +154,59 @@ func TestBootNeverLogsSensitiveValues(t *testing.T) {
 	}
 }
 
+// TestBootRefusesOnEachDependencyFailure drives all three of boot's
+// error returns -- client.New, loadTokenStore and NewIntake, in that
+// order -- each by breaking exactly one otherwise-valid fakeConfig
+// field, proving boot stops and names which step failed rather than
+// continuing past a broken dependency. Every failure here is a pure
+// validation check (no real network dial), so this needs no fake server.
+func TestBootRefusesOnEachDependencyFailure(t *testing.T) {
+	t.Run("client.New", func(t *testing.T) {
+		cfg := fakeConfig(t)
+		cfg.BirdcageURL = "" // client.New's own first check
+		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		if in != nil {
+			t.Cleanup(func() { _ = in.Receiver.Close() })
+		}
+		if err == nil {
+			t.Fatal("boot succeeded with an empty BirdcageURL, want an error")
+		}
+		if !strings.Contains(err.Error(), "build birdcage client") {
+			t.Errorf("boot error = %q, want it to name the birdcage-client step", err.Error())
+		}
+	})
+
+	t.Run("loadTokenStore", func(t *testing.T) {
+		cfg := fakeConfig(t)
+		cfg.TokenPath = filepath.Join(t.TempDir(), "no-such-token")
+		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		if in != nil {
+			t.Cleanup(func() { _ = in.Receiver.Close() })
+		}
+		if err == nil {
+			t.Fatal("boot succeeded with a missing token file, want an error")
+		}
+		if !strings.Contains(err.Error(), "load token") {
+			t.Errorf("boot error = %q, want it to name the load-token step", err.Error())
+		}
+	})
+
+	t.Run("NewIntake", func(t *testing.T) {
+		cfg := fakeConfig(t)
+		cfg.Listen = "8.8.8.8:0" // requireLoopback refuses any non-loopback host
+		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		if in != nil {
+			t.Cleanup(func() { _ = in.Receiver.Close() })
+		}
+		if err == nil {
+			t.Fatal("boot succeeded with a non-loopback Listen address, want an error")
+		}
+		if !strings.Contains(err.Error(), "build intake") {
+			t.Errorf("boot error = %q, want it to name the build-intake step", err.Error())
+		}
+	})
+}
+
 // TestLoadConfigErrorNeverLeaksStateDirPath is config.go's own half of
 // the same guarantee: an unreadable state-dir file is a startup failure
 // (see config_test.go's TestLoadConfigMissingCACert), and the error
