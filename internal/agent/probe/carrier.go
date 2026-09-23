@@ -47,6 +47,15 @@ var attributionCarriers = map[string]attributionCarrierFunc{
 	"portscan": probePortscan,
 }
 
+// Attributed reports whether service is one of the attributed-grade
+// services -- the ones whose event carries no marker and is claimed by
+// cmd/mockingbird's claim window instead, so the caller can open that
+// window before the probe that produces the event runs.
+func Attributed(service string) bool {
+	_, ok := attributionCarriers[service]
+	return ok
+}
+
 // notProbeable are the services #46 rules out of scope for this build:
 // smb needs a real Samba audit VFS this build cannot provide (a deploy
 // dependency, not a protocol limit -- see note 19797), and llmnr's own

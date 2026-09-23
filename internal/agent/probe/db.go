@@ -40,6 +40,14 @@ func probePostgres(ctx context.Context, address string, port int, marker string)
 // command (#46 carrier table: "the username or equivalent first-
 // credential field" -- Redis's own AUTH has no separate username short
 // of ACL-based multi-user setups, so the password is that field here).
+//
+// OpenCanary's redis module logs a command's arguments truncated to
+// redis.max_arg_length, 30 bytes by default -- two short of the
+// 32-character hex marker (selftest.MarkerBytes), so the logged ARGS
+// could never contain the whole marker birdcage matches by substring
+// (MR !60 pipeline 1524). build/mockingbird/opencanary.conf sets that
+// key to 64 for this reason; a canary running its own OpenCanary config
+// needs the same, or its redis target never passes.
 func probeRedis(ctx context.Context, address string, port int, marker string) error {
 	conn, err := dialTCP(ctx, address, port)
 	if err != nil {

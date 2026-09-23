@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
@@ -142,41 +141,55 @@ func runCommand(ctx context.Context, in *Intake, cmd *client.Command) error {
 // correctly-reported case, not a refusal. probe.Sweep also never writes
 // into the event path itself (see its own doc comment): the probes
 // produce ordinary OpenCanary events that reach birdcage by the normal
-// two roads, and this function's job ends at firing them, opening a
-// claim window for every attributed-grade probe that reached the wire
-// (#46 slice 3), and logging what happened for the operator and,
-// eventually, the heartbeat's counters.
+// two roads, and this function's job ends at firing them, watching a
+// claim window for every attributed-grade target (#46 slice 3), and
+// logging what happened for the operator and, eventually, the
+// heartbeat's counters.
+//
+// The claim windows open before the sweep, not after it: an attributed
+// probe's event is produced while the probe runs (the portscan detector
+// fires on the fifth SYN, mid-sweep), and a window that only opened once
+// probe.Sweep returned found nothing to claim -- the event had already
+// passed through intake unclaimed, and the run never settled (MR !60
+// pipeline 1524, e2e:enrol-and-hit). Every window stays open until
+// selfTestClaimWindow after the sweep returns, so a late detector event
+// still lands inside it; a target whose probe then fails simply closes
+// with no candidate.
 //
 // in is the same Intake the sender and every intake road share -- its
 // claims tracker (claim.go) is what turns an attributed probe's own fact
 // into a claimed event, by watching the events those same roads are
-// pushing concurrently with this function's own claim windows.
+// pushing concurrently with the sweep.
 func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 	params, err := selftest.DecodeParams(cmd.Params)
 	if err != nil {
 		return fmt.Errorf("selftest params: %w", err)
 	}
 
+	var windows []*claimWindow
+	for _, t := range params.Targets {
+		if probe.Attributed(t.Service) {
+			windows = append(windows, in.claims.startWindow(t.Service, params.Address, t.Marker))
+		}
+	}
+
 	outcomes := probe.Sweep(ctx, params)
 
-	// Every attributed-grade outcome's claim window runs concurrently
-	// (not one after another): each blocks for up to selfTestClaimWindow,
-	// and a self-test with both ntp and portscan targets must not pay
-	// that cost twice over.
-	var claims sync.WaitGroup
+	if len(windows) > 0 {
+		select {
+		case <-time.After(selfTestClaimWindow):
+		case <-ctx.Done():
+		}
+		for _, w := range windows {
+			in.claims.resolveWindow(w)
+		}
+	}
+
 	var ok, failed, noCarrier, notProbeable int
-	for i, o := range outcomes {
+	for _, o := range outcomes {
 		switch o.Status {
 		case probe.StatusOK:
 			ok++
-			if o.Fact != nil {
-				marker := params.Targets[i].Marker
-				claims.Add(1)
-				go func(service, marker string) {
-					defer claims.Done()
-					in.claims.open(ctx.Done(), service, params.Address, marker)
-				}(o.Fact.Service, marker)
-			}
 		case probe.StatusFailed:
 			failed++
 			selftestLog.Warn(fmt.Sprintf("%s: target %s:%d failed: %s", params.RunID, o.Service, o.DestPort, safeErr(o.Err)))
@@ -186,7 +199,6 @@ func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 			notProbeable++
 		}
 	}
-	claims.Wait()
 	selftestLog.Info(fmt.Sprintf("command %s: %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
 		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes)))
 	return nil

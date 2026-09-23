@@ -5,7 +5,6 @@ import (
 	"context"
 	"net"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
@@ -13,8 +12,10 @@ import (
 // acceptOneAndRead starts a listener, sends greeting to the first
 // connection it accepts (after a short delay, to exercise the
 // carrier's drainBriefly rather than let it race an instant write),
-// and returns a channel carrying whatever line the connection then
-// writes.
+// and returns a channel carrying the first two lines the connection
+// then writes, joined -- the carriers under test send a credential pair
+// (see selfTestPassword), and OpenCanary's own modules log only once
+// the second line lands.
 func acceptOneAndRead(t *testing.T, greeting string) (port int, lineCh <-chan string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -34,8 +35,10 @@ func acceptOneAndRead(t *testing.T, greeting string) (port int, lineCh <-chan st
 			time.Sleep(50 * time.Millisecond)
 			_, _ = c.Write([]byte(greeting)) // fixture write; a failure surfaces as a timeout in the test below
 		}
-		line, _ := bufio.NewReader(c).ReadString('\n')
-		ch <- line
+		r := bufio.NewReader(c)
+		first, _ := r.ReadString('\n')
+		second, _ := r.ReadString('\n')
+		ch <- first + second
 	}()
 
 	_, portStr, err := net.SplitHostPort(ln.Addr().String())
@@ -49,7 +52,7 @@ func acceptOneAndRead(t *testing.T, greeting string) (port int, lineCh <-chan st
 	return port, ch
 }
 
-func TestProbeFTP_SendsUSERWithMarker(t *testing.T) {
+func TestProbeFTP_SendsUSERWithMarkerThenPASS(t *testing.T) {
 	port, lineCh := acceptOneAndRead(t, "220 welcome\r\n")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -60,15 +63,15 @@ func TestProbeFTP_SendsUSERWithMarker(t *testing.T) {
 
 	select {
 	case line := <-lineCh:
-		if strings.TrimSpace(line) != "USER marker-ftp" {
-			t.Errorf("got line %q, want \"USER marker-ftp\"", line)
+		if line != "USER marker-ftp\r\nPASS "+selfTestPassword+"\r\n" {
+			t.Errorf("got %q, want USER marker-ftp then PASS %s", line, selfTestPassword)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for the USER line")
 	}
 }
 
-func TestProbeTelnet_SendsMarkerAsUsernameLine(t *testing.T) {
+func TestProbeTelnet_SendsMarkerAsUsernameLineThenPassword(t *testing.T) {
 	port, lineCh := acceptOneAndRead(t, "login: ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -79,8 +82,8 @@ func TestProbeTelnet_SendsMarkerAsUsernameLine(t *testing.T) {
 
 	select {
 	case line := <-lineCh:
-		if strings.TrimSpace(line) != "marker-telnet" {
-			t.Errorf("got line %q, want \"marker-telnet\"", line)
+		if line != "marker-telnet\r\n"+selfTestPassword+"\r\n" {
+			t.Errorf("got %q, want marker-telnet then %s", line, selfTestPassword)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for the username line")

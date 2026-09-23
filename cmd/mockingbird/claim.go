@@ -35,11 +35,9 @@ type claimWindow struct {
 // observe is called by every intake road that could carry an attributed
 // service's event, before that event is handed to the sender, so a
 // candidate is recorded before the sender's next Peek can possibly reach
-// it. open registers one window and blocks the caller until
-// selfTestClaimWindow elapses (or ctx ends first), deciding that
-// window's exactly-one rule (note 19897: exactly one candidate claims
-// the event; zero or two-or-more leaves every candidate to go out
-// unclaimed, real) before returning.
+// it. startWindow registers one window; resolveWindow decides its
+// exactly-one rule (note 19897: exactly one candidate claims the event;
+// zero or two-or-more leaves every candidate to go out unclaimed, real).
 //
 // pending and marker are the sender's own two questions for one queued
 // event id: is its claim still being decided (hold it back this round),
@@ -65,25 +63,14 @@ func (t *claimTracker) active() bool {
 	return len(t.windows) > 0
 }
 
-// open registers one window for (service, address, marker) and blocks
-// until selfTestClaimWindow elapses or done closes, then resolves it --
-// the shape command.go's runSelfTest actually calls. Split into
-// startWindow and resolveWindow below so a test can drive the exact same
-// decision deterministically, without depending on selfTestClaimWindow's
-// real wall-clock duration or a goroutine race between registration and
-// the test's own observe calls.
-func (t *claimTracker) open(done <-chan struct{}, service, address, marker string) {
-	w := t.startWindow(service, address, marker)
-	select {
-	case <-time.After(selfTestClaimWindow):
-	case <-done:
-	}
-	t.resolveWindow(w)
-}
-
-// startWindow registers one window and returns it immediately, before
-// any candidate can possibly have arrived -- the caller decides when to
-// stop watching by calling resolveWindow.
+// startWindow registers one window and returns it immediately -- the
+// caller (command.go's runSelfTest) opens every attributed target's
+// window before the sweep that produces its event, and calls
+// resolveWindow selfTestClaimWindow after the sweep returns. Split from
+// resolveWindow so a test can drive the exact same decision
+// deterministically, without depending on selfTestClaimWindow's real
+// wall-clock duration or a goroutine race between registration and the
+// test's own observe calls.
 func (t *claimTracker) startWindow(service, address, marker string) *claimWindow {
 	w := &claimWindow{service: service, address: address, marker: marker}
 	t.mu.Lock()

@@ -1,8 +1,14 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/queue"
 )
 
 // TestClaimTracker_ExactlyOneCandidateClaims is note 19897's exactly-one
@@ -149,47 +155,71 @@ func TestClaimTracker_Active(t *testing.T) {
 	}
 }
 
-// TestClaimTracker_OpenBlocksUntilDoneCloses proves open (the shape
-// command.go's runSelfTest actually calls) is the blocking
-// startWindow+resolveWindow pair above -- ended early by done rather
-// than by waiting out the real selfTestClaimWindow, so this test costs
-// no wall-clock time regardless of that var's value.
-func TestClaimTracker_OpenBlocksUntilDoneCloses(t *testing.T) {
+// TestRunSelfTestWindowOpensBeforeSweep proves runSelfTest opens an
+// attributed target's claim window before the sweep that produces its
+// event, not after it (the defect MR !60's pipeline 1524 showed: the
+// portscan detector fires mid-sweep, and a window opened once the sweep
+// returned found nothing to claim). The ssh target here dials a local
+// listener that accepts and never speaks, so the sweep is held open
+// until the test releases it -- and the test only releases it once the
+// portscan window is already active and its candidate observed. Under
+// the old ordering active() could not become true until the sweep
+// returned, which this test never allows before observing, so the
+// deadline below fails it rather than the assertion at the end.
+func TestRunSelfTestWindowOpensBeforeSweep(t *testing.T) {
 	origWindow := selfTestClaimWindow
-	selfTestClaimWindow = time.Hour // would hang the test if done did not end it first
+	selfTestClaimWindow = 50 * time.Millisecond
 	defer func() { selfTestClaimWindow = origWindow }()
 
-	tr := newClaimTracker()
-	done := make(chan struct{})
-	finished := make(chan struct{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	held := make(chan net.Conn, 1)
 	go func() {
-		tr.open(done, "portscan", "192.0.2.10", "the-marker")
-		close(finished)
+		c, err := ln.Accept()
+		if err == nil {
+			held <- c // never written to: the ssh probe blocks reading the banner
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	in, _ := newTestIntake(t, queue.Config{})
+	params := fmt.Sprintf(`{"run_id":"r1","address":"127.0.0.1","targets":[{"service":"ssh","dest_port":%d,"marker":"m-ssh"},{"service":"portscan","dest_port":0,"marker":"m-portscan"}]}`, port)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- runSelfTest(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: []byte(params)})
 	}()
 
-	// Give open's own startWindow a chance to run before observing --
-	// deterministic because pending() reads the tracker's own state, not
-	// a timer: this loop only ever ends once startWindow has actually
-	// registered the window (or the test's own deadline below fires
-	// first, which fails loudly rather than hanging).
 	deadline := time.Now().Add(2 * time.Second)
-	for !tr.active() {
+	for !in.claims.active() {
 		if time.Now().After(deadline) {
-			t.Fatal("open never registered its window")
+			t.Fatal("no claim window opened while the sweep was still running")
 		}
+		time.Sleep(time.Millisecond)
 	}
+	in.claims.observe("ev-1", "portscan", "127.0.0.1")
 
-	tr.observe("ev-1", "portscan", "192.0.2.10")
-	close(done)
+	// Release the sweep only now: the window was open before it ended.
+	select {
+	case c := <-held:
+		_ = c.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("the ssh probe never dialed the held listener")
+	}
 
 	select {
-	case <-finished:
-	case <-time.After(2 * time.Second):
-		t.Fatal("open did not return after done closed")
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("runSelfTest = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runSelfTest did not return after the sweep was released")
 	}
 
-	marker, ok := tr.marker("ev-1")
-	if !ok || marker != "the-marker" {
-		t.Fatalf("marker(ev-1) = (%q, %v), want (\"the-marker\", true)", marker, ok)
+	marker, ok := in.claims.marker("ev-1")
+	if !ok || marker != "m-portscan" {
+		t.Fatalf("marker(ev-1) = (%q, %v), want (\"m-portscan\", true)", marker, ok)
 	}
 }

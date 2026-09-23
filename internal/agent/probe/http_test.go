@@ -3,6 +3,7 @@ package probe
 import (
 	"bufio"
 	"context"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -10,7 +11,7 @@ import (
 	"time"
 )
 
-func TestProbeHTTP_PlantsMarkerInPathAndHeader(t *testing.T) {
+func TestProbeHTTP_PostsMarkerAsLoginUsername(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -33,6 +34,10 @@ func TestProbeHTTP_PlantsMarkerInPathAndHeader(t *testing.T) {
 				break
 			}
 		}
+		// The body follows the blank line; read whatever arrives before
+		// the carrier closes its side.
+		rest, _ := io.ReadAll(r)
+		b.Write(rest)
 		reqCh <- b.String()
 	}()
 
@@ -47,8 +52,11 @@ func TestProbeHTTP_PlantsMarkerInPathAndHeader(t *testing.T) {
 
 	select {
 	case req := <-reqCh:
-		if !strings.Contains(req, "GET /marker-http ") {
-			t.Errorf("request %q does not carry the marker in its path", req)
+		if !strings.HasPrefix(req, "POST /index.html HTTP/1.1\r\n") {
+			t.Errorf("request %q is not a login POST to /index.html, the one request OpenCanary's http module logs a username from", req)
+		}
+		if !strings.HasSuffix(req, "\r\n\r\nusername=marker-http&password="+selfTestPassword) {
+			t.Errorf("request %q does not carry the marker as the login form's username", req)
 		}
 		if !strings.Contains(req, "X-Birdcage-Selftest: marker-http") {
 			t.Errorf("request %q does not carry the marker header", req)
