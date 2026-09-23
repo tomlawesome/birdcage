@@ -96,30 +96,6 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
-  cmd/nightjar: 66           # 67.1% measured with -race, 2026-09-23 (#74).
-                             # The real checkMounts and realScan (not just
-                             # buildSnapshot's injected stand-ins) are now
-                             # exercised directly: mountinfoPath, hostRoot
-                             # and grypeBin are fixed constants with no
-                             # env-var seam, but checkMounts genuinely
-                             # refuses in any test/CI environment (no
-                             # /host bind) and realScan genuinely fails
-                             # closed (no grype binary at its pinned
-                             # path), so both are real, deterministic
-                             # refusal-path tests, not fixtures. runScanOnce
-                             # and runScanLoop are proved end-to-end against
-                             # a real TLS test server. What remains
-                             # uncovered: main()'s own wiring (50 of the
-                             # package's 164 statements -- needs a real
-                             # process exit, not unit-testable without a
-                             # self-exec test harness this codebase does not
-                             # use elsewhere) and 4 statements inside
-                             # checkMounts/ParseMountinfo reachable only by
-                             # making mountinfoPath unreadable or malformed,
-                             # or by /host actually being a mount point --
-                             # none reachable without adding a seam, which
-                             # was out of scope for this pass. 67.1% is the
-                             # ceiling on this checkout without either.
   cmd/mockingbird: 71       # 71.5% measured with -race and Postgres,
                              # 2026-09-23 (#46 slice 3, was floored at 69):
                              # the claim window (claim.go, new file) and
@@ -184,6 +160,30 @@ floors:
                              # checkStartupFiles' remaining branch) that need
                              # a filesystem failure this pass did not find a
                              # deterministic way to induce.
+  cmd/nightjar: 82           # 82.2% measured with -race, 2026-09-23 (#74).
+                             # Moved out of the below-70% section this pass:
+                             # main() is now factored the way
+                             # cmd/mockingbird/main.go's own boot/run split
+                             # does -- boot (build the birdcage client, load
+                             # the token) and run (start the scan and
+                             # heartbeat loops, wait for both) are pulled
+                             # out of main and are each 100% covered,
+                             # tested directly against the real TLS
+                             # test-server fixture scanner_real_test.go and
+                             # heartbeat_test.go already use, and (for run)
+                             # against a context cancelled before the call
+                             # so its shutdown path is proved without a
+                             # sleep. What remains uncovered: main() itself
+                             # (now just log level, the version argument,
+                             # loadConfig, the exit-code decisions and the
+                             # signal context -- still needs a real process
+                             # exit, no self-exec harness this codebase uses
+                             # elsewhere) and the same 4 statements inside
+                             # checkMounts as before (an unreadable or
+                             # malformed mountinfo, and the exists closure,
+                             # only invoked when /host is actually a mount
+                             # point) -- unreachable without adding a seam,
+                             # which stays out of scope.
   internal/agentkind: 100     # 100.0% measured, 2026-09-22 (#105). A closed
                               # enum and a lookup table: every value and both
                               # sides of Valid() are exercised by construction,

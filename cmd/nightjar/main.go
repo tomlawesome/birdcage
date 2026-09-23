@@ -35,6 +35,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -73,6 +74,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	cli, token, err := boot(cfg)
+	if err != nil {
+		mainLog.Error(safeErr(err))
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	run(ctx, cfg, cli, token, version, mainLog)
+}
+
+// boot builds the birdcage client and loads this agent's bearer token --
+// everything main does between loadConfig and starting its long-lived
+// loops, split out (mirroring cmd/mockingbird/main.go's own boot) so a
+// test can drive each dependency-failure return without a real signal
+// context or a real scan/heartbeat loop running underneath it. Every
+// error returned here already carries its safeErr-redacted cause, the
+// same "wrap once here, safeErr again at the call site" shape
+// cmd/mockingbird's boot/main pair uses -- harmless to repeat, since
+// safeErr's redaction is a no-op the second time a path or address has
+// already been replaced.
+func boot(cfg Config) (*client.Client, string, error) {
 	cli, err := client.New(client.Config{
 		BaseURL:    cfg.BirdcageURL,
 		CACert:     cfg.CACert,
@@ -80,20 +104,25 @@ func main() {
 		ClientKey:  cfg.ClientKey,
 	})
 	if err != nil {
-		mainLog.Error(fmt.Sprintf("build birdcage client: %s", safeErr(err)))
-		os.Exit(1)
+		return nil, "", fmt.Errorf("build birdcage client: %s", safeErr(err))
 	}
 
 	token, err := loadToken(cfg.TokenPath)
 	if err != nil {
-		mainLog.Error(fmt.Sprintf("load token: %s", safeErr(err)))
-		os.Exit(1)
+		return nil, "", fmt.Errorf("load token: %s", safeErr(err))
 	}
 
-	mainLog.Info(fmt.Sprintf("nightjar %s started, talking to %s, scanning every %s", version, cfg.BirdcageURL, cfg.ScanInterval))
+	return cli, token, nil
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+// run starts nightjar's two independent loops -- scan and heartbeat --
+// and blocks until ctx is done and both have returned, logging the same
+// "started"/"shutting down" lines main used to log directly. Split out
+// from main so a test can prove the cadence contract (both loops start,
+// both stop promptly on a cancelled context) without a real signal
+// handler -- see TestRunStopsPromptlyOnCancelledContext.
+func run(ctx context.Context, cfg Config, cli *client.Client, token, version string, log *slog.Logger) {
+	log.Info(fmt.Sprintf("nightjar %s started, talking to %s, scanning every %s", version, cfg.BirdcageURL, cfg.ScanInterval))
 
 	// Two independent loops (issue #106 adds the second): the scan loop
 	// is this agent's whole reason to exist, and the heartbeat loop is
@@ -113,5 +142,5 @@ func main() {
 	}()
 	wg.Wait()
 
-	mainLog.Info("shutting down")
+	log.Info("shutting down")
 }
