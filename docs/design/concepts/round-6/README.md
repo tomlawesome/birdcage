@@ -47,3 +47,16 @@ M (the trace, outlined · silence in ink) is the ratified dashboard
 shell; L dropped. Recorded as `../../../adr/0004-dashboard-shell.md`.
 The visioning rounds for #3 end here; the build follows the ratified
 direction.
+
+## Build-generated reference shots
+
+`m-alerts.png` and `m-poisoner.png` are not concept mockups. No drawing in
+this round covers the states they show -- issue #45's token-conflict,
+throttled, rotation-stalled and not-delivering canaries, and issue #86's
+poisoner rise -- so each was captured from the running build and kept as the
+reference `frontend/scripts/band-compare.mjs` compares against.
+
+That makes them regression gates rather than design decisions: they say "this
+still renders the way it did", not "this is how it should look". Replacing
+either with a drawn mockup is the ordinary way the design would change, and
+the comparison would then mean what it means for the other scenes.

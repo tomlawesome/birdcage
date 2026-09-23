@@ -95,6 +95,11 @@ export interface Visitor {
   canaries: VisitorCanaryHits[]
   services: string[]
   tried: string[]
+  /** Present only for a visitor with a poisoner hit (#86 slice D): what it
+   * claimed to be, over which of the three bait protocols, and its hardware
+   * address if the canary's neighbour table had one. Absent for every other
+   * visitor, so test presence rather than comparing empty strings. */
+  poisoner?: { name: string; protocol: string; mac: string }
   still_arriving: boolean
 }
 

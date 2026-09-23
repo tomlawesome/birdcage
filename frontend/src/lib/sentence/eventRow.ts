@@ -91,7 +91,29 @@ function defaultActions(v: Visitor): EventAction[] {
   }
 }
 
+/** The poisoner sentence (#86 slice D). Its own branch rather than a variant
+ * of the "inside" one it shares a kind with: a poisoner did not browse or try
+ * anything, it answered a question the canary asked, and that is the whole
+ * reason it is near-certain rather than suspicious.
+ *
+ * The bait name is bold because it is the point -- it does not exist, so
+ * nothing should have answered for it. The protocol and the MAC follow, so an
+ * operator can see which of the three bait protocols carried the answer and
+ * has the hardware address to hand for blocking it. */
+function poisonerSentence(v: Visitor): Segment[] {
+  const p = v.poisoner!
+  const alongside = [p.protocol, p.mac].filter((s) => s).join(' · ')
+  return [
+    { text: v.source_ip, cls: 'ip' },
+    { text: ' answered for ' },
+    { text: p.name, bold: true },
+    { text: ', a name nobody should answer.' },
+    { text: alongside ? ` ${alongside}` : '' },
+  ]
+}
+
 function whoSentence(v: Visitor, canaries: Canary[]): Segment[] {
+  if (v.poisoner) return poisonerSentence(v)
   const total = canaries.length
   const canary = canaries.find((c) => c.id === v.canaries[0]?.id)
   const canaryPort = canary ? `${canary.name} :${portForService(canary.ports, v.services[0]) ?? ''}` : ''
@@ -133,13 +155,21 @@ function whoSentence(v: Visitor, canaries: Canary[]): Segment[] {
 }
 
 export function computeEventRow(v: Visitor, canaries: Canary[], now: string): EventRow {
+  // A poisoner is labelled with the protocol that carried the answer rather
+  // than with its kind. Its kind is "inside" -- it has to be, since a
+  // link-local protocol can only be answered from the segment -- and
+  // "FROM INSIDE" is true but says nothing an operator can act on, where
+  // "LLMNR" says exactly which question was answered. No new colour comes
+  // with it: ADR-0004's palette is the four validated in round 1, and this
+  // rise is drawn in the one it already belongs to.
+  const label = v.poisoner ? v.poisoner.protocol.toUpperCase() : KIND_LABEL[v.kind]
   return {
     key: `${v.source_ip}-${v.kind}-${v.last_at}`,
     cls: KIND_CLS[v.kind],
     time: timeColumn(v, now),
     kind: {
       symbol: KIND_SYMBOL[v.kind],
-      label: KIND_LABEL[v.kind],
+      label,
       small: `${v.hits}× · ${v.canaries.length} of ${canaries.length}`,
     },
     who: whoSentence(v, canaries),

@@ -111,7 +111,7 @@ func ListTrace(ctx context.Context, database *db.DB, now time.Time, rangeStr str
 	hitsBySource := map[string][]hitPoint{}
 	hitsByCanary := map[string][]Alert{}
 	for _, a := range alerts {
-		hitsBySource[a.SourceIP] = append(hitsBySource[a.SourceIP], hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID})
+		hitsBySource[a.SourceIP] = append(hitsBySource[a.SourceIP], hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID, Service: a.Service})
 		hitsByCanary[a.InstanceID] = append(hitsByCanary[a.InstanceID], a)
 	}
 
@@ -177,7 +177,7 @@ func buildLastHit(ctx context.Context, database *db.DB, internalRanges []*net.IP
 	}
 	hits := make([]hitPoint, 0, len(history))
 	for _, a := range history {
-		hits = append(hits, hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID})
+		hits = append(hits, hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID, Service: a.Service})
 	}
 
 	return &LastHit{

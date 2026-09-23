@@ -36,6 +36,30 @@ type VisitorCanaryHits struct {
 	Hits int64  `json:"hits"`
 }
 
+// VisitorPoisoner is what a poisoner hit adds to a Visitor (#86 slice D):
+// the facts the dashboard's sentence and band label need, which no other
+// service has an equivalent of.
+//
+// Carried as its own field rather than squeezed into Tried, which is a list
+// of credentials-and-paths a visitor tried against a service. A poisoner did
+// not try anything -- it answered -- so putting a bait name in that list
+// would make every reader of Tried handle a value that is not what the field
+// means.
+type VisitorPoisoner struct {
+	// Name is the bait name the poisoner claimed to be.
+	Name string `json:"name"`
+
+	// Protocol is which of the three bait protocols carried the answer:
+	// "llmnr", "nbt-ns" or "mdns".
+	Protocol string `json:"protocol"`
+
+	// MAC is the answering host's hardware address, or empty -- the
+	// detector reads it passively from the kernel's neighbour table, and an
+	// answer from off-segment or over IPv6 has no entry to read
+	// (internal/agent/poisoner/arp.go).
+	MAC string `json:"mac"`
+}
+
 // Visitor is one source_ip's whole history within the requested range,
 // GET /api/visitors' per-entry shape. Field names and JSON shape match
 // frontend/src/lib/types.ts's Visitor exactly.
@@ -49,6 +73,11 @@ type Visitor struct {
 	Services      []string            `json:"services"`
 	Tried         []string            `json:"tried"`
 	StillArriving bool                `json:"still_arriving"`
+
+	// Poisoner is present only for a visitor with a poisoner hit (#86
+	// slice D) -- absent, not zeroed, for every other visitor, so the
+	// dashboard tests presence rather than comparing empty strings.
+	Poisoner *VisitorPoisoner `json:"poisoner,omitempty"`
 }
 
 // stillArrivingWindow is how recent a visitor's newest hit must be for
@@ -69,6 +98,11 @@ const (
 type hitPoint struct {
 	At       time.Time
 	CanaryID string
+
+	// Service is the alert's service name, for classifyKind's poisoner
+	// rule (#86 slice D) -- the only rule that looks at what a hit was
+	// rather than when or where it landed.
+	Service string
 }
 
 // ParseInternalRanges parses BIRDCAGE_INTERNAL_RANGES (issue #35): a
@@ -163,13 +197,49 @@ func isRepeat(hits []hitPoint) bool {
 	return false
 }
 
-// classifyKind applies issue #35's four kind rules in the stated order,
-// first match wins: inside, then sweep, then repeat, then touch as the
-// default. hits is every hit sourceIP made anywhere in the queried range
+// isPoisoner reports whether any of these hits is a poisoner hit -- #86's
+// detector catching something that answered a name nobody should answer.
+func isPoisoner(hits []hitPoint) bool {
+	for _, h := range hits {
+		if h.Service == poisonerService {
+			return true
+		}
+	}
+	return false
+}
+
+// poisonerService is the service name #86's detector's alerts carry, as
+// internal/opencanary derives it from logtype 30001. Written out rather than
+// imported to keep this file's only dependency on that package the one
+// extractLogData already avoids (see its own comment on why store stays an
+// ingest-independent reader); TestPoisonerServiceMatchesTheMapping pins the
+// two together.
+const poisonerService = "poisoner"
+
+// classifyKind applies the kind rules in the stated order, first match wins:
+// poisoner, then issue #35's own four -- inside, sweep, repeat, and touch as
+// the default. hits is every hit sourceIP made anywhere in the queried range
 // -- GET /api/visitors and GET /api/trace both build it the same way
-// (alertsInRange, grouped by source_ip) so the two endpoints never
-// disagree about a source's kind.
+// (alertsInRange, grouped by source_ip) so the two endpoints never disagree
+// about a source's kind.
 func classifyKind(sourceIP string, hits []hitPoint, internalRanges []*net.IPNet) VisitorKind {
+	// A poisoner is inside, by definition and not by address: LLMNR, NBT-NS
+	// and mDNS are link-local, so something that answered one of this
+	// canary's bait queries received a link-local multicast or a subnet
+	// broadcast, which only a host on the segment can do. That makes it the
+	// "inside" kind whatever its source address says, and deliberately
+	// without consulting internalRanges -- an operator who has not
+	// configured BIRDCAGE_INTERNAL_RANGES, or whose LAN uses public address
+	// space, must not see the one near-certain hit on the dashboard demoted
+	// to "one touch".
+	//
+	// First, so it wins over sweep and repeat: #86 decision 34 makes this
+	// confidence near-certain, so it outranks other hits in the band. No new
+	// colour comes with it -- ADR-0004's palette is the four validated in
+	// round 1, and this rise is drawn in the one it already belongs to.
+	if isPoisoner(hits) {
+		return KindInside
+	}
 	if isInside(sourceIP, internalRanges) {
 		return KindInside
 	}
@@ -271,9 +341,46 @@ func triedFor(service, raw string) string {
 			return share
 		}
 		return "smb"
+	case poisonerService:
+		// The protocol, which is what a poisoner rise is labelled with on
+		// the band -- in the place a credential label goes, since that is
+		// the one fact about the answer worth reading at a glance. The bait
+		// name and the MAC go on Visitor.Poisoner instead, for the sentence
+		// in the events list; see VisitorPoisoner's own comment on why they
+		// are not in this list.
+		if protocol, ok := logString(logdata, "PROTOCOL"); ok && protocol != "" {
+			return protocol
+		}
+		return poisonerService
 	default:
 		return service
 	}
+}
+
+// poisonerFor builds Visitor.Poisoner from hits (newest first, as
+// alertsInRange returns them): the newest poisoner hit's own facts, or nil
+// when this visitor has none.
+//
+// The newest, not the first: if the same host answered twice, what it most
+// recently claimed is what an operator is looking at.
+func poisonerFor(hits []Alert) *VisitorPoisoner {
+	for _, a := range hits {
+		if a.Service != poisonerService {
+			continue
+		}
+		logdata := extractLogData(a.Raw)
+		name, _ := logString(logdata, "NAME")
+		protocol, _ := logString(logdata, "PROTOCOL")
+		mac, _ := logString(logdata, "MAC")
+		if name == "" && protocol == "" {
+			// Neither fact present: not an event this can describe, so keep
+			// looking rather than returning a row of empty strings the
+			// dashboard would then have to render.
+			continue
+		}
+		return &VisitorPoisoner{Name: name, Protocol: protocol, MAC: mac}
+	}
+	return nil
 }
 
 // triedSummaries builds Visitor.Tried from hits (newest first, as
@@ -308,7 +415,7 @@ func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges [
 	for _, a := range hits {
 		canaryHits[a.InstanceID]++
 		serviceSet[a.Service] = true
-		classifyHits = append(classifyHits, hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID})
+		classifyHits = append(classifyHits, hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID, Service: a.Service})
 	}
 
 	canaryIDs := make([]string, 0, len(canaryHits))
@@ -337,6 +444,7 @@ func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges [
 		Services:      services,
 		Tried:         triedSummaries(hits),
 		StillArriving: !newest.Before(now.Add(-stillArrivingWindow)),
+		Poisoner:      poisonerFor(hits),
 	}
 }
 

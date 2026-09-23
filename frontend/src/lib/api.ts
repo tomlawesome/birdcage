@@ -67,6 +67,10 @@ type SceneName =
   | 'canary-failed'
   | 'canary-silent'
   | 'canary-night'
+  // Issue #86 slice D's own scene: one poisoner answered a bait query.
+  // Its own scene rather than a poisoner added to an existing one, so no
+  // reference image that has already been reviewed moves.
+  | 'poisoner'
 
 const SCENES: SceneName[] = [
   'quiet',
@@ -78,6 +82,7 @@ const SCENES: SceneName[] = [
   'canary-failed',
   'canary-silent',
   'canary-night',
+  'poisoner',
 ]
 
 // Static imports (not a dynamic fetch of the JSON file) so a production
@@ -95,6 +100,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/alerts.json')) as unknown as Fixture
     case 'history':
       return (await import('../dev/fixtures/history.json')) as unknown as Fixture
+    case 'poisoner':
+      return (await import('../dev/fixtures/poisoner.json')) as unknown as Fixture
     case 'canary-quiet':
       return (await import('../dev/fixtures/canary-quiet.json')) as unknown as Fixture
     case 'canary-failed':
