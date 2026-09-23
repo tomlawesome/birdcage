@@ -24,7 +24,9 @@
 // notProbeable) -- is reported rather than guessed at: see
 // StatusNoCarrier and StatusNotProbeable. vnc, ntp and portscan do have
 // carriers (vnc.go, attribution.go), but their carriers are not all
-// marker-planting: see each one's own doc comment.
+// marker-planting: see each one's own doc comment. ntp and portscan
+// report an AttributionFact instead of planting anything (#46 slice 3);
+// cmd/mockingbird's claim window is what turns that into a claimed event.
 //
 // This package must never import internal/ingest, internal/store,
 // internal/db, internal/api or internal/stream (#48: the agent binary

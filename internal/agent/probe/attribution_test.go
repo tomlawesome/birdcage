@@ -25,7 +25,7 @@ func TestProbeNTP_SendsTheMonlistRequest(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := probeNTP(ctx, "127.0.0.1", port, "unused-marker"); err != nil {
+	if _, err := probeNTP(ctx, "127.0.0.1", port); err != nil {
 		t.Fatalf("probeNTP: %v", err)
 	}
 
@@ -44,6 +44,42 @@ func TestProbeNTP_SendsTheMonlistRequest(t *testing.T) {
 	}
 	if got[3] != '*' {
 		t.Fatalf("byte 3 = %#x, want '*' (0x2A) -- ntp.py's own trigger check", got[3])
+	}
+}
+
+// TestProbeNTP_ReportsTheFiredFact proves probeNTP's AttributionFact
+// carries the service, the dest port it actually dialed, a non-zero
+// source port (whatever the OS assigned this one UDP socket), and a
+// FiredAt that lands inside the call -- the facts cmd/mockingbird's claim
+// window is built on (note 19897).
+func TestProbeNTP_ReportsTheFiredFact(t *testing.T) {
+	ln, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
+	port := ln.LocalAddr().(*net.UDPAddr).Port
+
+	before := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	fact, err := probeNTP(ctx, "127.0.0.1", port)
+	after := time.Now()
+	if err != nil {
+		t.Fatalf("probeNTP: %v", err)
+	}
+
+	if fact.Service != "ntp" {
+		t.Errorf("fact.Service = %q, want %q", fact.Service, "ntp")
+	}
+	if len(fact.DestPorts) != 1 || fact.DestPorts[0] != port {
+		t.Errorf("fact.DestPorts = %v, want [%d]", fact.DestPorts, port)
+	}
+	if fact.SourcePort == 0 {
+		t.Error("fact.SourcePort = 0, want the OS-assigned source port")
+	}
+	if fact.FiredAt.Before(before) || fact.FiredAt.After(after) {
+		t.Errorf("fact.FiredAt = %v, want between %v and %v", fact.FiredAt, before, after)
 	}
 }
 
@@ -84,25 +120,22 @@ func reserveConsecutiveFreePorts(t *testing.T, n int) int {
 // slice 2's inversion, stated as a test: five closed ports, no error --
 // a refusal is the scan signature working, not a probe failure.
 func TestProbePortscan_TreatsRefusalAsSuccessAcrossTheWholeRange(t *testing.T) {
-	base := reserveConsecutiveFreePorts(t, portscanTouchCount)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := probePortscan(ctx, "127.0.0.1", base, "unused-marker"); err != nil {
+	if _, err := probePortscan(ctx, "127.0.0.1", 0); err != nil {
 		t.Fatalf("probePortscan against %d unlistened ports: want nil, got %v", portscanTouchCount, err)
 	}
 }
 
 // TestProbePortscan_ReachesEveryPortInTheRange proves the loop does not
-// stop at the first refusal: only the middle port of the range has a
-// listener, and it must still be dialed.
+// stop at the first refusal: only the middle port of portscanBasePort's
+// range has a listener, and it must still be dialed.
 func TestProbePortscan_ReachesEveryPortInTheRange(t *testing.T) {
-	base := reserveConsecutiveFreePorts(t, portscanTouchCount)
-	mid := base + portscanTouchCount/2
+	mid := portscanBasePort + portscanTouchCount/2
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", mid))
 	if err != nil {
-		t.Fatalf("listen on %d: %v", mid, err)
+		t.Skipf("port %d unavailable in this sandbox: %v", mid, err)
 	}
 	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
 
@@ -118,7 +151,7 @@ func TestProbePortscan_ReachesEveryPortInTheRange(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := probePortscan(ctx, "127.0.0.1", base, "unused-marker"); err != nil {
+	if _, err := probePortscan(ctx, "127.0.0.1", 0); err != nil {
 		t.Fatalf("probePortscan: %v", err)
 	}
 
@@ -132,21 +165,44 @@ func TestProbePortscan_ReachesEveryPortInTheRange(t *testing.T) {
 func TestProbePortscan_CancelledContextIsAnError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := probePortscan(ctx, "127.0.0.1", 50000, "unused-marker"); err == nil {
+	if _, err := probePortscan(ctx, "127.0.0.1", 0); err == nil {
 		t.Fatal("probePortscan with an already-cancelled context: want an error, got nil")
 	}
 }
 
-// TestProbePortscan_WrapsPortNumberNearTheCeiling exercises the one
-// arithmetic edge probePortscan's own doc comment names: a base port
-// within portscanTouchCount-1 of 65535 must still dial every touch as a
-// valid port number, wrapping rather than producing an invalid one.
-func TestProbePortscan_WrapsPortNumberNearTheCeiling(t *testing.T) {
+// TestProbePortscan_ReportsTheFiredFact proves the fact recorded for a
+// portscan touch names every one of the portscanTouchCount destination
+// ports actually dialed, and one explicit, non-zero source port shared
+// by all of them -- exactly what a caller needs to watch its own intake
+// for the resulting event (note 19897, "the source port it bound").
+func TestProbePortscan_ReportsTheFiredFact(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	base := 65535 - portscanTouchCount + 2 // touches base..65535 then wraps to 1
-	if err := probePortscan(ctx, "127.0.0.1", base, "unused-marker"); err != nil {
-		t.Fatalf("probePortscan near the port ceiling: want nil, got %v", err)
+	before := time.Now()
+	fact, err := probePortscan(ctx, "127.0.0.1", 0)
+	after := time.Now()
+	if err != nil {
+		t.Fatalf("probePortscan: %v", err)
+	}
+
+	if fact.Service != "portscan" {
+		t.Errorf("fact.Service = %q, want %q", fact.Service, "portscan")
+	}
+	if len(fact.DestPorts) != portscanTouchCount {
+		t.Fatalf("fact.DestPorts = %v, want %d entries", fact.DestPorts, portscanTouchCount)
+	}
+	seen := make(map[int]bool, portscanTouchCount)
+	for _, p := range fact.DestPorts {
+		if seen[p] {
+			t.Errorf("fact.DestPorts repeats port %d", p)
+		}
+		seen[p] = true
+	}
+	if fact.SourcePort == 0 {
+		t.Error("fact.SourcePort = 0, want the reserved explicit source port")
+	}
+	if fact.FiredAt.Before(before) || fact.FiredAt.After(after) {
+		t.Errorf("fact.FiredAt = %v, want between %v and %v", fact.FiredAt, before, after)
 	}
 }
 
@@ -156,7 +212,7 @@ func TestProbePortscan_WrapsPortNumberNearTheCeiling(t *testing.T) {
 func TestProbeNTP_UnresolvableAddressIsAnError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := probeNTP(ctx, "not a valid host or address", 123, "unused-marker"); err == nil {
+	if _, err := probeNTP(ctx, "not a valid host or address", 123); err == nil {
 		t.Fatal("probeNTP against an unresolvable address: want an error, got nil")
 	}
 }

@@ -153,6 +153,160 @@ func TestHandleBatchExpiredMarkerEventStoredReal(t *testing.T) {
 	})
 }
 
+// mintAttributedSelfTestCommandForCanary mints one portscan target
+// (attributed grade) for canaryID at addr, sets canaryID's last-seen
+// address to addr -- MatchSelfTestClaim's own source check -- and
+// returns the marker planted for it.
+func mintAttributedSelfTestCommandForCanary(t *testing.T, database *db.DB, idx *store.SelfTestIndex, canaryID, addr string, issuedAt time.Time, ttl time.Duration) string {
+	t.Helper()
+	if err := store.SetCanaryLastSeenAddr(context.Background(), database, canaryID, addr); err != nil {
+		t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+	}
+	cmd, err := store.MintSelfTestCommand(context.Background(), database, idx, canaryID, addr,
+		[]store.SelfTestTarget{{Service: "portscan", DestPort: 0}}, issuedAt, issuedAt.Add(ttl))
+	if err != nil {
+		t.Fatalf("MintSelfTestCommand: %v", err)
+	}
+	params, err := selftest.DecodeParams([]byte(cmd.Params))
+	if err != nil {
+		t.Fatalf("decode minted params: %v", err)
+	}
+	return params.Targets[0].Marker
+}
+
+func claimRefusedAuditCount(t *testing.T, database *db.DB, canaryID string) int {
+	t.Helper()
+	var n int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = ? AND target = ?`,
+		"selftest.claim_refused", canaryID).Scan(&n); err != nil {
+		t.Fatalf("count audit_log rows: %v", err)
+	}
+	return n
+}
+
+// TestHandleBatchGoodClaimStoredSynthetic is #46 slice 3's positive
+// case, end to end through handleBatch: an event carrying a
+// self_test_marker that corroborates -- live attributed marker, right
+// service, source_ip equal to the canary's own last-seen address -- is
+// stored synthetic, exactly like a marked-grade match, and no refusal is
+// audited.
+func TestHandleBatchGoodClaimStoredSynthetic(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		idx := store.NewSelfTestIndex()
+		now := time.Now().UTC()
+		marker := mintAttributedSelfTestCommandForCanary(t, database, idx, "canary-a", "192.0.2.10", now, 10*time.Minute)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, idx, nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"192.0.2.10","dest_port":54321,"service":"portscan","raw":"scan","self_test_marker":%q}]}`,
+			validEventID1, marker)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		alerts := alertsForInstance(t, database, "canary-a")
+		if len(alerts) != 1 || !alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = true", alerts)
+		}
+		if n := claimRefusedAuditCount(t, database, "canary-a"); n != 0 {
+			t.Fatalf("selftest.claim_refused rows = %d, want 0 for a good claim", n)
+		}
+	})
+}
+
+// TestHandleBatchClaimWrongSourceRefusedStoredRealAndAudited: a claim
+// whose event's source_ip disagrees with the canary's own last-seen
+// address is refused -- stored as an ordinary real alert, and audited
+// once as selftest.claim_refused.
+func TestHandleBatchClaimWrongSourceRefusedStoredRealAndAudited(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		idx := store.NewSelfTestIndex()
+		now := time.Now().UTC()
+		marker := mintAttributedSelfTestCommandForCanary(t, database, idx, "canary-a", "192.0.2.10", now, 10*time.Minute)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, idx, nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"198.51.100.7","dest_port":54321,"service":"portscan","raw":"scan","self_test_marker":%q}]}`,
+			validEventID1, marker)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		alerts := alertsForInstance(t, database, "canary-a")
+		if len(alerts) != 1 || alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = false", alerts)
+		}
+		if n := claimRefusedAuditCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("selftest.claim_refused rows = %d, want 1", n)
+		}
+	})
+}
+
+// TestHandleBatchClaimOnMarkedGradeTargetRefused: a self_test_marker
+// naming a marked-grade target (ssh) is refused rather than silently
+// accepted -- a marked service proves itself with raw, never a claim.
+func TestHandleBatchClaimOnMarkedGradeTargetRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		idx := store.NewSelfTestIndex()
+		now := time.Now().UTC()
+		if err := store.SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "192.0.2.10"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		marker := mintSelfTestCommandForCanary(t, database, idx, "canary-a", now, 10*time.Minute) // ssh, marked grade
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, idx, nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"192.0.2.10","dest_port":22,"service":"ssh","raw":"hit","self_test_marker":%q}]}`,
+			validEventID1, marker)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		alerts := alertsForInstance(t, database, "canary-a")
+		if len(alerts) != 1 || alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = false", alerts)
+		}
+		if n := claimRefusedAuditCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("selftest.claim_refused rows = %d, want 1", n)
+		}
+	})
+}
+
+// TestHandleBatchClaimOnExpiredRunRefused: a claim presented after its
+// run's deadline has passed is refused -- stored real.
+func TestHandleBatchClaimOnExpiredRunRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		idx := store.NewSelfTestIndex()
+		issuedAt := time.Now().UTC().Add(-time.Hour)
+		marker := mintAttributedSelfTestCommandForCanary(t, database, idx, "canary-a", "192.0.2.10", issuedAt, time.Minute) // expired 59 minutes ago
+		afterExpiry := issuedAt.Add(time.Hour)
+		h := newHandler(database, nil, func() time.Time { return afterExpiry }, defaultLimiterLimits, idx, nil)
+
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"192.0.2.10","dest_port":54321,"service":"portscan","raw":"scan","self_test_marker":%q}]}`,
+			validEventID1, marker)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		alerts := alertsForInstance(t, database, "canary-a")
+		if len(alerts) != 1 || alerts[0].Synthetic {
+			t.Fatalf("alerts = %+v, want exactly one row with synthetic = false", alerts)
+		}
+		if n := claimRefusedAuditCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("selftest.claim_refused rows = %d, want 1", n)
+		}
+	})
+}
+
 // TestHandleBatchMatchSelfTestErrorStoresReal is #46 slice 1's required
 // error-path test: "on any error from MatchSelfTest: log, store the
 // alert as real, continue. Never drop." The marker itself does match in

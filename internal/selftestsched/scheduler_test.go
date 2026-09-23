@@ -63,6 +63,36 @@ func selfTestRunCount(t *testing.T, database *db.DB, canaryID string) int {
 	return n
 }
 
+// mintedTargetServices lists the service of every self_test_targets row
+// minted for canaryID's most recent self_test_runs row, regardless of
+// whether that run has completed yet -- store.SelfTestServiceResults
+// only reports a *completed* run's results, which is the wrong tool for
+// a test that only wants to see what mintForCanary decided to probe.
+func mintedTargetServices(t *testing.T, database *db.DB, canaryID string) []string {
+	t.Helper()
+	var commandID string
+	if err := database.QueryRow(`SELECT command_id FROM self_test_runs WHERE canary_id = ? ORDER BY issued_at DESC LIMIT 1`, canaryID).Scan(&commandID); err != nil {
+		t.Fatalf("find latest self_test_runs command_id for %s: %v", canaryID, err)
+	}
+	rows, err := database.Query(`SELECT service FROM self_test_targets WHERE command_id = ? ORDER BY service`, commandID)
+	if err != nil {
+		t.Fatalf("query self_test_targets for %s: %v", commandID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var svc string
+		if err := rows.Scan(&svc); err != nil {
+			t.Fatalf("scan self_test_targets service: %v", err)
+		}
+		out = append(out, svc)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate self_test_targets: %v", err)
+	}
+	return out
+}
+
 // TestTickDisabledMintsNothing is issue #46's required test: with
 // selftest_enabled = false, an eligible canary at its scheduled minute
 // gets no command at all.
@@ -268,10 +298,12 @@ func TestMintForCanarySkipsUnknownPortsButMintsKnownOnes(t *testing.T) {
 	})
 }
 
-// TestMintForCanarySkipsCanaryWithNoKnownServicePorts: every port
-// mapping to no known service means nothing to probe at all, so no
-// command is minted for that canary.
-func TestMintForCanarySkipsCanaryWithNoKnownServicePorts(t *testing.T) {
+// TestMintForCanaryStillMintsPortscanWithNoKnownServicePorts: every port
+// mapping to no known service leaves nothing from c.Ports to probe, but
+// portscan is added unconditionally (#46 slice 3 -- it is the agent's
+// own detector, not an OpenCanary module with a listening port), so a
+// run is still minted with that one target.
+func TestMintForCanaryStillMintsPortscanWithNoKnownServicePorts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
 		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
@@ -282,8 +314,45 @@ func TestMintForCanarySkipsCanaryWithNoKnownServicePorts(t *testing.T) {
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.Tick(context.Background())
 
-		if n := selfTestRunCount(t, database, "canary-a"); n != 0 {
-			t.Fatalf("self_test_runs for canary-a = %d, want 0 (no port maps to a known service)", n)
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Fatalf("self_test_runs for canary-a = %d, want 1 (portscan is always added)", n)
+		}
+
+		services := mintedTargetServices(t, database, "canary-a")
+		if len(services) != 1 || services[0] != "portscan" {
+			t.Fatalf("minted target services = %v, want exactly [portscan]", services)
+		}
+	})
+}
+
+// TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts proves portscan
+// is additive, not a replacement for whatever c.Ports itself yields.
+func TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+		insertHoneypotCanary(t, database, "canary-a", "22", "192.0.2.10")
+
+		now := time.Date(2026, 1, 1, 4, 12, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+
+		services := mintedTargetServices(t, database, "canary-a")
+		if len(services) != 2 {
+			t.Fatalf("minted target services = %v, want ssh and portscan", services)
+		}
+		var sawSSH, sawPortscan bool
+		for _, svc := range services {
+			switch svc {
+			case "ssh":
+				sawSSH = true
+			case "portscan":
+				sawPortscan = true
+			}
+		}
+		if !sawSSH || !sawPortscan {
+			t.Fatalf("minted target services = %v, want both ssh and portscan", services)
 		}
 	})
 }

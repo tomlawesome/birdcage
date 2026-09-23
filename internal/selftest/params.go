@@ -94,7 +94,17 @@ func (p Params) Validate() error {
 		if t.Service == "" {
 			return fmt.Errorf("selftest: target %d has an empty service", i)
 		}
-		if t.DestPort < 1 || t.DestPort > 65535 {
+		// portscan names no real socket (#46 slice 3:
+		// internal/selftestsched.mintForCanary mints it with DestPort 0
+		// for every honeypot canary, regardless of which ports
+		// OpenCanary itself listens on; internal/agent/probe's carrier
+		// picks its own range to touch). Every other service still
+		// needs a real 1-65535 port.
+		if t.Service == "portscan" {
+			if t.DestPort != 0 {
+				return fmt.Errorf("selftest: target %d (portscan) has dest_port %d, want 0 -- portscan names no real socket", i, t.DestPort)
+			}
+		} else if t.DestPort < 1 || t.DestPort > 65535 {
 			return fmt.Errorf("selftest: target %d (%s) has dest_port %d outside 1-65535", i, t.Service, t.DestPort)
 		}
 		if t.Marker == "" {

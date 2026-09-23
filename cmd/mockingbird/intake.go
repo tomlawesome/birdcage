@@ -82,6 +82,12 @@ type Intake struct {
 	collisionsBase atomic.Uint64 // sum of Collisions() from every discarded ledger
 
 	lastEventID atomic.Pointer[string]
+
+	// claims is #46 slice 3's attributed-grade claim window (claim.go):
+	// every road that pushes an event notes it here first (see
+	// observeClaim below), so the sender can tell a still-undecided
+	// candidate apart from an ordinary event before it ever ships.
+	claims *claimTracker
 }
 
 // NewIntake builds the queue, tailer and webhook receiver from cfg, and
@@ -107,6 +113,7 @@ func NewIntake(cfg IntakeConfig) (*Intake, error) {
 		posStore:  queue.NewPositionStore(cfg.PositionPath),
 		maxEvents: cfg.Queue.MaxEvents,
 		lowWater:  cfg.Queue.MaxEvents * num / den,
+		claims:    newClaimTracker(),
 	}
 	// A placeholder ledger so LastEventID/Collisions/heartbeat callers
 	// never see a nil pointer before runLogRoad's first real one is in
@@ -134,8 +141,31 @@ func (in *Intake) webhookHandler(body []byte) error {
 	if err != nil {
 		return err
 	}
+	in.observeClaim(id, message)
 	in.Queue.Push(queue.Event{ID: id, Payload: message})
 	return nil
+}
+
+// observeClaim hands (id, the fields decoded from message) to the claim
+// tracker (#46 slice 3, claim.go) before the event is queued, so a
+// candidate for a currently open attributed-grade window is on record
+// before the sender's next Peek could possibly reach it. A no-op --
+// including the ExtractFields decode itself -- whenever no window is
+// open, which is every moment outside the few seconds around a daily
+// self-test: claims.active() is one mutex lock and a length check,
+// cheaper than decoding JSON on every ordinary event this agent forwards.
+func (in *Intake) observeClaim(id string, message []byte) {
+	if !in.claims.active() {
+		return
+	}
+	fields, err := event.ExtractFields(message)
+	if err != nil {
+		// Not decodable as the fields ExtractFields wants: cannot be a
+		// candidate for anything (the two attributed carriers' own
+		// events always are), so there is nothing to observe.
+		return
+	}
+	in.claims.observe(id, fields.Service, fields.SourceIP)
 }
 
 // SubmitPortscanEvent is the third road into the queue (#65): a port
@@ -159,6 +189,7 @@ func (in *Intake) SubmitPortscanEvent(message []byte) error {
 	if err != nil {
 		return err
 	}
+	in.observeClaim(id, message)
 	in.Queue.Push(queue.Event{ID: id, Payload: message})
 	return nil
 }
@@ -293,6 +324,7 @@ func (in *Intake) handleLogLine(ctx context.Context, ldg *ledger.Ledger, line ta
 		return
 	}
 
+	in.observeClaim(id, message)
 	in.Queue.Push(queue.Event{ID: id, Payload: message})
 	ldg.Append(id, line.Pos)
 }

@@ -137,10 +137,16 @@ credential is first used for anything: it mints a self-test run for that
 canary -- the same round trip [issue #46](https://gitlab.tomlawson.io/-/issues/46)
 runs daily thereafter -- regardless of whether the operator has the daily
 self-test schedule turned on. The agent picks the command up on its
-ordinary poll, probes its own services, and the matching hits come back
-marked. Only once every target answers does the canary flip from
-**pending** to registered; from then on it's an ordinary canary, subject
-to the daily schedule like any other.
+ordinary poll and probes its own services. Most targets answer with a
+marker OpenCanary logs verbatim; portscan is always one of them (it is
+the agent's own detector, not a listening service, so every honeypot
+canary gets one regardless of which ports it offers) and, like ntp when
+enabled, carries no marker of its own -- the agent claims that hit
+locally, from the network facts of its own probe, and birdcage
+corroborates the claim independently before treating it the same as a
+marked hit. Only once every target answers -- marked or claimed -- does
+the canary flip from **pending** to registered; from then on it's an
+ordinary canary, subject to the daily schedule like any other.
 
 If that first run times out unanswered, the canary stays pending -- and
 also shows self-test failed -- and birdcage mints another run every ten

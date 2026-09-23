@@ -209,6 +209,78 @@ func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, ale
 	return true, nil
 }
 
+// MatchSelfTestClaim corroborates one attributed-grade claim (#46 slice
+// 3, note 19897's "Birdcage corroborates; it never trusts"): the agent
+// claims an event locally, before it ever leaves the container, by
+// watching its own intake for the single candidate an attributed probe
+// (ntp, portscan) could have produced -- but birdcage never simply
+// believes that claim. This re-derives the same decision independently,
+// from nothing the agent sent beyond the marker itself:
+//
+//  1. marker: a live, unexpired, unconsumed marker for this canary --
+//     the same SelfTestIndex state a raw substring match already checks
+//     (idx.lookupMarker shares match's own expiry pruning).
+//  2. grade: the target that marker was minted for must be
+//     attributed-grade (ntp, portscan) -- a marked-grade service proves
+//     itself with raw, never a claim; a self_test_marker attached to one
+//     of those is refused here, not silently ignored.
+//  3. service: the target's own service must equal the arriving event's
+//     service.
+//  4. source: the event's source_ip must equal the canary's own last
+//     known address (store.SelfTestCanaryByID's LastSeenAddr) -- the
+//     same address selftest.Params.Address supplied and every carrier in
+//     the run dialed.
+//
+// All four must hold for matched to be true. refusal names the first
+// check to fail, for the caller's audit entry (internal/ingest/batch.go)
+// -- and is deliberately never the marker itself, per issue #46's own
+// security note: a marker is a secret even in an audit trail about it
+// failing to match. refusal is empty when matched is true.
+//
+// A refusal is not an error: err is non-nil only for a genuine
+// bookkeeping failure (a database read), the same "on any error: store
+// the alert as real" contract MatchSelfTest's own caller already has.
+func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex, alert AlertInsert, marker string, now time.Time) (matched bool, refusal string, err error) {
+	if err := idx.ensureLoaded(ctx, database); err != nil {
+		return false, "", fmt.Errorf("load selftest index: %w", err)
+	}
+
+	info, found := idx.lookupMarker(alert.InstanceID, marker, now.UTC())
+	if !found {
+		return false, "no live marker for this claim", nil
+	}
+	// Check 5, note 19855's "at most one claim per target per run": the
+	// first corroborated claim binds the marker to its event id, so a
+	// second event carrying it -- a replay, or an intruder's hit an
+	// agent wrongly claimed alongside its own -- is refused and stored
+	// real. The same event id presented again (a batch retried after
+	// birdcage's ack was lost, which the dedup index otherwise makes
+	// free) is not a second claim.
+	if info.ClaimedBy != "" && info.ClaimedBy != alert.EventID {
+		return false, "marker already claimed by another event", nil
+	}
+	if gradeForService(info.Service) != GradeAttributed {
+		return false, "target is not attributed-grade", nil
+	}
+	if info.Service != alert.Service {
+		return false, "service does not match the claimed target", nil
+	}
+
+	canary, ok, err := SelfTestCanaryByID(ctx, database, alert.InstanceID)
+	if err != nil {
+		return false, "", fmt.Errorf("look up canary for claim corroboration: %w", err)
+	}
+	if !ok || canary.LastSeenAddr == nil || *canary.LastSeenAddr != alert.SourceIP {
+		return false, "source address does not match the canary's last-seen address", nil
+	}
+
+	if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
+		return false, "", fmt.Errorf("record selftest claim match: %w", err)
+	}
+	idx.claim(alert.InstanceID, marker, alert.EventID)
+	return true, "", nil
+}
+
 // recordSelfTestMatch sets self_test_targets.matched_at for the target
 // hash identifies, then -- if every target of that target's run is now
 // matched -- marks the owning self_test_runs row completed_at/passed=1.
@@ -442,12 +514,39 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 	return true, nil
 }
 
+// claim binds canaryID's marker to the event that first claimed it --
+// MatchSelfTestClaim's one-claim-per-target rule. A no-op for a marker
+// the index no longer holds.
+func (idx *SelfTestIndex) claim(canaryID, marker, eventID string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if info, ok := idx.byCanary[canaryID][marker]; ok {
+		info.ClaimedBy = eventID
+		idx.byCanary[canaryID][marker] = info
+	}
+}
+
+// selfTestMarkerInfo is one live marker's expiry and the service it was
+// minted for -- SelfTestIndex's byCanary value from #46 slice 3 onward.
+// Service is new: MatchSelfTestClaim needs a claimed marker's own
+// service (and, through gradeForService, its grade) without a second
+// database round trip, and grade is a pure function of service, so
+// service is the only fact beyond expiry this index need remember.
+type selfTestMarkerInfo struct {
+	ExpiresAt time.Time
+	Service   string
+	// ClaimedBy is the event id of the first corroborated claim on this
+	// marker, empty until then -- see MatchSelfTestClaim's check 5.
+	ClaimedBy string
+}
+
 // SelfTestIndex is the bounded, in-memory index of markers birdcage has
 // issued and not yet seen expire: byCanary[canaryID][marker] is that
-// marker's expiry. Nested by canary, rather than one flat
-// marker-to-canary map, so a lookup for one canary's alert only ever
-// walks that canary's own currently-live markers -- bounded by targets
-// per run, not by the size of the fleet or of history.
+// marker's expiry (and, since slice 3, its service). Nested by canary,
+// rather than one flat marker-to-canary map, so a lookup for one
+// canary's alert only ever walks that canary's own currently-live
+// markers -- bounded by targets per run, not by the size of the fleet or
+// of history.
 //
 // Constructed once by whatever owns the ingest path's dependencies --
 // mirroring auditCoalescer and limiterRegistry in internal/ingest, both
@@ -462,12 +561,12 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 type SelfTestIndex struct {
 	mu       sync.Mutex
 	loaded   bool
-	byCanary map[string]map[string]time.Time
+	byCanary map[string]map[string]selfTestMarkerInfo
 }
 
 // NewSelfTestIndex returns an empty, unloaded index.
 func NewSelfTestIndex() *SelfTestIndex {
-	return &SelfTestIndex{byCanary: make(map[string]map[string]time.Time)}
+	return &SelfTestIndex{byCanary: make(map[string]map[string]selfTestMarkerInfo)}
 }
 
 // ensureLoaded performs the one-time (per index) full scan of
@@ -539,11 +638,11 @@ func (idx *SelfTestIndex) add(canaryID string, targets []selftest.Target, expire
 func (idx *SelfTestIndex) addLocked(canaryID string, targets []selftest.Target, expiresAt time.Time) {
 	m := idx.byCanary[canaryID]
 	if m == nil {
-		m = make(map[string]time.Time)
+		m = make(map[string]selfTestMarkerInfo)
 		idx.byCanary[canaryID] = m
 	}
 	for _, tgt := range targets {
-		m[tgt.Marker] = expiresAt
+		m[tgt.Marker] = selfTestMarkerInfo{ExpiresAt: expiresAt, Service: tgt.Service}
 	}
 }
 
@@ -559,8 +658,8 @@ func (idx *SelfTestIndex) match(canaryID, raw string, now time.Time) (found bool
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	markers := idx.byCanary[canaryID]
-	for m, expiresAt := range markers {
-		if !expiresAt.After(now) {
+	for m, info := range markers {
+		if !info.ExpiresAt.After(now) {
 			delete(markers, m)
 			continue
 		}
@@ -573,4 +672,28 @@ func (idx *SelfTestIndex) match(canaryID, raw string, now time.Time) (found bool
 		delete(idx.byCanary, canaryID)
 	}
 	return found, marker
+}
+
+// lookupMarker finds canaryID's live marker exactly equal to marker --
+// not a substring search the way match's raw-content check is, since an
+// attributed claim's self_test_marker wire field carries the literal
+// marker value, never buried inside other data. It shares match's own
+// expiry pruning for whatever single marker this call happens to touch.
+// found is false for an unknown, expired, or unrecognised marker.
+func (idx *SelfTestIndex) lookupMarker(canaryID, marker string, now time.Time) (info selfTestMarkerInfo, found bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	markers := idx.byCanary[canaryID]
+	m, ok := markers[marker]
+	if !ok {
+		return selfTestMarkerInfo{}, false
+	}
+	if !m.ExpiresAt.After(now) {
+		delete(markers, marker)
+		if len(markers) == 0 {
+			delete(idx.byCanary, canaryID)
+		}
+		return selfTestMarkerInfo{}, false
+	}
+	return m, true
 }
