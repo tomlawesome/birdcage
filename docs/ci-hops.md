@@ -140,7 +140,7 @@ recorded here because `.gitlab-ci.yml` and this file move together.
 
 | job | when | what it is |
 | --- | --- | --- |
-| `build:images` | hop 1 -- every merge request and `dev` too | builds both images once, so `test:image:*` judges the bytes that later ship. Not a check itself; it is what makes the checks mean something. |
+| `build:images` | hop 1 -- every merge request and `dev` too | builds both images once, so `test:image:*` judges the bytes that later ship, and pushes each to this project's own registry (#112, below) so a later job can recover its tag if a concurrent pipeline's prune got to it first. Not a check itself; it is what makes the checks mean something. |
 | `release:push` | push to `preview` | publishes the anchor `sha-<commit>` and proves the registry holds what was tested |
 | `release:attest` | push to `preview` | mints the validation evidence. The only job that may sign, fenced by the `birdcage-signing` runner |
 | `release:preview` | push to `preview` | verifies that evidence, then creates the `preview` tag |
@@ -154,6 +154,53 @@ second copy of the gate, free to drift from the real one.
 `scripts/ci-release-guard.py` enforces the shape -- one signer, tagged, and
 no job both judging and shipping -- and `lint:ci` runs it. The procedure
 and the owner's one-time setup are `docs/releasing.md`.
+
+### Handing an image from `build:images` to a later job (#112)
+
+`build:images` builds both images once so every later job judges the same
+bytes; that only works if the bytes are still there when a later job looks.
+Every job on this host talks to the same Docker daemon (this runner has one
+host, one daemon), which used to be read as "so an image `build:images`
+built just sits in that daemon's store for the rest of the pipeline" -- true
+for one pipeline at a time, false the moment two overlap. This host runs
+several pipelines at once on that one shared daemon, and `build:images`'
+own prune (self-healing by design: it deletes every build tag except its
+own pipeline's, so whatever a cancelled pipeline left behind is cleared by
+the next one) cannot tell a leftover apart from a tag a *different*,
+still-running pipeline is using right now. Two pipelines running close
+together can each prune the other's image, and whichever one loses the
+race gets an e2e or image-test failure that has nothing to do with the
+code under test -- see issue #112 for the incident that first showed this.
+
+The fix leaves that prune exactly as it was and makes deletion harmless
+instead of forbidden. `build:images` now also pushes each image to this
+project's own container registry and records the resulting `repo@digest`
+in `release.env`, alongside the local tag it already recorded. Every job
+that consumes one of these images -- `test:image:*`, every `e2e:*` job
+that uses `build:images`' output, and `release:push` -- calls
+`scripts/ci-ensure-image.sh` first: it checks the local tag is still
+there, and if a concurrent pipeline's prune got to it first, pulls the
+recorded digest back down and retags it, logging that it did. Whoever
+prunes, and whenever, the worst case is now one extra pull instead of a
+failed job. (`e2e:postgres-requires-tls` is not a consumer of this kind --
+it builds and immediately uses its own throwaway image under a
+job-specific name, never the shared `birdcage-build`/`mockingbird-build`
+tags, so it was never exposed to this race and calls nothing new.)
+
+This registry push is transport between this pipeline's own jobs, not a
+release -- it never replaces `release:push`'s publication to
+`$GHCR_BIRDCAGE_REPO` / `$GHCR_MOCKINGBIRD_REPO`, which is still the only
+place a consumer, or an attacker's search engine, would ever find these
+images by name.
+
+The internal registry needs its own cleanup policy -- deleting `ci-.*`
+tags older than about a week is plenty, since nothing here is ever read
+after its pipeline finishes. That is a project setting (Settings >
+Packages and registries > Container registry, on this GitLab) that only
+the project owner can set; an assistant cannot set it. Left unset, the
+registry keeps every pipeline's pushed images forever: that is growth,
+not breakage, since no job here ever reads an old tag, but it is disk the
+project pays for indefinitely until the policy is set.
 
 ## What the guard enforces
 
