@@ -223,7 +223,12 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		runCommandRunner(ctx, in, commands)
+		// The poisoner detector doubles as the self-test's bait probe
+		// (#86 slice C): internal/agent/probe cannot reach it, so the
+		// command runner is handed it here. A nil detector -- the road
+		// off -- makes a poisoner target report itself skipped rather
+		// than silently pass.
+		runCommandRunner(ctx, in, poisonerDetector, commands)
 	}()
 	go func() {
 		defer wg.Done()

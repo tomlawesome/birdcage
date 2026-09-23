@@ -59,11 +59,21 @@ const (
 // unsolicited-response experiment showed no placement survives into
 // OpenCanary's llmnr logdata). smb and llmnr are listed here even
 // though this build has no carrier for either yet (smb: needs a real
-// Samba audit VFS, a deploy-script dependency; llmnr: #86's own
-// detector does not exist yet, see internal/agent/probe/carrier.go) --
-// the grade a service *can* reach is a fact about its protocol, not
-// about whether this build already has a carrier for it, and keeping
-// both consistent here means only the carrier needs to change later.
+// Samba audit VFS, a deploy-script dependency; llmnr: OpenCanary's own
+// llmnr module stays permanently disabled, notes 20752/20767) -- the
+// grade a service *can* reach is a fact about its protocol, not about
+// whether this build already has a carrier for it, and keeping both
+// consistent here means only the carrier needs to change later.
+//
+// poisoner (#86) is listed for the same reason and is in the same state:
+// the detector exists and cmd/mockingbird runs its bait lookup when a
+// target names it, but nothing mints that target yet, because a passing
+// poisoner target cannot be represented here yet. Every grade in this
+// table is proved by a marker-bearing event arriving; #86's self-test
+// grades SILENCE as a pass, and silence produces no event to carry a
+// marker. Minting the target before that is resolved would fail every
+// run. See internal/selftestsched/scheduler.go's own note at the mint
+// site, which is where the target goes once the question is settled.
 var serviceGrades = map[string]Grade{
 	"ftp":      GradeMarked,
 	"http":     GradeMarked,
@@ -82,6 +92,7 @@ var serviceGrades = map[string]Grade{
 	"ntp":      GradeAttributed,
 	"portscan": GradeAttributed,
 	"llmnr":    GradeAttributed,
+	"poisoner": GradeAttributed,
 }
 
 // gradeForService returns service's grade, defaulting to GradeMarked for

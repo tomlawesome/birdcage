@@ -3,6 +3,7 @@ package poisoner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -635,5 +636,61 @@ func TestWaitForWorkingHoursReturnsImmediatelyInHours(t *testing.T) {
 	cancel()
 	if d.waitForWorkingHours(ctx) {
 		t.Error("waitForWorkingHours ignored a cancelled context")
+	}
+}
+
+// TestLookupOnceRefusesWhenNothingToSendFrom covers the three ways a
+// self-test's bait probe can have nowhere to go. All three must be an
+// error rather than an empty answer list, because an empty list means
+// "asked, and nothing answered" -- the self-test's PASS -- and a canary
+// that never asked must never report that.
+func TestLookupOnceRefusesWhenNothingToSendFrom(t *testing.T) {
+	submit, _, _ := collect()
+
+	t.Run("a nil detector", func(t *testing.T) {
+		// The road off. A caller holding this in an interface cannot spot
+		// it by comparing against nil, so the method has to.
+		var d *Detector
+		if _, err := d.LookupOnce(context.Background(), "", ""); !errors.Is(err, ErrNotSending) {
+			t.Errorf("err = %v, want ErrNotSending", err)
+		}
+	})
+
+	t.Run("the off profile", func(t *testing.T) {
+		d, _ := New(Config{Profile: ProfileOff, ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+		if _, err := d.LookupOnce(context.Background(), "", ""); !errors.Is(err, ErrNotSending) {
+			t.Errorf("err = %v, want ErrNotSending", err)
+		}
+	})
+
+	t.Run("open never found a segment", func(t *testing.T) {
+		d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+		// canSend is only set by Open; a detector that never opened has
+		// nothing to send from.
+		if _, err := d.LookupOnce(context.Background(), "", ""); !errors.Is(err, ErrNotSending) {
+			t.Errorf("err = %v, want ErrNotSending", err)
+		}
+	})
+}
+
+// TestLookupOnceRefusesAProtocolTheProfileDoesNotUse: a self-test that
+// claimed to have asked over NBT-NS while actually asking over mDNS would
+// be proving the wrong thing, so the substitution is refused rather than
+// made silently.
+func TestLookupOnceRefusesAProtocolTheProfileDoesNotUse(t *testing.T) {
+	submit, _, _ := collect()
+	d, _ := New(Config{Profile: ProfileLinux, ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+	// Pretend Open succeeded, so the refusal under test is the protocol
+	// one rather than ErrNotSending.
+	d.canSend = true
+
+	if _, err := d.LookupOnce(context.Background(), ProtocolNBNS, "fs-lon-02"); err == nil {
+		t.Error("the linux profile accepted a NBT-NS lookup")
+	} else if errors.Is(err, ErrNotSending) {
+		t.Errorf("err = %v, want a protocol refusal", err)
+	}
+	// And an unusable name is refused before anything is sent.
+	if _, err := d.LookupOnce(context.Background(), ProtocolLLMNR, "bad_name"); err == nil {
+		t.Error("an unusable bait name was accepted")
 	}
 }

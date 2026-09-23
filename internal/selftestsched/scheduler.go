@@ -241,6 +241,18 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	// gets at least this one target.
 	targets = append(targets, store.SelfTestTarget{Service: "portscan", DestPort: 0})
 
+	// No poisoner target yet (#86 slice C), deliberately. The detector
+	// exists, the agent runs a bait lookup when a target names it
+	// (cmd/mockingbird's runAgentHandledTarget), and the grade is declared
+	// (internal/store/selftest_grade.go) -- but a poisoner target cannot
+	// yet be recorded as passing. Every grade this schema records is
+	// proved by a marker-bearing event arriving, and #86 grades SILENCE as
+	// a pass: nothing answering produces no event, so there is nothing to
+	// carry the marker. Minting one here today would leave every honeypot
+	// canary with a target that can never match, failing every run and
+	// holding every canary pending. Add it in the same change that gives
+	// silence a way to be reported.
+
 	deadline := now.Add(selfTestWindow)
 	cmd, err := store.MintSelfTestCommand(ctx, s.db, s.idx, c.ID, *c.LastSeenAddr, targets, now, deadline)
 	if err != nil {

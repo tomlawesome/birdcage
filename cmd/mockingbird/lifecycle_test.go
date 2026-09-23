@@ -166,7 +166,7 @@ func TestCommandPollAndRunnerStopOnContextCancel(t *testing.T) {
 		close(pollDone)
 	}()
 	go func() {
-		runCommandRunner(runCtx, in, commands)
+		runCommandRunner(runCtx, in, nil, commands)
 		close(runnerDone)
 	}()
 

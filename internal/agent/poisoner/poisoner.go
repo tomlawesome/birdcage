@@ -505,3 +505,81 @@ func (d *Detector) Pace() PaceReport {
 // Exported so the self-test (#46) and the dashboard work (#86 slice D) read
 // it from here rather than repeating the string.
 func Service() string { return serviceName() }
+
+// ErrNotSending is returned by LookupOnce when this detector has nothing
+// to send from: either the profile is ProfileOff, or Open found no
+// interface to ask on. It is a distinct error because a self-test must
+// report "this canary cannot bait" differently from "this canary baited
+// and nothing answered" -- the first is a capability that is missing, the
+// second is the result the test is looking for.
+var ErrNotSending = errors.New("poisoner: this canary has nothing to send bait lookups from")
+
+// LookupOnce makes exactly one bait lookup, on one protocol, for one
+// name, and returns every answer it heard -- normally none.
+//
+// Exported for the self-test (#46 slice C): a run sends one bait query
+// and grades silence as a pass. It is deliberately a single lookup rather
+// than a burst, because a self-test is proving the machinery works, not
+// impersonating a workstation, and because a burst's two-to-five lookups
+// spread across a minute would outlast the sweep it runs inside.
+//
+// An empty name asks for one from this canary's own rotation, so a caller
+// that does not want to know the bait names -- which is every caller
+// outside this package (see the package comment on why a bait name never
+// reaches a log line) -- does not have to handle them.
+//
+// An empty protocol asks on the first protocol the profile uses, so a
+// caller does not have to know which protocols a profile covers either. A
+// protocol the profile does not use is an error rather than a silent
+// substitution: a self-test that claimed to have asked over NBT-NS while
+// actually asking over mDNS would be proving the wrong thing.
+//
+// The answers it returns have already been submitted as alerts, the same
+// as any answer to a scheduled burst: something answering a bait name is
+// an intrusion whether or not a self-test happened to be what provoked
+// it, and holding that back until the self-test reported would be the one
+// case where this detector saw a poisoner and said nothing.
+func (d *Detector) LookupOnce(ctx context.Context, proto Protocol, name string) ([]Answer, error) {
+	// A nil receiver is the road being off. It reaches here because a
+	// caller holding a *Detector in an interface cannot test it against
+	// nil -- a typed nil pointer in an interface is not a nil interface --
+	// so the check has to be on this side to be reliable. Answering
+	// ErrNotSending is the same thing this says for a canary with nothing
+	// to send from, which is exactly what a canary with no detector has.
+	if d == nil || !d.canSend {
+		return nil, ErrNotSending
+	}
+	protocols := d.shape.Protocols
+	if len(protocols) == 0 {
+		return nil, ErrNotSending
+	}
+
+	if proto == "" {
+		proto = protocols[0]
+	} else if !d.profile.Asks(proto) {
+		return nil, fmt.Errorf("poisoner: the %s profile does not ask on %s", d.profile, proto)
+	}
+
+	if name == "" {
+		name = d.schedule.NextName(d.names)
+	} else {
+		normalised, err := normaliseName(name)
+		if err != nil {
+			return nil, err
+		}
+		name = normalised
+	}
+	if name == "" {
+		return nil, errNoName
+	}
+
+	d.lookups.Add(1)
+	answers, err := d.lookupLocked(ctx, proto, name)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range answers {
+		d.emit(a)
+	}
+	return answers, nil
+}

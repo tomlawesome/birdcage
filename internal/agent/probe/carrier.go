@@ -70,3 +70,27 @@ var notProbeable = map[string]bool{
 	"smb":   true,
 	"llmnr": true,
 }
+
+// agentHandled are the services this package deliberately does not probe
+// because cmd/mockingbird probes them itself, holding the detector that
+// does the work.
+//
+// poisoner (#86) is the only one. Its probe is one bait lookup on a
+// multicast group or a subnet broadcast, made by the live
+// internal/agent/poisoner detector -- the same one whose sockets are
+// already open and whose bait names are already settled. This package may
+// import internal/selftest only (see doc.go), so it cannot reach that
+// detector, and a second copy of the encoders here to avoid the import
+// would be two implementations of a packet shape whose whole value is
+// being exactly right.
+//
+// A target naming one of these gets StatusAgentHandled: nothing is
+// attempted here, and the caller is told plainly that the work is its
+// own, rather than being left to read a "no carrier" as a gap.
+var agentHandled = map[string]bool{
+	"poisoner": true,
+}
+
+// AgentHandled reports whether service is probed by cmd/mockingbird
+// itself rather than by this package -- see agentHandled.
+func AgentHandled(service string) bool { return agentHandled[service] }

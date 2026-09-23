@@ -82,6 +82,12 @@ const (
 	// out-of-scope services (smb, llmnr -- see carrier.go's
 	// notProbeable). Nothing is attempted.
 	StatusNotProbeable
+
+	// StatusAgentHandled means the target names a service cmd/mockingbird
+	// probes itself, holding the detector that does the work (poisoner --
+	// see carrier.go's agentHandled). Nothing is attempted here, and this
+	// is not a gap: the caller is the one that runs it.
+	StatusAgentHandled
 )
 
 // String renders a Status for logging.
@@ -93,6 +99,8 @@ func (s Status) String() string {
 		return "failed"
 	case StatusNoCarrier:
 		return "no-carrier"
+	case StatusAgentHandled:
+		return "agent-handled"
 	case StatusNotProbeable:
 		return "not-probeable"
 	default:
@@ -168,6 +176,11 @@ func probeOne(ctx context.Context, probeTimeout time.Duration, address string, t
 
 	if notProbeable[t.Service] {
 		o.Status = StatusNotProbeable
+		return o
+	}
+
+	if agentHandled[t.Service] {
+		o.Status = StatusAgentHandled
 		return o
 	}
 

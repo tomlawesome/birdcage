@@ -2,13 +2,25 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
+	"github.com/tomlawesome/birdcage/internal/agent/probe"
 	"github.com/tomlawesome/birdcage/internal/agent/queue"
 )
+
+// swapSelftestLog points the package's selftest logger at log for one
+// test, returning the restore. The logger is a package-level var (see
+// command.go), which is what makes runAgentHandledTarget's own output
+// testable without threading a logger through the command runner.
+func swapSelftestLog(log *slog.Logger) func() {
+	prev := selftestLog
+	selftestLog = log
+	return func() { selftestLog = prev }
+}
 
 // TestPoisonerEnabled is the one switch, no levels: only "0" turns the
 // road off, the same rule envPortscan and envSNMP state.
@@ -330,5 +342,146 @@ func TestNewPoisonerRoadBuildsTheDetector(t *testing.T) {
 	// the detector does know -- did not reach the log either.
 	if strings.Contains(buf.String(), poisoner.WPADName+",") {
 		t.Errorf("the startup log lists the name rotation: %s", buf.String())
+	}
+}
+
+// fakeBait stands in for the poisoner detector in the self-test tests, so
+// both outcomes can be driven without opening a multicast socket.
+type fakeBait struct {
+	answers []poisoner.Answer
+	err     error
+	calls   int
+	proto   poisoner.Protocol
+	name    string
+}
+
+func (f *fakeBait) LookupOnce(_ context.Context, proto poisoner.Protocol, name string) ([]poisoner.Answer, error) {
+	f.calls++
+	f.proto, f.name = proto, name
+	return f.answers, f.err
+}
+
+// TestRunAgentHandledTargetGradesSilenceAsAPass is #86 slice C's grading,
+// which is inverted from every other self-test target: the names the
+// detector asks for do not exist, so the only correct answer is none.
+func TestRunAgentHandledTargetGradesSilenceAsAPass(t *testing.T) {
+	log, buf := captureLogger()
+	restore := swapSelftestLog(log)
+	defer restore()
+
+	bait := &fakeBait{}
+	runAgentHandledTarget(context.Background(), bait, "run-1", poisoner.Service())
+
+	if bait.calls != 1 {
+		t.Fatalf("LookupOnce called %d times, want 1 -- a self-test is one lookup, not a burst", bait.calls)
+	}
+	// An empty protocol and name let the detector choose from its own
+	// profile and rotation, so this caller never handles a bait name.
+	if bait.proto != "" || bait.name != "" {
+		t.Errorf("LookupOnce called with (%q, %q), want both empty", bait.proto, bait.name)
+	}
+	line := buf.String()
+	if !strings.Contains(line, "nothing answered") {
+		t.Errorf("silence was not reported as the pass: %q", line)
+	}
+	if strings.Contains(line, "ANSWERED") {
+		t.Errorf("silence was reported as an answer: %q", line)
+	}
+}
+
+// TestRunAgentHandledTargetReportsAnAnswer: an answer is the worst result
+// there is, not a better one than silence, and the log names the
+// answering address without naming the bait.
+func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
+	log, buf := captureLogger()
+	restore := swapSelftestLog(log)
+	defer restore()
+
+	bait := &fakeBait{answers: []poisoner.Answer{{
+		Source:   "10.0.0.66",
+		Protocol: poisoner.ProtocolLLMNR,
+		Name:     "fs-lon-02",
+		MAC:      "aa:bb:cc:dd:ee:ff",
+	}}}
+	runAgentHandledTarget(context.Background(), bait, "run-1", poisoner.Service())
+
+	line := buf.String()
+	if !strings.Contains(line, "ANSWERED") || !strings.Contains(line, "10.0.0.66") {
+		t.Errorf("the answer was not reported with its source: %q", line)
+	}
+	// The bait name and the MAC belong in the event, not on this box's
+	// stdout -- see internal/agent/poisoner's package comment.
+	if strings.Contains(line, "fs-lon-02") {
+		t.Errorf("the log names the bait name: %q", line)
+	}
+	if strings.Contains(line, "aa:bb:cc:dd:ee:ff") {
+		t.Errorf("the log names the MAC: %q", line)
+	}
+}
+
+// TestRunAgentHandledTargetWithNoDetector: the poisoner road being off
+// must read as skipped, never as a pass. A canary that never asked must
+// not report the silence that means "asked, and nothing answered".
+func TestRunAgentHandledTargetWithNoDetector(t *testing.T) {
+	log, buf := captureLogger()
+	restore := swapSelftestLog(log)
+	defer restore()
+
+	runAgentHandledTarget(context.Background(), nil, "run-1", poisoner.Service())
+	line := buf.String()
+	if !strings.Contains(line, "skipped") {
+		t.Errorf("a missing detector was not reported as skipped: %q", line)
+	}
+	if strings.Contains(line, "nothing answered") {
+		t.Errorf("a missing detector was graded as a pass: %q", line)
+	}
+}
+
+// TestRunAgentHandledTargetWithALookupFailure: a bait lookup that never
+// reached the wire is not silence either.
+func TestRunAgentHandledTargetWithALookupFailure(t *testing.T) {
+	log, buf := captureLogger()
+	restore := swapSelftestLog(log)
+	defer restore()
+
+	runAgentHandledTarget(context.Background(), &fakeBait{err: poisoner.ErrNotSending}, "run-1", poisoner.Service())
+	line := buf.String()
+	if !strings.Contains(line, "did not go out") {
+		t.Errorf("a failed lookup was not reported: %q", line)
+	}
+	if strings.Contains(line, "nothing answered") {
+		t.Errorf("a failed lookup was graded as a pass: %q", line)
+	}
+}
+
+// TestRunAgentHandledTargetRefusesAnUnknownService guards the dispatch:
+// if probe ever reports another service as agent-handled, this binary says
+// so rather than running a bait lookup for it.
+func TestRunAgentHandledTargetRefusesAnUnknownService(t *testing.T) {
+	log, buf := captureLogger()
+	restore := swapSelftestLog(log)
+	defer restore()
+
+	bait := &fakeBait{}
+	runAgentHandledTarget(context.Background(), bait, "run-1", "smb")
+	if bait.calls != 0 {
+		t.Error("a bait lookup ran for a service that is not the poisoner")
+	}
+	if !strings.Contains(buf.String(), "nothing to run") {
+		t.Errorf("the unknown service was not reported: %q", buf.String())
+	}
+}
+
+// TestProbeReportsThePoisonerAsAgentHandled ties the two halves together:
+// internal/agent/probe must report a poisoner target as this binary's work
+// rather than as a missing carrier, or the target would read as a gap.
+func TestProbeReportsThePoisonerAsAgentHandled(t *testing.T) {
+	if !probe.AgentHandled(poisoner.Service()) {
+		t.Errorf("probe.AgentHandled(%q) = false, want true", poisoner.Service())
+	}
+	for _, other := range []string{"ssh", "portscan", "snmp", "smb"} {
+		if probe.AgentHandled(other) {
+			t.Errorf("probe.AgentHandled(%q) = true, want false", other)
+		}
 	}
 }
