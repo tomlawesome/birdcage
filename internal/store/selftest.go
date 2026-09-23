@@ -18,8 +18,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,6 +31,16 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/selftest"
 )
+
+// markerHash returns the sha256 hex digest of marker -- what
+// self_test_targets.marker_hash stores, per that migration's own doc
+// comment: the marker itself is never stored a second time outside
+// canary_commands.params, so a reader of this table alone learns
+// nothing an attacker could replay.
+func markerHash(marker string) string {
+	sum := sha256.Sum256([]byte(marker))
+	return hex.EncodeToString(sum[:])
+}
 
 // SelfTestTarget is what MintSelfTestCommand needs from a caller to plant
 // one probe: which service, on which port. The marker itself is never a
@@ -46,6 +59,29 @@ type SelfTestTarget struct {
 // MintCanaryCommand, the one door into canary_commands, and registers its
 // markers in idx, so a matching alert arriving moments later finds it
 // without waiting on idx's own lazy load.
+// MintSelfTestCommand mints the canary_commands row, the owning
+// self_test_runs row and one self_test_targets row per target, all in
+// one transaction (issue #46 item 4: "MintSelfTestCommand writes both
+// (same transaction as the command)") -- a caller never sees a command
+// with no run/target bookkeeping to match against, and a failure at any
+// point rolls the whole mint back rather than leaving a command queued
+// for an agent that birdcage itself can never resolve.
+// HasRecentSelfTestRun reports whether canaryID has a self_test_runs row
+// issued at or after since -- internal/selftestsched's double-mint guard
+// (issue #46 item 5b: "never mint twice in the same minute for the same
+// canary"), shared by both the per-minute tick and the rotation-coupled
+// hook so neither path can race the other into minting twice.
+func HasRecentSelfTestRun(ctx context.Context, database *db.DB, canaryID string, since time.Time) (bool, error) {
+	query := fmt.Sprintf(`
+		SELECT COUNT(*) FROM self_test_runs WHERE canary_id = ? AND %s`,
+		timeCompare(database.Engine, "issued_at", ">="))
+	var n int
+	if err := database.QueryRowContext(ctx, query, canaryID, since.UTC().Format(receivedAtLayout)).Scan(&n); err != nil {
+		return false, fmt.Errorf("count recent self_test_runs for %s: %w", canaryID, err)
+	}
+	return n > 0, nil
+}
+
 func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestIndex, canaryID, address string, targets []SelfTestTarget, createdAt, expiresAt time.Time) (CanaryCommand, error) {
 	if len(targets) == 0 {
 		return CanaryCommand{}, selftest.ErrNoTargets
@@ -84,10 +120,45 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestInde
 	if err != nil {
 		return CanaryCommand{}, fmt.Errorf("marshal selftest params: %w", err)
 	}
-	cmd, err := MintCanaryCommand(ctx, database, canaryID, CommandSelfTest, string(raw), createdAt, expiresAt)
+
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		return CanaryCommand{}, fmt.Errorf("begin selftest mint transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		_ = tx.Rollback() // best-effort; the error already returned above stands regardless
+	}()
+
+	cmd, err := MintCanaryCommand(ctx, tx, canaryID, CommandSelfTest, string(raw), createdAt, expiresAt)
 	if err != nil {
 		return CanaryCommand{}, err
 	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		cmd.ID, canaryID, runID, cmd.CreatedAt.Format(receivedAtLayout), cmd.ExpiresAt.Format(receivedAtLayout)); err != nil {
+		return CanaryCommand{}, fmt.Errorf("insert self_test_runs: %w", err)
+	}
+
+	for _, tgt := range params.Targets {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO self_test_targets (command_id, service, dest_port, marker_hash)
+			VALUES (?, ?, ?, ?)`,
+			cmd.ID, tgt.Service, tgt.DestPort, markerHash(tgt.Marker)); err != nil {
+			return CanaryCommand{}, fmt.Errorf("insert self_test_targets: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return CanaryCommand{}, fmt.Errorf("commit selftest mint transaction: %w", err)
+	}
+	committed = true
+
 	// cmd.ExpiresAt, not the caller's expiresAt, is the value actually
 	// stored (MintCanaryCommand normalizes to UTC) -- idx's expiry must
 	// agree with the row's or the two could disagree about whether a
@@ -112,7 +183,243 @@ func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, ale
 	if err := idx.ensureLoaded(ctx, database); err != nil {
 		return false, fmt.Errorf("load selftest index: %w", err)
 	}
-	return idx.match(alert.InstanceID, alert.Raw, now.UTC()), nil
+	matched, marker := idx.match(alert.InstanceID, alert.Raw, now.UTC())
+	if !matched {
+		return false, nil
+	}
+	// Record the hit against self_test_targets/self_test_runs (issue
+	// #46 item 4) now that idx has already made the security decision
+	// in memory -- a failure here still returns an error, per this
+	// function's caller (internal/ingest/batch.go): "on any error from
+	// MatchSelfTest: log, store the alert as real, continue. Never
+	// drop." That is a deliberately conservative choice: a self-test
+	// birdcage cannot finish recording is treated the same as one it
+	// never issued, rather than trusting the in-memory match alone.
+	if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
+		return false, fmt.Errorf("record selftest match: %w", err)
+	}
+	return true, nil
+}
+
+// recordSelfTestMatch sets self_test_targets.matched_at for the target
+// hash identifies, then -- if every target of that target's run is now
+// matched -- marks the owning self_test_runs row completed_at/passed=1.
+// Idempotent: a duplicate event carrying the same marker (retried by the
+// agent, or the same raw payload seen twice) updates zero rows on its
+// second pass (the "AND matched_at IS NULL" guard) and this function
+// simply returns without touching self_test_runs again.
+func recordSelfTestMatch(ctx context.Context, database *db.DB, hash string, now time.Time) error {
+	var commandID string
+	err := database.QueryRowContext(ctx, `
+		SELECT command_id FROM self_test_targets WHERE marker_hash = ? AND matched_at IS NULL`, hash).Scan(&commandID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Either this marker already matched (a duplicate/retried
+		// event -- see doc comment above) or, in principle, a hash
+		// collision with nothing this package ever minted; either way
+		// there is nothing left to record.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up self_test_targets by marker hash: %w", err)
+	}
+
+	nowStr := now.Format(receivedAtLayout)
+	res, err := database.ExecContext(ctx, `
+		UPDATE self_test_targets SET matched_at = ?
+		WHERE marker_hash = ? AND matched_at IS NULL`, nowStr, hash)
+	if err != nil {
+		return fmt.Errorf("update self_test_targets: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Lost a race with another concurrent match on the same
+		// marker (should never happen -- markers are per-target and
+		// unique -- but the guard is the same belt-and-braces the rest
+		// of this package's claim/update statements use).
+		return nil
+	}
+
+	var remaining int64
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM self_test_targets WHERE command_id = ? AND matched_at IS NULL`, commandID).Scan(&remaining); err != nil {
+		return fmt.Errorf("count unmatched self_test_targets: %w", err)
+	}
+	if remaining > 0 {
+		return nil
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE self_test_runs SET completed_at = ?, passed = 1
+		WHERE command_id = ? AND completed_at IS NULL`, nowStr, commandID); err != nil {
+		return fmt.Errorf("mark self_test_runs passed: %w", err)
+	}
+	return nil
+}
+
+// SweepExpiredSelfTestRuns marks every run past its deadline_at with
+// completed_at still NULL as completed and failed (issue #46 item 5d):
+// a canary that never finishes answering every target is exactly as
+// bad as one that answers none, so a run birdcage stops waiting on must
+// resolve to passed=false, not linger "still running" forever. Returns
+// how many runs it swept, for the scheduler's own log line.
+func SweepExpiredSelfTestRuns(ctx context.Context, database *db.DB, now time.Time) (int, error) {
+	query := fmt.Sprintf(`
+		UPDATE self_test_runs SET completed_at = ?, passed = 0
+		WHERE completed_at IS NULL AND %s`,
+		timeCompare(database.Engine, "deadline_at", "<="))
+	res, err := database.ExecContext(ctx, query, now.UTC().Format(receivedAtLayout), now.UTC().Format(receivedAtLayout))
+	if err != nil {
+		return 0, fmt.Errorf("sweep expired selftest runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// SelfTestRun is one self_test_runs row, as read back by
+// applySelfTestState (health.go's StateTestFailed) and
+// internal/selftestsched's double-mint guard.
+type SelfTestRun struct {
+	CommandID   string
+	CanaryID    string
+	RunID       string
+	IssuedAt    time.Time
+	DeadlineAt  time.Time
+	CompletedAt *time.Time
+	Passed      *bool
+}
+
+// LatestCompletedSelfTestRun returns canaryID's most recently completed
+// self-test run (by completed_at), or ok=false when none has ever
+// completed. Loaded and compared in Go rather than by an SQL ORDER BY on
+// the TEXT completed_at column, for the same trimmed-fractional-second
+// reason timeCompare's own doc comment gives -- one canary's self-test
+// history is small (at most a handful a day), so loading it whole here
+// costs nothing worth avoiding.
+func LatestCompletedSelfTestRun(ctx context.Context, database *db.DB, canaryID string) (run SelfTestRun, ok bool, err error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT command_id, canary_id, run_id, issued_at, deadline_at, completed_at, passed
+		FROM self_test_runs WHERE canary_id = ? AND completed_at IS NOT NULL`, canaryID)
+	if err != nil {
+		return SelfTestRun{}, false, fmt.Errorf("query self_test_runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var latest *SelfTestRun
+	for rows.Next() {
+		r, err := scanSelfTestRun(rows)
+		if err != nil {
+			return SelfTestRun{}, false, err
+		}
+		if latest == nil || r.CompletedAt.After(*latest.CompletedAt) {
+			cp := r
+			latest = &cp
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return SelfTestRun{}, false, fmt.Errorf("iterate self_test_runs: %w", err)
+	}
+	if latest == nil {
+		return SelfTestRun{}, false, nil
+	}
+	return *latest, true, nil
+}
+
+// scanSelfTestRun reads one self_test_runs row selected in the exact
+// column order LatestCompletedSelfTestRun's query uses.
+func scanSelfTestRun(row rowScanner) (SelfTestRun, error) {
+	var (
+		r           SelfTestRun
+		issuedAt    string
+		deadlineAt  string
+		completedAt *string
+		passed      *int64
+	)
+	if err := row.Scan(&r.CommandID, &r.CanaryID, &r.RunID, &issuedAt, &deadlineAt, &completedAt, &passed); err != nil {
+		return SelfTestRun{}, fmt.Errorf("scan self_test_run: %w", err)
+	}
+	var err error
+	if r.IssuedAt, err = time.Parse(receivedAtLayout, issuedAt); err != nil {
+		return SelfTestRun{}, fmt.Errorf("parse issued_at %q: %w", issuedAt, err)
+	}
+	if r.DeadlineAt, err = time.Parse(receivedAtLayout, deadlineAt); err != nil {
+		return SelfTestRun{}, fmt.Errorf("parse deadline_at %q: %w", deadlineAt, err)
+	}
+	if completedAt != nil {
+		t, err := time.Parse(receivedAtLayout, *completedAt)
+		if err != nil {
+			return SelfTestRun{}, fmt.Errorf("parse completed_at %q: %w", *completedAt, err)
+		}
+		r.CompletedAt = &t
+	}
+	if passed != nil {
+		p := *passed != 0
+		r.Passed = &p
+	}
+	return r, nil
+}
+
+// SelfTestTargetsUnmatched returns "service dest_port" strings (e.g.
+// "ssh 22") for every target of commandID that never matched, ordered by
+// service then dest_port for a deterministic display -- health.go's
+// SelfTestFailedServices and the canary detail page's own failure line
+// (issue #46 item 6).
+func SelfTestTargetsUnmatched(ctx context.Context, database *db.DB, commandID string) ([]string, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT service, dest_port FROM self_test_targets
+		WHERE command_id = ? AND matched_at IS NULL
+		ORDER BY service, dest_port`, commandID)
+	if err != nil {
+		return nil, fmt.Errorf("query unmatched self_test_targets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var (
+			service string
+			port    int
+		)
+		if err := rows.Scan(&service, &port); err != nil {
+			return nil, fmt.Errorf("scan unmatched self_test_target: %w", err)
+		}
+		out = append(out, fmt.Sprintf("%s %d", service, port))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unmatched self_test_targets: %w", err)
+	}
+	return out, nil
+}
+
+// applySelfTestState fills c.LastSelfTestAt, c.LastSelfTestPassed and
+// (when the run failed) c.SelfTestFailedServices from canaryID's most
+// recently completed self-test run, and reports whether c should carry
+// StateTestFailed -- ListCanaries' own per-canary self-test section
+// (issue #46 item 6). A canary with no completed run at all reports
+// false ("never run" is not a failure).
+func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFailed bool, err error) {
+	run, ok, err := LatestCompletedSelfTestRun(ctx, database, c.ID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	c.LastSelfTestAt = run.CompletedAt
+	c.LastSelfTestPassed = run.Passed
+	if run.Passed == nil || *run.Passed {
+		return false, nil
+	}
+	failed, err := SelfTestTargetsUnmatched(ctx, database, run.CommandID)
+	if err != nil {
+		return false, err
+	}
+	c.SelfTestFailedServices = failed
+	return true, nil
 }
 
 // SelfTestIndex is the bounded, in-memory index of markers birdcage has
@@ -225,23 +532,25 @@ func (idx *SelfTestIndex) addLocked(canaryID string, targets []selftest.Target, 
 // -- the index's only pruning, and enough on its own: a canary that
 // keeps self-testing keeps visiting its own bucket and keeps it small,
 // and one that stops leaves behind only its last run's targets, not its
-// whole history.
-func (idx *SelfTestIndex) match(canaryID, raw string, now time.Time) bool {
+// whole history. When found is true, marker is the matched value itself
+// (issue #46 item 3/4), so MatchSelfTest can hash it and record which
+// self_test_targets row to mark matched_at on.
+func (idx *SelfTestIndex) match(canaryID, raw string, now time.Time) (found bool, marker string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	markers := idx.byCanary[canaryID]
-	found := false
-	for marker, expiresAt := range markers {
+	for m, expiresAt := range markers {
 		if !expiresAt.After(now) {
-			delete(markers, marker)
+			delete(markers, m)
 			continue
 		}
-		if strings.Contains(raw, marker) {
+		if strings.Contains(raw, m) {
 			found = true
+			marker = m
 		}
 	}
 	if len(markers) == 0 {
 		delete(idx.byCanary, canaryID)
 	}
-	return found
+	return found, marker
 }

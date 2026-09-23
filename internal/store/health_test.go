@@ -275,7 +275,7 @@ func TestApplyHealthStatePrecedence(t *testing.T) {
 				t0 := now.Add(-time.Minute)
 				tokenConflictSince = &t0
 			}
-			applyHealthState(&c, tc.notDeliveringNow, throttledSince, tc.rotationStalled, false, 60, tokenConflictSince, now)
+			applyHealthState(&c, tc.notDeliveringNow, throttledSince, tc.rotationStalled, false, 60, tokenConflictSince, false, now)
 			if c.Status != string(tc.want) {
 				t.Errorf("Status = %q, want %q", c.Status, tc.want)
 			}
@@ -290,7 +290,7 @@ func TestApplyHealthStateKeepsDetailForNonWinningStates(t *testing.T) {
 	now := mustParse(t, "2026-01-01T00:00:00Z")
 	c := Canary{Status: "ok"}
 	throttledSince := now.Add(-2 * time.Minute)
-	applyHealthState(&c, true /* not delivering wins */, &throttledSince, true, false, 900, nil, now)
+	applyHealthState(&c, true /* not delivering wins */, &throttledSince, true, false, 900, nil, false, now)
 
 	if c.Status != string(StateNotDelivering) {
 		t.Fatalf("Status = %q, want %q", c.Status, StateNotDelivering)

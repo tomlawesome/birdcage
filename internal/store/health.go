@@ -6,12 +6,13 @@
 // canary. It adds no table: every signal here already exists in the
 // schema (audit_log, canary_tokens, canaries.agent_log_read_ok).
 //
-// Scope note: of the issue's eight states, only silent (already built,
-// #34/#38), throttled, not-delivering and rotation-stalled, and token
-// conflict are computed here. Self-test-failed (#46), pending (#47) and
-// agent-out-of-date (#48) read data that doesn't exist in this schema
-// yet -- their slots in healthStateRank are reserved, not emitted, so
-// wiring them in later is an insertion, not a renumbering.
+// Scope note: of the issue's eight states, silent (already built,
+// #34/#38), throttled, not-delivering, rotation-stalled, token conflict
+// and -- as of #46 -- self-test-failed are computed here. Pending (#47)
+// and agent-out-of-date (#48) still read data that doesn't exist in this
+// schema yet -- their slots in healthStateRank remain reserved, not
+// emitted, so wiring them in later stays an insertion, not a
+// renumbering.
 package store
 
 import (
@@ -30,9 +31,15 @@ import (
 type HealthState string
 
 const (
-	StateTokenConflict   HealthState = "token_conflict"
-	StateSilent          HealthState = "silent"
-	StateNotDelivering   HealthState = "not_delivering"
+	StateTokenConflict HealthState = "token_conflict"
+	StateSilent        HealthState = "silent"
+	StateNotDelivering HealthState = "not_delivering"
+	// StateTestFailed (issue #46) is a canary whose most recently
+	// *completed* scheduled self-test run has passed=false -- see
+	// applySelfTestState in selftest.go. Ranked between not-delivering
+	// and throttled, per the slot this file's own package doc comment
+	// already reserved for it.
+	StateTestFailed      HealthState = "self_test_failed"
 	StateThrottled       HealthState = "throttled"
 	StateRotationStalled HealthState = "rotation_stalled"
 	StateOK              HealthState = "ok"
@@ -52,9 +59,10 @@ var healthStateRank = map[HealthState]int{
 	StateTokenConflict:   0,
 	StateSilent:          1,
 	StateNotDelivering:   2,
-	StateThrottled:       3,
-	StateRotationStalled: 4,
-	StateOK:              5,
+	StateTestFailed:      3,
+	StateThrottled:       4,
+	StateRotationStalled: 5,
+	StateOK:              6,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -215,13 +223,14 @@ func rotationSignal(ctx context.Context, database *db.DB, canaryID string, now t
 
 // applyHealthState computes c's ordered HealthState (issue #45) from the
 // silent/ok status applyStatus already derived, plus the throttled,
-// not-delivering, rotation-stalled and token-conflict signals passed in.
+// not-delivering, rotation-stalled, token-conflict and (#46) self-test-
+// failed signals passed in.
 // c.ActiveStates is filled with every active state, worst first, and
 // c.Status with the head of that list ("one state on the tile, the
 // worst; the rest in its detail" -- issue #45); every other active
 // signal's own detail fields are still populated, so a caller that
 // wants to show more than the headline state can.
-func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Time, rotationStalled, rotationEscalated bool, rotationSinceS int64, tokenConflictSince *time.Time, now time.Time) {
+func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Time, rotationStalled, rotationEscalated bool, rotationSinceS int64, tokenConflictSince *time.Time, testFailed bool, now time.Time) {
 	if notDeliveringNow {
 		c.NotDelivering = true
 	}
@@ -254,6 +263,7 @@ func applyHealthState(c *Canary, notDeliveringNow bool, throttledSince *time.Tim
 	add(StateSilent, c.Status == string(StateSilent))
 	add(StateTokenConflict, tokenConflictSince != nil)
 	add(StateNotDelivering, notDeliveringNow)
+	add(StateTestFailed, testFailed)
 	add(StateThrottled, throttledSince != nil)
 	add(StateRotationStalled, rotationStalled)
 	sort.SliceStable(active, func(i, j int) bool {

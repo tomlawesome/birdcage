@@ -402,3 +402,103 @@ func TestRecordCanaryCommonHeartbeatUnknownCanary(t *testing.T) {
 		}
 	})
 }
+
+// TestSetCanaryLastSeenAddrRecordsAndReads is issue #46 item 1's store-
+// level test: SetCanaryLastSeenAddr writes canaries.last_seen_addr, read
+// back through ListCanaries as Canary.LastSeenAddr.
+func TestSetCanaryLastSeenAddrRecordsAndReads(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", EnrolledAt: time.Now()})
+
+		canaries := listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		if got := findCanary(t, canaries, "canary-a").LastSeenAddr; got != nil {
+			t.Fatalf("LastSeenAddr before any call = %v, want nil", *got)
+		}
+
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "203.0.113.5"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		canaries = listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		got := findCanary(t, canaries, "canary-a").LastSeenAddr
+		if got == nil || *got != "203.0.113.5" {
+			t.Fatalf("LastSeenAddr = %v, want 203.0.113.5", got)
+		}
+	})
+}
+
+// TestSetCanaryLastSeenAddrUnknownCanary mirrors RecordHeartbeat's own
+// ErrCanaryNotFound contract.
+func TestSetCanaryLastSeenAddrUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := SetCanaryLastSeenAddr(context.Background(), database, "no-such-canary", "203.0.113.5")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("SetCanaryLastSeenAddr(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestWellKnownServiceForPort covers both branches: a port
+// wellKnownPortNames carries, and one it doesn't.
+func TestWellKnownServiceForPort(t *testing.T) {
+	if name, ok := WellKnownServiceForPort(22); !ok || name != "ssh" {
+		t.Fatalf("WellKnownServiceForPort(22) = %q, %v, want \"ssh\", true", name, ok)
+	}
+	if _, ok := WellKnownServiceForPort(59999); ok {
+		t.Fatal("WellKnownServiceForPort(59999) = true, want false (not a well-known port)")
+	}
+}
+
+// TestListHoneypotCanariesForSelfTest is issue #46 item 5's store-level
+// test: only kind-honeypot canaries come back, each with its raw ports
+// parsed to ints (not portsDisplay's joined string) and its
+// last-seen address.
+func TestListHoneypotCanariesForSelfTest(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "honeypot-a", Name: "a", Lane: "l", Ports: "22,80", EnrolledAt: time.Now()})
+		insertCanary(t, database, Canary{ID: "scanner-a", Name: "s", Lane: "l", Kind: agentkind.Scanner, EnrolledAt: time.Now()})
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "honeypot-a", "192.0.2.10"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+
+		canaries, err := ListHoneypotCanariesForSelfTest(context.Background(), database)
+		if err != nil {
+			t.Fatalf("ListHoneypotCanariesForSelfTest: %v", err)
+		}
+		if len(canaries) != 1 {
+			t.Fatalf("got %d canaries, want 1 (the scanner must be excluded): %+v", len(canaries), canaries)
+		}
+		c := canaries[0]
+		if c.ID != "honeypot-a" || c.Kind != agentkind.Honeypot {
+			t.Fatalf("got %+v, want honeypot-a/Honeypot", c)
+		}
+		if len(c.Ports) != 2 || c.Ports[0] != 22 || c.Ports[1] != 80 {
+			t.Fatalf("Ports = %v, want [22 80]", c.Ports)
+		}
+		if c.LastSeenAddr == nil || *c.LastSeenAddr != "192.0.2.10" {
+			t.Fatalf("LastSeenAddr = %v, want 192.0.2.10", c.LastSeenAddr)
+		}
+	})
+}
+
+// TestSelfTestCanaryByID covers both the found and not-found cases.
+func TestSelfTestCanaryByID(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+
+		sc, ok, err := SelfTestCanaryByID(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID: %v", err)
+		}
+		if !ok || sc.ID != "canary-a" || sc.Kind != agentkind.Honeypot || len(sc.Ports) != 1 || sc.Ports[0] != 22 {
+			t.Fatalf("got %+v, %v, want canary-a/Honeypot/[22]/true", sc, ok)
+		}
+
+		_, ok, err = SelfTestCanaryByID(context.Background(), database, "no-such-canary")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID(unknown): %v", err)
+		}
+		if ok {
+			t.Fatal("SelfTestCanaryByID(unknown canary) = true, want false")
+		}
+	})
+}
