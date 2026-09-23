@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -81,39 +80,6 @@ func TestProbeNTP_ReportsTheFiredFact(t *testing.T) {
 	if fact.FiredAt.Before(before) || fact.FiredAt.After(after) {
 		t.Errorf("fact.FiredAt = %v, want between %v and %v", fact.FiredAt, before, after)
 	}
-}
-
-// reserveConsecutiveFreePorts finds portscanTouchCount consecutive ports
-// on 127.0.0.1 that are all free at the moment this returns, retrying a
-// fresh base a bounded number of times if the first candidate collides.
-// No sleeps: each attempt is a direct bind/close, and the bound is on
-// attempt count, not wall-clock time.
-func reserveConsecutiveFreePorts(t *testing.T, n int) int {
-	t.Helper()
-	for attempt := 0; attempt < 20; attempt++ {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen: %v", err)
-		}
-		_, portStr, _ := net.SplitHostPort(ln.Addr().String())
-		base, _ := strconv.Atoi(portStr)
-		_ = ln.Close()
-
-		ok := true
-		for i := 1; i < n; i++ {
-			l2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+i))
-			if err != nil {
-				ok = false
-				break
-			}
-			_ = l2.Close()
-		}
-		if ok {
-			return base
-		}
-	}
-	t.Fatal("could not reserve consecutive free ports")
-	return 0
 }
 
 // TestProbePortscan_TreatsRefusalAsSuccessAcrossTheWholeRange is #46

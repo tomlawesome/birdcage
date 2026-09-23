@@ -352,7 +352,7 @@ func TestOpenStartupDatabaseOpensAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openStartupDatabase: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	if database.Engine != db.SQLite {
 		t.Errorf("Engine = %v, want SQLite", database.Engine)
 	}
@@ -564,7 +564,7 @@ func TestServeAllReturnsNilOnCleanShutdown(t *testing.T) {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -586,7 +586,7 @@ func TestServeAllReturnsErrorOnBindFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reserve a loopback port: %v", err)
 	}
-	defer blocker.Close()
+	defer func() { _ = blocker.Close() }()
 
 	dashboard := &http.Server{Addr: blocker.Addr().String(), Handler: http.NotFoundHandler()}
 	ctx, stop := context.WithCancel(context.Background())

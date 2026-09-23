@@ -126,7 +126,7 @@ type wireCommonHeartbeat struct {
 // carrying any of SelfReport's own fields, so this function must never
 // be used to send one. Same status handling as SendHeartbeat.
 func (c *Client) SendCommonHeartbeat(ctx context.Context, token string, report CommonHeartbeat) error {
-	body, err := json.Marshal(wireCommonHeartbeat{AgentVersion: report.AgentVersion})
+	body, err := json.Marshal(wireCommonHeartbeat(report))
 	if err != nil {
 		return fmt.Errorf("client: encode common heartbeat: %w", err)
 	}

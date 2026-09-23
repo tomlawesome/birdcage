@@ -215,12 +215,6 @@ func newThrowawayCA(t *testing.T) *throwawayCA {
 	return &throwawayCA{key: key, cert: cert}
 }
 
-func (c *throwawayCA) pool() *x509.CertPool {
-	pool := x509.NewCertPool()
-	pool.AddCert(c.cert)
-	return pool
-}
-
 // issueLeaf mints a client-auth leaf for canaryID with ou set verbatim
 // (including nil, for a legacy pre-#106 shape) -- the point of this type
 // existing at all, since internal/ca.IssueClient's signature no longer

@@ -380,10 +380,7 @@ func TestRunTicksOnItsOwnScheduleUntilContextCanceled(t *testing.T) {
 		}()
 
 		deadline := time.After(2 * time.Second)
-		for {
-			if selfTestRunCount(t, database, "canary-a") == 1 {
-				break
-			}
+		for selfTestRunCount(t, database, "canary-a") != 1 {
 			select {
 			case <-deadline:
 				cancel()
