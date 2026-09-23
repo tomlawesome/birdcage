@@ -343,7 +343,7 @@ func (d *Detector) observe(l listener, b []byte, src *net.UDPAddr) {
 		SourcePort: src.Port,
 		Protocol:   l.proto,
 		Name:       r.Name,
-		MAC:        lookupMAC(d.arpPath, src.IP.String()),
+		MAC:        lookupMACWithRetry(d.arpPath, src.IP.String()),
 		Local:      local,
 		LocalPort:  localPort,
 	})
@@ -358,7 +358,7 @@ func (d *Detector) ask(ctx context.Context) {
 	// canary that stayed silent until nine would be the one host on the
 	// segment whose first question always arrives at the start of the
 	// working day.
-	if !sleepCtx(ctx, d.schedule.StartupDelay()) {
+	if !sleepCtx(ctx, d.schedule.StartupDelay(d.pace)) {
 		return
 	}
 	d.burst(ctx)

@@ -307,3 +307,65 @@ func TestParseNBNSReplyFollowsALegalNamePointer(t *testing.T) {
 		t.Errorf("decoded %q, want \"WPAD\"", name)
 	}
 }
+
+// TestParseDNSReplyAcceptsAnMDNSResponseWithNoQuestion is the shape a real
+// mDNS responder sends, and the one this parser used to drop on the floor.
+//
+// RFC 6762 section 6: "Multicast DNS responses MUST NOT contain any
+// questions". So the name is in the first answer record, not a question
+// section, and QDCOUNT is 0. An earlier version of parseDNSReply required
+// exactly one question and therefore silently ignored every real mDNS
+// poisoning -- caught by running Responder against the encoders, not by
+// reading the RFC.
+func TestParseDNSReplyAcceptsAnMDNSResponseWithNoQuestion(t *testing.T) {
+	msg := []byte{
+		0x00, 0x00, // ID zero, as a multicast response carries (RFC 6762 18.1)
+		0x84, 0x00, // QR set, AA set: an authoritative response
+		0x00, 0x00, // QDCOUNT 0 -- the clause above
+		0x00, 0x01, // ANCOUNT 1
+		0x00, 0x00,
+		0x00, 0x00,
+		// The answer record: NAME, then TYPE/CLASS/TTL/RDLENGTH/RDATA.
+		0x09, 'f', 's', '-', 'l', 'o', 'n', '-', '0', '6',
+		0x05, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, // TYPE A
+		0x00, 0x01, // CLASS IN
+		0x00, 0x00, 0x00, 0x78, // TTL
+		0x00, 0x04, // RDLENGTH
+		10, 0, 0, 66, // RDATA: the address the poisoner is offering
+	}
+
+	got, err := parseDNSReply(msg)
+	if err != nil {
+		t.Fatalf("parseDNSReply: %v", err)
+	}
+	if got.Name != "fs-lon-06" {
+		t.Errorf("Name = %q, want \"fs-lon-06\" (the .local stripped)", got.Name)
+	}
+	if got.Answers != 1 {
+		t.Errorf("Answers = %d, want 1", got.Answers)
+	}
+	// The offered address is in those last four bytes and must not appear
+	// anywhere in what the parser returns: issue #86 design point 6 says to
+	// act only on a reply's source, never its content.
+	if got.ID != 0 {
+		t.Errorf("ID = %#x, want 0", got.ID)
+	}
+}
+
+// TestParseDNSReplyRefusesAResponseWithNeitherSection: a response with no
+// question and no answer names nothing and claims nothing, so there is no
+// name to read and nothing to alert on.
+func TestParseDNSReplyRefusesAResponseWithNeitherSection(t *testing.T) {
+	msg := []byte{
+		0x00, 0x00,
+		0x84, 0x00,
+		0x00, 0x00, // QDCOUNT 0
+		0x00, 0x00, // ANCOUNT 0
+		0x00, 0x00,
+		0x00, 0x00,
+	}
+	if got, err := parseDNSReply(msg); err == nil {
+		t.Fatalf("parseDNSReply accepted it, returning %+v", got)
+	}
+}

@@ -75,22 +75,42 @@ func parseDNSReply(b []byte) (reply, error) {
 	if err != nil {
 		return reply{}, err
 	}
-	if hdr.questions != 1 {
-		// Every query this package sends has exactly one question, and
-		// a responder echoes the question section back. Anything else is
-		// not an answer to us.
-		return reply{}, fmt.Errorf("poisoner: reply carries %d questions, want 1", hdr.questions)
+	// QDCOUNT 0 and 1 are both ordinary, and which one appears is the
+	// difference between the two protocols that share this parser:
+	//
+	//   - LLMNR echoes the question back (RFC 4795 section 2.1), so a
+	//     reply has QDCOUNT 1.
+	//   - mDNS does not: RFC 6762 section 6 is explicit that "Multicast
+	//     DNS responses MUST NOT contain any questions", so a reply has
+	//     QDCOUNT 0 and the name is in the first answer record.
+	//
+	// Requiring exactly one question here made this parser silently drop
+	// every real mDNS answer. It was caught by running Responder against
+	// the real encoders rather than by reading the RFC (the journey in
+	// scripts/e2e/poisoner.sh is what keeps it caught).
+	//
+	// Either way the name this function wants is the first one after the
+	// header, because a question's QNAME and a resource record's NAME are
+	// the same encoding in the same place.
+	if hdr.questions > 1 {
+		return reply{}, fmt.Errorf("poisoner: reply carries %d questions, want 0 or 1", hdr.questions)
+	}
+	if hdr.questions == 0 && hdr.answers == 0 {
+		// Nothing to read a name from, and nothing being claimed either.
+		return reply{}, errors.New("poisoner: reply carries neither a question nor an answer")
 	}
 	name, end, err := readName(b, off)
 	if err != nil {
 		return reply{}, err
 	}
-	// The question's QTYPE and QCLASS follow the name. They are not read
-	// -- a reply is free to answer either the A or the AAAA twin -- but
-	// they must be present, because a question section short of them
-	// means a truncated datagram, which is the malformed case.
+	// Whatever follows the name -- a question's QTYPE/QCLASS, or a
+	// record's TYPE/CLASS -- is not read: a reply is free to answer
+	// either the A or the AAAA twin, and issue #86 design point 6 says to
+	// act only on a reply's source, never its content. But four bytes of
+	// it must be present, because a section short of them means a
+	// truncated datagram, which is the malformed case.
 	if end+4 > len(b) {
-		return reply{}, errors.New("poisoner: question section is truncated")
+		return reply{}, errors.New("poisoner: the section after the name is truncated")
 	}
 	return reply{ID: hdr.id, Name: trimLocal(name), Answers: hdr.answers}, nil
 }

@@ -309,7 +309,7 @@ func collectAnswers(ctx context.Context, sockets []querySocket, record asked, ar
 				SourcePort: src.Port,
 				Protocol:   record.proto,
 				Name:       record.name,
-				MAC:        lookupMAC(arpPath, host),
+				MAC:        lookupMACWithRetry(arpPath, host),
 				Local:      local,
 				LocalPort:  localPort,
 			})

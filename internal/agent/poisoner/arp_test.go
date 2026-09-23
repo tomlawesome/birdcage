@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The addresses and MACs in this fixture are documentation-range and
@@ -102,5 +103,51 @@ func TestDefaultARPPathIsTheKernelsOwn(t *testing.T) {
 		if _, err := net.ParseMAC("aa:bb:cc:dd:ee:ff"); err != nil {
 			t.Fatalf("net.ParseMAC cannot read the format this package expects: %v", err)
 		}
+	}
+}
+
+// TestLookupMACWithRetryFindsALateEntry covers the neighbour-table race
+// described at macRetryDelay: the entry is written by a different kernel
+// path from the one that delivered the reply, so a read in the same instant
+// can miss it. The fixture is empty for the first look and populated for
+// the second.
+func TestLookupMACWithRetryFindsALateEntry(t *testing.T) {
+	path := writeARP(t, "IP address       HW type     Flags       HW address            Mask     Device\n")
+
+	// Populate it while the retry is sleeping.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(macRetryDelay / 2)
+		_ = os.WriteFile(path, []byte(arpFixture), 0o600)
+	}()
+
+	if got := lookupMACWithRetry(path, "10.0.0.66"); got != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("lookupMACWithRetry = %q, want the late entry", got)
+	}
+	<-done
+}
+
+// TestLookupMACWithRetryReturnsEmptyWhenThereIsNothing proves the retry
+// does not turn "no entry" into a failure: an answer over IPv6, or from
+// off-segment, legitimately has no MAC and the alert still goes out.
+func TestLookupMACWithRetryReturnsEmptyWhenThereIsNothing(t *testing.T) {
+	path := writeARP(t, arpFixture)
+	if got := lookupMACWithRetry(path, "10.9.9.9"); got != "" {
+		t.Errorf("lookupMACWithRetry = %q, want the empty string", got)
+	}
+}
+
+// TestLookupMACWithRetrySkipsTheSleepOnAHit keeps the retry off the fast
+// path: the overwhelming majority of reads find the entry first time, and
+// paying macRetryDelay on every hit would delay every alert.
+func TestLookupMACWithRetrySkipsTheSleepOnAHit(t *testing.T) {
+	path := writeARP(t, arpFixture)
+	start := time.Now()
+	if got := lookupMACWithRetry(path, "10.0.0.66"); got != "aa:bb:cc:dd:ee:ff" {
+		t.Fatalf("lookupMACWithRetry = %q", got)
+	}
+	if took := time.Since(start); took >= macRetryDelay {
+		t.Errorf("a first-look hit still waited %v", took)
 	}
 }

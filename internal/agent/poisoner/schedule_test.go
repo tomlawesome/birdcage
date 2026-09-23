@@ -318,9 +318,33 @@ func TestScheduleJitterStaysInsideTheBounds(t *testing.T) {
 // self-test would miss it.
 func TestScheduleStartupDelayIsBounded(t *testing.T) {
 	s := NewSchedule("canary")
+	settings := DefaultPaceSettings()
 	for i := 0; i < 500; i++ {
-		got := s.StartupDelay()
+		got := s.StartupDelay(settings)
 		if got < 0 || got >= startupDelayMax {
+			t.Fatalf("StartupDelay = %v, outside 0 to %v", got, startupDelayMax)
+		}
+	}
+}
+
+// TestScheduleStartupDelayRespectsTheFloor: a canary told to burst every
+// few seconds must not wait three minutes for its first burst, which would
+// be the canary being quieter than its own settings ask. This is also what
+// makes the e2e journey deterministic -- see scripts/e2e/poisoner.sh.
+func TestScheduleStartupDelayRespectsTheFloor(t *testing.T) {
+	s := NewSchedule("canary")
+	tight := PaceSettings{FloorGap: 5 * time.Second, CeilingGap: time.Second, Hours: AllHours()}
+	for i := 0; i < 500; i++ {
+		got := s.StartupDelay(tight)
+		if got < 0 || got >= tight.FloorGap {
+			t.Fatalf("StartupDelay = %v, outside 0 to the %v floor", got, tight.FloorGap)
+		}
+	}
+	// A floor wider than startupDelayMax leaves startupDelayMax the bound,
+	// so the shipped default is unchanged by this.
+	wide := PaceSettings{FloorGap: 24 * time.Hour, CeilingGap: time.Hour, Hours: AllHours()}
+	for i := 0; i < 200; i++ {
+		if got := s.StartupDelay(wide); got >= startupDelayMax {
 			t.Fatalf("StartupDelay = %v, outside 0 to %v", got, startupDelayMax)
 		}
 	}

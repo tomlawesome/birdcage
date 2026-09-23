@@ -323,8 +323,23 @@ func (s *Schedule) Jitter(gap time.Duration, settings PaceSettings) time.Duratio
 }
 
 // StartupDelay is the wait before the boot-time burst.
-func (s *Schedule) StartupDelay() time.Duration {
-	return time.Duration(s.rand.Int64N(int64(startupDelayMax)))
+//
+// Bounded by the floor as well as by startupDelayMax, because a canary
+// whose settings say "a burst at least every N" should not wait longer
+// than N for its first one: on a segment configured to burst every few
+// seconds, a three-minute wait before the first is the canary being
+// quieter than its own settings ask. With the shipped floor of two hours
+// the bound is startupDelayMax and this changes nothing.
+func (s *Schedule) StartupDelay(settings PaceSettings) time.Duration {
+	settings = settings.normalise()
+	longest := startupDelayMax
+	if settings.FloorGap < longest {
+		longest = settings.FloorGap
+	}
+	if longest <= 0 {
+		return 0
+	}
+	return time.Duration(s.rand.Int64N(int64(longest)))
 }
 
 // NextName picks which name in the rotation the next lookup asks for.
