@@ -63,3 +63,17 @@ Owner, 2026-09-23, verbatim: **"22 O"**.
 O (the line, alone · ledger) is the ratified canary page; N dropped.
 Recorded as an extension of `../../../adr/0004-dashboard-shell.md`. The
 visioning for #115 ends here; the build follows O.
+
+## Build references (#118)
+
+`shots/o-build-*.png` are the built page, not the concept: captured by
+`frontend/scripts/canary-compare.mjs`, which is the pixel gate
+`test:frontend` runs on every merge request. They exist because the
+build cannot reproduce two things in `o-*.png` — the ledger's `ntp`
+card is a lure birdcage has no catalogue for, and the facts column's
+"by tom" needs an operator identity that arrives with #8 — so the
+mockups are what the page was judged against by eye, and these are what
+it is held to pixel by pixel.
+
+Recapture with `npm run compare:canary -- --update`, and only after
+looking at the result: an unlooked-at reference gates nothing.
