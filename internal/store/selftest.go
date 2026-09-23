@@ -147,9 +147,9 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestInde
 
 	for _, tgt := range params.Targets {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO self_test_targets (command_id, service, dest_port, marker_hash)
-			VALUES (?, ?, ?, ?)`,
-			cmd.ID, tgt.Service, tgt.DestPort, markerHash(tgt.Marker)); err != nil {
+			INSERT INTO self_test_targets (command_id, service, dest_port, marker_hash, grade)
+			VALUES (?, ?, ?, ?, ?)`,
+			cmd.ID, tgt.Service, tgt.DestPort, markerHash(tgt.Marker), string(gradeForService(tgt.Service))); err != nil {
 			return CanaryCommand{}, fmt.Errorf("insert self_test_targets: %w", err)
 		}
 	}
@@ -184,6 +184,14 @@ func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, ale
 		return false, fmt.Errorf("load selftest index: %w", err)
 	}
 	matched, marker := idx.match(alert.InstanceID, alert.Raw, now.UTC())
+	if !matched && alert.Service == "vnc" {
+		// Challenge-marked grade (#46 slice 2, notes 19854/19855/19897):
+		// vnc's carrier never puts the marker in raw where idx.match's
+		// substring check could find it -- see selftest_vnc.go's own
+		// doc comment for why a challenge-response verification is a
+		// different check, not a variant of the same one.
+		matched, marker = idx.matchVNCChallenge(alert.InstanceID, alert.Raw, now.UTC())
+	}
 	if !matched {
 		return false, nil
 	}
@@ -267,6 +275,15 @@ func recordSelfTestMatch(ctx context.Context, database *db.DB, hash string, now 
 // bad as one that answers none, so a run birdcage stops waiting on must
 // resolve to passed=false, not linger "still running" forever. Returns
 // how many runs it swept, for the scheduler's own log line.
+//
+// This does not resolve attributed-grade targets (ntp, portscan): note
+// 19897's ratified design has the agent claim an attributed event
+// before it ever leaves the container, so it arrives at birdcage
+// already synthetic -- there is nothing here for the deadline sweep to
+// do for that grade. That agent-side claim depends on #47's wire and
+// sender changes and is not built yet (#46 slice 3); until it lands, an
+// attributed target simply stays unmatched and its run fails, the same
+// as any other target that never answers.
 func SweepExpiredSelfTestRuns(ctx context.Context, database *db.DB, now time.Time) (int, error) {
 	query := fmt.Sprintf(`
 		UPDATE self_test_runs SET completed_at = ?, passed = 0

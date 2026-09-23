@@ -19,12 +19,12 @@
 // accepting the credential -- a rejected login is exactly the outcome
 // OpenCanary needs to see, since it logs the attempt, not the session.
 //
-// A service with no entry in the carrier table -- because its protocol
-// has no field that can carry an arbitrary attacker-chosen marker
-// without already knowing a real credential (vnc, see its comment in
-// carrier.go), or because #46 ruled it out of scope entirely (smb,
-// portscan, llmnr, ntp) -- is reported rather than guessed at: see
-// StatusNoCarrier and StatusNotProbeable.
+// A service with no entry in the carrier table -- because #46 slice 2
+// rules it out of scope for this build (smb, llmnr; see carrier.go's
+// notProbeable) -- is reported rather than guessed at: see
+// StatusNoCarrier and StatusNotProbeable. vnc, ntp and portscan do have
+// carriers (vnc.go, attribution.go), but their carriers are not all
+// marker-planting: see each one's own doc comment.
 //
 // This package must never import internal/ingest, internal/store,
 // internal/db, internal/api or internal/stream (#48: the agent binary
