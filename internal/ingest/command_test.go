@@ -44,7 +44,7 @@ func mintSelfTest(t *testing.T, database *db.DB, canaryID string, createdAt time
 // the same bearer-token gate as every other ingest route.
 func TestHandleCommandsRequiresCanaryToken(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/commands", "", ""))
 		if rec.Code != http.StatusUnauthorized {
@@ -60,7 +60,7 @@ func TestHandleCommandsEmptyQueueIsOK(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		code, cmd := pollCommands(t, h, raw, "")
 		if code != http.StatusOK {
@@ -81,7 +81,7 @@ func TestHandleCommandsDeliveredOnceNeverTwice(t *testing.T) {
 		raw := mintToken(t, database, "canary-a")
 		now := time.Now().UTC()
 		minted := mintSelfTest(t, database, "canary-a", now, commandTTL)
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		code, first := pollCommands(t, h, raw, "")
 		if code != http.StatusOK || first == nil {
@@ -115,7 +115,7 @@ func TestHandleCommandsMarksDeliveredBeforeTheWire(t *testing.T) {
 		raw := mintToken(t, database, "canary-a")
 		now := time.Now().UTC()
 		minted := mintSelfTest(t, database, "canary-a", now, commandTTL)
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		if code, cmd := pollCommands(t, h, raw, ""); code != http.StatusOK || cmd == nil {
 			t.Fatalf("poll: status %d, command %v; want 200 and a command", code, cmd)
@@ -138,7 +138,7 @@ func TestHandleCommandsExpiredIsNotDelivered(t *testing.T) {
 		raw := mintToken(t, database, "canary-a")
 		minted := time.Now().UTC().Add(-2 * commandTTL)
 		mintSelfTest(t, database, "canary-a", minted, commandTTL)
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		code, cmd := pollCommands(t, h, raw, "")
 		if code != http.StatusOK {
@@ -164,7 +164,7 @@ func TestHandleCommandsExpiryBoundaryIsNotSQL(t *testing.T) {
 
 		// One nanosecond after the first expires, the second is still live.
 		at := whole.Add(commandTTL)
-		h := newHandler(database, nil, func() time.Time { return at }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return at }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 		code, cmd := pollCommands(t, h, raw, "")
 		if code != http.StatusOK || cmd == nil {
 			t.Fatalf("status %d command %v: the later command should still be live", code, cmd)
@@ -188,7 +188,7 @@ func TestHandleCommandsCannotBeReadWithAnotherCanarysToken(t *testing.T) {
 		rawB := mintToken(t, database, "canary-b")
 		now := time.Now().UTC()
 		minted := mintSelfTest(t, database, "canary-a", now, commandTTL)
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		code, cmd := pollCommands(t, h, rawB, "")
 		if code != http.StatusOK {
@@ -216,7 +216,7 @@ func TestHandleCommandsConcurrentPollsDeliverOnce(t *testing.T) {
 		raw := mintToken(t, database, "canary-a")
 		now := time.Now().UTC()
 		mintSelfTest(t, database, "canary-a", now, commandTTL)
-		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		const pollers = 4
 		var (
@@ -253,7 +253,7 @@ func TestHandleCommandsRejectsUnknownBody(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		for _, body := range []string{`{"canary_id":"canary-b"}`, `{}{}`, `not json`} {
 			rec := httptest.NewRecorder()

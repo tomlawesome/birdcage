@@ -1,14 +1,34 @@
 package ingest
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
+
+// SelfTestRotationHook lets an external scheduler (internal/selftestsched,
+// issue #46 item 5c) learn the instant a canary's token rotation
+// succeeds, so it can mint a self-test command immediately for a canary
+// using the "same schedule as key rotation" setting. A structural
+// interface, not a concrete type: internal/ingest never imports
+// internal/selftestsched (which would need to import internal/ingest
+// back, for this very type), and internal/selftestsched never imports
+// internal/ingest either -- cmd/birdcage's main is the only thing that
+// knows both packages, and it hands the handler something satisfying
+// this method (or leaves it nil).
+//
+// RotationSucceeded must not block or fail handleRotate's own response:
+// it is called after the rotation has already committed, and any error
+// it hits is the hook's own to log.
+type SelfTestRotationHook interface {
+	RotationSucceeded(ctx context.Context, canaryID string, at time.Time)
+}
 
 // rotateResponse is POST /ingest/rotate's response body: the freshly
 // minted raw token, shown here and never again -- issue #32's "the raw
@@ -99,6 +119,16 @@ func (h *ingestHandler) handleRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
+
+	// Issue #46 item 5c: the rotation-coupled self-test schedule mints
+	// immediately after a rotation succeeds, not on a tick -- this is
+	// that hook. Nil when no scheduler was wired in (every test in this
+	// package, and any deployment that hasn't started one), in which
+	// case it is simply skipped; never lets a self-test concern affect
+	// this response either way.
+	if h.rotationHook != nil {
+		h.rotationHook.RotationSucceeded(r.Context(), tok.CanaryID, h.now().UTC())
+	}
 
 	writeJSON(w, http.StatusOK, rotateResponse{Token: raw})
 }

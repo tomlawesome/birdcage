@@ -152,7 +152,7 @@ func TestCanaryRevokeTakesEffectImmediately(t *testing.T) {
 		t.Fatalf("openCanaryDB: %v", err)
 	}
 	defer closeCanaryDB(database)
-	h := ingest.NewHandler(database, nil)
+	h := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 
 	if status := heartbeatStatus(h, raw); status == http.StatusUnauthorized {
 		t.Fatalf("token was refused (401) before revocation; test setup is broken")
@@ -285,7 +285,7 @@ func TestCanaryRevokeFailsWithFailedAuditWriteAndTokenStaysLive(t *testing.T) {
 		t.Fatalf("openCanaryDB (recheck): %v", err)
 	}
 	defer closeCanaryDB(database)
-	h := ingest.NewHandler(database, nil)
+	h := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	if status := heartbeatStatus(h, raw); status == http.StatusUnauthorized {
 		t.Fatal("token stopped authenticating despite the revoke failing; the revoke must roll back with its audit write")
 	}

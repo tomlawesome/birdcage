@@ -119,7 +119,7 @@ func batchRequest(token, body string) *http.Request {
 func TestIngestAuthDatabaseFailureIsRetryableNot401(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		token := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		// Closing the handle is how this test reaches the lookup's
 		// error path; dbtest's own cleanup closing it again is a no-op.
@@ -142,7 +142,7 @@ func TestIngestAuthDatabaseFailureIsRetryableNot401(t *testing.T) {
 // 401".
 func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 		validBody := `{"events":[]}`
 
 		cases := []struct {
@@ -183,7 +183,7 @@ func TestIngestAuthRejectsMissingUnknownAndRevokedTokens(t *testing.T) {
 // still a placeholder no-op).
 func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		for _, path := range []string{"/api/alerts", "/api/heartbeat", "/api/stream", "/"} {
 			rec := httptest.NewRecorder()

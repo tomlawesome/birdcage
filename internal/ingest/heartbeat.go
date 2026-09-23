@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -147,7 +149,29 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
+	recordLastSeenAddr(r, h.db, tok.CanaryID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// recordLastSeenAddr stores r's peer host as canaryID's
+// canaries.last_seen_addr (issue #46 item 1), from r.RemoteAddr's own
+// net.SplitHostPort -- never a payload value, the same "identity from
+// the transport" rule the rest of this package already follows. Called
+// only after the heartbeat itself has already been accepted and
+// recorded, and deliberately best-effort: a failure here is logged and
+// does not turn an otherwise-accepted heartbeat into a failed response,
+// since this is a secondary signal (internal/selftestsched's own address
+// to probe) rather than part of what "accepted" means for #45's health
+// states.
+func recordLastSeenAddr(r *http.Request, database *db.DB, canaryID string) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		slog.Warn("ingest: could not parse peer address for last-seen", "canary", canaryID, "remote_addr", r.RemoteAddr, "err", err)
+		return
+	}
+	if err := store.SetCanaryLastSeenAddr(r.Context(), database, canaryID, host); err != nil {
+		slog.Warn("ingest: record last-seen address failed", "canary", canaryID, "err", err)
+	}
 }
 
 // handleCommonHeartbeat serves every kind other than Honeypot (Scanner
@@ -184,5 +208,6 @@ func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Req
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
+	recordLastSeenAddr(r, h.db, tok.CanaryID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

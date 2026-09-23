@@ -157,6 +157,22 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			ReceivedAt: receivedAt, // birdcage's own receipt time, never agent-supplied
 			EventID:    ev.EventID,
 		}
+
+		// Issue #46 item 3: every event is checked against the live
+		// self-test index before it is stored, so a marker birdcage
+		// itself planted is recorded as synthetic rather than a real
+		// hit. A MatchSelfTest error (a failure recording the match,
+		// not a "no match") is logged and the event falls through to
+		// storing as real -- "on any error: log, store the alert as
+		// real, continue. Never drop" (brief for this slice): losing
+		// the self-test/real distinction on a bookkeeping failure is
+		// far cheaper than losing the event entirely.
+		if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
+			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
+		} else if matched {
+			insert.Synthetic = true
+		}
+
 		stored, err := store.InsertAlertIfNew(r.Context(), h.db, insert)
 		if err != nil {
 			// An infrastructure failure is never turned into a rejection

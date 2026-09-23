@@ -31,6 +31,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/mail"
 	"github.com/tomlawesome/birdcage/internal/mailbox"
+	"github.com/tomlawesome/birdcage/internal/selftestsched"
 	"github.com/tomlawesome/birdcage/internal/startcheck"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
@@ -171,6 +172,12 @@ const (
 	// run that often -- a tick is the same query GET /api/canaries
 	// already runs on every dashboard poll, plus one small transaction.
 	historyTickInterval = 30 * time.Second
+
+	// selfTestTickInterval is how often internal/selftestsched checks
+	// the self-test schedule (issue #46 item 5): once a minute, since
+	// the schedule itself is a "HH:MM" time of day and a tick any more
+	// often than that could fire the same minute twice.
+	selfTestTickInterval = time.Minute
 )
 
 // serviceResult is what each of the two services below reports once it
@@ -588,6 +595,19 @@ func main() {
 	// one) specifically so both sides share the same instance.
 	hub := stream.NewHub()
 
+	// selfTestIndex is issue #46's bounded, in-memory set of markers a
+	// self-test command planted -- constructed once here and shared
+	// between the ingest listener below (which matches an arriving
+	// alert against it) and selfTestScheduler (which mints commands and
+	// registers their markers into it), the same reasoning hub's own
+	// doc comment gives for building it once and passing it to both
+	// sides rather than letting either construct its own, unreachable
+	// copy.
+	selfTestIndex := store.NewSelfTestIndex()
+	selfTestLog := logging.New("selftest")
+	selfTestScheduler := selftestsched.New(database, selfTestIndex, time.Now, selfTestLog)
+	go selfTestScheduler.Run(ctx, selfTestTickInterval)
+
 	// /api/* keeps its exact routing (internal/api.NewHandlerWithHub is
 	// otherwise untouched); everything else is the dashboard frontend
 	// (#36), embedded into this binary by web/embed.go with an SPA
@@ -722,7 +742,7 @@ func main() {
 		// birdcageCA issued (issue #47 slice 3's mutual TLS); the
 		// enrolment listener below passes nil -- a canary has no
 		// certificate to present before it is provisioned.
-		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub), getCert, birdcageCA.Pool())
+		ingestServer = ingest.NewTLSServer(ingestAddr, ingest.NewHandler(database, hub, selfTestIndex, selfTestScheduler), getCert, birdcageCA.Pool())
 
 		enrolAddr := os.Getenv(envEnrolAddr)
 		if enrolAddr == "" {

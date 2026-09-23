@@ -93,7 +93,7 @@ func newIngestServer(t *testing.T, database *db.DB) (*client.Client, *httptest.S
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
 	}
-	handler := ingest.NewHandler(database, nil)
+	handler := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	ts := httptest.NewUnstartedServer(handler)
 	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
 	ts.StartTLS()

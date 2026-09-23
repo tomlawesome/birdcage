@@ -15,20 +15,27 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
 )
 
 // ingestHandler carries the dependencies POST /ingest/events needs: db
 // for the token lookup and alert insert, hub (issue #44) so a newly
 // stored alert reaches an open dashboard immediately, now so tests can
-// pin "current time" instead of depending on the wall clock, and
-// limiters for the per-canary rate caps (issue #32 item 8).
+// pin "current time" instead of depending on the wall clock, limiters
+// for the per-canary rate caps (issue #32 item 8), and selfTestIndex
+// (#46) -- the bounded, in-memory set of markers a self-test command
+// planted, checked by handleBatch before an alert is stored (see
+// store.MatchSelfTest's own doc comment for why the candidate set lives
+// in memory rather than behind a query).
 type ingestHandler struct {
-	db        *db.DB
-	hub       *stream.Hub
-	now       func() time.Time
-	limiters  *limiterRegistry
-	coalescer *auditCoalescer
+	db            *db.DB
+	hub           *stream.Hub
+	now           func() time.Time
+	limiters      *limiterRegistry
+	coalescer     *auditCoalescer
+	selfTestIndex *store.SelfTestIndex
+	rotationHook  SelfTestRotationHook
 }
 
 // NewHandler returns the ingest submux: bearer-token auth in front of
@@ -42,8 +49,21 @@ type ingestHandler struct {
 // hub may be nil (a caller that doesn't care about live dashboard
 // updates, e.g. a test exercising only the batch/auth behavior); a nil
 // hub simply means handleBatch skips the publish step.
-func NewHandler(database *db.DB, hub *stream.Hub) http.Handler {
-	return newHandler(database, hub, time.Now, defaultLimiterLimits)
+//
+// idx is the self-test marker index (#46), constructed once by
+// cmd/birdcage's main and shared with internal/selftestsched's
+// scheduler -- the same reasoning MintSelfTestCommand's own doc comment
+// gives (both sides of a run must agree on one in-memory index, so it
+// is built once by whoever owns the ingest path's dependencies and
+// passed in, never a package-level registry).
+//
+// hook is SelfTestRotationHook's own implementation (in practice,
+// internal/selftestsched's scheduler), fired by handleRotate the
+// instant a rotation succeeds; nil disables the rotation-coupled
+// self-test schedule entirely (see hook's own doc comment for why this
+// is a structural interface rather than a concrete import).
+func NewHandler(database *db.DB, hub *stream.Hub, idx *store.SelfTestIndex, hook SelfTestRotationHook) http.Handler {
+	return newHandler(database, hub, time.Now, defaultLimiterLimits, idx, hook)
 }
 
 // ingestRoute is the whole registration surface for this mux (issue
@@ -90,8 +110,8 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 // that need a pinned clock or (far more often) rate limits small enough
 // to cross in a handful of calls rather than thousands -- mirroring
 // internal/api's own newHandler/NewHandler split.
-func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits) http.Handler {
-	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer()}
+func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits, idx *store.SelfTestIndex, hook SelfTestRotationHook) http.Handler {
+	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook}
 
 	// Every route on this mux is behind requireBearerToken, extended
 	// with the route's own allowed kinds (issue #106) -- ingestRoute's

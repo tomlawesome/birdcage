@@ -44,7 +44,7 @@ func findCanaryByID(t *testing.T, canaries []store.Canary, id string) store.Cana
 // required test: "a heartbeat without a canary token is refused".
 func TestHandleHeartbeatRequiresCanaryToken(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", "", `{"agent_version":"1.0.0"}`))
@@ -61,7 +61,7 @@ func TestHandleHeartbeatIdentityIsAlwaysTheTokens(t *testing.T) {
 		enrollCanary(t, database, "canary-a")
 		enrollCanary(t, database, "canary-b")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"canary_id":"canary-b","agent_version":"1.0.0"}`
 		rec := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestHandleHeartbeatStoresSelfReportFields(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3"}`
 		rec := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestHandleHeartbeatStoresExtendedSelfReportFields(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3",` +
 			`"dropped":3,"rejected":2,"event_id_collisions":0,"position_found":true}`
@@ -170,7 +170,7 @@ func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3"}`
 		rec := httptest.NewRecorder()
@@ -211,7 +211,7 @@ func TestHandleHeartbeatInvalidBodyDoesNotAdvanceLastSeen(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"queue_depth":"not-a-number"}`))
@@ -237,7 +237,7 @@ func TestHandleHeartbeatUnknownFieldRejected(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"unexpected_field":true}`))
@@ -256,7 +256,7 @@ func TestHandleHeartbeatScannerCommonShapeStored(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanaryKind(t, database, "canary-scanner", agentkind.Scanner)
 		raw := mintTokenForKind(t, database, "canary-scanner", agentkind.Scanner)
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"9.9.9"}`))
@@ -290,7 +290,7 @@ func TestHandleHeartbeatScannerRejectsLogTailerFields(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		enrollCanaryKind(t, database, "canary-scanner", agentkind.Scanner)
 		raw := mintTokenForKind(t, database, "canary-scanner", agentkind.Scanner)
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		for _, body := range []string{`{"queue_depth":5}`, `{"log_read_ok":true}`} {
 			rec := httptest.NewRecorder()
@@ -325,7 +325,7 @@ func TestHandleHeartbeatUnknownCanaryReturns403AtTheSeam(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MintCanaryToken: %v", err)
 		}
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits)
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"1.0.0"}`))
@@ -346,7 +346,7 @@ func TestHandleHeartbeatOverLimitReturns429AndIsRecorded(t *testing.T) {
 		enrollCanary(t, database, "canary-a")
 		raw := mintToken(t, database, "canary-a")
 		tiny := limiterLimits{RequestsPerMinute: 2, EventsPerMinute: 60000}
-		h := newHandler(database, nil, time.Now, tiny)
+		h := newHandler(database, nil, time.Now, tiny, store.NewSelfTestIndex(), nil)
 		body := `{"agent_version":"1.0.0"}`
 
 		var last *httptest.ResponseRecorder
@@ -360,6 +360,72 @@ func TestHandleHeartbeatOverLimitReturns429AndIsRecorded(t *testing.T) {
 
 		if got := countAuditRows(t, database, "ingest.rate_limited", "canary-a"); got == 0 {
 			t.Fatal("no audit_log row recorded for the rate limit crossing on heartbeat")
+		}
+	})
+}
+
+// canaryLastSeenAddr reads canaries.last_seen_addr back directly, since
+// store.ListCanaries' own Canary.LastSeenAddr carries no JSON tag (it is
+// an internal signal for internal/selftestsched, not a dashboard field).
+func canaryLastSeenAddr(t *testing.T, database *db.DB, canaryID string) *string {
+	t.Helper()
+	canaries, err := store.ListCanaries(context.Background(), database, time.Now(), time.Hour)
+	if err != nil {
+		t.Fatalf("ListCanaries: %v", err)
+	}
+	return findCanaryByID(t, canaries, canaryID).LastSeenAddr
+}
+
+// TestHandleHeartbeatRecordsLastSeenAddr is issue #46 item 1's required
+// test: an accepted honeypot heartbeat records the request's own peer
+// host (net.SplitHostPort(r.RemoteAddr)) as canaries.last_seen_addr --
+// never a value the payload could supply, since ingestHeartbeat has no
+// address field at all.
+func TestHandleHeartbeatRecordsLastSeenAddr(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		if got := canaryLastSeenAddr(t, database, "canary-a"); got != nil {
+			t.Fatalf("last_seen_addr before any heartbeat = %v, want nil", *got)
+		}
+
+		req := ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"1.0.0"}`)
+		req.RemoteAddr = "203.0.113.77:54321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		got := canaryLastSeenAddr(t, database, "canary-a")
+		if got == nil || *got != "203.0.113.77" {
+			t.Fatalf("last_seen_addr = %v, want 203.0.113.77", got)
+		}
+	})
+}
+
+// TestHandleCommonHeartbeatRecordsLastSeenAddr mirrors the above for the
+// common (non-Honeypot) heartbeat shape -- issue #46 item 1 sets
+// last_seen_addr from "both the honeypot and common heartbeat handlers".
+func TestHandleCommonHeartbeatRecordsLastSeenAddr(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "scanner-a", agentkind.Scanner)
+		raw := mintToken(t, database, "scanner-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		req := ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"agent_version":"1.0.0"}`)
+		req.RemoteAddr = "203.0.113.88:9999"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		got := canaryLastSeenAddr(t, database, "scanner-a")
+		if got == nil || *got != "203.0.113.88" {
+			t.Fatalf("last_seen_addr = %v, want 203.0.113.88", got)
 		}
 	})
 }

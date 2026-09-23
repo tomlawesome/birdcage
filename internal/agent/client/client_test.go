@@ -21,6 +21,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
 	"github.com/tomlawesome/birdcage/internal/ingest"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 // forEachEngine mirrors internal/ingest's own test helper
@@ -84,7 +85,7 @@ func newIngestServer(t *testing.T, database *db.DB, kind agentkind.Kind) (*Clien
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
 	}
-	handler := ingest.NewHandler(database, nil)
+	handler := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	ts := httptest.NewUnstartedServer(handler)
 	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
 	ts.StartTLS()
