@@ -41,8 +41,13 @@ const TIER: Record<HistoryState, HistoryTier> = {
   token_conflict: 'crit',
   silent: 'crit',
   not_delivering: 'crit',
+  self_test_failed: 'crit',
   throttled: 'crit',
   rotation_stalled: 'warn',
+  // pending (issue #47) is neither a fault nor health, the same reasoning
+  // 'unobserved' above already carries -- provisioned but not yet proven,
+  // never the canary's own doing.
+  pending: 'unobs',
   unobserved: 'unobs',
 }
 
@@ -57,8 +62,10 @@ const STATE_ORDER: HistoryState[] = [
   'token_conflict',
   'silent',
   'not_delivering',
+  'self_test_failed',
   'throttled',
   'rotation_stalled',
+  'pending',
   'unobserved',
 ]
 
@@ -70,8 +77,10 @@ const STATE_LABEL: Record<HistoryState, string> = {
   token_conflict: 'token conflict',
   silent: 'silent',
   not_delivering: 'not delivering',
+  self_test_failed: 'self-test failed',
   throttled: 'throttled',
   rotation_stalled: 'rotation stalled',
+  pending: 'pending',
   unobserved: 'birdcage was not watching',
 }
 

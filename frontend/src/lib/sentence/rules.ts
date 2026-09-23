@@ -5,14 +5,15 @@
 //
 // Issue #45 widens rule 2 from "any silent canary" into the health
 // slot: the fleet's worst-ranked state (token conflict, silent, not
-// delivering, throttled, rotation stalled -- health.go's order) speaks
-// there, each with its own copy in #38's voice. The slot itself does
-// not move: a still-arriving sweep still outranks it, exactly as it
-// already outranked silent, and rules 3 and 4 still only run when
-// every canary is 'ok', so the quiet page gains no words.
+// delivering, self-test failed (#46), throttled, rotation stalled --
+// health.go's order) speaks there, each with its own copy in #38's
+// voice. The slot itself does not move: a still-arriving sweep still
+// outranks it, exactly as it already outranked silent, and rules 3 and
+// 4 still only run when every canary is 'ok', so the quiet page gains
+// no words.
 import type { Canary, CanaryStatus, LastHit, Range, Visitor } from '../types'
 import { agoWords } from './duration'
-import { formatClock } from './time'
+import { formatClock, formatClockShort } from './time'
 import { canariesPhrase, minutesPhrase, rangeNoun, servicesNarrative, triedNarrative } from './narrative'
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { wordOrNumber } from './words'
@@ -157,6 +158,32 @@ function rule2NotDelivering(c: Canary, canaries: Canary[], now: string, lastHit:
   }
 }
 
+/** Self-test failed (#45 state, issue #46): birdcage's own daily probe
+ * of the canary's services -- the agent knocks, OpenCanary must catch
+ * it -- came back short. This is the state proving #45's founding worry
+ * wrong the other way round from not-delivering: there the log read is
+ * broken while the ports are silent by choice; here birdcage went and
+ * checked the ports themselves and found one that didn't answer at all,
+ * so the claim is narrower and stronger -- named services, not "the
+ * agent", failed to catch a probe birdcage knows it sent. */
+function rule2SelfTestFailed(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const services = c.self_test_failed_services ?? []
+  const named = services.length > 0 ? services.join(', ') : 'one of its services'
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name} failed its self-test.`, bold: true }],
+    sub: [
+      { text: 'Birdcage tried its own door at ' },
+      { text: formatClockShort(c.last_self_test_at ?? now), bold: true },
+      {
+        text: ` and ${named} didn't answer the way a canary must — a real visitor would get the same silence, so those ports are catching nothing right now. `,
+      },
+      { text: 'Go and see why.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** Throttled: the canary crossed its rate limit within the last few
  * minutes and birdcage refused part of what it sent (#45 state 2,
  * corrected: with a retrying agent a refusal is delay, not loss -- it
@@ -255,10 +282,11 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   token_conflict: 0,
   silent: 1,
   not_delivering: 2,
-  throttled: 3,
-  rotation_stalled: 4,
-  pending: 5,
-  ok: 6,
+  self_test_failed: 3,
+  throttled: 4,
+  rotation_stalled: 5,
+  pending: 6,
+  ok: 7,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -332,6 +360,8 @@ export function computeSentence(
         return rule2(worst, canaries, now, lastHit)
       case 'not_delivering':
         return rule2NotDelivering(worst, canaries, now, lastHit)
+      case 'self_test_failed':
+        return rule2SelfTestFailed(worst, canaries, now, lastHit)
       case 'throttled':
         return rule2Throttled(worst, canaries, now, lastHit)
       case 'rotation_stalled':

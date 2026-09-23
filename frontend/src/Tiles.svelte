@@ -36,6 +36,9 @@
         rotation_stalled_for_s: c.rotation_stalled_for_s,
         rotation_stalled_escalated: c.rotation_stalled_escalated,
         token_conflict_for_s: c.token_conflict_for_s,
+        last_self_test_at: c.last_self_test_at,
+        last_self_test_passed: c.last_self_test_passed,
+        self_test_failed_services: c.self_test_failed_services,
       },
       trace.now,
       trace.last_hit,
@@ -43,7 +46,10 @@
     <div
       class="tile k-{c.lane}"
       class:silent={c.status === 'silent'}
-      class:critical={c.status === 'token_conflict' || c.status === 'not_delivering' || c.status === 'throttled'}
+      class:critical={c.status === 'token_conflict' ||
+        c.status === 'not_delivering' ||
+        c.status === 'self_test_failed' ||
+        c.status === 'throttled'}
       class:conflict={c.status === 'token_conflict'}
       class:degraded={c.status === 'rotation_stalled'}
       class:pending={c.status === 'pending'}
