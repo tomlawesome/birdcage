@@ -117,11 +117,16 @@ allow-npm-licenses:
 # strings matching, so not every entry below is needed by every
 # MIT-licensed package; the comments say which packages need which.
 #
-# The other three found in that scan are deliberately NOT on the list
-# above -- their own metadata does not declare an acceptable licence, or
-# does not declare one at all -- but are individually reviewed and
+# The other three found in that scan were deliberately NOT on the list
+# above -- their own metadata did not declare an acceptable licence, or
+# did not declare one at all -- but were individually reviewed and
 # recorded below, under allow-python-package-licenses, instead:
 #   - hpfeeds==3.0.0, setuptools==78.1.1, ordereddict==1.1.
+#
+# opencanary 0.9.10 (Refs #114) pulled in setuptools 83.0.0, which now
+# carries "License-Expression: MIT" in its own METADATA -- unlike
+# 78.1.1, it matches the allow-python-licenses MIT entry above directly,
+# so its individual exception below was deleted rather than re-pinned.
 allow-python-licenses:
   - MIT
   # attrs, charset-normalizer, urllib3 (License-Expression); constantly,
@@ -193,13 +198,6 @@ allow-python-package-licenses:
   # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
   # GPLv3 dependency in the image is the owner's call, not this policy
   # file's; the owner has accepted it (#95).
-  - setuptools@78.1.1 MIT
-  # METADATA has no License:, no License-Expression:, and no
-  # "Classifier: License ::" line -- only a License-File: LICENSE
-  # pointer, "no licence field" to this checker with nothing to match
-  # against the list above. Installed and read directly:
-  # setuptools-78.1.1.dist-info/licenses/LICENSE is the verbatim MIT
-  # licence text.
   - ordereddict@1.1 MIT
   # Same shape as setuptools: PyPI's web API reports an MIT classifier,
   # but the sdist itself does not carry it -- its PKG-INFO literally says
