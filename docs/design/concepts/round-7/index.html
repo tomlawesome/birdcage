@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Birdcage · design round 7</title>
+<style>
+  body { margin: 0; padding: 40px; background: #06080e; color: #e9eefb; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 6px; } h1 span { color: #9db8e8; }
+  p { color: #97a4c4; max-width: 80ch; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; margin-top: 28px; }
+  .dir h2 { font-size: 16px; margin: 0 0 4px; } .dir h2 small { color: #55628a; font-weight: 400; font-family: ui-monospace, monospace; font-size: 12px; margin-left: 8px; }
+  .dir p { font-size: 13.5px; margin: 0 0 12px; }
+  .dir img { width: 100%; display: block; margin-bottom: 12px; border-bottom: 1px solid rgba(160,185,230,.26); }
+  .dir a { display: block; color: #9db8e8; text-decoration: none; font: 13px ui-monospace, monospace; padding: 3px 0; }
+  .dir .one { font-weight: 600; margin-bottom: 4px; }
+  .dir.dropped { opacity: .4; }
+</style>
+</head>
+<body>
+<h1>Birdcage <span>· design round 7</span></h1>
+<p>The first surface after the ratified shell (ADR-0004): one canary's own page. The band line alone at its own scale, a status sentence and its actions, the self-test per service, every state newest first, and the facts. The shell is not restyled. Two new marks, both in ink: a hollow tick under the line is birdcage testing its own canary at 04:00; a filled tick with words above the line is a run that failed.</p>
+<p>The two directions share the top half and differ only in how the lower half is set. Each page is one URL that scrolls through four scenes: <b>quiet, and answers when tested</b> (5 Sep), <b>deaf on telnet</b> (self-test failed), <b>silent, third time this week</b>, <b>the sweep night, from this canary</b> (12 Sep).</p>
+<p><b style="color:#e8b05a">Verdict 2026-09-23:</b> the ledger (O) is the ratified canary page — <i>"22 O"</i>. N dropped. Recorded as an extension of ADR-0004.</p>
+<div class="grid">
+  <div class="dir dropped">
+    <h2>The line, alone · prose<small>N</small></h2>
+    <p>The self-test is a short list, one line per service. The history is prose, one sentence per state.</p>
+    <img src="shots/n-failed.png" alt="The line alone, prose: deaf on telnet">
+    <a class="one" href="direction-n-line-alone-prose.html">direction-n-line-alone-prose.html ▸</a>
+    <a href="direction-n-line-alone-prose.html#n-quiet">scene 1 · quiet, and answers when tested</a>
+    <a href="direction-n-line-alone-prose.html#n-failed">scene 2 · deaf on telnet</a>
+    <a href="direction-n-line-alone-prose.html#n-silent">scene 3 · silent, third time this week</a>
+    <a href="direction-n-line-alone-prose.html#n-night">scene 4 · the sweep night, from this canary</a>
+  </div>
+  <div class="dir">
+    <h2>The line, alone · ledger<small>O</small></h2>
+    <p>The self-test is a strip of cards, one per service, outlined in the grade's colour. The history is a thread with a dot per state, the band's own dots.</p>
+    <img src="shots/o-failed.png" alt="The line alone, ledger: deaf on telnet">
+    <a class="one" href="direction-o-line-alone-ledger.html">direction-o-line-alone-ledger.html ▸</a>
+    <a href="direction-o-line-alone-ledger.html#o-quiet">scene 1 · quiet, and answers when tested</a>
+    <a href="direction-o-line-alone-ledger.html#o-failed">scene 2 · deaf on telnet</a>
+    <a href="direction-o-line-alone-ledger.html#o-silent">scene 3 · silent, third time this week</a>
+    <a href="direction-o-line-alone-ledger.html#o-night">scene 4 · the sweep night, from this canary</a>
+  </div>
+</div>
+</body>
+</html>
