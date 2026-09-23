@@ -173,13 +173,17 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		Ports:              profile.Ports,
 		HeartbeatIntervalS: DefaultHeartbeatIntervalS,
 		EnrolledAt:         now,
-		// Issue #47 steps 7-9: a canary provisioned through this path is
-		// pending (#45 state 5) until its first self-test round trip
+		// Issue #47 steps 7-9: a honeypot provisioned through this path
+		// is pending (#45 state 5) until its first self-test round trip
 		// passes -- store.SettlePending, fired from recordSelfTestMatch
-		// the moment that happens. Every other InsertCanary caller
-		// (`birdcage canary add`, cmd/seed-story) leaves Pending false
-		// and keeps registering immediately.
-		Pending: true,
+		// the moment that happens. A scanner has no self-test yet (#46
+		// is honeypot-only), so nothing could ever settle it: it
+		// registers on provisioning, as every canary did before this
+		// column existed, until issue #116 gives it a proof of its own.
+		// Every other InsertCanary caller (`birdcage canary add`,
+		// cmd/seed-story) leaves Pending false and keeps registering
+		// immediately.
+		Pending: found.Kind == agentkind.Honeypot,
 	}); err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("insert canary: %w", err)
 	}

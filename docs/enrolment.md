@@ -143,9 +143,15 @@ marked. Only once every target answers does the canary flip from
 to the daily schedule like any other.
 
 If that first run times out unanswered, the canary stays pending -- and
-also shows self-test failed -- and is retried the same way over the
-command channel, with nothing to rebuild on the box. There is no operator
-action that skips this step; it is the proof, not a formality.
+also shows self-test failed -- and birdcage mints another run every ten
+minutes until one passes, whether or not the daily self-test is switched
+on, with nothing to rebuild on the box. There is no operator action that
+skips this step; it is the proof, not a formality.
+
+A scanner has no self-test yet, so nothing could ever prove it this way:
+it registers on provisioning, and its first heartbeat is the only proof
+it works. [Issue #116](https://gitlab.tomlawson.io/ai/birdcage/-/issues/116)
+gives the scanner kind a proof of its own.
 
 ## Why the token is single-use and five minutes
 

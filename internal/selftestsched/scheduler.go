@@ -98,11 +98,17 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// Tick is Run's per-interval body (issue #46 item 5). If
-// selftest_enabled reads false, or either setting this tick needs fails
-// to read or parse, Tick does nothing at all for this tick -- including
-// skipping the deadline sweep below -- and logs the failure once; it
-// never falls back to a default schedule.
+// Tick is Run's per-interval body (issue #46 item 5), in three parts:
+// the scheduled mint, which selftest_enabled and the schedule settings
+// govern; the deadline sweep; and the pending retry (issue #47 step 9),
+// which re-mints the enrolment proof for a canary still pending. The
+// last two run whatever the settings say -- a first-contact run minted
+// while the daily self-test is switched off still has to expire, and a
+// canary whose first run expired still has to be proven -- so only the
+// scheduled mint is skipped when selftest_enabled is false. If any
+// setting fails to read or parse, Tick does nothing at all for this
+// tick and logs the failure once; it never falls back to a default
+// schedule.
 func (s *Scheduler) Tick(ctx context.Context) {
 	now := s.now().UTC()
 
@@ -111,27 +117,26 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		s.log.Error("read selftest_enabled; doing nothing this tick", "err", err)
 		return
 	}
-	if !enabled {
-		return
-	}
-
-	useRotation, err := s.readBool(ctx, store.SettingSelfTestUseRotationSchedule)
-	if err != nil {
-		s.log.Error("read selftest_use_rotation_schedule; doing nothing this tick", "err", err)
-		return
-	}
-
-	// When the rotation-coupled schedule is on, this tick mints nothing
-	// itself -- see RotationSucceeded, fired by internal/ingest's
-	// handleRotate the instant a rotation actually succeeds.
-	if !useRotation {
-		schedule, err := store.GetSetting(ctx, s.db, store.SettingSelfTestSchedule)
+	if enabled {
+		useRotation, err := s.readBool(ctx, store.SettingSelfTestUseRotationSchedule)
 		if err != nil {
-			s.log.Error("read selftest_schedule; doing nothing this tick", "err", err)
+			s.log.Error("read selftest_use_rotation_schedule; doing nothing this tick", "err", err)
 			return
 		}
-		if now.Format(scheduleTimeLayout) == schedule {
-			s.mintForEligibleCanaries(ctx, now)
+
+		// When the rotation-coupled schedule is on, this tick mints
+		// nothing itself -- see RotationSucceeded, fired by
+		// internal/ingest's handleRotate the instant a rotation actually
+		// succeeds.
+		if !useRotation {
+			schedule, err := store.GetSetting(ctx, s.db, store.SettingSelfTestSchedule)
+			if err != nil {
+				s.log.Error("read selftest_schedule; doing nothing this tick", "err", err)
+				return
+			}
+			if now.Format(scheduleTimeLayout) == schedule {
+				s.mintForEligibleCanaries(ctx, now)
+			}
 		}
 	}
 
@@ -142,6 +147,32 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	}
 	if n > 0 {
 		s.log.Info("swept expired self-test runs", "count", n)
+	}
+
+	s.retryPending(ctx, now)
+}
+
+// retryPending re-mints the enrolment proof for every honeypot canary
+// still pending (issue #47 step 9: "retried the same way over the
+// command channel"): FirstContact minted its first run; if that run
+// expired unmatched the canary would otherwise stay pending until the
+// daily schedule happened to reach it, or forever with the daily
+// self-test switched off. One run per selfTestWindow, not per tick
+// (mintForCanary's guard is the whole window here), so a canary that
+// never answers costs one open run at a time and one failed run per
+// window. Runs after the sweep so the run that just expired is the one
+// being replaced, not a reason to wait.
+func (s *Scheduler) retryPending(ctx context.Context, now time.Time) {
+	canaries, err := store.ListHoneypotCanariesForSelfTest(ctx, s.db)
+	if err != nil {
+		s.log.Error("list honeypot canaries for pending retry", "err", err)
+		return
+	}
+	for _, c := range canaries {
+		if !c.Pending || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
+			continue
+		}
+		s.mintForCanary(ctx, c, now, selfTestWindow)
 	}
 }
 
@@ -169,17 +200,20 @@ func (s *Scheduler) mintForEligibleCanaries(ctx context.Context, now time.Time) 
 		if c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
 			continue
 		}
-		s.mintForCanary(ctx, c, now)
+		s.mintForCanary(ctx, c, now, doubleMintGuard)
 	}
 }
 
-// mintForCanary is the mint helper shared by the scheduled tick and
-// RotationSucceeded (issue #46 items 5b/5c): the double-mint guard,
-// target derivation (skipping ports with no known service, logging each
-// skip) and the MintSelfTestCommand call all live here once, so the two
-// trigger paths can never disagree about any of it.
-func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, now time.Time) {
-	recent, err := store.HasRecentSelfTestRun(ctx, s.db, c.ID, now.Add(-doubleMintGuard))
+// mintForCanary is the mint helper shared by the scheduled tick,
+// RotationSucceeded, FirstContact and the pending retry (issue #46
+// items 5b/5c, #47 steps 8-9): the recent-run guard, target derivation
+// (skipping ports with no known service, logging each skip) and the
+// MintSelfTestCommand call all live here once, so the trigger paths can
+// never disagree about any of it. guard is how recently a run must have
+// been issued to block this one: doubleMintGuard for every trigger but
+// the pending retry, which uses the whole selfTestWindow.
+func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, now time.Time, guard time.Duration) {
+	recent, err := store.HasRecentSelfTestRun(ctx, s.db, c.ID, now.Add(-guard))
 	if err != nil {
 		s.log.Error("check recent self-test runs", "canary", c.ID, "err", err)
 		return
@@ -249,7 +283,7 @@ func (s *Scheduler) FirstContact(ctx context.Context, canaryID string, at time.T
 	if !ok || c.Kind != agentkind.Honeypot || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
 		return
 	}
-	s.mintForCanary(ctx, c, at.UTC())
+	s.mintForCanary(ctx, c, at.UTC(), doubleMintGuard)
 }
 
 // RotationSucceeded implements internal/ingest.SelfTestRotationHook
@@ -289,5 +323,5 @@ func (s *Scheduler) RotationSucceeded(ctx context.Context, canaryID string, at t
 	if !ok || c.Kind != agentkind.Honeypot || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
 		return
 	}
-	s.mintForCanary(ctx, c, at.UTC())
+	s.mintForCanary(ctx, c, at.UTC(), doubleMintGuard)
 }

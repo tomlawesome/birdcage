@@ -223,6 +223,10 @@ type SelfTestCanary struct {
 	Kind         agentkind.Kind
 	Ports        []int
 	LastSeenAddr *string
+	// Pending is true while registered_at is NULL (issue #47 step 9):
+	// the canary's first self-test round trip has not passed yet, so
+	// the scheduler keeps re-minting one for it until it does.
+	Pending bool
 }
 
 // parsePorts parses canaries.ports (a comma-separated list of bare port
@@ -256,7 +260,7 @@ func parsePorts(raw string) []int {
 // per-minute tick to filter down to the ones with a LastSeenAddr and at
 // least one port.
 func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr FROM canaries WHERE kind = ?`, string(agentkind.Honeypot))
+	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr, registered_at FROM canaries WHERE kind = ?`, string(agentkind.Honeypot))
 	if err != nil {
 		return nil, fmt.Errorf("query honeypot canaries: %w", err)
 	}
@@ -265,13 +269,15 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 	var out []SelfTestCanary
 	for rows.Next() {
 		var (
-			sc       SelfTestCanary
-			portsRaw string
+			sc           SelfTestCanary
+			portsRaw     string
+			registeredAt *string
 		)
-		if err := rows.Scan(&sc.ID, &portsRaw, &sc.LastSeenAddr); err != nil {
+		if err := rows.Scan(&sc.ID, &portsRaw, &sc.LastSeenAddr, &registeredAt); err != nil {
 			return nil, fmt.Errorf("scan honeypot canary: %w", err)
 		}
 		sc.Kind = agentkind.Honeypot
+		sc.Pending = registeredAt == nil
 		sc.Ports = parsePorts(portsRaw)
 		out = append(out, sc)
 	}
@@ -288,17 +294,19 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 // not a full table scan. ok is false when canaryID names no row.
 func SelfTestCanaryByID(ctx context.Context, database *db.DB, canaryID string) (sc SelfTestCanary, ok bool, err error) {
 	var (
-		portsRaw string
-		kind     string
+		portsRaw     string
+		kind         string
+		registeredAt *string
 	)
-	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM canaries WHERE id = ?`, canaryID)
-	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr); err != nil {
+	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr, registered_at FROM canaries WHERE id = ?`, canaryID)
+	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &registeredAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SelfTestCanary{}, false, nil
 		}
 		return SelfTestCanary{}, false, fmt.Errorf("scan canary %s: %w", canaryID, err)
 	}
 	sc.Kind = agentkind.Kind(kind)
+	sc.Pending = registeredAt == nil
 	sc.Ports = parsePorts(portsRaw)
 	return sc, true, nil
 }

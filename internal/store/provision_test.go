@@ -155,9 +155,12 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 			t.Fatalf("outcome = %v, want Provisioned", provisionOutcome)
 		}
 
-		var kind, ports string
-		row := database.QueryRow(`SELECT kind, ports FROM canaries WHERE id = ?`, result.CanaryID)
-		if err := row.Scan(&kind, &ports); err != nil {
+		var (
+			kind, ports  string
+			registeredAt *string
+		)
+		row := database.QueryRow(`SELECT kind, ports, registered_at FROM canaries WHERE id = ?`, result.CanaryID)
+		if err := row.Scan(&kind, &ports, &registeredAt); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}
 		if kind != string(agentkind.Scanner) {
@@ -165,6 +168,11 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 		}
 		if ports != "" {
 			t.Errorf("canaries ports = %q, want empty", ports)
+		}
+		// A scanner has no self-test to settle it (issue #116), so it
+		// must register on provisioning rather than stay pending forever.
+		if registeredAt == nil {
+			t.Error("registered_at is NULL for a provisioned scanner; want registered at once")
 		}
 	})
 }

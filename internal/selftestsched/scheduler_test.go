@@ -692,3 +692,62 @@ func TestFirstContactCanaryLookupErrorDoesNothing(t *testing.T) {
 		s.FirstContact(context.Background(), "canary-a", now)
 	})
 }
+
+func insertPendingHoneypotCanary(t *testing.T, database *db.DB, id, ports, lastSeenAddr string) {
+	t.Helper()
+	if err := store.InsertCanary(context.Background(), database, store.Canary{
+		ID: id, Name: id, Lane: "lan", Kind: agentkind.Honeypot, Ports: ports, EnrolledAt: time.Now().UTC(), Pending: true,
+	}); err != nil {
+		t.Fatalf("InsertCanary(%s): %v", id, err)
+	}
+	if err := store.SetCanaryLastSeenAddr(context.Background(), database, id, lastSeenAddr); err != nil {
+		t.Fatalf("SetCanaryLastSeenAddr(%s): %v", id, err)
+	}
+}
+
+// TestTickRetriesPendingCanaryOncePerWindowWhateverTheSettings is issue
+// #47 step 9's "retried the same way over the command channel": with
+// the daily self-test switched off, a pending canary still gets a run
+// minted, that run is still swept when it expires, and the next run is
+// minted only once the window has passed -- never every tick. A
+// registered canary beside it gets nothing.
+func TestTickRetriesPendingCanaryOncePerWindowWhateverTheSettings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "false")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+		insertPendingHoneypotCanary(t, database, "pending", "22", "192.0.2.10")
+		insertHoneypotCanary(t, database, "registered", "22", "192.0.2.11")
+
+		start := time.Date(2026, 9, 23, 4, 12, 0, 0, time.UTC)
+		now := start
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "pending"); n != 1 {
+			t.Fatalf("runs for pending after first tick = %d, want 1 (retry must not depend on selftest_enabled)", n)
+		}
+		if n := selfTestRunCount(t, database, "registered"); n != 0 {
+			t.Fatalf("runs for registered canary = %d, want 0 (daily self-test is off)", n)
+		}
+
+		now = start.Add(time.Minute)
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "pending"); n != 1 {
+			t.Fatalf("runs for pending one minute later = %d, want still 1 (one run per window)", n)
+		}
+
+		now = start.Add(selfTestWindow + time.Minute)
+		s.Tick(context.Background())
+		run, ok, err := store.LatestCompletedSelfTestRun(context.Background(), database, "pending")
+		if err != nil {
+			t.Fatalf("LatestCompletedSelfTestRun: %v", err)
+		}
+		if !ok || run.Passed == nil || *run.Passed {
+			t.Fatalf("first run was not swept as failed with the daily self-test off: ok=%v run=%+v", ok, run)
+		}
+		if n := selfTestRunCount(t, database, "pending"); n != 2 {
+			t.Fatalf("runs for pending after the window = %d, want 2 (re-minted once the first expired)", n)
+		}
+	})
+}
