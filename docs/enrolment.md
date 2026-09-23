@@ -103,6 +103,27 @@ Nothing about this step needs an operator's attention -- it happens
 automatically, seconds after the `docker run` command starts the
 container.
 
+### The certificate carries the agent's kind
+
+Since [ADR-0011](adr/0011-certificate-kind-authorisation.md), the
+certificate's subject also carries the agent's kind (`--kind honeypot`
+or `--kind scanner`, whichever this node enrolled as) in its
+Organizational Unit -- one value, fixed for the life of this identity.
+The ingest listener authorises every route on it: a honeypot's
+certificate cannot post vulnerability findings, and a scanner's cannot
+post honeypot alerts. A refused kind reads as `403` in the agent's own
+logs, never `401` -- the credential itself is fine, it is simply not the
+right one for that route.
+
+**Every node enrolled before this landed needs re-enrolling.** Its
+certificate carries no kind at all, and is refused at every ingest
+route the moment this ships -- there is no grace period and no
+grandfather clause (the reasoning is in ADR-0011: nothing renews a
+client certificate today, so "trust it until it renews" would mean
+trusting it forever). The fix is the same `birdcage canary enrol`
+command and printed `docker run` line described above; there is nothing
+else to do.
+
 ## Why the token is single-use and five minutes
 
 The deploy token is a bearer credential: whoever has it can claim the

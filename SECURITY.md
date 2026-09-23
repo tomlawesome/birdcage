@@ -192,6 +192,24 @@ only at the point that text is displayed, per surface:
   an `ingest.client_cert_mismatch` audit entry. The enrolment listener
   (below) does not require one -- a canary has no certificate to present
   until `POST /enrol/provision` issues its first one.
+
+  **Kind authorisation (issue #106, [ADR-0011](docs/adr/0011-certificate-kind-authorisation.md)).**
+  The certificate's subject also carries the agent's kind (honeypot or
+  scanner) as a single Organizational Unit value, fixed at issuance, and
+  every ingest route declares which kinds may post to it: a honeypot's
+  credential cannot post vulnerability findings, and a scanner's cannot
+  post honeypot alerts. Both the database's own record of the canary's
+  kind and the certificate's OU must agree with the route's allowed set,
+  checked independently, so a compromised registry row and a stolen
+  certificate each have to defeat a different check. A kind refusal is
+  `403 {"error":"forbidden"}`, deliberately not the uniform 401 above --
+  the credential is fine, it is simply not this route's -- audited as
+  `ingest.kind_refused` (the route disallows this canary's registered
+  kind) or `ingest.kind_mismatch` (the certificate's OU is absent,
+  carries more than one value, names an unregistered kind, or disagrees
+  with the registry). Every certificate issued before this landed
+  carries no kind and is refused everywhere; the fix is re-enrolment
+  (docs/enrolment.md).
 - **Canary enrolment — HTTPS, default `:8444`** (`BIRDCAGE_ENROL_ADDR`;
   starts and stops with the ingest listener). Its own `*http.Server`,
   no client certificate, two routes: `POST /enrol/hello` accepts a
