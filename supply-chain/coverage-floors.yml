@@ -213,7 +213,7 @@ floors:
                               # is driven by a recorded-fixture unit test
                               # (a real grype binary is never required).
   internal/selftest: 96
-  internal/selftestsched: 81 # 81.6% measured, 2026-09-23 (#46 slice 1). New
+  internal/selftestsched: 81 # 82.8% measured with -race, 2026-09-23 (#46 slice 1). New
                              # package this slice adds: the scheduled
                              # self-test's tick, deadline sweep and
                              # rotation-coupled mint hook, against sqlite and

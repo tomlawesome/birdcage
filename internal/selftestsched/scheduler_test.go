@@ -332,3 +332,79 @@ func TestRunTicksOnItsOwnScheduleUntilContextCanceled(t *testing.T) {
 		}
 	})
 }
+
+// TestTickSweepsRunsPastTheirDeadline pins the sweep branch of Tick on
+// its own: a run whose deadline has passed with a target still
+// unmatched is closed as failed by the next tick, whether or not that
+// tick minted anything. Without this the branch was only reached when
+// TestRunTicksOnItsOwnScheduleUntilContextCanceled happened to tick a
+// second time before cancel, which made the package's measured
+// coverage swing by several points between runs.
+func TestTickSweepsRunsPastTheirDeadline(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
+		insertHoneypotCanary(t, database, "canary-a", "22", "192.0.2.10")
+
+		issued := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		idx := store.NewSelfTestIndex()
+		if _, err := store.MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
+			[]store.SelfTestTarget{{Service: "ssh", DestPort: 22}}, issued, issued.Add(selfTestWindow)); err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
+
+		now := issued.Add(selfTestWindow + time.Minute)
+		s := New(database, idx, func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+
+		run, ok, err := store.LatestCompletedSelfTestRun(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("LatestCompletedSelfTestRun: %v", err)
+		}
+		if !ok {
+			t.Fatal("run past its deadline was not completed by Tick")
+		}
+		if run.Passed == nil || *run.Passed {
+			t.Errorf("Passed = %v, want false for a run nothing answered", run.Passed)
+		}
+	})
+}
+
+// TestSettingsUnreadableDoesNothing covers the settings-read error
+// paths of Tick and RotationSucceeded deterministically: with the
+// database closed under it, neither mints, neither panics, and the
+// error is the only outcome (logged; the brief's "never fall back to a
+// default schedule").
+func TestSettingsUnreadableDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		insertHoneypotCanary(t, database, "canary-a", "22", "192.0.2.10")
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+
+		if err := database.Close(); err != nil {
+			t.Fatalf("close database: %v", err)
+		}
+		s.Tick(context.Background())
+		s.RotationSucceeded(context.Background(), "canary-a", now)
+		// Nothing to assert against a closed database beyond "returned
+		// without panicking"; the mint paths all need it open.
+	})
+}
+
+// TestTickSweepErrorIsLoggedNotFatal pins the sweep's own error path,
+// which the Run-loop test otherwise reached only when cancel() landed
+// mid-tick. With the runs table gone the settings still read fine, the
+// tick reaches the sweep, and the sweep's failure ends the tick quietly.
+func TestTickSweepErrorIsLoggedNotFatal(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
+		if _, err := database.ExecContext(context.Background(), `DROP TABLE self_test_runs`); err != nil {
+			t.Fatalf("drop self_test_runs: %v", err)
+		}
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+	})
+}
