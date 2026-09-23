@@ -132,9 +132,24 @@ floors:
                              # rather than turning the build red over it.
                              # Still below the 70% band; the rest is main() and
                              # the detector branches that need CAP_NET_RAW.
-  internal/db: 67           # 67.6% measured against real Postgres (see
-                             # header) -- was floored at 44 from a SQLite-only
-                             # local run; still below the 70% band, but close.
+  internal/db: 87           # 88.3% measured with -race and Postgres, 2026-09-23
+                             # (#74). db.go's Engine.String, Rebind's quoted-
+                             # literal branch, Open's "sqlite:" prefix, and
+                             # Begin/Tx (commit and rollback both proved by
+                             # after-the-fact row absence, not just a nil
+                             # error) plus migrate.go's closed-DB, foreign-
+                             # schema-shape and non-idempotent-reapply error
+                             # paths gained tests rather than the floor being
+                             # lowered. Remaining gaps (openSQLite/openPostgres
+                             # error returns, MigrationNames' ReadDir error,
+                             # applyMigration's ReadFile/BeginTx/insert/commit
+                             # failures) are dead code under the current
+                             # drivers: sql.Open never touches the network or
+                             # disk for either (verified empirically, matching
+                             # Open's own doc comment), and the embedded
+                             # migration names always exist for a defined
+                             # Engine, so nothing reaches them without fault
+                             # injection this package doesn't have a seam for.
 
   # --- no test files at all: floor 0, listed rather than silently absent ---
   cmd/seed-story: 0         # dev-data seeding CLI, not shipped; no _test.go.
