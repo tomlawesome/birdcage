@@ -296,6 +296,9 @@ review's brief:
 | 204 | `postgresql-client (apt package)` | unpinned -- `apt-get install -y postgresql-client` in `test:go` | Unverified -- Debian's current package version wasn't checked this session. | PostgreSQL Licence | direct | PostgreSQL Global Development Group, packaged by Debian | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 205 | `pyyaml (pip package)` | unpinned -- `pip install --quiet pyyaml` in `lint:ci` | 6.0.3 (PyPI JSON API, verified). | MIT | direct | PyYAML community | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 206 | `bash (apk package)` | unpinned -- `apk add --no-cache bash` in `lint:ci` and every `e2e:*` job | Unverified -- Alpine's current package version wasn't checked this session. | GPL-3.0-or-later (GNU project; not confirmed against a registry API this session). | direct | GNU Project, packaged by Alpine | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
+| 223 | `Responder` (source, `build/e2e-responder/Dockerfile`) | v3.2.2.0, upstream commit `fb29fe25db9135a9487c961783254b56a20f58ac`, fetched by `git fetch --depth 1 origin <sha>` and verified with `git rev-parse HEAD` | v3.2.2.0 is the newest tag (verified 2026-09-24 via `git ls-remote --tags https://github.com/lgandx/Responder`) -- already current. | GPL-3.0 | direct | Laurent Gaffie (lgandx) | high (the reference LLMNR/NBT-NS/mDNS poisoner; what #86 exists to catch) | CI-only -- `e2e:poisoner`'s sibling container, built on demand by `scripts/e2e/poisoner-stack.sh`, never in any shipped image | Directed by the coordinator for #86 slice C as CI-only; **the owner has not individually approved it** -- see "What needs the owner's attention" |
+| 224 | `debian:trixie-slim` (base of `build/e2e-responder`) | trixie-slim (floating minor) | Unverified -- Debian's current point release wasn't checked this session; the tag is floating, so "latest" and "pinned" are the same moving target. | Mixed, Debian main (DFSG-free) | direct | Debian project, Docker Official Images | very high (mainstream, widely deployed) | CI-only -- journey fixture image, never shipped | Predates the rule for its other users (`build/e2e-samba`, `build/e2e-snmp` use the same base and are not recorded either) |
+| 225 | `git`, `ca-certificates`, `python3`, `python3-netifaces`, `python3-aioquic`, `iproute2` (apt packages, `build/e2e-responder`) | unpinned -- one `apt-get install` in the journey fixture's Dockerfile | Unverified -- Debian's current package versions weren't checked this session. `python3-aioquic` 1.2.0-1 is what trixie offers (checked while building the image, because Responder v3.2.2.0 exits without aioquic). | Mixed, Debian main (DFSG-free) | transitive (Responder's own imports) | Debian project | very high (mainstream, widely deployed) | CI-only -- journey fixture image, never shipped | Covered by row 223's entry; Debian archive packages, no pip |
 
 ### G. GitHub Actions, `.github/workflows/*.yml` (CodeQL + dependency review mirror only -- GitLab is where the gate actually runs)
 
@@ -353,6 +356,30 @@ in it, is not invisible to this inventory.
 landed `build/nightjar/Dockerfile`, the manifest this row was waiting on.
 
 ## What needs the owner's attention
+
+**A new third party, CI-only, not individually approved:** `Responder`
+(row 223), GPL-3.0, pinned to upstream commit `fb29fe25`. It runs in a
+sibling container in `e2e:poisoner` and is never linked into or copied into
+any shipped image -- the same footing as `grype`, which the owner did
+approve explicitly (AGENTS.md, #108). Two things worth a decision:
+
+- AGENTS.md's rule is "no third-party module without the owner's explicit
+  approval". This was added on the coordinator's direction for #86 slice C,
+  which is not the owner's approval. It needs either that approval or a
+  recorded exception.
+- It is pinned by commit rather than by image digest because there is no
+  published Responder image to pin: `lgandx/responder` does not exist on
+  Docker Hub (checked 2026-09-24) and Debian does not package it. So CI
+  clones a third-party offensive tool from GitHub at test time. A commit
+  SHA cannot be moved, and the build verifies it, but the fetch itself is a
+  network dependency the pipeline did not have before.
+
+**Journey fixture images were already unrecorded before this:**
+`build/e2e-samba` and `build/e2e-snmp` build on `debian:trixie-slim` and
+install Debian packages, and none of that appears in this inventory. Row
+224 records the base image now that `build/e2e-responder` shares it; the
+other two fixtures' own packages are still missing. Not fixed here because
+it is not this change's to fix.
 
 **Unapproved and shipped, same footing as `x/net`/`x/sys` but never recorded:**
 `golang.org/x/crypto` and `golang.org/x/time` are direct Go dependencies,

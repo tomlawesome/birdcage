@@ -1297,6 +1297,61 @@ e2e:portscan:
     - scripts/e2e/portscan-stack.sh down
     - scripts/e2e/stack.sh down
 
+# Issue #86's poisoner, caught by the tool it exists to catch: real
+# Responder, in a sibling container on the canary's own network, answering
+# a real canary's real bait lookups. Sits at hop 1 for the same reason
+# e2e:portscan does -- the encoders and the sockets only prove anything
+# against the real image, and running Responder against them is what found
+# an mDNS parser that dropped every real answer (RFC 6762 forbids a
+# question section in a response) and a MAC missing from the first hit.
+# Neither showed up in any unit test.
+#
+# It also asserts the half that needs the real attacker: Responder stands
+# up the SMB and HTTP servers a poisoned victim would authenticate to, and
+# logs every client that reaches them. "The canary never connected to the
+# offered address" is therefore checked from the attacker's own side of the
+# wire, which is the only place that could disagree with our code.
+e2e:poisoner:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Four containers at once (birdcage, the base canary, this journey's own
+  # canary and Responder), and Responder is a Python process that binds a
+  # dozen sockets; the light lane's 4 CPU / 6 GB is not enough headroom.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-poisoner-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    # Builds build/e2e-responder on demand: it is a journey fixture, not a
+    # shipped artefact, so build:images does not carry it.
+    - eval "$(scripts/e2e/poisoner-stack.sh up)"
+    - scripts/e2e/poisoner.sh
+  after_script:
+    # poisoner-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, the same ordering
+    # e2e:portscan's own after_script keeps.
+    - scripts/e2e/poisoner-stack.sh down
+    - scripts/e2e/stack.sh down
+
 # Issue #84's refusal, watched actually happen against the real binary
 # rather than only asserted in internal/startcheck's own unit tests: a
 # check nobody has watched fire is not evidence it actually gates
