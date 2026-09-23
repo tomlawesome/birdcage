@@ -24,7 +24,7 @@
 # Usage:
 #   scripts/publish-image.sh <image-reference-with-tag> <tested-image-id>
 #
-#   <image-reference-with-tag>  e.g. ghcr.io/tomlawesome/birdcage:sha-<40hex>
+#   <image-reference-with-tag>  e.g. registry.gitlab.tomlawson.io/ai/birdcage/birdcage:sha-<40hex>
 #   <tested-image-id>           the local image config ID the test jobs
 #                                exercised, "sha256:<64 hex>" (what
 #                                `docker image inspect --format '{{.Id}}'`

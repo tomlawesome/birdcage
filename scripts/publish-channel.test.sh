@@ -26,7 +26,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="ghcr.io/tomlawesome/birdcage"
+repo="registry.gitlab.tomlawson.io/ai/birdcage/birdcage"
 digest="sha256:$(printf 'a%.0s' $(seq 64))"
 other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
 commit="$(printf 'b%.0s' $(seq 40))"

@@ -19,7 +19,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="ghcr.io/tomlawesome/birdcage"
+repo="registry.gitlab.tomlawson.io/ai/birdcage/birdcage"
 ref="${repo}:sha-$(printf 'b%.0s' $(seq 40))"
 tested_id="sha256:$(printf 'a%.0s' $(seq 64))"
 good_digest="sha256:$(printf 'c%.0s' $(seq 64))"
@@ -142,7 +142,7 @@ else
 fi
 
 reset_fixtures
-RESOLVED_REPO_DIGEST="ghcr.io/someone-else/other@${good_digest}"
+RESOLVED_REPO_DIGEST="registry.gitlab.tomlawson.io/ai/someone-else/other@${good_digest}"
 split "$(run "$ref" "$tested_id")"
 if [ "$GOT" = 2 ] && [[ "$OUT" == *"no RepoDigests entry for ${repo}"* ]]; then
   ok "a resolved digest belonging only to a different repository is refused (exit 2), naming the cause"

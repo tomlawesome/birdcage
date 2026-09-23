@@ -24,6 +24,17 @@
 # refusal grounds and their exit codes are in
 # scripts/verify-validation-evidence.sh, which this workflow calls rather
 # than reimplementing.
+#
+# WHERE THE DIGEST LIVES (#90, note 22233, 2026-09-22). GitLab's own
+# registry is where release:push publishes and release:promote promotes --
+# the evidence is bound to that digest -- and GHCR is a read-only mirror of
+# it, pushed by release:mirror-preview/release:mirror-release after
+# publication and verified byte-for-byte before this workflow ever runs.
+# This workflow therefore reads and writes ghcr.io, the same as before
+# GHCR was briefly dropped: GITHUB_TOKEN already carries what it needs
+# under `packages: write` below, and no credential reaching into the
+# GitLab registry is required from this host at all -- the mirror job on
+# the GitLab side is what removed that problem, rather than a secret here.
 
 name: Countersign a released digest
 
@@ -63,8 +74,8 @@ jobs:
       # will issue a short-lived certificate against.
       id-token: write
       # cosign stores the signature as an artifact beside the image, so it
-      # needs write access to the package itself. The image is pushed from
-      # GitLab with a PAT rather than by Actions, so the package must be
+      # needs write access to the package itself. The image is mirrored
+      # from GitLab with GHCR_TOKEN, not by Actions, so the package must be
       # linked to this repository for this permission to reach it -- see
       # docs/releasing.md.
       packages: write

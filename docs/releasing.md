@@ -1,7 +1,17 @@
 # Releasing birdcage
 
-Issue #90. Two images are published — `ghcr.io/tomlawesome/birdcage`, the
-server, and `ghcr.io/tomlawesome/mockingbird`, the canary. Both are
+Issue #90, note 22233. Two images are published and promoted in this
+project's own GitLab container registry —
+`registry.gitlab.tomlawson.io/ai/birdcage/birdcage`, the server, and
+`.../mockingbird`, the canary. The validation evidence is bound to the
+digest there, and that is where
+`release:push`/`release:promote` publish and promote it. GHCR is a public
+mirror of the same digest, pushed after GitLab publication succeeds and
+verified byte-for-byte before it is trusted: `ghcr.io/tomlawesome/birdcage`
+and `ghcr.io/tomlawesome/mockingbird` are where users are told to pull from,
+and where the GitHub countersignature (step 5 below) is added. Nothing in
+validation or promotion reads from GHCR; if the mirror push fails, the
+GitLab release stands and the mirror is retried on its own. Both images are
 published **by digest**: the digest is the identity, and a tag is only a
 readable label pointing at one.
 
@@ -19,14 +29,57 @@ the split is ever quietly undone:
 
 | job | what it does | what it holds |
 | --- | --- | --- |
-| `release:push` | pushes the anchor tag `sha-<commit>`, then pulls the digest back and refuses unless it is the image that was tested | a registry credential |
+| `release:push` | pushes the anchor tag `sha-<commit>`, then pulls the digest back and refuses unless it is the image that was tested | the CI job token |
 | `release:attest` | mints the validation evidence over that digest | the signing key, and nothing else |
-| `release:preview` | verifies the evidence, then gives the digest the `preview` name | a registry credential |
-| `release:promote` | the manual button; verifies again, then moves the tested digest to `v<version>` | a registry credential |
+| `release:preview` | verifies the evidence, then gives the digest the `preview` name | the CI job token |
+| `release:promote` | the manual button; verifies again, then moves the tested digest to `v<version>` | the CI job token |
 
 An attacker who takes the signing runner gets a key but no push path. One
 who takes the publishing credential gets a push path but cannot mint
 evidence the verifier accepts. Neither alone is a release.
+
+The job token is scoped to this project by GitLab itself, needs no CI/CD
+variable and no owner setup — unlike the credential the countersigning
+workflow needs on the other host (setup step 1 below).
+
+The registry's own cleanup policy (#112) removes only tags matching
+`ci-.*` — the `build:images` transport tags — on a daily sweep. The
+`sha-<commit>` anchor, `preview`, `latest` and every version tag this stage
+creates are never candidates; a release tag is never swept.
+
+## Mirroring to GHCR
+
+Two more jobs, `release:mirror-preview` and `release:mirror-release`, run
+after `release:preview` and `release:promote` respectively. Each resolves
+the digest the tag GitLab just published now points at, copies it to the
+matching tag on `ghcr.io/tomlawesome/<name>` with
+`docker buildx imagetools create` (a registry-to-registry manifest-and-blob
+copy — no rebuild, no local image ever tagged with a name a caller might
+push by hand), then re-resolves the GHCR tag and refuses if it does not
+match. `scripts/mirror-image.sh` is the shared implementation; its tests
+are `scripts/mirror-image.test.sh`.
+
+The cosign attestation `release:attest` minted is not part of the image
+manifest — cosign stores it as its own object, tagged
+`sha256-<digest-hex>.att` beside the image — so both mirror jobs copy that
+tag too, using the same script, right after the image tag. Without it the
+countersigning workflow would find an image on GHCR with no evidence beside
+it to verify.
+
+Neither mirror job judges anything: the digest was already named by
+`release:preview` or `release:promote`, which already verified the
+evidence, so mirroring never calls `scripts/verify-validation-evidence.sh`
+and cannot become a second job judging the same evidence. That is why the
+release guard's "no job both judges and ships" rule does not apply to
+them — there is no judging in either job to collide with the copying.
+
+The mirror jobs hold `GHCR_TOKEN`/`GHCR_USER` (setup step 1 below), scoped
+to that push alone; no other release job touches GHCR at all. Neither is
+`allow_failure` or manual: a failed mirror turns the pipeline red so it
+gets noticed and retried, but it cannot undo or block the GitLab publish
+that already happened — `release:push`, `release:attest` and
+`release:preview`/`release:promote` keep whatever result they already
+reached regardless of what a mirror job does afterwards.
 
 ## The version
 
@@ -84,14 +137,15 @@ when the moving is gated.
 
 Separately, and regardless of `latest`: the `docker run` line that
 `birdcage canary enrol` prints should pin the server's own stamped version
-when that is wired to GHCR (#69). A canary has to match the server that
-issued it, so it names a version rather than a moving tag.
+when that is wired to the release registry (#69). A canary has to match the
+server that issued it, so it names a version rather than a moving tag.
 
 ## Cutting a release
 
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
-   runs the full gate, then the four release jobs: both images are pushed
-   under `sha-<commit>`, attested, and given the `preview` tag.
+   runs the full gate, then the release jobs: both images are pushed under
+   `sha-<commit>`, attested, given the `preview` tag on GitLab, and mirrored
+   to the `preview` tag on GHCR.
 2. Do the production-like manual test on `preview`. That test is the point
    of the hop, not a formality.
 3. `preview` -> `main` by merge request.
@@ -101,14 +155,16 @@ issued it, so it names a version rather than a moving tag.
    It refuses unless the commit has an anchor from a validated build, the
    evidence still verifies, the birdcage image reports the right stamp, and
    the registry does not already carry this version. Then it moves the
-   tested digest onto the version tag, and `release:gitlab` creates the
-   annotated tag and the release note from `VERSION`.
+   tested digest onto the version tag, mirrors that tag to GHCR, and
+   `release:gitlab` creates the annotated tag and the release note from
+   `VERSION`.
 
    The tag is an output, not an input — you do not type a version
    anywhere, and there is no local checkout to get wrong.
 5. **Countersign, on GitHub.** Run the "Countersign a released digest"
    workflow once, giving both digests and the commit. It verifies the
-   key-based evidence for each image and signs keyless only if that passes.
+   key-based evidence for each image against the GHCR mirror and signs
+   keyless only if that passes.
 
 Two buttons for a complete release: one on GitLab, one on GitHub. The
 second cannot be folded into the first without giving away what it is
@@ -122,8 +178,10 @@ build — that is the rule working, not a nuisance to route around.
 
 ## Verifying a published image
 
-The public half of the signing key is committed as `cosign.pub`. Anyone can
-check a release:
+GHCR is the public mirror, and this is what a user actually pulls, so
+verification is against it — no credential needed, the same as any public
+GHCR package. The public half of the signing key is committed as
+`cosign.pub`. Anyone can check a release:
 
 ```sh
 scripts/ensure-cosign.sh ~/.local/bin
@@ -144,7 +202,10 @@ cosign verify \
 ```
 
 A consumer should require **both**. One signature is a runner host; two are
-two independent compromises on two hosts.
+two independent compromises on two hosts. Both checks are against the GHCR
+mirror; the digest is identical to the one GitLab published and promoted —
+`release:mirror-preview`/`release:mirror-release` refuse rather than let it
+drift (Mirroring to GHCR, above).
 
 ## What the evidence does not say
 
@@ -169,15 +230,23 @@ Nothing below can be done by an assistant: GitLab CI/CD variables are
 refused by the safety hook, and the `gh` credential here gets 403 on GitHub
 repository secrets.
 
-### 1. The two CI/CD variables
+### 1. The two CI/CD variables, for the GHCR mirror
 
-Settings > CI/CD > Variables, both **protected** (so they are reachable
-only from protected branches and tags — `preview`, `main`, `v*`):
+`release:push`, `release:preview` and `release:promote` need no owner-set
+variable: they authenticate with the CI job token GitLab already gives
+every job (`CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD`), scoped to this
+project alone. Only the two mirror jobs need anything from you. Settings >
+CI/CD > Variables, both **protected** (so they are reachable only from
+protected branches and tags — `preview`, `main`, `v*`):
 
 | variable | masked? | value |
 | --- | --- | --- |
 | `GHCR_TOKEN` | masked | a GitHub fine-grained PAT, **`write:packages` only**, scoped to `tomlawesome/birdcage` alone. No `repo`, no `delete:packages`. |
 | `GHCR_USER` | not masked | the literal login `tomlawesome`. Masking it only makes the logs unreadable; it is not a secret. |
+
+The countersigning workflow, on GitHub, needs nothing new: it reads and
+signs the GHCR mirror with the built-in `GITHUB_TOKEN`, the same as before
+GHCR was briefly dropped (note 22222) and restored (note 22233).
 
 ### 2. The cosign key, on the runner host and never in GitLab
 
@@ -249,26 +318,27 @@ sees the key, and a job with the tag on an unprotected ref never runs.
 
 ### 4. Link the GHCR packages to the repository
 
-**Verify this rather than assuming it.** The images are pushed from GitLab
-with `GHCR_TOKEN`, not by Actions. A package pushed that way is not
+**Verify this rather than assuming it.** The images are pushed to GHCR from
+GitLab with `GHCR_TOKEN`, not by Actions. A package pushed that way is not
 necessarily linked to the repository, and if it is not, the countersigning
 workflow's built-in `GITHUB_TOKEN` has no write access to it — and cosign
 needs that write to store the signature beside the image.
 
-Prove it on a throwaway tag before the first real release: push something
-to `ghcr.io/tomlawesome/birdcage:scratch`, check the package page lists
-this repository, and run the countersigning workflow against that digest.
-Then delete the tag.
+Prove it on a throwaway tag before the first real release: merge to
+`preview` once, check the package page for `ghcr.io/tomlawesome/birdcage`
+and `.../mockingbird` lists this repository, and run the countersigning
+workflow against the `preview` digests. There is no separate scratch push
+to do by hand — `release:mirror-preview` is that first push.
 
 ## What has not been run yet
 
 The whole path above has never executed. The scripts have unit tests — 100
 or so across `scripts/*.test.sh`, every refusal ground covered — but every
 one of them stubs the registry, so no call has ever been made to a real
-GHCR. In particular, the functions that resolve a tag to a digest have
+registry. In particular, the functions that resolve a tag to a digest have
 never seen a registry's actual output.
 
-Two things in particular to watch on the first cut:
+Four things in particular to watch on the first cut:
 
 - Whether `release-cli`, acting with `CI_JOB_TOKEN`, can create a
   protected `v*` tag on this CE instance. If it cannot, the fallback is
@@ -278,6 +348,17 @@ Two things in particular to watch on the first cut:
   button. It should end up skipped once the pipeline finishes, since the
   job it needs was never played. If it instead sits pending and holds the
   pipeline open, give it its own `when: manual` and press both.
+- Whether `docker buildx imagetools create` actually copies the cosign
+  attestation object (`sha256-<digest-hex>.att`) the same way it copies the
+  image tag. It is just another manifest reference to buildx, and nothing
+  in this design depends on either registry supporting the newer OCI 1.1
+  referrers API — but this exact copy, GitLab to GHCR, has never run
+  against real registries, and if `cosign verify-attestation` finds nothing
+  on the GHCR side this is the first place to look.
+- Setup step 4 above (GHCR package-to-repository linkage) is unverified
+  until the first `preview` merge actually pushes through
+  `release:mirror-preview` and the countersigning workflow is run against
+  it.
 
 Per AGENTS.md, a release path that has never run is not a release path. The
 first `preview` merge after the setup above is the run that proves it, and

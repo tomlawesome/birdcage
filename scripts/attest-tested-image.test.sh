@@ -26,7 +26,7 @@ ref_ok="preview"
 pipeline_id="42"
 pipeline_url="https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/42"
 policy="$(printf 'c%.0s' $(seq 64))"
-digest_ref="ghcr.io/tomlawesome/birdcage@${digest}"
+digest_ref="registry.gitlab.tomlawson.io/ai/birdcage/birdcage@${digest}"
 
 # A valid signing key and password, fixture-only: never a real cosign key.
 key_dir="$work/signing"
@@ -101,7 +101,7 @@ case "$recorded_at" in
 esac
 
 # --- the digest-only rule: a tag reference is refused -------------------
-result="$(run "ghcr.io/tomlawesome/birdcage:preview" "$digest")"
+result="$(run "registry.gitlab.tomlawson.io/ai/birdcage/birdcage:preview" "$digest")"
 got="${result%%$'\x1f'*}"; out="${result#*$'\x1f'}"
 if [ "$got" != 0 ]; then
   ok "a tag reference (no @digest) is refused"
@@ -109,7 +109,7 @@ else
   bad "a tag reference (no @digest) is refused" "exit $got: $out"
 fi
 
-result="$(run "ghcr.io/tomlawesome/birdcage@sha256:not-hex" "sha256:not-hex")"
+result="$(run "registry.gitlab.tomlawson.io/ai/birdcage/birdcage@sha256:not-hex" "sha256:not-hex")"
 got="${result%%$'\x1f'*}"; out="${result#*$'\x1f'}"
 if [ "$got" != 0 ]; then
   ok "a malformed digest is refused"
@@ -117,7 +117,7 @@ else
   bad "a malformed digest is refused" "exit $got: $out"
 fi
 
-result="$(run "ghcr.io/tomlawesome/birdcage@${digest}" "sha256:$(printf 'f%.0s' $(seq 64))")"
+result="$(run "registry.gitlab.tomlawson.io/ai/birdcage/birdcage@${digest}" "sha256:$(printf 'f%.0s' $(seq 64))")"
 got="${result%%$'\x1f'*}"; out="${result#*$'\x1f'}"
 if [ "$got" != 0 ]; then
   ok "a reference whose @digest does not match the given digest argument is refused"
@@ -131,7 +131,7 @@ fi
 # (no ":" allowed in a path segment) catches this one. Isolates that check
 # from the suffix-agreement check, which a looser mutation could otherwise
 # hide behind.
-result="$(run "ghcr.io/tomlawesome/birdcage:preview@${digest}" "$digest")"
+result="$(run "registry.gitlab.tomlawson.io/ai/birdcage/birdcage:preview@${digest}" "$digest")"
 got="${result%%$'\x1f'*}"; out="${result#*$'\x1f'}"
 if [ "$got" != 0 ]; then
   ok "a reference carrying both a tag and a digest is refused (not a plain digest reference)"
