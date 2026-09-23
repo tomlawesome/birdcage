@@ -823,7 +823,14 @@ test:image:nightjar:
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: nightjar-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - docker tag "$NIGHTJAR_BUILD_IMAGE" "$APP"
     - |
       got="$(docker run --rm "$APP" version)"
@@ -1203,6 +1210,12 @@ e2e:scanner:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/scanner-stack.sh up)"
     - scripts/e2e/scanner.sh
@@ -1374,6 +1387,12 @@ e2e:scanner:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/scanner-stack.sh up)"
     - scripts/e2e/scanner.sh
