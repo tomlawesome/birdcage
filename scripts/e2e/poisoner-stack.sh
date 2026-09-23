@@ -39,6 +39,11 @@ CANARY="${E2E_PREFIX}-poisoner-canary"
 CANARY_NAME="${E2E_POISONER_NAME:-e2e-poisoner}"
 CANARY_LANE="${E2E_POISONER_LANE:-e2e-poisoner}"
 RESPONDER="${E2E_PREFIX}-poisoner-responder"
+# The default tag is prefixed, which is what makes `down` safe to let
+# remove it: it only ever deletes an image tag beginning with E2E_PREFIX,
+# so pointing this at an image you built yourself
+# (E2E_RESPONDER_IMAGE=e2e-responder:local) never deletes it. Exactly the
+# rule stack.sh states for its own two images.
 RESPONDER_IMAGE="${E2E_RESPONDER_IMAGE:-${E2E_PREFIX}-e2e-responder}"
 
 # The bait names this journey enrols the canary with. Two names in a
@@ -226,6 +231,14 @@ down() {
   for vol in "$STATE_VOL" "$LOG_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true
   done
+  # Only ever an image tag this harness named itself -- see
+  # RESPONDER_IMAGE's own comment. It has to go: E2E_PREFIX carries
+  # $CI_JOB_ID in the pipeline, so the tag is unique per job and could
+  # never be reused anyway -- keeping it would just fill a long-lived
+  # runner's disk one journey at a time.
+  case "$RESPONDER_IMAGE" in
+    "$E2E_PREFIX"*) docker image rm --force "$RESPONDER_IMAGE" >/dev/null 2>&1 || true ;;
+  esac
 }
 
 case "${1:-}" in

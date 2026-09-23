@@ -35,6 +35,7 @@ leftovers() {
   {
     docker ps -a --format '{{.Names}}'
     docker volume ls --format '{{.Name}}'
+    docker images --format '{{.Repository}}'
   } 2>/dev/null | grep -E "^$E2E_PREFIX-(poisoner|e2e-responder)" | sort -u
 }
 
@@ -66,12 +67,10 @@ echo "== up refuses without a running stack.sh stack =="
 check "$?" "1" "up exits 1 without E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY set"
 
 echo "== down cleans up after a run killed half way =="
-# Roughly what an interrupted `up` leaves: one volume created, the
-# containers never started. The image is deliberately not part of this
-# fixture -- `down` leaves the Responder image in place on purpose, so a
-# second run does not rebuild it, the same way stack.sh keeps an image it
-# was handed.
+# Roughly what an interrupted `up` leaves: the image built and one volume
+# created, the containers never started.
 docker volume create "$E2E_PREFIX-poisoner-log" >/dev/null
+printf 'FROM alpine:3.24\n' | docker build --quiet --tag "$E2E_PREFIX-e2e-responder" - >/dev/null
 [ -n "$(leftovers)" ] && echo "ok - the partial run really did leave objects behind" \
   || { echo "FAIL - the partial-run fixture created nothing"; fail=1; }
 "$POISONER_STACK" down >/dev/null 2>&1
