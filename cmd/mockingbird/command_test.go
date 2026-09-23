@@ -167,8 +167,20 @@ func TestRunCommandPollLoopDropsOnFullBuffer(t *testing.T) {
 	commandPollInterval, commandPollJitter = 5*time.Millisecond, 0
 	defer func() { commandPollInterval, commandPollJitter = origInterval, origJitter }()
 
+	// secondPoll closes when the server has answered a second poll. The
+	// loop only starts a second poll once the first cycle has been all
+	// the way through its send-or-drop select, so by then the drop of
+	// cmd-1 is already logged -- the cue to cancel. A fixed sleep here
+	// was a flake (pipeline 1528, test:go under -race on a busy runner:
+	// the first TLS handshake alone outlasted 50ms, and the loop was
+	// cancelled mid-request before it had ever received a command).
+	var polls int32
+	secondPoll := make(chan struct{})
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"command":{"id":"cmd-1","kind":"selftest","expires_at":"2026-01-01T00:00:00Z"}}`))
+		if atomic.AddInt32(&polls, 1) == 2 {
+			close(secondPoll)
+		}
 	}))
 	defer ts.Close()
 	c := newTestClient(t, ts)
@@ -189,7 +201,11 @@ func TestRunCommandPollLoopDropsOnFullBuffer(t *testing.T) {
 			runCommandPollLoop(runCtx, c, tokStore, commands)
 			close(done)
 		}()
-		time.Sleep(50 * time.Millisecond) // several poll cycles at 5ms
+		select {
+		case <-secondPoll:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the poll loop never reached its second poll")
+		}
 		cancel()
 		select {
 		case <-done:
