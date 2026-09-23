@@ -7,7 +7,7 @@ import "testing"
 // TestServiceForLogTypeRangeBoundaries and TestServiceForLogTypeRangeMinMax
 // below rather than bumping this number -- that is the whole point of the
 // check.
-const wantRangeCount = 23
+const wantRangeCount = 24
 
 func TestLogTypeRangesCount(t *testing.T) {
 	if len(logTypeRanges) != wantRangeCount {
@@ -85,6 +85,26 @@ func expectedService(logType int) string {
 		}
 	}
 	return UnknownService
+}
+
+// TestPoisonerRangeIsBirdcagesOwn pins the one range in the table that does
+// not mirror an upstream LOG_* constant (issue #86 decision 34: the service
+// name is "poisoner", and upstream has no logtype for it). It is pinned by
+// value rather than derived from the table, so moving the number has to be a
+// deliberate change here as well -- an agent in the field keeps sending the
+// old one until it is upgraded.
+func TestPoisonerRangeIsBirdcagesOwn(t *testing.T) {
+	logType := 30001
+	if got := ServiceForLogType(&logType); got != "poisoner" {
+		t.Errorf("ServiceForLogType(30001) = %q, want %q", got, "poisoner")
+	}
+	// The band around it stays free, so a second birdcage-only detector has
+	// somewhere obvious to go and cannot collide with this one.
+	for _, near := range []int{30000, 30002, 30010} {
+		if got := ServiceForLogType(&near); got != UnknownService {
+			t.Errorf("ServiceForLogType(%d) = %q, want %q", near, got, UnknownService)
+		}
+	}
 }
 
 // TestServiceForLogTypeFarOutsideEveryRange is the "wildly wrong logtype"

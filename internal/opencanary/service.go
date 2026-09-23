@@ -62,8 +62,29 @@ var logTypeRanges = []logTypeRange{
 	{18001, 18005, "tcpbanner"},
 	{19001, 19001, "llmnr"},
 	{20001, 20001, "mongodb"},
+	// Birdcage's own, not upstream's: see the note below.
+	{30001, 30001, "poisoner"},
 	{99000, 99009, "user"},
 }
+
+// The 30000 band is birdcage's own. Every other range above mirrors a
+// LOG_* constant in upstream OpenCanary's logger.py, and the two agent-side
+// detectors that came before this one (internal/agent/portscan,
+// internal/agent/snmp) deliberately reuse upstream's numbers so their events
+// need no special case anywhere downstream.
+//
+// 30001 exists because issue #86's detector has nothing upstream to reuse:
+// upstream has no logtype for "something answered a name that does not
+// exist". Its nearest, 19001 (LOG_LLMNR_QUERY_RESPONSE, service "llmnr"),
+// names one of the three protocols that detector uses rather than what the
+// operator is being told about, and #86 decision 34 settled the service name
+// as "poisoner" for exactly that reason.
+//
+// 30001 sits clear of upstream's numbering in both directions: its service
+// ranges run contiguously from 1000 to 20001 and then jump to the
+// 99000-99009 user band, so a new upstream service lands near 21001, not
+// here. A future birdcage-only detector takes the next value in this band
+// and adds a line to this note saying what it is.
 
 // ServiceForLogType maps an OpenCanary logtype to a service name. Values
 // outside every range -- including an absent logtype -- map to
