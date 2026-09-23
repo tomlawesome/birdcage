@@ -429,3 +429,164 @@ func TestTickCanaryListErrorIsLoggedNotFatal(t *testing.T) {
 		s.Tick(context.Background())
 	})
 }
+
+// nullableSettings replaces the settings table with one whose value
+// column allows NULL, so a test can plant a row that GetSetting's Scan
+// into a string refuses ("converting NULL to string is unsupported" on
+// both engines). It is the only deterministic way to make one settings
+// read fail while the reads before it succeed: the store functions take
+// a *db.DB, not an interface, so there is no seam to fail the Nth query,
+// and the alternative -- letting the Run-loop test's cancel land between
+// two reads -- is what left this package's coverage swinging by a branch
+// per run.
+func nullableSettings(t *testing.T, database *db.DB, rows map[store.SettingKey]*string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		`DROP TABLE settings`,
+		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT NOT NULL)`,
+	} {
+		if _, err := database.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	for k, v := range rows {
+		if _, err := database.ExecContext(ctx,
+			`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`,
+			string(k), v, "2026-09-23T00:00:00Z"); err != nil {
+			t.Fatalf("insert %s: %v", k, err)
+		}
+	}
+}
+
+func strp(s string) *string { return &s }
+
+// TestTickUseRotationReadErrorDoesNothing pins Tick's second settings
+// read failing: enabled reads true, selftest_use_rotation_schedule fails
+// to scan, and the tick does nothing -- no mint, and no sweep either.
+func TestTickUseRotationReadErrorDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		nullableSettings(t, database, map[store.SettingKey]*string{
+			store.SettingSelfTestEnabled:             strp("true"),
+			store.SettingSelfTestUseRotationSchedule: nil,
+		})
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+	})
+}
+
+// TestTickScheduleReadErrorDoesNothing pins the third read failing the
+// same way: enabled true, rotation-coupling off, selftest_schedule
+// unreadable -- the tick never falls back to a default schedule.
+func TestTickScheduleReadErrorDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		nullableSettings(t, database, map[store.SettingKey]*string{
+			store.SettingSelfTestEnabled:             strp("true"),
+			store.SettingSelfTestUseRotationSchedule: strp("false"),
+			store.SettingSelfTestSchedule:            nil,
+		})
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+	})
+}
+
+// dropTable drops one table on either engine: Postgres needs CASCADE
+// when other tables reference it, SQLite has no CASCADE at all.
+func dropTable(t *testing.T, database *db.DB, name string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, `DROP TABLE `+name+` CASCADE`); err != nil {
+		if _, err := database.ExecContext(ctx, `DROP TABLE `+name); err != nil {
+			t.Fatalf("drop %s: %v", name, err)
+		}
+	}
+}
+
+func scheduledTickSettings(t *testing.T, database *db.DB, now time.Time) {
+	t.Helper()
+	mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+	mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+	mustSetSetting(t, database, store.SettingSelfTestSchedule, now.Format(scheduleTimeLayout))
+}
+
+// TestMintRecentCheckErrorSkipsCanary pins mintForCanary's first error
+// branch: the canary is eligible and the minute matches, but the
+// double-mint guard's read of self_test_runs fails, so nothing is
+// minted and the tick carries on.
+func TestMintRecentCheckErrorSkipsCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		scheduledTickSettings(t, database, now)
+		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		dropTable(t, database, "self_test_runs")
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+	})
+}
+
+// TestMintCommandErrorSkipsCanary pins mintForCanary's last error
+// branch: the guard read succeeds, targets derive, and the mint itself
+// fails part-way (self_test_targets is gone), leaving no run behind.
+func TestMintCommandErrorSkipsCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		scheduledTickSettings(t, database, now)
+		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		dropTable(t, database, "self_test_targets")
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "canary-a"); n != 0 {
+			t.Fatalf("self_test_runs after a failed mint = %d, want 0 (mint is one transaction)", n)
+		}
+	})
+}
+
+// TestRotationSucceededDisabledDoesNothing: self-test off means the
+// rotation hook mints nothing, whatever the schedule setting says.
+func TestRotationSucceededDisabledDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "false")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
+		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.RotationSucceeded(context.Background(), "canary-a", now)
+		if n := selfTestRunCount(t, database, "canary-a"); n != 0 {
+			t.Fatalf("self_test_runs with self-test disabled = %d, want 0", n)
+		}
+	})
+}
+
+// TestRotationSucceededUseRotationReadErrorDoesNothing pins the hook's
+// second settings read failing, the same NULL-value trick as Tick's.
+func TestRotationSucceededUseRotationReadErrorDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		nullableSettings(t, database, map[store.SettingKey]*string{
+			store.SettingSelfTestEnabled:             strp("true"),
+			store.SettingSelfTestUseRotationSchedule: nil,
+		})
+		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.RotationSucceeded(context.Background(), "canary-a", now)
+		if n := selfTestRunCount(t, database, "canary-a"); n != 0 {
+			t.Fatalf("self_test_runs after an unreadable setting = %d, want 0", n)
+		}
+	})
+}
+
+// TestRotationSucceededCanaryLookupErrorDoesNothing pins the hook's
+// canary lookup failing: with the canaries table gone the hook logs and
+// returns rather than minting for a canary it cannot see.
+func TestRotationSucceededCanaryLookupErrorDoesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
+		dropTable(t, database, "canaries")
+		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.RotationSucceeded(context.Background(), "canary-a", now)
+	})
+}
