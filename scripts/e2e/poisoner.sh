@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# poisoner.sh -- issue #86 slice C's live check: the real Responder,
+# poisoner.sh -- issue #86 slice C's live check: the real the fixture,
 # answering a real canary's real bait lookups, produces a real poisoner
 # alert in birdcage naming what answered -- and the canary never connects
 # to the address it was offered.
 #
 # The second half is the one that needs a real poisoner rather than a
-# hand-made reply. Responder does not just answer: it stands up the SMB
+# hand-made reply. the fixture does not just answer: it stands up the SMB
 # and HTTP servers that collect a victim's credentials, and it logs every
 # client that reaches them. So "the canary never connected" is not
 # asserted by reading our own code back -- it is asserted from the
@@ -15,7 +15,7 @@
 # scripts/e2e/poisoner-stack.sh is the infrastructure this needs and no
 # other journey does: a canary paced to burst every few seconds, enrolled
 # with bait names through `birdcage canary enrol --bait-names`, and the
-# Responder container itself.
+# the fixture container itself.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/poisoner-stack.sh up)"
@@ -27,8 +27,8 @@ set -eu
 . "$(dirname "$0")/journey.sh"
 
 [ -n "${POISONER_CANARY:-}" ] && [ -n "${POISONER_CANARY_ID:-}" ] \
-  && [ -n "${POISONER_RESPONDER:-}" ] || {
-  echo "poisoner: POISONER_CANARY/_ID or POISONER_RESPONDER unset -- run: eval \"\$(scripts/e2e/poisoner-stack.sh up)\"" >&2
+  && [ -n "${POISONER_FIXTURE:-}" ] || {
+  echo "poisoner: POISONER_CANARY/_ID or POISONER_FIXTURE unset -- run: eval \"\$(scripts/e2e/poisoner-stack.sh up)\"" >&2
   exit 2
 }
 
@@ -48,8 +48,8 @@ poisoner_seen() { # poisoner_seen <canary-id>
   [ "${n:-0}" -ge 1 ] 2>/dev/null
 }
 
-responder_poisoned() { # responder_poisoned -- exit 0 once Responder says it answered
-  docker logs "$POISONER_RESPONDER" 2>&1 | grep -q "Poisoned answer sent to"
+fixture_poisoned() { # fixture_poisoned -- exit 0 once the fixture says it answered
+  docker logs "$POISONER_FIXTURE" 2>&1 | grep -q "Poisoned answer sent to"
 }
 
 step "the poisoner canary holds a token"
@@ -59,16 +59,16 @@ case "$list" in
   *) fail "canary $POISONER_CANARY_ID is not in the list: $list" "$POISONER_CANARY" ;;
 esac
 
-step "the canary asks for a name nobody should answer, and Responder answers it"
+step "the canary asks for a name nobody should answer, and the fixture answers it"
 # poisoner-stack.sh already waited for "poisoner detection active", and
 # the pacing it enrolled makes a burst land within seconds. 60 attempts is
 # far more headroom than the few seconds this needs; it is generous
 # because a loaded runner schedules the container late, not because the
 # rate is uncertain.
-poll 60 responder_poisoned \
-  || fail "Responder never logged a poisoned answer -- the canary's bait lookups never reached it, or did not look like a real client's" "$POISONER_CANARY" "$POISONER_RESPONDER"
-answered="$(docker logs "$POISONER_RESPONDER" 2>&1 | grep "Poisoned answer sent to" | head -3)"
-ok "Responder answered: $(printf '%s' "$answered" | tr '\n' ';')"
+poll 60 fixture_poisoned \
+  || fail "the fixture never logged a poisoned answer -- the canary's bait lookups never reached it, or did not look like a real client's" "$POISONER_CANARY" "$POISONER_FIXTURE"
+answered="$(docker logs "$POISONER_FIXTURE" 2>&1 | grep "Poisoned answer sent to" | head -3)"
+ok "the fixture answered: $(printf '%s' "$answered" | tr '\n' ';')"
 
 step "the answer reaches birdcage as a poisoner alert for this canary"
 poll 60 poisoner_seen "$POISONER_CANARY_ID" \
@@ -83,14 +83,14 @@ case "$alert" in
   *) fail "the alert is not a poisoner alert: $alert" "$POISONER_CANARY" ;;
 esac
 
-# The answering address, taken from Responder's own container rather than
+# The answering address, taken from the fixture's own container rather than
 # from the alert, so this compares two independent sources.
-responder_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POISONER_RESPONDER")" \
-  || fail "could not read $POISONER_RESPONDER's address"
-[ -n "$responder_ip" ] || fail "$POISONER_RESPONDER has no address on $E2E_NET"
+fixture_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POISONER_FIXTURE")" \
+  || fail "could not read $POISONER_FIXTURE's address"
+[ -n "$fixture_ip" ] || fail "$POISONER_FIXTURE has no address on $E2E_NET"
 case "$alert" in
-  *"\"source_ip\":\"$responder_ip\""*) ok "the alert names Responder's own address $responder_ip" ;;
-  *) fail "the alert does not name Responder's address $responder_ip: $alert" "$POISONER_CANARY" "$POISONER_RESPONDER" ;;
+  *"\"source_ip\":\"$fixture_ip\""*) ok "the alert names the fixture's own address $fixture_ip" ;;
+  *) fail "the alert does not name the fixture's address $fixture_ip: $alert" "$POISONER_CANARY" "$POISONER_FIXTURE" ;;
 esac
 
 # One of the three protocols, whichever burst landed first. Asserting the
@@ -122,25 +122,25 @@ case "$alert" in
 esac
 
 step "the canary never connected to the address it was offered"
-# Responder's own side of the wire. It answered with its own address, and
+# the fixture's own side of the wire. It answered with its own address, and
 # a victim that believed it would have connected straight to the SMB or
-# HTTP server Responder stands up for exactly that -- which is what would
-# hand over an NTLM exchange. Responder logs every client that reaches
+# HTTP server the fixture stands up for exactly that -- which is what would
+# hand over an NTLM exchange. the fixture logs every client that reaches
 # those servers, and writes a file per captured hash.
 #
-# Checked from Responder rather than from the canary because a bug in the
+# Checked from the fixture rather than from the canary because a bug in the
 # canary is precisely what this is looking for: reading our own code's
 # claim that it did not connect would prove nothing.
-captured="$(docker exec "$POISONER_RESPONDER" sh -c 'ls /opt/responder/logs/ 2>/dev/null | grep -i ntlm || true')"
-[ -z "$captured" ] || fail "Responder captured credentials from the canary -- it must never connect to the offered address: $captured" "$POISONER_CANARY" "$POISONER_RESPONDER"
-ok "Responder captured no credentials"
+captured="$(docker exec "$POISONER_FIXTURE" sh -c 'ls /opt/responder/logs/ 2>/dev/null | grep -i ntlm || true')"
+[ -z "$captured" ] || fail "the fixture captured credentials from the canary -- it must never connect to the offered address: $captured" "$POISONER_CANARY" "$POISONER_FIXTURE"
+ok "the fixture captured no credentials"
 
 # The session log's own client lines. Neither substring appears anywhere
-# in Responder's startup banner (checked while building this journey), so
+# in the fixture's startup banner (checked while building this journey), so
 # a match here is a real client, not a banner line.
-clients="$(docker logs "$POISONER_RESPONDER" 2>&1 | grep -E 'NTLMv1|NTLMv2|Client +:' || true)"
-[ -z "$clients" ] || fail "Responder logged a client connection from the canary: $clients" "$POISONER_CANARY" "$POISONER_RESPONDER"
-ok "Responder logged no client connection"
+clients="$(docker logs "$POISONER_FIXTURE" 2>&1 | grep -E 'NTLMv1|NTLMv2|Client +:' || true)"
+[ -z "$clients" ] || fail "the fixture logged a client connection from the canary: $clients" "$POISONER_CANARY" "$POISONER_FIXTURE"
+ok "the fixture logged no client connection"
 
 step "the canary is still asking, and still not connecting"
 # One more round of bursts, to prove the first result was not a one-off
@@ -152,10 +152,10 @@ after="$(poisoner_alert_count "$POISONER_CANARY_ID")"
 [ "${after:-0}" -ge 1 ] || fail "the poisoner alert count fell to $after" "$POISONER_CANARY"
 ok "$after poisoner alert(s) for this canary"
 
-captured="$(docker exec "$POISONER_RESPONDER" sh -c 'ls /opt/responder/logs/ 2>/dev/null | grep -i ntlm || true')"
-[ -z "$captured" ] || fail "Responder captured credentials after further poisoning: $captured" "$POISONER_CANARY" "$POISONER_RESPONDER"
-clients="$(docker logs "$POISONER_RESPONDER" 2>&1 | grep -E 'NTLMv1|NTLMv2|Client +:' || true)"
-[ -z "$clients" ] || fail "Responder logged a client connection after further poisoning: $clients" "$POISONER_CANARY" "$POISONER_RESPONDER"
+captured="$(docker exec "$POISONER_FIXTURE" sh -c 'ls /opt/responder/logs/ 2>/dev/null | grep -i ntlm || true')"
+[ -z "$captured" ] || fail "the fixture captured credentials after further poisoning: $captured" "$POISONER_CANARY" "$POISONER_FIXTURE"
+clients="$(docker logs "$POISONER_FIXTURE" 2>&1 | grep -E 'NTLMv1|NTLMv2|Client +:' || true)"
+[ -z "$clients" ] || fail "the fixture logged a client connection after further poisoning: $clients" "$POISONER_CANARY" "$POISONER_FIXTURE"
 ok "still no connection and no captured credentials"
 
 finish
