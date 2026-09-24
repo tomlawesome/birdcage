@@ -1,7 +1,6 @@
 # ADR-0012: A scanner proves its enrolment by answering an ordered scan, over the same road as a honeypot's self-test
 
-**Status:** Proposed (revised 2026-09-24 after the owner's first review;
-second review pending)
+**Status:** Accepted by the owner, 2026-09-24 (after one review round)
 **Date:** 2026-09-24
 **Relates to:** #116 (this proof), #129 (manual scan, M3), #47
 (enrolment; pending until the first self-test passes), #46 (self-test),
@@ -1017,7 +1016,7 @@ route in `internal/api`):
       order while open -> `409`; run passes with stages recorded and
       `registered_at` unchanged; browser leg drives the modal.
 
-**Proposed issue (not filed): "Agent credentials: agent-made keys,
+**Issue #130: "Agent credentials: agent-made keys,
 seven-day certificates with renewal, cert-bound tokens, conflict
 detection, one-action revocation" -- Part B.** Scope, one paragraph:
 `POST /enrol/provision` takes a CSR and `IssueClient` becomes
@@ -1040,20 +1039,12 @@ in the fixture) and prove `renewal_stalled` then `not_delivering`.
 Every node enrolled before it needs re-enrolling once; `docs/enrolment.md`
 and `SECURITY.md` updated. Answers #72 and lands before MR 1 or
 alongside it, so the proof is built once against the final credential
-model; the owner's milestone call is open question 1. Sub-agents do
-not file it; the primary agent files it once the owner has read this.
+model; the owner put it in M1 on 2026-09-24. Filed as #130.
 
 ## Open questions for the owner
 
-Sequencing of #8 was settled by the owner, 2026-09-24: #8 (dashboard
-authentication) stays in M3, and MR 2 (the manual scan) waits for it --
-"Not everything needs to be in m1." One new question:
-
-**1** Part B (stolen credentials) is fleet-wide and forces a one-time
-re-enrolment of every node. Which milestone does it go in?
-  **1a** M1, before or beside MR 1, so no node is ever enrolled twice
-  after the first announced release (the ADR's recommendation: the
-  re-enrolment cost is only free while there is no announced release,
-  as ADR-0011 decision 5 argued).
-  **1b** M3 with #72, accepting that the first release ships one-year,
-  server-made keys and the fleet re-enrols once more when Part B lands.
+None; all settled by the owner on 2026-09-24:
+- #8 (dashboard authentication) stays in M3, and MR 2 (the manual scan,
+  #129) waits for it -- "Not everything needs to be in m1."
+- Part B goes in M1, beside MR 1 (#130), so no node re-enrols after the
+  first release; #72 moved to M1 with it.
