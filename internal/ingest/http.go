@@ -44,6 +44,12 @@ type ingestHandler struct {
 	signer  *ca.CA
 	certTTL time.Duration
 	dualUse *dualUseTracker
+
+	// afterRotateCertRead, when set, runs inside handleRotate's
+	// transaction between reading the canary's current certificate and
+	// committing -- a test seam for interleaving a renewal there. Nil
+	// outside tests.
+	afterRotateCertRead func()
 }
 
 // NewHandler returns the ingest submux: bearer-token auth in front of
