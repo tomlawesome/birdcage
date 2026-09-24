@@ -46,6 +46,13 @@ type CanaryToken struct {
 	// kind-gated route -- agentkind.Valid("") is false -- rather than
 	// the join silently dropping the row instead.
 	Kind agentkind.Kind
+
+	// CertFingerprint is canary_tokens.cert_fingerprint (issue #130,
+	// ADR-0012 B3): the SHA-256 fingerprint of the client certificate
+	// this token is bound to, "" when the column is NULL. Populated only
+	// by LookupCanaryTokenByHash, like Kind; see TokenBoundToCert for how
+	// the auth path uses it.
+	CertFingerprint string
 }
 
 // ErrTokenNotFound is returned by LookupCanaryTokenByHash when hash
@@ -114,7 +121,8 @@ func MintCanaryToken(ctx context.Context, database db.Conn, canaryID string, cre
 func LookupCanaryTokenByHash(ctx context.Context, database *db.DB, hash string) (CanaryToken, error) {
 	row := database.QueryRowContext(ctx, `
 		SELECT canary_tokens.id, canary_tokens.canary_id, canary_tokens.created_at,
-			canary_tokens.last_used_at, canary_tokens.revoked_at, canaries.kind
+			canary_tokens.last_used_at, canary_tokens.revoked_at, canaries.kind,
+			canary_tokens.cert_fingerprint
 		FROM canary_tokens
 		LEFT JOIN canaries ON canaries.id = canary_tokens.canary_id
 		WHERE canary_tokens.token_hash = ? AND canary_tokens.revoked_at IS NULL`, hash)
@@ -160,8 +168,9 @@ func scanCanaryTokenWithKind(row rowScanner) (CanaryToken, error) {
 		lastUsedAt *string
 		revokedAt  *string
 		kind       *string
+		certFP     *string
 	)
-	if err := row.Scan(&t.ID, &t.CanaryID, &createdAt, &lastUsedAt, &revokedAt, &kind); err != nil {
+	if err := row.Scan(&t.ID, &t.CanaryID, &createdAt, &lastUsedAt, &revokedAt, &kind, &certFP); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CanaryToken{}, ErrTokenNotFound
 		}
@@ -169,6 +178,9 @@ func scanCanaryTokenWithKind(row rowScanner) (CanaryToken, error) {
 	}
 	if kind != nil {
 		t.Kind = agentkind.Kind(*kind)
+	}
+	if certFP != nil {
+		t.CertFingerprint = *certFP
 	}
 	return finishCanaryToken(t, createdAt, lastUsedAt, revokedAt)
 }
