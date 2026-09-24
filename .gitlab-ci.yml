@@ -1434,6 +1434,17 @@ e2e:poisoner:
     E2E_PREFIX: birdcage-e2e-poisoner-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    # The Responder fixture. Attack tooling is never built in this
+    # repository (its mirror is public): the private fixtures project
+    # builds, scans and publishes it, and this pin is the whole of what
+    # lives here (AGENTS.md, "Attack-tool fixtures"). Moving the pin is
+    # the version check -- a one-line change, not a rebuild per pipeline.
+    # The pull uses this job's token, so the fixtures project must list
+    # this project under its job-token permissions (#127).
+    E2E_RESPONDER_IMAGE: e2e-responder:pinned
+    # Responder v3.2.2.0. Filled in by #127 once the fixtures project has
+    # published its first build; until then this job fails at the pull.
+    E2E_RESPONDER_DIGEST: registry.gitlab.tomlawson.io/ai/birdcage-fixtures/responder@sha256:0000000000000000000000000000000000000000000000000000000000000000
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1445,8 +1456,10 @@ e2e:poisoner:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
-    # Builds build/e2e-responder on demand: it is a journey fixture, not a
-    # shipped artefact, so build:images does not carry it.
+    # The Responder fixture is pulled by digest from the fixtures project
+    # and tagged for the harness -- the same recovery pull the two build
+    # images get above, which also does the registry login.
+    - scripts/ci-ensure-image.sh "$E2E_RESPONDER_IMAGE" "$E2E_RESPONDER_DIGEST"
     - eval "$(scripts/e2e/poisoner-stack.sh up)"
     - scripts/e2e/poisoner.sh
   after_script:

@@ -15,6 +15,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK="$HERE/stack.sh"
 POISONER_STACK="$HERE/poisoner-stack.sh"
 export E2E_PREFIX="birdcage-e2e-poisonerselftest"
+# The Responder image comes from the private fixtures project, pulled by
+# digest (AGENTS.md, "Attack-tool fixtures"); the harness never builds it.
+: "${E2E_RESPONDER_IMAGE:?set E2E_RESPONDER_IMAGE to the responder image from the fixtures project}"
 
 fail=0
 check() { # check <actual> <expected> <label>
@@ -27,7 +30,7 @@ check() { # check <actual> <expected> <label>
 }
 
 # leftovers, scoped to poisoner-stack.sh's own names
-# (E2E_PREFIX-poisoner* and E2E_PREFIX-e2e-responder) so this never
+# (E2E_PREFIX-poisoner*) so this never
 # reports stack.sh's own -birdcage/-canary/-net objects as something
 # poisoner-stack.sh failed to clean up -- those are stack.sh's to clean,
 # and its own self-test already covers that.
@@ -36,7 +39,7 @@ leftovers() {
     docker ps -a --format '{{.Names}}'
     docker volume ls --format '{{.Name}}'
     docker images --format '{{.Repository}}'
-  } 2>/dev/null | grep -E "^$E2E_PREFIX-(poisoner|e2e-responder)" | sort -u
+  } 2>/dev/null | grep -E "^$E2E_PREFIX-poisoner" | sort -u
 }
 
 check_clean() { # check_clean <label>
@@ -67,10 +70,10 @@ echo "== up refuses without a running stack.sh stack =="
 check "$?" "1" "up exits 1 without E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY set"
 
 echo "== down cleans up after a run killed half way =="
-# Roughly what an interrupted `up` leaves: the image built and one volume
-# created, the containers never started.
+# Roughly what an interrupted `up` leaves: one volume created, the
+# containers never started. (The Responder image is pulled, never built,
+# so it is not a leftover -- AGENTS.md, "Attack-tool fixtures".)
 docker volume create "$E2E_PREFIX-poisoner-log" >/dev/null
-printf 'FROM alpine:3.24\n' | docker build --quiet --tag "$E2E_PREFIX-e2e-responder" - >/dev/null
 [ -n "$(leftovers)" ] && echo "ok - the partial run really did leave objects behind" \
   || { echo "FAIL - the partial-run fixture created nothing"; fail=1; }
 "$POISONER_STACK" down >/dev/null 2>&1

@@ -24,7 +24,12 @@
 # it against the real encoders found two faults no unit test had (an mDNS
 # parser that dropped every real answer, because RFC 6762 forbids a
 # question section in a response, and a missing MAC on the first hit).
-# build/e2e-responder/Dockerfile holds the pin and the reasoning.
+#
+# The Responder image is not built here or anywhere in this repository:
+# attack tooling is built, scanned and kept current in the private
+# fixtures project and pulled by digest (AGENTS.md, "Attack-tool
+# fixtures"). E2E_RESPONDER_IMAGE names that image; the CI job sets it,
+# and a developer sets it after logging in to the fixtures registry.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/poisoner-stack.sh up)"
@@ -39,12 +44,9 @@ CANARY="${E2E_PREFIX}-poisoner-canary"
 CANARY_NAME="${E2E_POISONER_NAME:-e2e-poisoner}"
 CANARY_LANE="${E2E_POISONER_LANE:-e2e-poisoner}"
 RESPONDER="${E2E_PREFIX}-poisoner-responder"
-# The default tag is prefixed, which is what makes `down` safe to let
-# remove it: it only ever deletes an image tag beginning with E2E_PREFIX,
-# so pointing this at an image you built yourself
-# (E2E_RESPONDER_IMAGE=e2e-responder:local) never deletes it. Exactly the
-# rule stack.sh states for its own two images.
-RESPONDER_IMAGE="${E2E_RESPONDER_IMAGE:-${E2E_PREFIX}-e2e-responder}"
+# Never built here and never removed by `down`: the pulled fixture is
+# left for the next run, the same as the two images stack.sh pulls.
+RESPONDER_IMAGE="${E2E_RESPONDER_IMAGE:-}"
 
 # The bait names this journey enrols the canary with. Two names in a
 # plausible style plus the wpad the detector always adds itself. They are
@@ -184,18 +186,21 @@ wait_for_line() { # wait_for_line <container> <substring>
   die "$container never reported '$substring'"
 }
 
-# build_responder builds the CI-only Responder image if it is not already
-# present. Built here rather than in build:images because it is not a
-# shipped artefact and nothing but this journey ever wants it -- the same
-# call build/e2e-samba makes.
-build_responder() {
+# ensure_responder pulls the fixture image if it is not already present.
+# It is never built here: the fixtures project builds, scans and
+# publishes it, and this repository -- whose mirror is public -- carries
+# only the digest. In CI, scripts/ci-ensure-image.sh has already pulled
+# and tagged it before this runs, so this is the developer's path.
+ensure_responder() {
+  [ -n "$RESPONDER_IMAGE" ] \
+    || die "set E2E_RESPONDER_IMAGE to the fixtures project's responder image (AGENTS.md, Attack-tool fixtures)"
   if docker image inspect "$RESPONDER_IMAGE" >/dev/null 2>&1; then
-    log "$RESPONDER_IMAGE already built"
+    log "$RESPONDER_IMAGE already present"
     return 0
   fi
-  log "building $RESPONDER_IMAGE"
-  docker build -q -f build/e2e-responder/Dockerfile -t "$RESPONDER_IMAGE" . >/dev/null \
-    || die "building $RESPONDER_IMAGE failed"
+  log "pulling $RESPONDER_IMAGE"
+  docker pull -q "$RESPONDER_IMAGE" >/dev/null \
+    || die "pulling $RESPONDER_IMAGE failed -- log in to the fixtures registry first"
 }
 
 up() {
@@ -204,7 +209,7 @@ up() {
     || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
   down >/dev/null 2>&1 || true
 
-  build_responder
+  ensure_responder
 
   local vol
   for vol in "$STATE_VOL" "$LOG_VOL"; do
@@ -238,14 +243,6 @@ down() {
   for vol in "$STATE_VOL" "$LOG_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true
   done
-  # Only ever an image tag this harness named itself -- see
-  # RESPONDER_IMAGE's own comment. It has to go: E2E_PREFIX carries
-  # $CI_JOB_ID in the pipeline, so the tag is unique per job and could
-  # never be reused anyway -- keeping it would just fill a long-lived
-  # runner's disk one journey at a time.
-  case "$RESPONDER_IMAGE" in
-    "$E2E_PREFIX"*) docker image rm --force "$RESPONDER_IMAGE" >/dev/null 2>&1 || true ;;
-  esac
 }
 
 case "${1:-}" in
