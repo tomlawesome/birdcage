@@ -114,12 +114,16 @@ function stateWords(c: Canary): string {
       return 'self-test failed'
     case 'token_conflict':
       return `token conflict ${durationCoarse(c.token_conflict_for_s ?? 0)}`
+    case 'credential_conflict':
+      return `credential conflict ${durationCoarse(c.credential_conflict_for_s ?? 0)}`
     case 'not_delivering':
       return 'not delivering'
     case 'throttled':
       return `throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
       return `rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
+    case 'renewal_stalled':
+      return `renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
     case 'pending':
       return 'pending its first self-test'
     default:
@@ -367,6 +371,9 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
     case 'self_test_failed':
       return selfTestFailedSentence(input)
     case 'token_conflict':
+      // ADR-0012 Part B widens this to also mean a superseded
+      // certificate still in use, not tokens alone -- "the credential",
+      // not "the token", is what may have been stolen.
       return {
         hero: [{ text: canary.name, cls: 'c' }, { text: "'s revoked token came back.", bold: true }],
         sub: [
@@ -374,10 +381,29 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
           { text: agoWords(canary.token_conflict_for_s ?? 0), bold: true },
           {
             text:
-              ', while its successor was already active. Either the token was stolen and the thief rotated first, ' +
-              'or two boxes share one identity. ',
+              ', while its successor was already active. Either the credential was stolen and the thief rotated ' +
+              'first, or two boxes share one identity. ',
           },
           { text: 'Look at the box now.', bold: true },
+        ],
+      }
+    case 'credential_conflict':
+      // ADR-0012 Part B (#130): one live credential seen from two
+      // places at once. The ADR's own sentence names the two source
+      // addresses ("credential in use from two addresses: <a> and
+      // <b>"); Canary carries no field for either, so this sentence
+      // omits them.
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s credential is live in two places at once.", bold: true }],
+        sub: [
+          { text: 'It was seen from a second address ' },
+          { text: agoWords(canary.credential_conflict_for_s ?? 0), bold: true },
+          {
+            text:
+              " while its usual one was still live. A copy of its key may be in use elsewhere, or the node " +
+              'itself moved address. ',
+          },
+          { text: 'Revoke the node (birdcage canary revoke <canary-id>) and re-enrol it.', bold: true },
         ],
       }
     case 'not_delivering':
@@ -419,6 +445,27 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
               'lapsed. ',
           },
           { text: 'Check the agent.', bold: true },
+        ],
+      }
+    case 'renewal_stalled':
+      // ADR-0012 Part B (#130): rotation_stalled's certificate twin --
+      // the agent renews its own certificate from half-life rather than
+      // birdcage issuing one, so it becomes not_delivering once the
+      // certificate expires rather than staying stalled forever.
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s certificate renewal has stalled.", bold: true }],
+        sub: [
+          canary.renewal_stalled_escalated
+            ? { text: "It hasn't renewed its certificate in over a day past its renewal point." }
+            : {
+                text: `Its certificate passed its renewal point ${agoWords(canary.renewal_stalled_for_s ?? 0)} and the agent hasn't renewed it.`,
+              },
+          {
+            text:
+              ' It still phones home on the old certificate — nothing is being missed yet, but it will stop ' +
+              'working once the certificate expires. ',
+          },
+          { text: "Check the agent can reach birdcage's ingest listener.", bold: true },
         ],
       }
     default:

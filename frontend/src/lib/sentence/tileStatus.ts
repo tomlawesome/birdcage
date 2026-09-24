@@ -39,6 +39,13 @@ export interface TileCanaryInput {
   rotation_stalled_for_s?: number
   rotation_stalled_escalated?: boolean
   token_conflict_for_s?: number
+  // ADR-0012 Part B (issue #130): renewal_stalled is rotation_stalled's
+  // certificate twin, credential_conflict_for_s is token_conflict_for_s's
+  // -- same independent-of-`status` carrying.
+  renewal_stalled?: boolean
+  renewal_stalled_for_s?: number
+  renewal_stalled_escalated?: boolean
+  credential_conflict_for_s?: number
   // issue #46: the most recently completed self-test round, carried the
   // same independent way -- present whether or not it is what made
   // `status` self_test_failed, since a passing run still earns its own
@@ -97,9 +104,20 @@ function withSelfTest(lines: Segment[][], canary: TileCanaryInput): TileStatusRe
 function otherStateLine(canary: TileCanaryInput): Segment[] | null {
   switch (canary.status as CanaryStatus) {
     case 'token_conflict':
+      // ADR-0012 Part B widens this to also mean a superseded
+      // certificate still in use, not tokens alone.
       return [
         {
-          text: `⚠ token conflict ${durationExact(canary.token_conflict_for_s ?? 0)} · a revoked token was reused — look at the box now`,
+          text: `⚠ token conflict ${durationExact(canary.token_conflict_for_s ?? 0)} · a revoked credential was reused — look at the box now`,
+          cls: 'al',
+        },
+      ]
+    case 'credential_conflict':
+      // ADR-0012 Part B (#130): the same live credential seen from two
+      // places at once, ranked with token_conflict (same 'al' colour).
+      return [
+        {
+          text: `⚠ credential conflict ${durationExact(canary.credential_conflict_for_s ?? 0)} · in use from two places at once — revoke the node`,
           cls: 'al',
         },
       ]
@@ -144,6 +162,21 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
       return [
         {
           text: `⏳ rotation stalled ${durationExact(canary.rotation_stalled_for_s ?? 0)} · ${what} — check the agent`,
+          cls: 'wn',
+        },
+      ]
+    }
+    case 'renewal_stalled': {
+      // ADR-0012 Part B (#130): rotation_stalled's certificate twin --
+      // the agent renews its own certificate from half-life (ADR-0012
+      // B2) rather than birdcage issuing one, so the not-escalated
+      // clause names that instead of "a fresh token".
+      const what = canary.renewal_stalled_escalated
+        ? 'no renewal completed in over a day'
+        : "past its renewal point, not yet renewed"
+      return [
+        {
+          text: `⏳ renewal stalled ${durationExact(canary.renewal_stalled_for_s ?? 0)} · ${what} — check the agent can reach ingest`,
           cls: 'wn',
         },
       ]

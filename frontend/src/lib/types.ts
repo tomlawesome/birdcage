@@ -13,14 +13,25 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * 'self_test_failed' (issue #46, health.go's StateTestFailed) ranks
  * between not_delivering and throttled, the slot health.go gives it. One
  * state the issue names, agent_out_of_date, still doesn't appear here:
- * #48 hasn't shipped the frontend data it would read from. */
+ * #48 hasn't shipped the frontend data it would read from.
+ *
+ * ADR-0012 Part B (issue #130) adds two more, ranked with the state each
+ * is a twin of: 'credential_conflict' ties 'token_conflict' -- one live
+ * credential (token or certificate) seen from two places at once, same
+ * red severity, never auto-cleared. 'renewal_stalled' ties
+ * 'rotation_stalled' -- the certificate past its renewal point that
+ * hasn't renewed; it becomes 'not_delivering' once the certificate
+ * itself expires. 'token_conflict' itself widens under B4 to also mean a
+ * superseded certificate still in use, not tokens alone. */
 export type CanaryStatus =
   | 'token_conflict'
+  | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
   | 'self_test_failed'
   | 'throttled'
   | 'rotation_stalled'
+  | 'renewal_stalled'
   | 'pending'
   | 'ok'
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
@@ -46,6 +57,18 @@ export interface Canary {
   rotation_stalled_for_s?: number
   rotation_stalled_escalated?: boolean
   token_conflict_for_s?: number
+  /** ADR-0012 Part B (issue #130): the certificate twin of
+   * rotation_stalled/rotation_stalled_for_s/rotation_stalled_escalated
+   * -- past its renewal point, not yet renewed. */
+  renewal_stalled?: boolean
+  renewal_stalled_for_s?: number
+  renewal_stalled_escalated?: boolean
+  /** ADR-0012 Part B: one live credential seen from two places at once
+   * (#130's credential_conflict). The API does not carry the two source
+   * addresses the ADR's sentence names ("credential in use from two
+   * addresses: <a> and <b>") -- there is no field here for them, so the
+   * frontend sentence omits them until one exists. */
+  credential_conflict_for_s?: number
   /** issue #46: the most recently *completed* self-test run, or
    * null/undefined when none has ever completed (store/canary.go's
    * LastSelfTestAt/LastSelfTestPassed). SelfTestFailedServices names the
@@ -158,11 +181,13 @@ export interface TraceResponse {
  * bill of health. */
 export type HistoryState =
   | 'token_conflict'
+  | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
   | 'self_test_failed'
   | 'throttled'
   | 'rotation_stalled'
+  | 'renewal_stalled'
   | 'pending'
   | 'unobserved'
 

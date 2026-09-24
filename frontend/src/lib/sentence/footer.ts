@@ -50,8 +50,11 @@ export function computeFooter(
     const n = canaries.filter((c) => c.status !== 'ok').length
     const attention =
       n === 1 ? `${worst.name} needs attention` : `${wordOrNumber(n)} canaries need attention`
+    // ADR-0012 Part B (#130): credential_conflict is ranked with
+    // token_conflict (same red severity, never auto-cleared), so it
+    // earns the same act-now tail here.
     const tail: Segment[] =
-      worst.status === 'token_conflict'
+      worst.status === 'token_conflict' || worst.status === 'credential_conflict'
         ? [{ text: ' — ' }, { text: n === 1 ? 'look at the box now' : `look at ${worst.name} first`, cls: 'r' }]
         : [{ text: ' — quiet is only good news while the cage is sound' }]
     return [{ text: `${numberToWords(days)} quiet days · ` }, { text: attention, bold: true }, ...tail]

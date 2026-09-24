@@ -65,6 +65,44 @@ describe('computeTileStatus: issue #45 states', () => {
     )
   })
 
+  // ADR-0012 Part B (issue #130): credential_conflict is
+  // token_conflict's twin ("in use from two places at once" rather than
+  // "a revoked credential was reused"), same 'al' colour, and the
+  // token_conflict line itself now says "credential" rather than
+  // "token" since it also covers a superseded certificate.
+  it('credential_conflict: names the state and says to revoke the node', () => {
+    const result = computeTileStatus({ ...base, status: 'credential_conflict', credential_conflict_for_s: 125 }, '2026-01-01T00:02:05Z')
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toBe('⚠ credential conflict 2 m 5 s · in use from two places at once — revoke the node')
+    expect(result.lines[0][0].cls).toBe('al')
+  })
+
+  it('token_conflict now names "credential", not "token", since it also covers a superseded certificate', () => {
+    const result = computeTileStatus({ ...base, status: 'token_conflict', token_conflict_for_s: 125 }, '2026-01-01T00:02:05Z')
+    expect(plainText(result.lines[0])).toBe('⚠ token conflict 2 m 5 s · a revoked credential was reused — look at the box now')
+  })
+
+  // ADR-0012 Part B: renewal_stalled is rotation_stalled's certificate
+  // twin, same 'wn' colour and escalated/not-escalated shape.
+  it('renewal_stalled: not yet escalated reads differently from escalated', () => {
+    const fresh = computeTileStatus(
+      { ...base, status: 'renewal_stalled', renewal_stalled_for_s: 900, renewal_stalled_escalated: false },
+      '2026-01-01T00:15:00Z',
+    )
+    const stale = computeTileStatus(
+      { ...base, status: 'renewal_stalled', renewal_stalled_for_s: 90000, renewal_stalled_escalated: true },
+      '2026-01-02T01:00:00Z',
+    )
+    expect(plainText(fresh.lines[0]).split('· ')[1]).toBe(
+      'past its renewal point, not yet renewed — check the agent can reach ingest',
+    )
+    expect(plainText(stale.lines[0]).split('· ')[1]).toBe(
+      'no renewal completed in over a day — check the agent can reach ingest',
+    )
+    expect(fresh.lines[0][0].cls).toBe('wn')
+  })
+
   it('silent still takes the original branch, unchanged', () => {
     const result = computeTileStatus({ ...base, status: 'silent', silent_for_s: 372 }, '2026-01-01T00:06:12Z')
     expect(plainText(result.lines[0])).toContain('silent')
