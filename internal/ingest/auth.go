@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +32,19 @@ type canaryTokenCtxKey struct{}
 func canaryTokenFromContext(ctx context.Context) (store.CanaryToken, bool) {
 	tok, ok := ctx.Value(canaryTokenCtxKey{}).(store.CanaryToken)
 	return tok, ok
+}
+
+// clientCertCtxKey is the context key requireBearerToken stores the
+// presented certificate's store.ClientCert row under (issue #130), for
+// handleRenew and the heartbeat's version observation.
+type clientCertCtxKey struct{}
+
+// clientCertFromContext recovers the certificate row requireBearerToken
+// resolved. false means the request carried no client certificate --
+// only possible without TLS, i.e. in handler tests.
+func clientCertFromContext(ctx context.Context) (store.ClientCert, bool) {
+	c, ok := ctx.Value(clientCertCtxKey{}).(store.ClientCert)
+	return c, ok
 }
 
 // bearerToken extracts the raw token from an "Authorization: Bearer
@@ -66,9 +80,12 @@ func bearerToken(header string) (string, bool) {
 // one indexed lookup".
 //
 // Order of checks past the token lookup (issue #106, design note section
-// 2): certificate CN matches the token's canary, then the two kind
-// checks, then token-use bookkeeping, rotation completion and the rate
-// limiter. A cross-kind post must not advance last_used_at or trigger
+// 2; issue #130): certificate CN matches the token's canary; the
+// certificate is a live row in client_certs (ADR-0012 B2); the token is
+// bound to that certificate (B3); then the two kind checks, then
+// token-use and certificate-use bookkeeping, rotation and renewal
+// completion, the dual-use observation (B4) and the rate limiter. Every
+// credential refusal is a 401 and comes before any 403. A cross-kind post must not advance last_used_at or trigger
 // completeRotation's revocation sweep, so both kind checks sit ahead of
 // that bookkeeping, not after it.
 //
@@ -84,7 +101,10 @@ func bearerToken(header string) (string, bool) {
 // below, which is the only place it's ever called -- nil disables the
 // first-contact self-test entirely, the same stance handleRotate already
 // takes on RotationSucceeded.
-func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, hook SelfTestRotationHook, route ingestRoute) http.HandlerFunc {
+//
+// dualUse is B4's tracker; nil (some tests) skips the dual-use
+// observation and nothing else.
+func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiterRegistry, coalescer *auditCoalescer, dualUse *dualUseTracker, hook SelfTestRotationHook, route ingestRoute) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -120,7 +140,7 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		// server-side ClientAuth setting enforces that before any
 		// request is even read. This check is what ties that certificate
 		// to the bearer token that already resolved above: the
-		// certificate's CommonName (internal/ca.IssueClient's own
+		// certificate's CommonName (internal/ca.SignClient's own
 		// convention) must name the same canary. r.TLS == nil is the one
 		// exemption, so every existing handler test built on plain
 		// httptest.NewRequest keeps working unchanged; a plain HTTP
@@ -136,6 +156,33 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 				writeIngestError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
+		}
+
+		// Issue #130, ADR-0012 B2 and B3: the certificate must be one
+		// birdcage recorded issuing to this canary and has not revoked,
+		// whatever its signature, and the token must be bound to it.
+		// Inside the r.TLS != nil exemption only because a plain request
+		// has no certificate to look up; production's listener always
+		// has one (RequireAndVerifyClientCert).
+		var presented *store.ClientCert
+		if r.TLS != nil {
+			if len(r.TLS.PeerCertificates) == 0 {
+				// The CN check above already refuses this (an empty CN
+				// never names a canary); kept so the index below can
+				// never panic whatever that check becomes.
+				writeIngestError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			cert, status := checkClientCertificate(r.Context(), database, now, coalescer, tok, r.TLS.PeerCertificates[0])
+			if status != 0 {
+				msg := "unauthorized"
+				if status == http.StatusServiceUnavailable {
+					msg = "service unavailable"
+				}
+				writeIngestError(w, status, msg)
+				return
+			}
+			presented = &cert
 		}
 
 		// Kind check 1 of 2, the registry: does this canary's registered
@@ -194,6 +241,19 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 			completeRotation(database, now, tok, r, hook)
 		}
 
+		if presented != nil {
+			if presented.FirstUsedAt == nil {
+				completeRenewal(r.Context(), database, now, *presented)
+			}
+			if dualUse != nil {
+				if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+					if prev, dual := dualUse.observe(presented.Fingerprint, host, false, now().UTC()); dual {
+						recordDualUse(r.Context(), database, now, coalescer, tok.CanaryID, store.DualUseAddresses, prev, host)
+					}
+				}
+			}
+		}
+
 		if !limiters.allowRequest(tok.CanaryID) {
 			recordRateLimitCrossed(r.Context(), database, now, coalescer, tok.CanaryID, "requests/min")
 			writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
@@ -201,7 +261,113 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 		}
 
 		ctx := context.WithValue(r.Context(), canaryTokenCtxKey{}, tok)
+		if presented != nil {
+			ctx = context.WithValue(ctx, clientCertCtxKey{}, *presented)
+		}
 		route.handler(w, r.WithContext(ctx))
+	}
+}
+
+// checkClientCertificate is ADR-0012 B2 and B3's check on the presented
+// leaf, for requireBearerToken. It returns the certificate's row, or a
+// non-zero status to refuse with: 401 for every credential refusal, 503
+// when birdcage's own storage failed (never a 401 for that, the same
+// rule the token lookup follows: a 401 sends an agent to re-enrolment).
+//
+//   - No row for the fingerprint, or a row for another canary: a
+//     certificate birdcage did not record issuing to this node --
+//     including every certificate from before issue #130, so every such
+//     node re-enrols once (ADR-0012, Consequences). ingest.cert_unknown.
+//   - A revoked row: ingest.cert_conflict when a successor is live
+//     (ADR-0012 B4, "superseded credential still in use"), otherwise a
+//     plain 401 -- a node the operator revoked entirely is noise, not a
+//     conflict.
+//   - A token not bound to it (store.TokenBoundToCert):
+//     ingest.token_cert_mismatch.
+//
+// All three are coalesced: reaching them needs a CA-signed certificate
+// and a live token, but a node enrolled before #130 reaches the first on
+// every request, and a copy reaches the others on every retry.
+func checkClientCertificate(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, tok store.CanaryToken, leaf *x509.Certificate) (store.ClientCert, int) {
+	fp := store.CertFingerprint(leaf.Raw)
+	cert, err := store.LookupClientCertByFingerprint(ctx, database, fp)
+	if err != nil && !errors.Is(err, store.ErrClientCertNotFound) {
+		slog.Error("ingest: client certificate lookup failed", "canary", tok.CanaryID, "err", err)
+		return store.ClientCert{}, http.StatusServiceUnavailable
+	}
+	if err != nil || cert.CanaryID != tok.CanaryID {
+		recordCoalesced(ctx, database, now, coalescer, tok.CanaryID, "ingest.cert_unknown",
+			fmt.Sprintf("client certificate serial %s is not on record as issued to canary %s", leaf.SerialNumber.Text(16), tok.CanaryID), "presentations")
+		return store.ClientCert{}, http.StatusUnauthorized
+	}
+	if !cert.Live() {
+		live, err := store.CanaryHasLiveClientCert(ctx, database, cert.CanaryID)
+		if err != nil {
+			slog.Error("ingest: check live client certificate failed", "canary", cert.CanaryID, "err", err)
+		} else if live {
+			recordCoalesced(ctx, database, now, coalescer, cert.CanaryID, "ingest.cert_conflict",
+				fmt.Sprintf("revoked client certificate serial %s presented while a successor certificate is live", cert.Serial), "presentations")
+		}
+		return store.ClientCert{}, http.StatusUnauthorized
+	}
+	bound, err := store.TokenBoundToCert(ctx, database, tok, cert)
+	if err != nil {
+		slog.Error("ingest: token binding check failed", "canary", tok.CanaryID, "err", err)
+		return store.ClientCert{}, http.StatusServiceUnavailable
+	}
+	if !bound {
+		recordCoalesced(ctx, database, now, coalescer, tok.CanaryID, "ingest.token_cert_mismatch",
+			fmt.Sprintf("token %s presented over client certificate serial %s, which it is not bound to", tok.ID, cert.Serial), "presentations")
+		return store.ClientCert{}, http.StatusUnauthorized
+	}
+	return cert, 0
+}
+
+// recordCoalesced is the shared shape of every coalesced audit write
+// issue #130 adds: admit through coalescer, append on admission, log on
+// failure, never change the response.
+func recordCoalesced(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID, action, reason, noun string) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, action, at)
+	if !write {
+		return
+	}
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      action,
+		Target:      canaryID,
+		Reason:      coalescedReason(reason, occurrences, noun),
+		TriggeredBy: canaryID,
+		CreatedAt:   at,
+	}); err != nil {
+		slog.Error("ingest: record "+action, "canary", canaryID, "err", err)
+	}
+}
+
+// completeRenewal is ADR-0012 B2's one-way rule, completeRotation's
+// certificate twin: the first authenticated use of a certificate
+// revokes every older certificate of its canary. When that revoked
+// anything this was a renewal completing, audited ingest.cert_renewed;
+// a canary's first certificate revokes nothing and its first use is
+// already audited as ingest.token_first_use. Errors are logged, never
+// turned into a refusal: the request is already fully authenticated.
+func completeRenewal(ctx context.Context, database *db.DB, now func() time.Time, cert store.ClientCert) {
+	at := now().UTC()
+	first, revoked, err := store.RecordClientCertFirstUse(ctx, database, cert, at)
+	if err != nil {
+		slog.Error("ingest: record certificate first use failed", "canary", cert.CanaryID, "err", err)
+		return
+	}
+	if !first || revoked == 0 {
+		return
+	}
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      "ingest.cert_renewed",
+		Target:      cert.CanaryID,
+		Reason:      fmt.Sprintf("first use of client certificate serial %s revoked %d older certificate(s)", cert.Serial, revoked),
+		TriggeredBy: cert.CanaryID,
+		CreatedAt:   at,
+	}); err != nil {
+		slog.Error("ingest: record completed renewal", "canary", cert.CanaryID, "err", err)
 	}
 }
 

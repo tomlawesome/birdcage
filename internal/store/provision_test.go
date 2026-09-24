@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,15 +13,14 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
-// fakeIssue returns a fixed, obviously-fake cert/key pair -- Provision
-// never inspects their contents, only that issue succeeded, so a real
-// internal/ca.CA is unnecessary for these store-level tests (the real
-// thing is exercised by internal/ingest's mTLS tests instead). Its kind
-// parameter (issue #105) is unused here for the same reason
-// internal/enrol's own closure ignores it -- #105 doesn't touch the
-// certificate.
-func fakeIssue(_ string, _ agentkind.Kind) (certPEM, keyPEM []byte, err error) {
-	return []byte("fake-cert-pem"), []byte("fake-key-pem"), nil
+// fakeIssue signs a real certificate for canaryID over a fresh key,
+// with a test CA built here from crypto/x509 (testSigningCA, in
+// clientcert_test.go): Provision now records the certificate's serial,
+// fingerprint and validity, so a placeholder PEM no longer suffices.
+// The key is thrown away -- these store-level tests never present it;
+// internal/ingest's mTLS tests do.
+func fakeIssue(canaryID string, kind agentkind.Kind) ([]byte, *x509.Certificate, error) {
+	return testSigningCA().sign(canaryID, kind, time.Hour)
 }
 
 // contactedFixture mints and first-contacts a session, returning the raw
@@ -65,8 +67,8 @@ func TestProvisionHappyPath(t *testing.T) {
 		if result.CanaryToken == "" {
 			t.Fatal("CanaryToken is empty")
 		}
-		if result.ClientCertPEM != "fake-cert-pem" || result.ClientKeyPEM != "fake-key-pem" {
-			t.Errorf("ClientCertPEM/ClientKeyPEM = %q/%q, want the values fakeIssue returned", result.ClientCertPEM, result.ClientKeyPEM)
+		if !strings.HasPrefix(result.ClientCertPEM, "-----BEGIN CERTIFICATE-----") {
+			t.Errorf("ClientCertPEM = %q, want the certificate fakeIssue signed", result.ClientCertPEM)
 		}
 		if result.HeartbeatIntervalS != DefaultHeartbeatIntervalS {
 			t.Errorf("HeartbeatIntervalS = %d, want %d", result.HeartbeatIntervalS, DefaultHeartbeatIntervalS)
@@ -102,6 +104,29 @@ func TestProvisionHappyPath(t *testing.T) {
 		}
 		if tok.CanaryID != result.CanaryID {
 			t.Errorf("token CanaryID = %q, want %q", tok.CanaryID, result.CanaryID)
+		}
+
+		// Issue #130 B2/B3: the certificate is recorded, live and unused,
+		// and the token is bound to exactly its fingerprint.
+		block, _ := pem.Decode([]byte(result.ClientCertPEM))
+		if block == nil {
+			t.Fatal("ClientCertPEM does not decode")
+		}
+		certs, err := ListClientCertsForCanary(context.Background(), database, result.CanaryID)
+		if err != nil {
+			t.Fatalf("ListClientCertsForCanary: %v", err)
+		}
+		if len(certs) != 1 {
+			t.Fatalf("client_certs rows = %d, want 1", len(certs))
+		}
+		if certs[0].Fingerprint != CertFingerprint(block.Bytes) {
+			t.Errorf("recorded fingerprint = %s, want the issued certificate's", certs[0].Fingerprint)
+		}
+		if !certs[0].Live() || certs[0].FirstUsedAt != nil {
+			t.Errorf("recorded certificate = %+v, want live and unused", certs[0])
+		}
+		if tok.CertFingerprint != certs[0].Fingerprint {
+			t.Errorf("token bound to %q, want %q", tok.CertFingerprint, certs[0].Fingerprint)
 		}
 
 		// The session is provisioned and its secret is shredded.
@@ -316,7 +341,7 @@ func TestProvisionIssueFailureRollsBackEverything(t *testing.T) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
 		secret, session := contactedFixture(t, database, mintedAt)
 
-		failingIssue := func(string, agentkind.Kind) ([]byte, []byte, error) {
+		failingIssue := func(string, agentkind.Kind) ([]byte, *x509.Certificate, error) {
 			return nil, nil, errors.New("ca: boom")
 		}
 

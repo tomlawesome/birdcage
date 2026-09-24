@@ -54,6 +54,23 @@ type handler struct {
 	now       func() time.Time
 	logger    *slog.Logger
 	limiters  *sourceLimiters
+	certTTL   time.Duration
+}
+
+// Option adjusts NewHandler's handler. The only one is
+// WithClientCertTTL.
+type Option func(*handler)
+
+// WithClientCertTTL overrides ClientCertTTL for the certificates this
+// handler signs -- for a live-test fixture that needs a certificate to
+// reach half-life and expiry in minutes (ADR-0012 #130 scope: "TTL
+// overridden to minutes in the fixture"). ttl <= 0 is ignored.
+func WithClientCertTTL(ttl time.Duration) Option {
+	return func(h *handler) {
+		if ttl > 0 {
+			h.certTTL = ttl
+		}
+	}
 }
 
 // NewHandler returns the enrolment submux: POST /enrol/hello and POST
@@ -63,14 +80,17 @@ type handler struct {
 // port; an empty string means BIRDCAGE_ADVERTISE_HOST was unset, and is
 // passed straight through to the response the same way. now nil means
 // time.Now; logger nil means slog.Default().
-func NewHandler(database *db.DB, birdcageCA *ca.CA, ingestURL string, now func() time.Time, logger *slog.Logger) http.Handler {
+func NewHandler(database *db.DB, birdcageCA *ca.CA, ingestURL string, now func() time.Time, logger *slog.Logger, opts ...Option) http.Handler {
 	if now == nil {
 		now = time.Now
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &handler{db: database, ca: birdcageCA, ingestURL: ingestURL, now: now, logger: logger, limiters: newSourceLimiters()}
+	h := &handler{db: database, ca: birdcageCA, ingestURL: ingestURL, now: now, logger: logger, limiters: newSourceLimiters(), certTTL: ClientCertTTL}
+	for _, opt := range opts {
+		opt(h)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /enrol/hello", h.handleHello)

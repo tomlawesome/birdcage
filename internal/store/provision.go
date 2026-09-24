@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -63,17 +64,23 @@ func (o ProvisionOutcome) String() string {
 
 // ProvisionResult is POST /enrol/provision's success payload: everything
 // Provision minted inside its one transaction, for internal/enrol to
-// encode. CanaryToken and the two PEM fields are each shown to the
-// caller exactly once here -- no store function can recover any of them
-// afterwards, matching MintCanaryToken's and MintEnrolmentSession's own
-// stance on their raw values.
+// encode. CanaryToken is shown to the caller exactly once here -- no
+// store function can recover it afterwards, matching MintCanaryToken's
+// and MintEnrolmentSession's own stance on their raw values. There is no
+// private key: the agent generated its own and sent only a CSR (issue
+// #130, ADR-0012 B1), so birdcage never holds one to hand back.
 type ProvisionResult struct {
 	CanaryID           string
 	CanaryToken        string
 	ClientCertPEM      string
-	ClientKeyPEM       string
 	HeartbeatIntervalS int
 }
+
+// ProvisionSigner signs the new canary's client certificate over the
+// public key the agent sent (in practice a closure over
+// (*ca.CA).SignClient and the parsed CSR). kind is the session's own
+// registered kind, which the signer writes into the subject's OU.
+type ProvisionSigner func(canaryID string, kind agentkind.Kind) (certPEM []byte, cert *x509.Certificate, err error)
 
 // Provision resolves secretHash (as produced by HashToken) against
 // enrolment_sessions in state "contacted" and, on success, creates the
@@ -82,16 +89,18 @@ type ProvisionResult struct {
 // decision 2: "the secret is shredded at provisioning; a replay then
 // looks like an unknown secret, which is the point").
 //
-// issue mints the canary's client certificate (in practice,
-// (*ca.CA).IssueClient) and is called inside the transaction, so a CA
-// failure rolls back the canary row and token mint with it -- a caller
-// never sees a canary row with no client certificate to match.
+// sign signs the canary's client certificate and is called inside the
+// transaction, so a CA failure rolls back the canary row with it -- a
+// caller never sees a canary row with no client certificate to match,
+// and the enrolment secret is spent only when everything committed.
+// The certificate is recorded in client_certs (issue #130, B2) and the
+// first token is bound to it (B3) in the same transaction.
 //
-// issue's kind parameter (issue #105) is the session's own kind, in hand
-// at certificate-issuance time for #106 to carry into the certificate.
-// This function's own caller (internal/enrol's handleProvision) ignores
-// it for now -- #105 does not touch the certificate itself.
-func Provision(ctx context.Context, database *db.DB, secretHash string, now time.Time, issue func(canaryID string, kind agentkind.Kind) (certPEM, keyPEM []byte, err error)) (ProvisionResult, ProvisionOutcome, error) {
+// A second enrolment under a name an existing canary already has is a
+// new canary with a new, server-minted id and its own credential; it
+// never touches the existing node's row, tokens or certificates
+// (ADR-0012 B5, the Keylime CVE-2025-13609 lesson).
+func Provision(ctx context.Context, database *db.DB, secretHash string, now time.Time, sign ProvisionSigner) (ProvisionResult, ProvisionOutcome, error) {
 	if now.IsZero() {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("store: Provision: now is zero; callers must set it")
 	}
@@ -188,14 +197,18 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("insert canary: %w", err)
 	}
 
-	rawToken, _, err := MintCanaryToken(ctx, tx, canaryID, now)
+	certPEM, cert, err := sign(canaryID, found.Kind)
 	if err != nil {
-		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mint canary token: %w", err)
+		return ProvisionResult{}, UnknownSecret, fmt.Errorf("sign client certificate: %w", err)
+	}
+	recorded, err := RecordClientCert(ctx, tx, canaryID, cert)
+	if err != nil {
+		return ProvisionResult{}, UnknownSecret, fmt.Errorf("record client certificate: %w", err)
 	}
 
-	certPEM, keyPEM, err := issue(canaryID, found.Kind)
+	rawToken, _, err := MintCanaryTokenForCert(ctx, tx, canaryID, recorded.Fingerprint, now)
 	if err != nil {
-		return ProvisionResult{}, UnknownSecret, fmt.Errorf("issue client certificate: %w", err)
+		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mint canary token: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -228,7 +241,6 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		CanaryID:           canaryID,
 		CanaryToken:        rawToken,
 		ClientCertPEM:      string(certPEM),
-		ClientKeyPEM:       string(keyPEM),
 		HeartbeatIntervalS: DefaultHeartbeatIntervalS,
 	}, Provisioned, nil
 }

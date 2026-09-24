@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,22 +19,83 @@ import (
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
-// clientCertificate mints a client cert/key pair for canaryID and kind
-// via testCA.IssueClient and parses it into a tls.Certificate an
-// http.Client's TLSClientConfig can present.
+// clientCertificate does what an agent does since issue #130 (ADR-0012
+// B1): generates its own ECDSA P-256 key, sends a CSR, and gets back a
+// certificate testCA.SignClient signed over that key. Returned as a
+// tls.Certificate an http.Client can present. Not recorded:
+// registerCert does that, as provisioning or renewal would.
 func clientCertificate(t *testing.T, testCA *ca.CA, canaryID string, kind agentkind.Kind) tls.Certificate {
 	t.Helper()
-	certPEM, keyPEM, err := testCA.IssueClient(canaryID, kind, time.Hour)
+	return clientCertificateTTL(t, testCA, canaryID, kind, time.Hour)
+}
+
+func clientCertificateTTL(t *testing.T, testCA *ca.CA, canaryID string, kind agentkind.Kind, ttl time.Duration) tls.Certificate {
+	t.Helper()
+	key, csr := newAgentCSR(t)
+	certPEM, _, err := testCA.SignClient(csr, canaryID, kind, ttl)
 	if err != nil {
-		t.Fatalf("IssueClient(%s): %v", canaryID, err)
+		t.Fatalf("SignClient(%s): %v", canaryID, err)
 	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	return keyPair(t, certPEM, key)
+}
+
+// newAgentCSR is the agent's half of B1: a fresh key and a CSR over it.
+func newAgentCSR(t *testing.T) (*ecdsa.PrivateKey, *x509.CertificateRequest) {
+	t.Helper()
+	key, csrPEM := newAgentCSRPEM(t)
+	csr, err := ca.ParseClientCSR(csrPEM)
 	if err != nil {
-		t.Fatalf("X509KeyPair(%s): %v", canaryID, err)
+		t.Fatalf("ParseClientCSR: %v", err)
 	}
-	return cert
+	return key, csr
+}
+
+func newAgentCSRPEM(t *testing.T) (*ecdsa.PrivateKey, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate agent key: %v", err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatalf("CreateCertificateRequest: %v", err)
+	}
+	return key, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
+func keyPair(t *testing.T, certPEM []byte, key *ecdsa.PrivateKey) tls.Certificate {
+	t.Helper()
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	pair, err := tls.X509KeyPair(certPEM, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	return pair
+}
+
+// registerCert records cert in client_certs for canaryID and binds every
+// live token of canaryID to it -- what provisioning (or a renewal) does
+// in production. Returns the recorded row.
+func registerCert(t *testing.T, database *db.DB, canaryID string, cert tls.Certificate) store.ClientCert {
+	t.Helper()
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	rec, err := store.RecordClientCert(context.Background(), database, canaryID, leaf)
+	if err != nil {
+		t.Fatalf("RecordClientCert(%s): %v", canaryID, err)
+	}
+	if _, err := store.BindCanaryTokensToCert(context.Background(), database, canaryID, rec.Fingerprint); err != nil {
+		t.Fatalf("BindCanaryTokensToCert(%s): %v", canaryID, err)
+	}
+	return rec
 }
 
 // newMTLSServer starts a real httptest.Server, TLS 1.3, ClientAuth:
@@ -108,6 +170,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 
 		rightCert := clientCertificate(t, testCA, "right-canary", agentkind.Honeypot)
 		wrongCert := clientCertificate(t, testCA, "wrong-canary", agentkind.Honeypot)
+		registerCert(t, database, "right-canary", rightCert)
 
 		limiters := newLimiterRegistry(defaultLimiterLimits)
 		coalescer := newAuditCoalescer()
@@ -115,7 +178,7 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}}
 		mux := http.NewServeMux()
-		mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, nil, route))
+		mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, newDualUseTracker(), nil, route))
 
 		srv := newMTLSServer(t, testCA, testCA.Pool(), mux)
 		defer srv.Close()
@@ -177,8 +240,8 @@ func TestRequireBearerTokenEnforcesClientCertificateCN(t *testing.T) {
 
 // throwawayCA is a second, independent CA -- not internal/ca.CA -- built
 // directly with crypto/x509, used only to mint the certificate shapes
-// internal/ca.IssueClient can no longer produce (issue #106, design note
-// section 5: "do not add a kindless option to IssueClient" -- a legacy
+// internal/ca.SignClient can no longer produce (issue #106, design note
+// section 5: "do not add a kindless option to IssueClient", now SignClient -- a legacy
 // pre-#106 certificate carries no OU at all, and a malformed one carries
 // more than one). Its own certificate is added to the listener's
 // ClientCAs pool alongside the real testCA's, so a leaf it signs still
@@ -217,7 +280,7 @@ func newThrowawayCA(t *testing.T) *throwawayCA {
 
 // issueLeaf mints a client-auth leaf for canaryID with ou set verbatim
 // (including nil, for a legacy pre-#106 shape) -- the point of this type
-// existing at all, since internal/ca.IssueClient's signature no longer
+// existing at all, since internal/ca.SignClient's signature no longer
 // allows either shape.
 func (c *throwawayCA) issueLeaf(t *testing.T, canaryID string, ou []string) tls.Certificate {
 	t.Helper()
@@ -259,7 +322,7 @@ func (c *throwawayCA) issueLeaf(t *testing.T, canaryID string, ou []string) tls.
 // either issued by internal/ca (the seagull and matching-kind cases,
 // real production certificates carrying a real if unregistered OU) or by
 // a throwaway CA the listener is also told to trust (the legacy and
-// two-OU cases, shapes internal/ca.IssueClient's own signature no longer
+// two-OU cases, shapes internal/ca.SignClient's own signature no longer
 // allows) -- never a mocked authoriser.
 func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
@@ -288,7 +351,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}}
 			mux := http.NewServeMux()
-			mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, nil, route))
+			mux.Handle(route.pattern, requireBearerToken(database, time.Now, limiters, coalescer, newDualUseTracker(), nil, route))
 			return newMTLSServer(t, testCA, clientCAs, mux)
 		}
 
@@ -311,6 +374,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 			defer srv.Close()
 
 			cert := other.issueLeaf(t, "legacy-canary", nil)
+			registerCert(t, database, "legacy-canary", cert)
 			resp, err := mtlsRequest(t, srv, testCA.Pool(), "/probe", raw, cert)
 			if err != nil {
 				t.Fatalf("request with a legacy (kindless) certificate: %v", err)
@@ -329,6 +393,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 			defer srv.Close()
 
 			cert := other.issueLeaf(t, "two-ou-canary", []string{string(agentkind.Honeypot), string(agentkind.Scanner)})
+			registerCert(t, database, "two-ou-canary", cert)
 			resp, err := mtlsRequest(t, srv, testCA.Pool(), "/probe", raw, cert)
 			if err != nil {
 				t.Fatalf("request with a two-OU certificate: %v", err)
@@ -347,6 +412,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 			defer srv.Close()
 
 			cert := clientCertificate(t, testCA, "seagull-canary", agentkind.Kind("seagull"))
+			registerCert(t, database, "seagull-canary", cert)
 			resp, err := mtlsRequest(t, srv, testCA.Pool(), "/probe", raw, cert)
 			if err != nil {
 				t.Fatalf("request with an unregistered-kind certificate: %v", err)
@@ -365,6 +431,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 			defer srv.Close()
 
 			cert := clientCertificate(t, testCA, "matching-canary", agentkind.Honeypot)
+			registerCert(t, database, "matching-canary", cert)
 			resp, err := mtlsRequest(t, srv, testCA.Pool(), "/probe", raw, cert)
 			if err != nil {
 				t.Fatalf("request with a matching-kind certificate: %v", err)
@@ -382,6 +449,7 @@ func TestRequireBearerTokenEnforcesCertificateKind(t *testing.T) {
 			defer srv.Close()
 
 			cert := clientCertificate(t, testCA, "empty-route-canary", agentkind.Honeypot)
+			registerCert(t, database, "empty-route-canary", cert)
 			resp, err := mtlsRequest(t, srv, testCA.Pool(), "/probe", raw, cert)
 			if err != nil {
 				t.Fatalf("request against an empty-kinds route: %v", err)
