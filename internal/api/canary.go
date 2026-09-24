@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -227,4 +228,31 @@ func nextScheduleTime(schedule string, now time.Time) (time.Time, bool) {
 		next = next.AddDate(0, 0, 1)
 	}
 	return next, true
+}
+
+// canaryRunsResponse is GET /api/canaries/{id}/runs' body.
+type canaryRunsResponse struct {
+	Runs []store.ScanRunSummary `json:"runs"`
+}
+
+// handleCanaryRuns serves GET /api/canaries/{id}/runs (issue #116,
+// ADR-0012 decision 11): a scanner's completed ordered runs, newest
+// first, at most store.DefaultScanRunsLimit -- trigger, when, verdict,
+// last stage, reason and the settling snapshot's id. Never the run id.
+// An unknown canary is 404, as on /api/canary; a canary with no scan
+// runs (a honeypot, or a scanner registered before #116) is an empty
+// list.
+func (h *handler) handleCanaryRuns(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	runs, err := store.ListScannerRuns(r.Context(), h.db, id, store.DefaultScanRunsLimit)
+	if errors.Is(err, store.ErrCanaryNotFound) {
+		writeError(w, http.StatusNotFound, "unknown canary")
+		return
+	}
+	if err != nil {
+		log.Printf("api: list scan runs for %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, canaryRunsResponse{Runs: runs})
 }

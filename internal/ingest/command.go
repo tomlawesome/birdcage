@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -80,8 +81,10 @@ func (h *ingestHandler) handleCommands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// tok.CanaryID, never anything from the request: a canary can only
-	// ever be handed its own commands.
-	cmd, err := store.ClaimNextCanaryCommand(r.Context(), h.db, tok.CanaryID, h.now().UTC())
+	// ever be handed its own commands -- and, since issue #116, only the
+	// command kinds its own kind implements (commandKindsFor).
+	now := h.now().UTC()
+	cmd, err := store.ClaimNextCanaryCommandOfKinds(r.Context(), h.db, tok.CanaryID, commandKindsFor(tok.Kind), now)
 	if err != nil {
 		if errors.Is(err, store.ErrCommandNotFound) {
 			writeJSON(w, http.StatusOK, map[string]any{"command": nil})
@@ -90,6 +93,10 @@ func (h *ingestHandler) handleCommands(w http.ResponseWriter, r *http.Request) {
 		slog.Error("ingest: claim canary command failed", "canary", tok.CanaryID, "err", err)
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
+	}
+
+	if cmd.Kind == store.CommandScan {
+		h.advanceClaimedScan(r, tok.CanaryID, cmd, now)
 	}
 
 	// Past this line the command is already marked delivered. If writing
@@ -107,4 +114,34 @@ func (h *ingestHandler) handleCommands(w http.ResponseWriter, r *http.Request) {
 		out.Params = json.RawMessage(cmd.Params)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"command": out})
+}
+
+// commandKindsFor is the kind-to-command allow-list (issue #116): a
+// honeypot claims only selftest, a scanner only scan. Any other kind
+// gets an empty, non-nil set -- nothing is claimable -- so a kind added
+// to the route without a line here fails closed.
+func commandKindsFor(kind agentkind.Kind) map[store.CommandKind]bool {
+	switch kind {
+	case agentkind.Honeypot:
+		return map[store.CommandKind]bool{store.CommandSelfTest: true}
+	case agentkind.Scanner:
+		return map[store.CommandKind]bool{store.CommandScan: true}
+	}
+	return map[store.CommandKind]bool{}
+}
+
+// advanceClaimedScan moves a just-claimed scan command's run to stage
+// collected (ADR-0012 decision 9). Best-effort: the command is already
+// delivered, and a stage is only a description of an unanswered run --
+// nothing settles on it -- so a failure here is logged, never turned
+// into a failed poll.
+func (h *ingestHandler) advanceClaimedScan(r *http.Request, canaryID string, cmd store.CanaryCommand, now time.Time) {
+	var params store.ScanParams
+	if err := json.Unmarshal([]byte(cmd.Params), &params); err != nil || params.RunID == "" {
+		slog.Error("ingest: claimed scan command carries no run id", "canary", canaryID, "command_id", cmd.ID)
+		return
+	}
+	if _, err := store.AdvanceRunStage(r.Context(), h.db, canaryID, params.RunID, store.StageCollected, now); err != nil {
+		slog.Error("ingest: advance scan run to collected", "canary", canaryID, "command_id", cmd.ID, "err", err)
+	}
 }

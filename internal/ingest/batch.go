@@ -341,3 +341,26 @@ func recordSelfTestClaimRefused(ctx context.Context, database *db.DB, now func()
 		slog.Error("ingest: record self-test claim refusal", "canary", canaryID, "service", service, "err", err)
 	}
 }
+
+// recordSelfTestAudit appends one self-test audit entry for canaryID
+// through the coalescer (issue #116's selftest.run_unknown,
+// selftest.run_stale and selftest.stage_stale): the agent paces these,
+// so the log's growth is bounded the same way every other agent-paced
+// entry's is. reason never carries a run id (ADR-0012: run ids stay out
+// of the audit log).
+func recordSelfTestAudit(ctx context.Context, database *db.DB, now func() time.Time, coalescer *auditCoalescer, canaryID, action, reason, noun string) {
+	at := now().UTC()
+	write, occurrences := coalescer.admit(canaryID, action, at)
+	if !write {
+		return
+	}
+	if _, err := audit.Append(ctx, database, audit.Entry{
+		Action:      action,
+		Target:      canaryID,
+		Reason:      coalescedReason(reason, occurrences, noun),
+		TriggeredBy: canaryID,
+		CreatedAt:   at,
+	}); err != nil {
+		slog.Error("ingest: record self-test audit entry", "canary", canaryID, "action", action, "err", err)
+	}
+}

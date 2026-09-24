@@ -56,12 +56,26 @@ type ScanSnapshot struct {
 	Reason        string     `json:"reason,omitempty"`
 	FindingCount  int        `json:"finding_count"`
 	MaskedPaths   []string   `json:"masked_paths"`
+
+	// DBRefreshedAt is the agent's last successful vulnerability
+	// database refresh, and DBRefreshError the error text when this
+	// scan's own refresh failed (issue #116, ADR-0012 decision 10). nil
+	// and "" from an agent built before the fields existed.
+	DBRefreshedAt  *time.Time `json:"db_refreshed_at,omitempty"`
+	DBRefreshError string     `json:"db_refresh_error,omitempty"`
+
+	// SelfTestRunID is the self_test_runs.command_id of the ordered run
+	// this snapshot settled (pass or fail), empty for a timer scan or an
+	// answer to a spent or expired run. Never serialised: the dashboard
+	// reaches a run's snapshot through ListScannerRuns' snapshot id, and
+	// no run identifier appears on /api (ADR-0012, Fleet's oracle).
+	SelfTestRunID string `json:"-"`
 }
 
 // scanSnapshotColumns is the one SELECT list ListScanSnapshots reads,
 // kept in one place the way approvalColumns already is for this
 // package's approvals table.
-const scanSnapshotColumns = `id, canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths`
+const scanSnapshotColumns = `id, canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths, db_refreshed_at, db_refresh_error, self_test_run_id`
 
 // RecordScanSnapshot inserts one receipt of a Nightjar scan. It is the
 // sole writer of scan_snapshots -- POST /ingest/scans' handler is its
@@ -103,10 +117,12 @@ func RecordScanSnapshot(ctx context.Context, database db.Conn, s ScanSnapshot) e
 	}
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO scan_snapshots (canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO scan_snapshots (canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths,
+			db_refreshed_at, db_refresh_error, self_test_run_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.CanaryID, s.TakenAt.UTC().Format(receivedAtLayout), s.ReceivedAt.UTC().Format(receivedAtLayout),
-		s.EngineName, s.EngineVersion, nullableTime(s.DBBuiltAt), s.Status, s.Reason, s.FindingCount, maskedPaths)
+		s.EngineName, s.EngineVersion, nullableTime(s.DBBuiltAt), s.Status, s.Reason, s.FindingCount, maskedPaths,
+		nullableTime(s.DBRefreshedAt), emptyToNull(s.DBRefreshError), emptyToNull(s.SelfTestRunID))
 	if err != nil {
 		return fmt.Errorf("insert scan snapshot: %w", err)
 	}
@@ -131,9 +147,13 @@ func ListScanSnapshots(ctx context.Context, database *db.DB) ([]ScanSnapshot, er
 			takenAt, receivedAt string
 			dbBuiltAt           *string
 			maskedPaths         string
+			dbRefreshedAt       *string
+			dbRefreshError      *string
+			selfTestRunID       *string
 		)
 		if err := rows.Scan(&s.ID, &s.CanaryID, &takenAt, &receivedAt, &s.EngineName, &s.EngineVersion,
-			&dbBuiltAt, &s.Status, &s.Reason, &s.FindingCount, &maskedPaths); err != nil {
+			&dbBuiltAt, &s.Status, &s.Reason, &s.FindingCount, &maskedPaths,
+			&dbRefreshedAt, &dbRefreshError, &selfTestRunID); err != nil {
 			return nil, fmt.Errorf("scan scan snapshot: %w", err)
 		}
 		if s.TakenAt, err = time.Parse(receivedAtLayout, takenAt); err != nil {
@@ -148,12 +168,30 @@ func ListScanSnapshots(ctx context.Context, database *db.DB) ([]ScanSnapshot, er
 		if s.MaskedPaths, err = unmarshalMaskedPaths(maskedPaths); err != nil {
 			return nil, fmt.Errorf("parse scan snapshot masked_paths %q: %w", maskedPaths, err)
 		}
+		if s.DBRefreshedAt, err = parseNullableTime(dbRefreshedAt, "db_refreshed_at"); err != nil {
+			return nil, err
+		}
+		if dbRefreshError != nil {
+			s.DBRefreshError = *dbRefreshError
+		}
+		if selfTestRunID != nil {
+			s.SelfTestRunID = *selfTestRunID
+		}
 		snapshots = append(snapshots, s)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate scan snapshots: %w", err)
 	}
 	return snapshots, nil
+}
+
+// emptyToNull binds an empty string as SQL NULL, so "not reported" is one
+// value in a nullable text column rather than two.
+func emptyToNull(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // isAbsolutePath reports whether p looks like an absolute filesystem

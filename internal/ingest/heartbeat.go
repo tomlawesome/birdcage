@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -61,9 +62,59 @@ type ingestHeartbeat struct {
 // that sends queue_depth or log_read_ok outright -- it would be lying
 // about having a log tailer at all -- with no bespoke field-by-field
 // check to forget.
+//
+// Run and DBRefresh are the scanner's (issue #116, ADR-0012 decisions 9
+// and 10), refused with 400 from any other kind.
 type ingestCommonHeartbeat struct {
-	CanaryID     string `json:"canary_id,omitempty"`
-	AgentVersion string `json:"agent_version,omitempty"`
+	CanaryID     string           `json:"canary_id,omitempty"`
+	AgentVersion string           `json:"agent_version,omitempty"`
+	Run          *ingestRunReport `json:"run,omitempty"`
+	DBRefresh    *ingestDBRefresh `json:"db_refresh,omitempty"`
+}
+
+// ingestRunReport is where an ordered scan has got to: one of the three
+// stages the scanner itself reports (store.AgentReportableStage).
+type ingestRunReport struct {
+	RunID string `json:"run_id"`
+	Stage string `json:"stage"`
+}
+
+// ingestDBRefresh is the scanner's vulnerability database refresh
+// state, present whenever a refresh has failed since the last success.
+// FailingSince non-null is what "failing" means; birdcage records its
+// own clock, not this value, as the start (store.SetCanaryDBRefresh).
+type ingestDBRefresh struct {
+	LastOKAt     *string `json:"last_ok_at"`
+	FailingSince *string `json:"failing_since"`
+	LastError    string  `json:"last_error"`
+}
+
+// maxRunIDLen bounds a reported run id: MintScanCommand's are 32 hex
+// characters, so anything much longer is not one.
+const maxRunIDLen = 128
+
+// validateScannerHeartbeat checks the scanner-only fields' shapes,
+// returning the 400 message or "".
+func validateScannerHeartbeat(body ingestCommonHeartbeat) string {
+	if body.Run != nil {
+		if body.Run.RunID == "" || len(body.Run.RunID) > maxRunIDLen {
+			return "run.run_id is required"
+		}
+		if !store.AgentReportableStage(body.Run.Stage) {
+			return "run.stage must be one of mounts_checked, db_refreshed, scanning"
+		}
+	}
+	if body.DBRefresh != nil {
+		for name, v := range map[string]*string{"last_ok_at": body.DBRefresh.LastOKAt, "failing_since": body.DBRefresh.FailingSince} {
+			if v == nil {
+				continue
+			}
+			if _, err := time.Parse(time.RFC3339, *v); err != nil {
+				return "db_refresh." + name + " must be an RFC3339 timestamp or null"
+			}
+		}
+	}
+	return ""
 }
 
 // handleHeartbeat serves POST /ingest/heartbeat, reached only through
@@ -205,6 +256,15 @@ func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if tok.Kind != agentkind.Scanner && (body.Run != nil || body.DBRefresh != nil) {
+		writeIngestError(w, http.StatusBadRequest, "run and db_refresh are scanner-only heartbeat fields")
+		return
+	}
+	if msg := validateScannerHeartbeat(body); msg != "" {
+		writeIngestError(w, http.StatusBadRequest, msg)
+		return
+	}
+
 	if body.CanaryID != "" && body.CanaryID != tok.CanaryID {
 		slog.Warn("ingest: heartbeat payload named a different canary than its token; ignoring",
 			"token_canary", tok.CanaryID, "payload_canary_id", body.CanaryID)
@@ -212,6 +272,7 @@ func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Req
 
 	h.observeAgentVersion(r.Context(), tok, body.AgentVersion)
 
+	now := h.now().UTC()
 	if err := store.RecordCanaryCommonHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), body.AgentVersion); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {
 			writeIngestError(w, http.StatusNotFound, "unknown canary")
@@ -222,5 +283,41 @@ func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Req
 		return
 	}
 	recordLastSeenAddr(r, h.db, tok.CanaryID)
+	if tok.Kind == agentkind.Scanner {
+		if err := h.recordScannerProgress(r, tok.CanaryID, body, now); err != nil {
+			slog.Error("ingest: record scanner progress failed", "canary", tok.CanaryID, "err", err)
+			writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// recordScannerProgress stores a scanner heartbeat's database refresh
+// state -- clearing it when the field is absent -- and applies its stage
+// report. A stage for a run that is not this node's, not open, or behind
+// the one recorded is ignored and audited selftest.stage_stale through
+// the coalescer; the response does not say which, so the route is no
+// oracle for another node's run ids.
+func (h *ingestHandler) recordScannerProgress(r *http.Request, canaryID string, body ingestCommonHeartbeat, now time.Time) error {
+	failing := body.DBRefresh != nil && body.DBRefresh.FailingSince != nil
+	lastError := ""
+	if failing {
+		lastError = body.DBRefresh.LastError
+	}
+	if err := store.SetCanaryDBRefresh(r.Context(), h.db, canaryID, failing, lastError, now); err != nil {
+		return err
+	}
+	if body.Run == nil {
+		return nil
+	}
+	result, err := store.AdvanceRunStage(r.Context(), h.db, canaryID, body.Run.RunID, store.ScanStage(body.Run.Stage), now)
+	if err != nil {
+		return err
+	}
+	if result == store.StageStale {
+		recordSelfTestAudit(r.Context(), h.db, h.now, h.coalescer, canaryID, "selftest.stage_stale",
+			"stage "+body.Run.Stage+" reported for a run that is not open, not this node's, or already further along", "reports")
+	}
+	return nil
 }

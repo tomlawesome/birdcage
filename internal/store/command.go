@@ -27,7 +27,7 @@ const commandIDBytes = 16
 type CommandKind string
 
 // CommandSelfTest orders the canary to prove it can still trigger (#46).
-// It is the only kind M1 mints.
+// With CommandScan below, the only kinds M1 mints.
 //
 // #32 also names an "upgrade" kind. It is deliberately absent: an
 // upgrade must not be orderable without an admin's established authority
@@ -38,11 +38,20 @@ type CommandKind string
 // once that gate exists -- which is the point of it not being here now.
 const CommandSelfTest CommandKind = "selftest"
 
+// CommandScan orders a scanner to run one scan and answer it with the
+// run's id (issue #116, ADR-0012 decision 1). Its params are
+// ScanParams -- the run id and nothing else: no target is named, since
+// the scanner scans only the host it already mounts. Minted only by
+// MintScanCommand, which writes the owning self_test_runs row in the
+// same transaction.
+const CommandScan CommandKind = "scan"
+
 // mintableCommandKinds is what MintCanaryCommand will accept. A kind
 // absent from this map cannot be created at all, so it can never be
 // claimed, so no agent ever sees it.
 var mintableCommandKinds = map[CommandKind]bool{
 	CommandSelfTest: true,
+	CommandScan:     true,
 }
 
 // CanaryCommand is one canary_commands row.
@@ -143,6 +152,18 @@ func MintCanaryCommand(ctx context.Context, database db.Conn, canaryID string, k
 // only statement that can select a row, and the caller passes the id from
 // the authenticated token, never from a request body.
 func ClaimNextCanaryCommand(ctx context.Context, database *db.DB, canaryID string, now time.Time) (CanaryCommand, error) {
+	return ClaimNextCanaryCommandOfKinds(ctx, database, canaryID, nil, now)
+}
+
+// ClaimNextCanaryCommandOfKinds is ClaimNextCanaryCommand restricted to
+// the command kinds in allowed (issue #116: a scanner may claim only
+// scan, a honeypot only selftest). A command of any other kind is left
+// undelivered -- never handed over and never marked delivered -- so a
+// wrongly queued command expires unseen rather than reaching an agent
+// that must not act on it. allowed == nil means every kind (the
+// original ClaimNextCanaryCommand); an empty, non-nil map allows none,
+// which is how a caller fails closed.
+func ClaimNextCanaryCommandOfKinds(ctx context.Context, database *db.DB, canaryID string, allowed map[CommandKind]bool, now time.Time) (CanaryCommand, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, canary_id, kind, params, created_at, expires_at
 		FROM canary_commands
@@ -170,6 +191,9 @@ func ClaimNextCanaryCommand(ctx context.Context, database *db.DB, canaryID strin
 	now = now.UTC()
 	live := pending[:0]
 	for _, cmd := range pending {
+		if allowed != nil && !allowed[cmd.Kind] {
+			continue
+		}
 		if cmd.ExpiresAt.After(now) {
 			live = append(live, cmd)
 		}

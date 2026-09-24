@@ -49,7 +49,13 @@ const (
 	// applySelfTestState in selftest.go. Ranked between not-delivering
 	// and throttled, per the slot this file's own package doc comment
 	// already reserved for it.
-	StateTestFailed      HealthState = "self_test_failed"
+	StateTestFailed HealthState = "self_test_failed"
+	// StateDBStale (issue #116, ADR-0012 decision 10) is a scanner whose
+	// vulnerability database refresh has been failing for more than
+	// dbStaleThreshold, counted on birdcage's clock from the first
+	// failing report (canaries.db_refresh_failing_since). Ranked between
+	// self-test-failed and throttled.
+	StateDBStale         HealthState = "db_stale"
 	StateThrottled       HealthState = "throttled"
 	StateRotationStalled HealthState = "rotation_stalled"
 	// StateRenewalStalled (issue #130, ADR-0012 B2; answers #72) is
@@ -91,11 +97,12 @@ var healthStateRank = map[HealthState]int{
 	StateSilent:             2,
 	StateNotDelivering:      3,
 	StateTestFailed:         4,
-	StateThrottled:          5,
-	StateRotationStalled:    6,
-	StateRenewalStalled:     7,
-	StatePending:            8,
-	StateOK:                 9,
+	StateDBStale:            5,
+	StateThrottled:          6,
+	StateRotationStalled:    7,
+	StateRenewalStalled:     8,
+	StatePending:            9,
+	StateOK:                 10,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -140,7 +147,44 @@ const (
 	// that catches an agent that never asks to rotate at all, distinct
 	// from an issued-but-unused token.
 	rotationStaleThreshold = 25 * time.Hour
+
+	// dbStaleThreshold is the owner's number (ADR-0012 decision 10: "if
+	// pulling fails for more than 24hr ... flag").
+	dbStaleThreshold = 24 * time.Hour
 )
+
+// applyDBRefreshHealth fills c.DBRefresh while c's database refresh is
+// failing and adds StateDBStale once it has failed for more than
+// dbStaleThreshold by birdcage's clock. Runs after applyHealthState, the
+// same way applyCredentialHealth does, merging into ActiveStates.
+func applyDBRefreshHealth(c *Canary, now time.Time) {
+	if c.dbRefreshFailingSince == nil {
+		return
+	}
+	c.DBRefresh = &DBRefreshFailure{FailingSince: *c.dbRefreshFailingSince, LastError: c.dbRefreshError}
+	if now.Sub(*c.dbRefreshFailingSince) <= dbStaleThreshold {
+		return
+	}
+	addActiveStates(c, StateDBStale)
+}
+
+// addActiveStates merges states into c.ActiveStates, re-sorts by
+// healthStateRank and re-derives c.Status as the head.
+func addActiveStates(c *Canary, states ...HealthState) {
+	active := make([]HealthState, 0, len(c.ActiveStates)+len(states))
+	for _, s := range c.ActiveStates {
+		active = append(active, HealthState(s))
+	}
+	active = append(active, states...)
+	sort.SliceStable(active, func(i, j int) bool {
+		return healthStateRank[active[i]] < healthStateRank[active[j]]
+	})
+	c.ActiveStates = make([]string, len(active))
+	for i, s := range active {
+		c.ActiveStates[i] = string(s)
+	}
+	c.Status = c.ActiveStates[0]
+}
 
 // notDelivering reports whether c's own agent self-report says its log
 // read is failing. AgentLogReadOK is nil until the agent's first
