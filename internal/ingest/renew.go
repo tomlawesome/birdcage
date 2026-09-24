@@ -139,6 +139,45 @@ func (h *ingestHandler) handleRenew(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// One renewal (or rotation, or first use) per canary at a time; see
+	// store.LockCanaryCredentials. Two concurrent renewals therefore
+	// run one after the other, and the second supersedes the first's
+	// certificate below, leaving exactly one pending.
+	if err := store.LockCanaryCredentials(r.Context(), tx, tok.CanaryID); err != nil {
+		slog.Error("ingest: lock canary credentials for renewal failed", "canary", tok.CanaryID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+
+	// A renewal arriving while an earlier renewed certificate sits
+	// unused revokes that one (issue #130 review): otherwise a copy that
+	// renews and never presents the result keeps a hidden seven-day
+	// credential. Never a refusal -- an honest agent whose previous
+	// renewal response was lost is exactly this case and must succeed.
+	// Each superseded certificate is audited here, uncoalesced and fail
+	// closed like ingest.cert_issued below: every renewal already writes
+	// its own ingest.cert_issued row, so coalescing this one would bound
+	// nothing and would lose the superseded serial.
+	superseded, err := store.SupersedePendingClientCerts(r.Context(), tx, tok.CanaryID, presented.ID, h.now().UTC())
+	if err != nil {
+		slog.Error("ingest: supersede pending certificates failed", "canary", tok.CanaryID, "err", err)
+		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+	for _, old := range superseded {
+		if _, err := audit.Append(r.Context(), tx, audit.Entry{
+			Action:      "ingest.cert_renewal_superseded",
+			Target:      tok.CanaryID,
+			Reason:      "renewal revoked client certificate serial " + old.Serial + ", issued by an earlier renewal and never used",
+			TriggeredBy: tok.CanaryID,
+			CreatedAt:   h.now().UTC(),
+		}); err != nil {
+			slog.Error("ingest: record superseded certificate failed; renewal aborted", "canary", tok.CanaryID, "err", err)
+			writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
+			return
+		}
+	}
+
 	rec, err := store.RecordClientCert(r.Context(), tx, tok.CanaryID, leaf)
 	if err != nil {
 		slog.Error("ingest: record renewed certificate failed", "canary", tok.CanaryID, "err", err)

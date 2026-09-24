@@ -220,6 +220,15 @@ func RecordClientCertFirstUse(ctx context.Context, database *db.DB, cert ClientC
 			_ = tx.Rollback() // the error being returned already says what failed
 		}
 	}()
+	// Serialised with renewal and rotation (LockCanaryCredentials), so a
+	// renewal deciding which certificates are still unused
+	// (SupersedePendingClientCerts) never races this marking one used.
+	// No canaries row means no rotation or renewal can run for this
+	// canary either (both refuse on it), so there is nothing to race.
+	if err = LockCanaryCredentials(ctx, tx, cert.CanaryID); err != nil && !errors.Is(err, ErrCanaryNotFound) {
+		return false, 0, err
+	}
+	err = nil
 	stamp := at.UTC().Format(receivedAtLayout)
 	res, err := tx.ExecContext(ctx,
 		`UPDATE client_certs SET first_used_at = ? WHERE id = ? AND first_used_at IS NULL AND revoked_at IS NULL`,
@@ -250,6 +259,91 @@ func RecordClientCertFirstUse(ctx context.Context, database *db.DB, cert ClientC
 		return false, 0, fmt.Errorf("commit certificate first use: %w", err)
 	}
 	return true, revokedOlder, nil
+}
+
+// LockCanaryCredentials serialises every transaction that reads a
+// canary's certificates and then writes a binding or a revocation
+// decided on that read: token rotation (read the newest certificate,
+// bind the new token to it), renewal (record a certificate, supersede
+// unused ones, carry every live token across) and a certificate's first
+// use. Call it first in the transaction; the lock lasts until commit or
+// rollback.
+//
+// Why it is needed (issue #130 review): without it, on Postgres, a
+// renewal could commit between a rotation's "newest certificate" read
+// and its commit. The renewal's carry-across cannot see the rotation's
+// uncommitted token, and the rotation binds that token to what is by
+// then the older certificate -- so once the agent switches to its
+// renewed certificate, TokenBoundToCert refuses the pair and an honest
+// node is locked out.
+//
+// How: a no-op UPDATE of the canary's own registry row, the same
+// statement on both engines. On Postgres it takes that row's lock, so a
+// second such transaction for the same canary waits at this statement
+// until the first ends; under READ COMMITTED every later statement of
+// the waiter takes a fresh snapshot, so its reads see everything the
+// first committed. On SQLite every transaction is already serial
+// (internal/db opens it with one connection), and the UPDATE merely
+// takes the write lock early. Other canaries are never blocked.
+//
+// Returns ErrCanaryNotFound when there is no row to lock: nothing is
+// serialised then, so the caller must not go on as if it were.
+func LockCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string) error {
+	res, err := tx.ExecContext(ctx, `UPDATE canaries SET kind = kind WHERE id = ?`, canaryID)
+	if err != nil {
+		return fmt.Errorf("lock canary credentials: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrCanaryNotFound
+	}
+	return nil
+}
+
+// SupersedePendingClientCerts revokes every certificate of canaryID
+// issued after the in-use certificate inUseID that is still live and
+// has never been used -- a pending renewal nobody has switched to --
+// and returns the rows it revoked (as they were before revocation).
+//
+// Renewal calls it, under LockCanaryCredentials, in the transaction
+// that records the new certificate (ADR-0012 B2, issue #130 review): a
+// holder of a copied certificate and token could otherwise renew and
+// never present the result, keeping a hidden seven-day credential that
+// no first use ever revokes and no alarm ever names. The renewal itself
+// is never refused over this: an honest agent whose renewal response was
+// lost retries with a fresh key and must succeed, and it is exactly its
+// lost certificate that is revoked here.
+func SupersedePendingClientCerts(ctx context.Context, tx *db.Tx, canaryID string, inUseID int64, at time.Time) ([]ClientCert, error) {
+	certs, err := ListClientCertsForCanary(ctx, tx, canaryID)
+	if err != nil {
+		return nil, err
+	}
+	stamp := at.UTC().Format(receivedAtLayout)
+	var out []ClientCert
+	for _, c := range certs {
+		if c.ID <= inUseID || !c.Live() || c.FirstUsedAt != nil {
+			continue
+		}
+		// The conditions are repeated in the WHERE so the write can
+		// never act on anything but what was read, lock or no lock.
+		res, err := tx.ExecContext(ctx,
+			`UPDATE client_certs SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND first_used_at IS NULL`,
+			stamp, c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("revoke pending client certificate: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if n == 1 {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 // MintCanaryTokenForCert is MintCanaryToken with the new token bound to
@@ -306,19 +400,27 @@ func BindCanaryTokensToCert(ctx context.Context, database db.Conn, canaryID, cer
 //
 // A NULL binding (tokens minted before migration 0021, or by
 // `birdcage canary add`) is never accepted.
+//
+// The binding is re-read here, token row and bound certificate in one
+// statement, rather than taken from tok.CertFingerprint: a renewal
+// moves the binding and revokes the certificate it moved it from
+// (SupersedePendingClientCerts) in one transaction, and reading the two
+// halves at different moments could pair the old binding with the new
+// revocation and refuse an honest request made during a renewal. One
+// statement sees one consistent state on both engines.
 func TokenBoundToCert(ctx context.Context, database db.Conn, tok CanaryToken, cert ClientCert) (bool, error) {
-	if tok.CertFingerprint == "" {
-		return false, nil
-	}
-	if tok.CertFingerprint == cert.Fingerprint {
-		return true, nil
-	}
-	bound, err := LookupClientCertByFingerprint(ctx, database, tok.CertFingerprint)
+	bound, err := scanClientCert(database.QueryRowContext(ctx, `
+		SELECT c.id, c.canary_id, c.serial, c.fingerprint_sha256, c.not_before, c.not_after, c.first_used_at, c.revoked_at
+		FROM canary_tokens t JOIN client_certs c ON c.fingerprint_sha256 = t.cert_fingerprint
+		WHERE t.id = ?`, tok.ID))
 	if errors.Is(err, ErrClientCertNotFound) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if bound.Fingerprint == cert.Fingerprint {
+		return bound.CanaryID == tok.CanaryID, nil
 	}
 	return bound.CanaryID == cert.CanaryID &&
 		bound.CanaryID == tok.CanaryID &&
