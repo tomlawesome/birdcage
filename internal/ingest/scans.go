@@ -28,11 +28,21 @@ const scanMaxBodyBytes = 4 * 1024 * 1024
 // scanner binary alone. Every field is optional (empty string): a run
 // that failed before it ever loaded a database has nothing honest to
 // report here (internal/scan.Result's own doc comment).
+//
+// DBRefreshedAt and DBRefreshError (issue #116, ADR-0012 decision 10)
+// are the agent's last successful database refresh and, when this
+// scan's own refresh failed, its error text.
 type ingestScanEngine struct {
-	Name      string `json:"name,omitempty"`
-	Version   string `json:"version,omitempty"`
-	DBBuiltAt string `json:"db_built_at,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Version        string `json:"version,omitempty"`
+	DBBuiltAt      string `json:"db_built_at,omitempty"`
+	DBRefreshedAt  string `json:"db_refreshed_at,omitempty"`
+	DBRefreshError string `json:"db_refresh_error,omitempty"`
 }
+
+// dbRefreshErrorMaxLen bounds the refresh error text stored per
+// snapshot.
+const dbRefreshErrorMaxLen = 1024
 
 // ingestScanFinding is one finding in a snapshot's findings array --
 // internal/scan.Finding's wire shape, mirrored for the same reason
@@ -68,7 +78,11 @@ type ingestScanFinding struct {
 // covered over before this scan ran (design decision on #108, 2026-09-22): a
 // covered path is a path the scan could not see, present on both an ok
 // and a failed snapshot since the blind spot exists either way.
+//
+// RunID (issue #116, ADR-0012 decision 4) is present when this snapshot
+// answers an ordered scan: the run id from the scan command's params.
 type ingestScan struct {
+	RunID        string              `json:"run_id,omitempty"`
 	TakenAt      string              `json:"taken_at"`
 	AgentVersion string              `json:"agent_version,omitempty"`
 	Engine       ingestScanEngine    `json:"engine"`
@@ -159,6 +173,20 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		dbBuiltAt = &t
 	}
 
+	var dbRefreshedAt *time.Time
+	if body.Engine.DBRefreshedAt != "" {
+		t, err := time.Parse(time.RFC3339, body.Engine.DBRefreshedAt)
+		if err != nil {
+			writeIngestError(w, http.StatusBadRequest, "engine.db_refreshed_at must be an RFC3339 timestamp")
+			return
+		}
+		dbRefreshedAt = &t
+	}
+	if len(body.RunID) > maxRunIDLen {
+		writeIngestError(w, http.StatusBadRequest, "unknown run")
+		return
+	}
+
 	for i, p := range body.MaskedPaths {
 		if !strings.HasPrefix(p, "/") {
 			writeIngestError(w, http.StatusBadRequest, fmt.Sprintf("masked_paths[%d]: %q is not an absolute path", i, p))
@@ -166,24 +194,124 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	now := h.now().UTC()
 	snapshot := store.ScanSnapshot{
-		CanaryID:      tok.CanaryID, // identity from the token; the body carries none to disagree with -- see ingestScan's own comment
-		TakenAt:       takenAt,
-		ReceivedAt:    h.now().UTC(),
-		EngineName:    body.Engine.Name,
-		EngineVersion: body.Engine.Version,
-		DBBuiltAt:     dbBuiltAt,
-		Status:        body.Status,
-		Reason:        body.Reason,
-		FindingCount:  len(body.Findings),
-		MaskedPaths:   body.MaskedPaths,
+		CanaryID:       tok.CanaryID, // identity from the token; the body carries none to disagree with -- see ingestScan's own comment
+		TakenAt:        takenAt,
+		ReceivedAt:     now,
+		EngineName:     body.Engine.Name,
+		EngineVersion:  body.Engine.Version,
+		DBBuiltAt:      dbBuiltAt,
+		Status:         body.Status,
+		Reason:         body.Reason,
+		FindingCount:   len(body.Findings),
+		MaskedPaths:    body.MaskedPaths,
+		DBRefreshedAt:  dbRefreshedAt,
+		DBRefreshError: truncate(body.Engine.DBRefreshError, dbRefreshErrorMaxLen),
 	}
-	if err := store.RecordScanSnapshot(r.Context(), h.db, snapshot); err != nil {
+	// The server-side backstop for Grype's own five-day rule (ADR-0012
+	// decisions 4 and 10), on every snapshot, at scan time
+	// (store.ScanDBTooOld): a database older than that is never ok,
+	// whatever the agent says. The
+	// finding count goes with the status -- a failed snapshot carries
+	// none (store.RecordScanSnapshot's invariant).
+	if snapshot.Status == store.ScanStatusOK && store.ScanDBTooOld(dbBuiltAt, takenAt) {
+		snapshot.Status = store.ScanStatusFailed
+		snapshot.Reason = fmt.Sprintf("%s: vulnerability database built %s is more than five days old",
+			store.ReasonDBTooOld, dbBuiltAt.UTC().Format(time.RFC3339))
+		snapshot.FindingCount = 0
+	}
+
+	outcome, err := h.storeScan(r, snapshot, body.RunID, now)
+	if err != nil {
 		slog.Error("ingest: record scan snapshot failed", "canary", tok.CanaryID, "err", err)
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
+	switch outcome {
+	case store.ScanRunUnknown:
+		recordSelfTestAudit(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, "selftest.run_unknown",
+			"scan snapshot named a run that does not exist for this node; refused, nothing stored", "refusals")
+		writeIngestError(w, http.StatusBadRequest, "unknown run")
+		return
+	case store.ScanRunStale:
+		recordSelfTestAudit(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, "selftest.run_stale",
+			"scan snapshot answered a run already completed or past its deadline; stored, settles nothing", "answers")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// noRunAudit is storeScan's "nothing to audit" result: a timer scan, or
+// a run that passed or failed.
+const noRunAudit store.ScanRunOutcome = -1
+
+// storeScan stores snapshot and, when runID is set, settles the run it
+// answers -- all in one transaction (ADR-0012 decision 4). It also
+// records the node's database refresh state from the snapshot. It
+// returns store.ScanRunUnknown (nothing stored; the caller refuses the
+// request) or store.ScanRunStale (stored, settles nothing) for the
+// caller to audit after the transaction is over, and noRunAudit
+// otherwise. Audits are written after commit: SQLite serves one
+// connection, which the open transaction holds.
+func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, runID string, now time.Time) (store.ScanRunOutcome, error) {
+	ctx := r.Context()
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return noRunAudit, fmt.Errorf("begin scan transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result := noRunAudit
+	if runID != "" {
+		match, err := store.MatchScanRun(ctx, tx, snapshot.CanaryID, runID, snapshot, now)
+		if err != nil {
+			return noRunAudit, err
+		}
+		switch match.Outcome {
+		case store.ScanRunUnknown:
+			return store.ScanRunUnknown, nil // deferred rollback: nothing stored
+		case store.ScanRunStale:
+			result = store.ScanRunStale
+		default:
+			snapshot.SelfTestRunID = match.CommandID
+		}
+	}
+
+	if err := store.RecordScanSnapshot(ctx, tx, snapshot); err != nil {
+		return noRunAudit, err
+	}
+	// Decision 10: a snapshot whose refresh failed marks the node
+	// failing (from birdcage's clock, if not already); an ok snapshot
+	// with a fresh refresh and no error clears it. A snapshot that says
+	// neither (a failed scan, or an agent predating the fields) leaves
+	// the state as it was.
+	switch {
+	case snapshot.DBRefreshError != "":
+		err = store.SetCanaryDBRefresh(ctx, tx, snapshot.CanaryID, true, snapshot.DBRefreshError, now)
+	case snapshot.Status == store.ScanStatusOK && snapshot.DBRefreshedAt != nil:
+		err = store.SetCanaryDBRefresh(ctx, tx, snapshot.CanaryID, false, "", now)
+	}
+	if err != nil {
+		return noRunAudit, err
+	}
+	if err := tx.Commit(); err != nil {
+		return noRunAudit, fmt.Errorf("commit scan transaction: %w", err)
+	}
+	committed = true
+	return result, nil
+}
+
+// truncate cuts s to at most n bytes.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // validateFinding applies section 2's per-field requirement: every
