@@ -33,12 +33,22 @@ const badID = "not-a-valid-event-id"
 // for a test has to have a row behind it to reach a handler at all).
 // scans_test.go's enrollCanaryKind registers "canary-a" as a Scanner
 // before calling this, for the one route here that needs it.
+//
+// ADR-0012 Part B3: the ingest listener also refuses any token that is
+// not bound to the certificate presented on the connection, so this
+// binds the new token to canaryID's current recorded certificate --
+// every caller mints via newIngestServer first, which has already
+// recorded one (recordClientCert in client_test.go).
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
 	ensureCanary(t, database, canaryID, agentkind.Honeypot)
-	raw, _, err := store.MintCanaryToken(ctx(), database, canaryID, time.Now().UTC())
+	cert, err := store.CurrentClientCert(ctx(), database, canaryID)
 	if err != nil {
-		t.Fatalf("MintCanaryToken: %v", err)
+		t.Fatalf("CurrentClientCert(%s): %v (did the test call newIngestServer first?)", canaryID, err)
+	}
+	raw, _, err := store.MintCanaryTokenForCert(ctx(), database, canaryID, cert.Fingerprint, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("MintCanaryTokenForCert: %v", err)
 	}
 	return raw
 }
