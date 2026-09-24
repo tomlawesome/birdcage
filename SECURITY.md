@@ -193,6 +193,37 @@ only at the point that text is displayed, per surface:
   (below) does not require one -- a canary has no certificate to present
   until `POST /enrol/provision` issues its first one.
 
+  **Agent-made keys, short-lived certificates and cert-bound tokens
+  (issue #130, [ADR-0012](docs/adr/0012-scanner-enrolment-proof.md) Part
+  B).** Birdcage never holds an agent's private key: the agent generates
+  it and sends only a CSR, so a compromise of birdcage's database, logs
+  or a captured provision response yields no key -- only the fingerprint
+  of what was issued (`client_certs`, checked on every ingest request; a
+  certificate not on that record, or revoked, is `401` regardless of its
+  signature). Certificates live seven days and the agent renews from
+  half-life with a fresh key each time; `canary_tokens.cert_fingerprint`
+  binds each bearer token to the certificate it was minted under, so a
+  token or a key leaking alone is inert -- both halves are needed
+  together, and they age out together.
+
+  **Dual use is detected, never auto-revoked.** Two holders of one
+  credential -- a revoked credential still presented, or one live
+  certificate seen from two addresses or two agent builds within 60
+  seconds -- are flagged (`ingest.cert_conflict`,
+  `ingest.credential_dual_use`) and shown on the canary's tile, but
+  nothing is revoked automatically: that would let a copied key silence
+  the real canary at will. `birdcage canary revoke <canary-id>` is the
+  one action that ends both holders, all tokens and all certificates for
+  that node, at once (docs/enrolment.md).
+
+  **What a copied key is worth, concretely.** Until it expires (seven
+  days at most) or is revoked, it can post as that node and claim its
+  pending commands -- nothing more. It cannot change the node's kind,
+  reach any other node's data, enrol a node, mint a deploy token, or
+  touch the dashboard or an upgrade approval; renewing or rotating with
+  the copy cuts the real node off, which is exactly the loud signal
+  above.
+
   **Kind authorisation (issue #106, [ADR-0011](docs/adr/0011-certificate-kind-authorisation.md)).**
   The certificate's subject also carries the agent's kind (honeypot or
   scanner) as a single Organizational Unit value, fixed at issuance, and

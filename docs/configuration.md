@@ -597,6 +597,18 @@ provisioned canary's agent should post. Empty when
 `BIRDCAGE_ADVERTISE_HOST` is unset -- birdcage logs a boot warning naming
 it, but still starts both listeners.
 
+### `BIRDCAGE_TEST_CLIENT_CERT_TTL`
+
+**Test only -- never set this in production.** Overrides how long an
+issued or renewed client certificate lives (normally seven days,
+[ADR-0012](adr/0012-scanner-enrolment-proof.md) Part B2), for a live
+test that needs a certificate to reach half-life and expiry in minutes
+instead of days. A Go duration (e.g. `5m`). Refused at startup, not
+silently clamped, if it doesn't parse, is zero or negative, or is longer
+than seven days -- it can only ever shorten the real TTL, never lengthen
+it. Logged loudly (`WARN`) whenever it is set, so it can never be
+mistaken for ordinary configuration in a log stream.
+
 ### Enrolment settings: `admin_approval_address` / `release_address`
 
 Issue #54's two addresses, stored as settings (`birdcage settings set

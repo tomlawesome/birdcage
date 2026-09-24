@@ -214,20 +214,29 @@ func runCanaryList(args []string) error {
 	return nil
 }
 
-// runCanaryRevoke implements `birdcage canary revoke <token_id>` (issue
-// #32 item 9). Revocation and its audit entry (item 10) run in one
-// transaction, the same mint-plus-audit shape runCanaryMint above and
-// internal/ingest/rotate.go both use. The next request authenticating
-// with this token is refused immediately: the ingest auth path
-// (internal/ingest/auth.go) looks it up fresh on every request via
-// store.LookupCanaryTokenByHash, which excludes a revoked row at the SQL
-// level, so there is no cache anywhere in between that could serve one
-// more authenticated request off a stale answer.
+// runCanaryRevoke implements `birdcage canary revoke <canary_id>`
+// (ADR-0012 Part B5: "one operator action ends both holders"). It
+// revokes every live token and every live certificate for canary_id in
+// one transaction, via store.RevokeCanaryCredentials, with the audit
+// entry (`canary.revoked`) written on the same tx -- the same mint/
+// revoke-plus-audit shape runCanaryMint above and
+// internal/ingest/rotate.go both use, so a failed audit write rolls the
+// revocation back with it rather than leaving it silently unrecorded.
+// From the moment this commits, the next request from either holder --
+// the honest node or a copy of its credentials -- is 401: the ingest
+// auth path looks up both the token and the certificate fresh on every
+// request, which excludes a revoked row at the SQL level, so there is
+// no cache in between that could serve one more authenticated request
+// off a stale answer.
+//
+// Before #130 this command took a token id; it now takes the canary id
+// the ADR specifies, since a copied credential's token and certificate
+// must die together, not one at a time.
 func runCanaryRevoke(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: birdcage canary revoke <token_id>")
+		return fmt.Errorf("usage: birdcage canary revoke <canary_id>")
 	}
-	tokenID := args[0]
+	canaryID := args[0]
 
 	database, err := openCanaryDB()
 	if err != nil {
@@ -243,19 +252,15 @@ func runCanaryRevoke(args []string) error {
 	committed := false
 	defer rollbackCanaryTx(tx, &committed)
 
-	tok, err := store.LookupCanaryTokenByID(ctx, tx, tokenID)
-	if err != nil {
-		return fmt.Errorf("look up token %s: %w", tokenID, err)
-	}
-
 	now := time.Now().UTC()
-	if err := store.RevokeCanaryToken(ctx, tx, tokenID, now); err != nil {
-		return fmt.Errorf("revoke canary token: %w", err)
+	revoked, err := store.RevokeCanaryCredentials(ctx, tx, canaryID, now)
+	if err != nil {
+		return fmt.Errorf("revoke canary credentials: %w", err)
 	}
 
 	if _, err := audit.Append(ctx, tx, audit.Entry{
-		Action:      "canary.token_revoked",
-		Target:      tok.CanaryID,
+		Action:      "canary.revoked",
+		Target:      canaryID,
 		Reason:      "revoked via CLI",
 		TriggeredBy: "cli",
 		CreatedAt:   now,
@@ -268,10 +273,10 @@ func runCanaryRevoke(args []string) error {
 	}
 	committed = true
 
-	// tokenID is the caller-supplied argument; tok.CanaryID came back
-	// from the lookup above exactly as stored. Both are escaped here, at
-	// the point they reach this terminal, not before.
-	fmt.Printf("revoked token %s for canary %s\n", term.Escape(tokenID), term.Escape(tok.CanaryID))
+	// canaryID is the caller-supplied argument, echoed back verbatim;
+	// escaped here, at the point it reaches this terminal, not before.
+	fmt.Printf("revoked canary %s: %d token(s), %d certificate(s)\n",
+		term.Escape(canaryID), revoked.Tokens, revoked.Certificates)
 	return nil
 }
 
