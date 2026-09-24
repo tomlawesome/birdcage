@@ -33,7 +33,7 @@ func TestRunHeartbeatLoopStopsOnContextCancel(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runHeartbeatLoop(runCtx, c, tokStore, func() client.SelfReport { return client.SelfReport{} })
+		runHeartbeatLoop(runCtx, c, tokStore, newTestRenewalManager(t), func() client.SelfReport { return client.SelfReport{} })
 		close(done)
 	}()
 

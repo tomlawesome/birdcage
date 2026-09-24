@@ -120,7 +120,7 @@ func TestBootNeverLogsSensitiveValues(t *testing.T) {
 	var in *Intake
 	var bootErr error
 	out := captureStdout(t, func() {
-		_, _, in, bootErr = boot(cfg, "9.9.9", logging.New("test"))
+		_, _, _, in, bootErr = boot(cfg, "9.9.9", logging.New("test"))
 	})
 	t.Cleanup(func() {
 		if in != nil {
@@ -164,7 +164,7 @@ func TestBootRefusesOnEachDependencyFailure(t *testing.T) {
 	t.Run("client.New", func(t *testing.T) {
 		cfg := fakeConfig(t)
 		cfg.BirdcageURL = "" // client.New's own first check
-		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		_, _, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
 		if in != nil {
 			t.Cleanup(func() { _ = in.Receiver.Close() })
 		}
@@ -179,7 +179,7 @@ func TestBootRefusesOnEachDependencyFailure(t *testing.T) {
 	t.Run("loadTokenStore", func(t *testing.T) {
 		cfg := fakeConfig(t)
 		cfg.TokenPath = filepath.Join(t.TempDir(), "no-such-token")
-		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		_, _, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
 		if in != nil {
 			t.Cleanup(func() { _ = in.Receiver.Close() })
 		}
@@ -194,7 +194,7 @@ func TestBootRefusesOnEachDependencyFailure(t *testing.T) {
 	t.Run("NewIntake", func(t *testing.T) {
 		cfg := fakeConfig(t)
 		cfg.Listen = "8.8.8.8:0" // requireLoopback refuses any non-loopback host
-		_, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
+		_, _, _, in, err := boot(cfg, "9.9.9", logging.New("test"))
 		if in != nil {
 			t.Cleanup(func() { _ = in.Receiver.Close() })
 		}
