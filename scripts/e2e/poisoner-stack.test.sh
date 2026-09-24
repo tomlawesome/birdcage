@@ -3,7 +3,7 @@
 # smb-stack.test.sh exercises scripts/e2e/smb-stack.sh: not the poisoner
 # journey's assertions, but the harness underneath it -- a `down` that
 # assumes something is up, a run killed half way, and a real `up` actually
-# producing a listening Responder and a canary whose detector is running.
+# producing a listening fixture and a canary whose detector is running.
 #
 # poisoner-stack.sh needs a real stack.sh stack underneath it (it enrols
 # its canary against a real birdcage), so this brings one up first, under
@@ -15,9 +15,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK="$HERE/stack.sh"
 POISONER_STACK="$HERE/poisoner-stack.sh"
 export E2E_PREFIX="birdcage-e2e-poisonerselftest"
-# The Responder image comes from the private fixtures project, pulled by
+# The fixture image comes from the private fixtures project, pulled by
 # digest (AGENTS.md, "Attack-tool fixtures"); the harness never builds it.
-: "${E2E_RESPONDER_IMAGE:?set E2E_RESPONDER_IMAGE to the responder image from the fixtures project}"
+: "${E2E_POISONER_FIXTURE_IMAGE:?set E2E_POISONER_FIXTURE_IMAGE to the poisoner-fixture image from the fixtures project}"
 
 fail=0
 check() { # check <actual> <expected> <label>
@@ -71,7 +71,7 @@ check "$?" "1" "up exits 1 without E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY set
 
 echo "== down cleans up after a run killed half way =="
 # Roughly what an interrupted `up` leaves: one volume created, the
-# containers never started. (The Responder image is pulled, never built,
+# containers never started. (The fixture image is pulled, never built,
 # so it is not a leftover -- AGENTS.md, "Attack-tool fixtures".)
 docker volume create "$E2E_PREFIX-poisoner-log" >/dev/null
 [ -n "$(leftovers)" ] && echo "ok - the partial run really did leave objects behind" \
@@ -80,7 +80,7 @@ docker volume create "$E2E_PREFIX-poisoner-log" >/dev/null
 check "$?" "0" "down exits 0 after a partial up"
 check_clean "down after a partial up leaves nothing behind"
 
-echo "== a real up produces a listening Responder and a canary with the detector on =="
+echo "== a real up produces a listening fixture and a canary with the detector on =="
 stack_env="$("$STACK" up 2>/dev/null)"
 check "$?" "0" "stack.sh up succeeds"
 eval "$stack_env"
@@ -105,10 +105,10 @@ case "$poisoner_env" in
 esac
 eval "$poisoner_env"
 
-# Responder listening, not just a container that stayed running -- the
+# the fixture listening, not just a container that stayed running -- the
 # same distinction smb-stack.test.sh's smbclient check draws.
-docker logs "$POISONER_RESPONDER" 2>&1 | grep -q "Listening for events..."
-check "$?" "0" "Responder reports itself listening"
+docker logs "$POISONER_FIXTURE" 2>&1 | grep -q "Listening for events..."
+check "$?" "0" "the fixture reports itself listening"
 
 # And the canary's own detector is running, which is what makes the
 # journey's first step meaningful rather than a wait on nothing.

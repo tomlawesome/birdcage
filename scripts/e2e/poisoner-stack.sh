@@ -25,10 +25,10 @@
 # parser that dropped every real answer, because RFC 6762 forbids a
 # question section in a response, and a missing MAC on the first hit).
 #
-# The Responder image is not built here or anywhere in this repository:
+# The fixture image is not built here or anywhere in this repository:
 # attack tooling is built, scanned and kept current in the private
 # fixtures project and pulled by digest (AGENTS.md, "Attack-tool
-# fixtures"). E2E_RESPONDER_IMAGE names that image; the CI job sets it,
+# fixtures"). E2E_POISONER_FIXTURE_IMAGE names that image; the CI job sets it,
 # and a developer sets it after logging in to the fixtures registry.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
@@ -43,10 +43,10 @@ LOG_VOL="${E2E_PREFIX}-poisoner-log"
 CANARY="${E2E_PREFIX}-poisoner-canary"
 CANARY_NAME="${E2E_POISONER_NAME:-e2e-poisoner}"
 CANARY_LANE="${E2E_POISONER_LANE:-e2e-poisoner}"
-RESPONDER="${E2E_PREFIX}-poisoner-responder"
+FIXTURE="${E2E_PREFIX}-poisoner-fixture"
 # Never built here and never removed by `down`: the pulled fixture is
 # left for the next run, the same as the two images stack.sh pulls.
-RESPONDER_IMAGE="${E2E_RESPONDER_IMAGE:-}"
+FIXTURE_IMAGE="${E2E_POISONER_FIXTURE_IMAGE:-}"
 
 # The bait names this journey enrols the canary with. Two names in a
 # plausible style plus the wpad the detector always adds itself. They are
@@ -186,21 +186,21 @@ wait_for_line() { # wait_for_line <container> <substring>
   die "$container never reported '$substring'"
 }
 
-# ensure_responder pulls the fixture image if it is not already present.
+# ensure_fixture pulls the fixture image if it is not already present.
 # It is never built here: the fixtures project builds, scans and
 # publishes it, and this repository -- whose mirror is public -- carries
 # only the digest. In CI, scripts/ci-ensure-image.sh has already pulled
 # and tagged it before this runs, so this is the developer's path.
-ensure_responder() {
-  [ -n "$RESPONDER_IMAGE" ] \
-    || die "set E2E_RESPONDER_IMAGE to the fixtures project's responder image (AGENTS.md, Attack-tool fixtures)"
-  if docker image inspect "$RESPONDER_IMAGE" >/dev/null 2>&1; then
-    log "$RESPONDER_IMAGE already present"
+ensure_fixture() {
+  [ -n "$FIXTURE_IMAGE" ] \
+    || die "set E2E_POISONER_FIXTURE_IMAGE to the fixtures project's poisoner-fixture image (AGENTS.md, Attack-tool fixtures)"
+  if docker image inspect "$FIXTURE_IMAGE" >/dev/null 2>&1; then
+    log "$FIXTURE_IMAGE already present"
     return 0
   fi
-  log "pulling $RESPONDER_IMAGE"
-  docker pull -q "$RESPONDER_IMAGE" >/dev/null \
-    || die "pulling $RESPONDER_IMAGE failed -- log in to the fixtures registry first"
+  log "pulling $FIXTURE_IMAGE"
+  docker pull -q "$FIXTURE_IMAGE" >/dev/null \
+    || die "pulling $FIXTURE_IMAGE failed -- log in to the fixtures registry first"
 }
 
 up() {
@@ -209,20 +209,20 @@ up() {
     || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
   down >/dev/null 2>&1 || true
 
-  ensure_responder
+  ensure_fixture
 
   local vol
   for vol in "$STATE_VOL" "$LOG_VOL"; do
     docker volume create "$vol" >/dev/null || die "creating volume $vol failed"
   done
 
-  # Responder first, and listening, before the canary can ask anything:
+  # The fixture first, and listening, before the canary can ask anything:
   # a bait query that goes out before the poisoner is up gets the silence
   # a clean segment gives, which is the pass this journey is not testing.
-  docker run --detach --name "$RESPONDER" --network "$E2E_NET" --init \
+  docker run --detach --name "$FIXTURE" --network "$E2E_NET" --init \
     --memory 512m --cpus 1.0 \
-    "$RESPONDER_IMAGE" >/dev/null || die "starting $RESPONDER failed"
-  wait_for_line "$RESPONDER" "Listening for events..."
+    "$FIXTURE_IMAGE" >/dev/null || die "starting $FIXTURE failed"
+  wait_for_line "$FIXTURE" "Listening for events..."
 
   enrol "$CANARY_NAME" "$CANARY_LANE" poisoner-enrol-output.txt
   run poisoner-enrol-output.txt "$CANARY" "$STATE_VOL" "$LOG_VOL"
@@ -232,12 +232,12 @@ up() {
   cat <<EOF
 export POISONER_CANARY=$CANARY
 export POISONER_CANARY_ID=$CANARY_ID
-export POISONER_RESPONDER=$RESPONDER
+export POISONER_FIXTURE=$FIXTURE
 EOF
 }
 
 down() {
-  docker rm --force "$RESPONDER" >/dev/null 2>&1 || true
+  docker rm --force "$FIXTURE" >/dev/null 2>&1 || true
   docker rm --force "$CANARY" >/dev/null 2>&1 || true
   local vol
   for vol in "$STATE_VOL" "$LOG_VOL"; do
