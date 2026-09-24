@@ -35,6 +35,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agent/certkey"
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 	"github.com/tomlawesome/birdcage/internal/agent/enrol"
 	"github.com/tomlawesome/birdcage/internal/agent/event"
@@ -79,10 +80,26 @@ func run(args []string) error {
 		return fmt.Errorf("first contact: %w", err)
 	}
 
-	// Step 2/3: exchange the one-time enrolment secret for a lasting
-	// canary identity -- bearer token plus an mTLS client certificate
-	// birdcage's own CA issued.
-	creds, err := enrol.Provision(ctx, *enrolURL, hello.CAPEM, hello.EnrolmentSecret)
+	// Step 2/3: generate our own mTLS client key and CSR, exactly as the
+	// real agents do (ADR-0012 B1: "the agent makes its own key;
+	// birdcage never sees it") -- then exchange the one-time enrolment
+	// secret plus that CSR for a lasting canary identity: bearer token
+	// plus the mTLS client certificate birdcage's own CA issued over our
+	// public key.
+	key, err := certkey.GenerateKey()
+	if err != nil {
+		return fmt.Errorf("generate client key: %w", err)
+	}
+	keyPEM, err := certkey.MarshalKeyPEM(key)
+	if err != nil {
+		return fmt.Errorf("marshal client key: %w", err)
+	}
+	csrPEM, err := certkey.BuildCSR(key)
+	if err != nil {
+		return fmt.Errorf("build CSR: %w", err)
+	}
+
+	creds, err := enrol.Provision(ctx, *enrolURL, hello.CAPEM, hello.EnrolmentSecret, csrPEM)
 	if err != nil {
 		return fmt.Errorf("provision: %w", err)
 	}
@@ -91,7 +108,7 @@ func run(args []string) error {
 		BaseURL:    hello.IngestURL,
 		CACert:     hello.CAPEM,
 		ClientCert: creds.ClientCertPEM,
-		ClientKey:  creds.ClientKeyPEM,
+		ClientKey:  keyPEM,
 	})
 	if err != nil {
 		return fmt.Errorf("build ingest client: %w", err)
