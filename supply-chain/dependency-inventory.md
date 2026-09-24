@@ -279,7 +279,7 @@ review's brief:
 
 | # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
 |---|---|---|---|---|---|---|---|---|---|
-| 195 | `alpine:3.24` | 3.24 (floating minor) | 3.24.2 is the current patch (already what the floating tag resolves to). | MIT (Alpine) | direct | Alpine Linux project | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
+| 195 | `alpine:3.24` | 3.24 (floating minor) | 3.24.2 is the current patch (already what the floating tag resolves to). | MIT (Alpine) | direct | Alpine Linux project | very high (mainstream, widely deployed) | **Shipped** -- corrected 2026-09-23 (#87). It is the runtime base of `build/smb-lure/Dockerfile`, so it now ships. It remains a CI runner image here, and is build-only in `build/nightjar/Dockerfile`, whose `grype` stage uses it and is discarded before that image's distroless runtime. | Predates the rule -- not individually recorded |
 | 196 | `golang:1.27` | 1.27 (floating minor, distinct from the Dockerfiles' pinned 1.27.0-alpine) | Already resolves to 1.27.1, per go.dev/dl. | BSD-3-Clause (Go) | direct | Go team (Google), Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
 | 197 | `python:3.13-alpine` | 3.13-alpine (floating minor) | 3.13.13-alpine3.24 is the current patch; same 3.13-vs-3.14 gap as row 5. | PSF-2.0 (CPython) + Alpine's licences | direct | Python Software Foundation, Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
 | 198 | `node:22-trixie` | 22-trixie (floating minor) | 22.22-trixie is the current patch; Node 22 ("Jod") is the active LTS line, verified via nodejs.org. | MIT (Node.js) | direct | OpenJS Foundation (Node.js), Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
@@ -296,6 +296,8 @@ review's brief:
 | 204 | `postgresql-client (apt package)` | unpinned -- `apt-get install -y postgresql-client` in `test:go` | Unverified -- Debian's current package version wasn't checked this session. | PostgreSQL Licence | direct | PostgreSQL Global Development Group, packaged by Debian | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 205 | `pyyaml (pip package)` | unpinned -- `pip install --quiet pyyaml` in `lint:ci` | 6.0.3 (PyPI JSON API, verified). | MIT | direct | PyYAML community | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 206 | `bash (apk package)` | unpinned -- `apk add --no-cache bash` in `lint:ci` and every `e2e:*` job | Unverified -- Alpine's current package version wasn't checked this session. | GPL-3.0-or-later (GNU project; not confirmed against a registry API this session). | direct | GNU Project, packaged by Alpine | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
+| 223 | `Responder` (fixture image, `registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture`, pulled by digest) | the `E2E_POISONER_FIXTURE_DIGEST` pin in `.gitlab-ci.yml` (`e2e:poisoner`), published once by the fixtures project (#127) and pulled by digest | v3.2.2.0 is the newest upstream tag (verified 2026-09-24 via `git ls-remote --tags https://github.com/lgandx/Responder`); the fixtures project records which tag its image was built from, and moving the digest here is the version check. | GPL-3.0 | direct | Laurent Gaffie (lgandx); image built, scanned and published by the private `ai/birdcage-fixtures` project | high (the reference LLMNR/NBT-NS/mDNS poisoner; what #86 exists to catch) | CI-only -- `e2e:poisoner`'s sibling container, pulled by `scripts/ci-ensure-image.sh`, never built here and never in any shipped image | Directed by the coordinator for #86 slice C as CI-only; **the owner has not individually approved it** -- see "What needs the owner's attention". Owner, 2026-09-24 (#86, 45b): built once in the private fixtures project, never in this repository |
+| 224 | `debian:trixie-slim` (base of `build/e2e-samba` and `build/e2e-snmp`) | trixie-slim (floating minor) | Unverified -- Debian's current point release wasn't checked this session; the tag is floating, so "latest" and "pinned" are the same moving target. | Mixed, Debian main (DFSG-free) | direct | Debian project, Docker Official Images | very high (mainstream, widely deployed) | CI-only -- journey fixture image, never shipped | Predates the rule -- recorded here because the fixtures' packages were not; the Responder fixture no longer uses it in this repository (#127) |
 
 ### G. GitHub Actions, `.github/workflows/*.yml` (CodeQL + dependency review mirror only -- GitLab is where the gate actually runs)
 
@@ -337,15 +339,38 @@ in it, is not invisible to this inventory.
 | 221 | `grype` (Anchore) | v0.119.0, `linux_amd64`, SHA-256 `3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b` -- pinned by both the version and the checksum in `build/nightjar/Dockerfile`'s `GRYPE_VERSION`/`GRYPE_SHA256` build args, verified against the release's own `grype_0.119.0_checksums.txt` and against a fresh download of the artefact itself (matched) | v0.119.0 -- current (GitHub releases API, verified 2026-09-22, same release the #108 engine-decision comment compared against) | Apache-2.0 | direct | Anchore | high (13k GitHub stars, ~147 contributors -- #108's own comparison record) | Shipped -- copied into the Nightjar runtime image as a pinned binary, never linked into any Go binary (AGENTS.md's approved-modules list) | Approved -- #108, 2026-09-22 |
 | 222 | Grype's vulnerability database | Not pinned by this repository at all -- fetched and refreshed by Grype itself at runtime into the `nightjar-grype-db` volume (`GRYPE_DB_CACHE_DIR`), never vendored or baked into the image. Grype's own default fail-closed behaviour (refuses a database older than five days) is kept unmodified. | N/A -- a live feed, not a versioned release this inventory tracks | Grype's own database build is Apache-2.0 per ADR-0010's engine comparison; the underlying vulnerability advisories it aggregates carry their own upstream licences (NVD, distro security trackers, GitHub advisories), which this repository never redistributes since the feed is fetched directly by the operator's own Nightjar instance, not by birdcage | direct (a runtime feed, not a code dependency) | Anchore (aggregates upstream vulnerability sources) | n/a -- not a popularity-ranked artefact | Runtime feed only -- never shipped in any image or binary | n/a -- a runtime feed, not a dependency in the sense this inventory otherwise tracks; recorded per this section's own header |
 
+### J. `build/smb-lure/Dockerfile` (#87: the SMB lure's own image)
+
+A real Samba, serving read-only guest shares beside a canary, in its own
+image (ADR-0008). Two rows: the Samba package it runs, and the Python that
+generates the share content in a build stage which is then discarded.
+
+The base image is `alpine:3.24`, row 195 above -- which this image is the
+reason to have corrected from "never shipped" to shipped.
+
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-23) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+|---|---|---|---|---|---|---|---|---|---|
+| 226 | `samba-server` (apk package) | `4.23.8-r0`, pinned exactly in `build/smb-lure/Dockerfile` | `4.23.8-r0` -- current in Alpine 3.24's `main` repository, read from `apk policy samba` in the image itself, 2026-09-23. Samba's own current release line is 4.23.x. | GPL-3.0-or-later | direct | Samba Team, packaged by Alpine Linux | very high (mainstream, widely deployed -- it is what the NAS this image imitates actually runs) | Shipped -- it is the service the image exists to run. Unmodified upstream, in its own container, linked into no binary of ours: the same shape as `grype` in the scanner image (AGENTS.md, "Shipped as a binary in an agent image, never linked into birdcage") | Approved -- #87, owner, 2026-09-23 ("Real Samba on Alpine", decision 1). GPLv3 in a shipped image has the owner's precedent in `hpfeeds@3.0.0` (`supply-chain/licence-policy.yml`) |
+| 227 | `python3` (apk package) | `3.14.7-r1`, pinned exactly in `build/smb-lure/Dockerfile` | `3.14.7-r1` -- current in Alpine 3.24's `main`, read from `apk policy python3` in the image, 2026-09-23 | PSF-2.0 (CPython) + Alpine's own licences | direct | Python Software Foundation, packaged by Alpine Linux | very high (mainstream, widely deployed) | Build-only -- runs `make-bait.py` in a stage that is discarded; no Python reaches the shipped image | Predates the rule -- not individually recorded (a build-stage tool, the same footing as row 191) |
+
+There is no licence gate covering apk packages. `scripts/licence-check.sh`
+covers Go modules, `-npm` covers npm and `-python` covers the pip packages
+in the mockingbird image; nothing reads an Alpine package's licence. So row
+226's GPL-3.0-or-later is recorded and approved here and in AGENTS.md, and
+is not enforced by CI. Worth closing if a third apk-pinned shipped package
+ever appears.
+
 ## Summary, by approval status
 
-222 rows total (210 from the issue's own table, 10 found in section H, 2 in section I).
+227 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
+3 in section F, 2 in section J).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 6 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108) |
+| Approved, with issue number | 7 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
-| Predates the rule -- not individually recorded | 47 (every other **direct** dependency) |
+| Predates the rule -- not individually recorded | 49 (every other **direct** dependency, including `debian:trixie-slim`, row 224) |
+| Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 223) |
 | Runtime feed, not a dependency | 1 (Grype's vulnerability database, row 222) |
 | n/a -- transitive | 166 |
 
@@ -353,6 +378,38 @@ in it, is not invisible to this inventory.
 landed `build/nightjar/Dockerfile`, the manifest this row was waiting on.
 
 ## What needs the owner's attention
+
+**A new third party, CI-only, not individually approved:** `Responder`
+(row 223), GPL-3.0, built from upstream v3.2.2.0. It runs in a sibling
+container in `e2e:poisoner` and is never linked into or copied into any
+shipped image -- the same footing as `grype`, which the owner did approve
+explicitly (AGENTS.md, #108). Two things worth a decision:
+
+- AGENTS.md's rule is "no third-party module without the owner's explicit
+  approval". This was added on the coordinator's direction for #86 slice C,
+  which is not the owner's approval. It needs either that approval or a
+  recorded exception.
+- Where it is built. The owner ruled on 2026-09-24 (#86, decision 45b)
+  that attack tooling is never built in this repository, whose mirror is
+  public: the image is built, scanned and published once by the private
+  `ai/birdcage-fixtures` project (#127) and this repository only pins its
+  digest. The first build was published on 2026-09-24 and scanned before
+  release (findings below). There is no published upstream image to pin
+  instead: `lgandx/responder` does not exist on Docker Hub (checked
+  2026-09-24) and Debian does not package it.
+- Scan of the published image (grype, 2026-09-24): 8 Critical, 82 High,
+  86 Medium, all in Debian base packages, not the tool. Every Critical is
+  `libcurl`, marked "won't fix" by Debian, exploit probability near zero.
+  Six Highs are fixable in principle but Debian trixie has not shipped the
+  patched packages yet; the image's `apt-get upgrade` clears them on the
+  next rebuild once it does. Accepted for a CI-only, isolated, throwaway
+  fixture with no real attack surface.
+
+**Journey fixture images were already unrecorded before this:**
+`build/e2e-samba` and `build/e2e-snmp` build on `debian:trixie-slim` and
+install Debian packages, and none of that appeared in this inventory. Row
+224 records the base image now; the two fixtures' own packages are still
+missing. Not fixed here because it is not this change's to fix.
 
 **Unapproved and shipped, same footing as `x/net`/`x/sys` but never recorded:**
 `golang.org/x/crypto` and `golang.org/x/time` are direct Go dependencies,

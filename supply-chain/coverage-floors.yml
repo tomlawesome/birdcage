@@ -208,6 +208,26 @@ floors:
                               # redactErr are covered.
   internal/agent/event: 85
   internal/agent/ledger: 95
+  internal/agent/poisoner: 77 # New package (#86): the bait-query detector
+                             # that catches Responder and anything else that
+                             # answers a name nobody should answer. 77.99%
+                             # measured with -race on this checkout, floored
+                             # to a whole percent as this file's rule says.
+                             # The
+                             # three encoders, the reply parser, the name
+                             # generator, the pace-matcher, the schedule,
+                             # the neighbour-table read and the event
+                             # encoding are covered by table tests; the
+                             # never-answer guarantee has its own tests
+                             # against real sockets. The gaps are the socket
+                             # paths a unit test must not exercise -- the
+                             # multicast query sockets and the port-137
+                             # bind, which need the container's lowered
+                             # privileged-port floor and would put real bait
+                             # queries on the test host's own network. Those
+                             # are slice C's job (the e2e stage runs real
+                             # Responder in a sibling container), not a gap
+                             # to close with a mock of the kernel.
   internal/agent/portscan: 71
   internal/agent/probe: 95
   internal/agent/queue: 88
@@ -220,6 +240,15 @@ floors:
                              # is a context-cancellation race in Check that
                              # is exercised but not always the branch hit.
   internal/agent/receiver: 95
+  internal/agent/smbaudit: 98 # New package (#87): the parse of the SMB
+                             # lure's audit file. 98.9% measured with
+                             # -race, 2026-09-23. A small, closed parser
+                             # over captured lines, so a high number is
+                             # cheap here and worth having: the one
+                             # failure mode this package exists to prevent
+                             # is reading a shifted line as a good one,
+                             # and every branch that decides that is
+                             # covered.
   internal/agent/snmp: 82
   internal/agent/tailer: 77
   internal/api: 84

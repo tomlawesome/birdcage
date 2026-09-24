@@ -99,9 +99,14 @@ VOLUME ["/var/lib/mockingbird", "/var/log/opencanary"]
 # The services opencanary.conf enables by default, plus 161/udp for the
 # agent's own SNMP road (#88) -- a plain Go UDP listener, no OpenCanary
 # module behind it (opencanary.conf keeps "snmp.enabled": false; see
-# internal/agent/snmp's package doc for why). There is no EXPOSE for the
-# agent's receiver: it is loopback-only by design.
-EXPOSE 21/tcp 22/tcp 23/tcp 69/udp 80/tcp 161/udp 1433/tcp 3306/tcp 3389/tcp 5060/udp 6379/tcp
+# internal/agent/snmp's package doc for why) -- and 137, 5353 and 5355/udp
+# for the poisoner road (#86), which listens on all three to count how
+# much the segment's own hosts ask for names. Those three sockets are shut
+# for writing the moment they open, so the kernel refuses any send from
+# them: the canary cannot answer another machine's lookup even if
+# something in this image tried to. There is no EXPOSE for the agent's
+# receiver: it is loopback-only by design.
+EXPOSE 21/tcp 22/tcp 23/tcp 69/udp 80/tcp 137/udp 161/udp 1433/tcp 3306/tcp 3389/tcp 5060/udp 5353/udp 5355/udp 6379/tcp
 # The agent is PID 1's child (see --init above) and runs OpenCanary as
 # its own child from these arguments: twistd in the foreground, on the
 # .tac file pip installed beside it, with no pidfile (see run-twistd.py

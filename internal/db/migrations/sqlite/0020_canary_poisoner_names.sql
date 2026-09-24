@@ -1,0 +1,22 @@
+-- canaries gains poisoner_names (issue #86 slice D): the bait names the
+-- canary is currently asking for, comma-separated, as the agent last
+-- reported them on its heartbeat. Nullable, and NULL is the ordinary state
+-- for a canary that is not a honeypot, has the poisoner road switched off,
+-- or is running an agent built before this field existed -- absence is how
+-- "this canary reports no bait names" is represented, never an empty string
+-- standing in for it.
+--
+-- Written only by RecordCanaryAgentHeartbeat, read only for the canary
+-- pages facts column. The agent is the source of truth on purpose: the
+-- names may be the operators own (set at enrolment) or derived by the
+-- agent from its own hostname, and only the agent knows which it settled
+-- on. Birdcage never chooses them and never sends them.
+--
+-- These names reach the dashboard and nothing else. They are deliberately
+-- kept out of every log line on the canary side (internal/agent/poisoners
+-- package comment: the bait only works while nobody knows which names it
+-- uses, and that binarys stdout is readable by whoever breaks into the
+-- box). The dashboard is the operators own screen, which is the one place
+-- they are meant to be visible -- so an operator can tell what their
+-- canaries are baiting with without reading it off a honeypot.
+ALTER TABLE canaries ADD COLUMN poisoner_names TEXT;

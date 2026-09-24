@@ -73,6 +73,13 @@ type Canary struct {
 	// here only now.
 	AgentVersion *string `json:"agent_version,omitempty"`
 
+	// PoisonerNames is the bait names this canary last reported asking for
+	// (canaries.poisoner_names, written by RecordCanaryAgentHeartbeat, #86
+	// slice D), comma-separated. nil for a canary that has reported none --
+	// the poisoner road off, an agent built before the field existed, or any
+	// kind but a honeypot.
+	PoisonerNames *string `json:"poisoner_names,omitempty"`
+
 	// AgentDropped, AgentRejected, AgentEventIDCollisions and
 	// AgentPositionFound are the agent's last self-reported values for
 	// #48's process-composition note (gap 3): cumulative events dropped
@@ -453,6 +460,13 @@ type AgentHeartbeat struct {
 	Rejected          *int64
 	EventIDCollisions *int64
 	PositionFound     *bool
+
+	// PoisonerNames is the bait names the canary reported asking for (#86
+	// slice D), comma-separated. Empty means the agent reported none -- the
+	// poisoner road off, or an agent built before the field existed -- and
+	// is stored as NULL, so "reports no bait names" stays distinct from a
+	// stored empty list the facts column would then have to render.
+	PoisonerNames string
 }
 
 // RecordCanaryAgentHeartbeat records that canaryID's agent phoned home at
@@ -487,13 +501,21 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 		}
 		positionFound = &v
 	}
+	// An empty PoisonerNames binds to SQL NULL rather than to '', for the
+	// reason AgentHeartbeat.PoisonerNames states.
+	var poisonerNames *string
+	if report.PoisonerNames != "" {
+		poisonerNames = &report.PoisonerNames
+	}
 	if _, err := database.ExecContext(ctx, `
 		UPDATE canaries
 		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?,
-			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?
+			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?,
+			poisoner_names = ?
 		WHERE id = ?`,
 		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID,
-		report.Dropped, report.Rejected, report.EventIDCollisions, positionFound, canaryID); err != nil {
+		report.Dropped, report.Rejected, report.EventIDCollisions, positionFound,
+		poisonerNames, canaryID); err != nil {
 		return fmt.Errorf("update agent self-report: %w", err)
 	}
 	return nil
@@ -565,7 +587,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
 			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at,
-			agent_version
+			agent_version, poisoner_names
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -585,14 +607,16 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			lastSeenAddr       *string
 			registeredAt       *string
 			agentVersion       *string
+			poisonerNames      *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
-			&agentVersion); err != nil {
+			&agentVersion, &poisonerNames); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.LastSeenAddr = lastSeenAddr
 		c.AgentVersion = agentVersion
+		c.PoisonerNames = poisonerNames
 		// c.Kind is opaque on read, like scanEnrolmentSession's own kind
 		// field -- see that function's doc comment.
 		c.Kind = agentkind.Kind(kind)

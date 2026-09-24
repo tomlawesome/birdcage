@@ -95,6 +95,11 @@ export interface Visitor {
   canaries: VisitorCanaryHits[]
   services: string[]
   tried: string[]
+  /** Present only for a visitor with a poisoner hit (#86 slice D): what it
+   * claimed to be, over which of the three bait protocols, and its hardware
+   * address if the canary's neighbour table had one. Absent for every other
+   * visitor, so test presence rather than comparing empty strings. */
+  poisoner?: { name: string; protocol: string; mac: string }
   still_arriving: boolean
 }
 
@@ -238,6 +243,11 @@ export interface CanaryFacts {
   enrolled_at: string
   registered_at?: string
   agent_version?: string
+  /** The bait names the poisoner detector is asking for (#86 slice D),
+   * comma-separated, as the agent last reported them. Absent for a canary
+   * that reports none: the detector off, an older agent, or a kind that is
+   * not a honeypot. */
+  poisoner_names?: string
   token_rotated_at?: string
   token_rotates_at?: string
 }

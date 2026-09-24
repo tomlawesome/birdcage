@@ -31,6 +31,14 @@ type SelfReport struct {
 	Rejected          int64
 	EventIDCollisions int64
 	PositionFound     bool
+
+	// PoisonerNames is the bait names this canary is asking for, comma
+	// separated (#86 slice D) -- the agent's own record of what it settled
+	// on, which may be the operator's list from enrolment or names it
+	// derived from its own hostname. Empty when the poisoner road is off,
+	// which is an ordinary state and is why the wire field below is
+	// omitempty rather than a zero value birdcage would store.
+	PoisonerNames string
 }
 
 // wireHeartbeat mirrors internal/ingest/heartbeat.go's ingestHeartbeat
@@ -55,6 +63,7 @@ type wireHeartbeat struct {
 	Rejected          *int64 `json:"rejected,omitempty"`
 	EventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
 	PositionFound     *bool  `json:"position_found,omitempty"`
+	PoisonerNames     string `json:"poisoner_names,omitempty"`
 }
 
 // SendHeartbeat posts report to POST /ingest/heartbeat on token.
@@ -79,6 +88,7 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 		Rejected:          &report.Rejected,
 		EventIDCollisions: &report.EventIDCollisions,
 		PositionFound:     &report.PositionFound,
+		PoisonerNames:     report.PoisonerNames,
 	})
 	if err != nil {
 		return fmt.Errorf("client: encode heartbeat: %w", err)

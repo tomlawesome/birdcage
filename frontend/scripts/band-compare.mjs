@@ -2,9 +2,13 @@
 // pixel-compare it against the matching reference shot
 // (docs/design/concepts/round-6/shots/m-<scene>.png) -- quiet/silent/
 // night against the round-6 concept mockups; alerts (issue #45's token
-// conflict, throttled, rotation-stalled and not-delivering states)
-// against a reference generated from the build, since no concept mockup
-// covers it. Starts an in-process vite dev server (fixture mode is
+// conflict, throttled, rotation-stalled and not-delivering states) and
+// poisoner (issue #86's detector catching something that answered a bait
+// query) against references generated from the build, since no concept
+// mockup covers either. A build-generated reference locks in what the code
+// renders today, which is what a regression gate needs; it is not a design
+// anybody validated, and the owner replacing m-poisoner.png with a drawn
+// one is the ordinary way that would change. Starts an in-process vite dev server (fixture mode is
 // dev-only, see src/lib/api.ts), screenshots the live <svg
 // class="band-svg"> at 1600x1000 @2x -- the same viewport and scale
 // docs/design/concepts/round-6/capture.mjs used for the shots -- and
@@ -33,7 +37,7 @@ const shotsDir = join(frontendDir, '..', 'docs', 'design', 'concepts', 'round-6'
 const outDir = join(frontendDir, 'scripts', '.out')
 mkdirSync(outDir, { recursive: true })
 
-const SCENES = ['quiet', 'silent', 'night', 'alerts']
+const SCENES = ['quiet', 'silent', 'night', 'alerts', 'poisoner']
 const THRESHOLD_PCT = 2
 const DPR = 2
 const PAGE_WIDTH = 1600

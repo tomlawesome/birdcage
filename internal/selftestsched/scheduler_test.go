@@ -299,10 +299,10 @@ func TestMintForCanarySkipsUnknownPortsButMintsKnownOnes(t *testing.T) {
 }
 
 // TestMintForCanaryStillMintsPortscanWithNoKnownServicePorts: every port
-// mapping to no known service leaves nothing from c.Ports to probe, but
-// portscan is added unconditionally (#46 slice 3 -- it is the agent's
-// own detector, not an OpenCanary module with a listening port), so a
-// run is still minted with that one target.
+// mapping to no known service leaves nothing from c.Ports to probe, but the
+// two agent-own detectors are added unconditionally (#46 slice 3 for
+// portscan, #86 slice C for poisoner -- neither is an OpenCanary module
+// with a listening port), so a run is still minted from those alone.
 func TestMintForCanaryStillMintsPortscanWithNoKnownServicePorts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
@@ -315,18 +315,20 @@ func TestMintForCanaryStillMintsPortscanWithNoKnownServicePorts(t *testing.T) {
 		s.Tick(context.Background())
 
 		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
-			t.Fatalf("self_test_runs for canary-a = %d, want 1 (portscan is always added)", n)
+			t.Fatalf("self_test_runs for canary-a = %d, want 1 (the agent-own detectors are always added)", n)
 		}
 
+		// mintedTargetServices returns them ordered by service.
 		services := mintedTargetServices(t, database, "canary-a")
-		if len(services) != 1 || services[0] != "portscan" {
-			t.Fatalf("minted target services = %v, want exactly [portscan]", services)
+		if len(services) != 2 || services[0] != "poisoner" || services[1] != "portscan" {
+			t.Fatalf("minted target services = %v, want exactly [poisoner portscan]", services)
 		}
 	})
 }
 
-// TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts proves portscan
-// is additive, not a replacement for whatever c.Ports itself yields.
+// TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts proves the two
+// agent-own targets are additive, not a replacement for whatever c.Ports
+// itself yields.
 func TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
@@ -339,20 +341,22 @@ func TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts(t *testing.T) {
 		s.Tick(context.Background())
 
 		services := mintedTargetServices(t, database, "canary-a")
-		if len(services) != 2 {
-			t.Fatalf("minted target services = %v, want ssh and portscan", services)
+		if len(services) != 3 {
+			t.Fatalf("minted target services = %v, want ssh, portscan and poisoner", services)
 		}
-		var sawSSH, sawPortscan bool
+		var sawSSH, sawPortscan, sawPoisoner bool
 		for _, svc := range services {
 			switch svc {
 			case "ssh":
 				sawSSH = true
 			case "portscan":
 				sawPortscan = true
+			case "poisoner":
+				sawPoisoner = true
 			}
 		}
-		if !sawSSH || !sawPortscan {
-			t.Fatalf("minted target services = %v, want both ssh and portscan", services)
+		if !sawSSH || !sawPortscan || !sawPoisoner {
+			t.Fatalf("minted target services = %v, want ssh, portscan and poisoner", services)
 		}
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
 	"github.com/tomlawesome/birdcage/internal/agent/probe"
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/selftest"
@@ -97,13 +98,13 @@ func jitteredInterval(base, jitter time.Duration) time.Duration {
 // runCommandRunner executes commands from run one at a time, in arrival
 // order (#48's process-composition note: "executes dispatched commands
 // sequentially"), until ctx is done.
-func runCommandRunner(ctx context.Context, in *Intake, run <-chan *client.Command) {
+func runCommandRunner(ctx context.Context, in *Intake, bait baitLookup, run <-chan *client.Command) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case cmd := <-run:
-			if err := runCommand(ctx, in, cmd); err != nil {
+			if err := runCommand(ctx, in, bait, cmd); err != nil {
 				commandLog.Warn(fmt.Sprintf("%s (%s): refused, executing nothing: %s", cmd.ID, cmd.Kind, safeErr(err)))
 			}
 		}
@@ -117,10 +118,10 @@ func runCommandRunner(ctx context.Context, in *Intake, run <-chan *client.Comman
 // and the command is never partially executed either way (#48
 // fail-closed: "a command the agent cannot fully parse is an attack or
 // version skew; both end in refusal").
-func runCommand(ctx context.Context, in *Intake, cmd *client.Command) error {
+func runCommand(ctx context.Context, in *Intake, bait baitLookup, cmd *client.Command) error {
 	switch cmd.Kind {
 	case kindSelfTest:
-		return runSelfTest(ctx, in, cmd)
+		return runSelfTest(ctx, in, bait, cmd)
 	default:
 		return fmt.Errorf("unknown command kind %q", cmd.Kind)
 	}
@@ -160,7 +161,7 @@ func runCommand(ctx context.Context, in *Intake, cmd *client.Command) error {
 // claims tracker (claim.go) is what turns an attributed probe's own fact
 // into a claimed event, by watching the events those same roads are
 // pushing concurrently with the sweep.
-func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
+func runSelfTest(ctx context.Context, in *Intake, bait baitLookup, cmd *client.Command) error {
 	params, err := selftest.DecodeParams(cmd.Params)
 	if err != nil {
 		return fmt.Errorf("selftest params: %w", err)
@@ -185,7 +186,7 @@ func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 		}
 	}
 
-	var ok, failed, noCarrier, notProbeable int
+	var ok, failed, noCarrier, notProbeable, agentHandled int
 	for _, o := range outcomes {
 		switch o.Status {
 		case probe.StatusOK:
@@ -197,9 +198,127 @@ func runSelfTest(ctx context.Context, in *Intake, cmd *client.Command) error {
 			noCarrier++
 		case probe.StatusNotProbeable:
 			notProbeable++
+		case probe.StatusAgentHandled:
+			agentHandled++
+			runAgentHandledTarget(ctx, in, bait, params, targetFor(params, o.Service))
 		}
 	}
-	selftestLog.Info(fmt.Sprintf("command %s: %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable (of %d targets)",
-		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, len(outcomes)))
+	selftestLog.Info(fmt.Sprintf("command %s: %s complete -- %d ok, %d failed, %d no-carrier, %d not-probeable, %d agent-handled (of %d targets)",
+		cmd.ID, params.RunID, ok, failed, noCarrier, notProbeable, agentHandled, len(outcomes)))
 	return nil
+}
+
+// baitLookup is the one thing runSelfTest needs from #86's poisoner
+// detector: make a single bait lookup and say what answered. An interface
+// rather than the concrete type so a test can drive both outcomes -- the
+// silence that is a pass, and the answer that is an intrusion -- without
+// opening a multicast socket.
+type baitLookup interface {
+	LookupOnce(ctx context.Context, proto poisoner.Protocol, name string) ([]poisoner.Answer, error)
+}
+
+// runAgentHandledTarget runs a target internal/agent/probe deliberately
+// left to this binary (probe.StatusAgentHandled). Today that is #86's
+// poisoner and nothing else.
+//
+// The grading is inverted from every other target: #86 slice C grades
+// SILENCE as a pass, because the names the detector asks for do not
+// exist and the only correct answer is none. So an answer here is not a
+// better result than silence -- it is the worst result there is, and the
+// alert for it has already gone out through the ordinary event path by
+// the time LookupOnce returns.
+//
+// This currently reports to the operator's log and no further. Birdcage
+// cannot yet be told that a poisoner target passed: every grade it
+// records is proved by a marker-bearing event arriving
+// (internal/store/selftest_grade.go), and silence produces no event to
+// carry a marker. Nothing mints a poisoner target for that reason, so in
+// this build this function runs only if something else starts minting
+// one -- at which point the log line below is what says whether the bait
+// went out.
+func runAgentHandledTarget(ctx context.Context, in *Intake, bait baitLookup, params selftest.Params, target selftest.Target) {
+	runID := params.RunID
+	service := target.Service
+	if service != poisoner.Service() {
+		selftestLog.Warn(fmt.Sprintf("%s: target %s is agent-handled but this binary has nothing to run for it", runID, service))
+		return
+	}
+	if bait == nil {
+		// No result reported: birdcage must not be told a target passed on
+		// a canary that never ran it. The run fails on the deadline sweep
+		// like any other unanswered target, which is the honest outcome.
+		selftestLog.Warn(fmt.Sprintf("%s: %s target skipped -- the poisoner road is not running on this canary", runID, service))
+		return
+	}
+
+	// An empty protocol and an empty name ask the detector to choose from
+	// its own profile and rotation, so this function never handles a bait
+	// name -- see internal/agent/poisoner's package comment on why one
+	// never reaches a log line.
+	answers, err := bait.LookupOnce(ctx, "", "")
+	if err != nil {
+		// The probe never reached the wire, which is neither silence nor an
+		// answer. Nothing is reported, for the reason above.
+		selftestLog.Warn(fmt.Sprintf("%s: %s bait lookup did not go out: %s", runID, service, safeErr(err)))
+		return
+	}
+
+	outcome := selfTestOutcomeSilence
+	if len(answers) > 0 {
+		outcome = selfTestOutcomeAnswered
+		// The answering addresses only -- they are the attacker's own, and
+		// the alert carrying the name, protocol and MAC is already on its
+		// way to birdcage.
+		for _, a := range answers {
+			selftestLog.Warn(fmt.Sprintf("%s: %s bait lookup was ANSWERED by %s -- a poisoner is on this segment", runID, service, a.Source))
+		}
+	} else {
+		// The pass. Silence is what a clean segment sounds like.
+		selftestLog.Info(fmt.Sprintf("%s: %s bait lookup went out and nothing answered", runID, service))
+	}
+
+	reportSelfTestResult(in, runID, service, outcome, target.Marker)
+}
+
+// targetFor finds the target in params naming service. probe.Sweep returns
+// one outcome per target in params.Targets order, so the service is enough
+// to pair them -- selftest.Params.Validate already refuses a run with two
+// targets sharing a marker, and nothing mints two for one service.
+func targetFor(params selftest.Params, service string) selftest.Target {
+	for _, t := range params.Targets {
+		if t.Service == service {
+			return t
+		}
+	}
+	return selftest.Target{Service: service}
+}
+
+// reportSelfTestResult puts one result on the queue, carrying the marker
+// birdcage minted for this target (#86 slice C).
+//
+// This is the only way a target whose pass is silence can pass at all:
+// birdcage records a pass when a marker it minted arrives back, and nothing
+// answering produces no other event to carry one. internal/ingest never
+// stores these as alerts (opencanary.IsSelfTestResult) -- it matches the
+// marker and then drops the event -- so reporting a result costs no entry on
+// anybody's dashboard.
+//
+// The marker is never logged. A marker in a log line is one an attacker who
+// reads logs could replay to have their own traffic classified as synthetic,
+// which is the inversion #46 decision 4 exists to prevent.
+func reportSelfTestResult(in *Intake, runID, target, outcome, marker string) {
+	if marker == "" {
+		selftestLog.Warn(fmt.Sprintf("%s: %s result not reported -- the target carried no marker", runID, target))
+		return
+	}
+	message, err := encodeSelfTestResult(target, outcome, marker, selfTestNodeID(), time.Now())
+	if err != nil {
+		selftestLog.Warn(fmt.Sprintf("%s: could not encode the %s result: %s", runID, target, safeErr(err)))
+		return
+	}
+	if err := in.SubmitSelfTestResultEvent(message); err != nil {
+		selftestLog.Warn(fmt.Sprintf("%s: could not queue the %s result: %s", runID, target, safeErr(err)))
+		return
+	}
+	selftestLog.Info(fmt.Sprintf("%s: reported the %s result as %s", runID, target, outcome))
 }

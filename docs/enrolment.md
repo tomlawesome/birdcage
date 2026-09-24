@@ -51,10 +51,19 @@ docker run -d --name mockingbird --restart unless-stopped --init \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --cap-add NET_RAW \
   -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \
+  -v smb-audit:/audit:ro \
+  -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log \
   -e MOCKINGBIRD_BIRDCAGE_URL=https://203.0.113.10:8444 \
   -e MOCKINGBIRD_CA_PIN=<64 hex characters -- the CA's SHA-256 pin> \
   -e MOCKINGBIRD_DEPLOY_TOKEN=<64 hex characters -- shown once, single-use> \
   mockingbird:latest
+```
+
+followed by a second block for the SMB lure (see ["The SMB
+lure"](#the-smb-lure) below), and then the line saying how long the token
+is valid:
+
+```
 token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 ```
 
@@ -76,6 +85,120 @@ Docker would otherwise create do not. Lose the state volume and the
 canary cannot start -- it refuses loudly rather than coming back healthy
 with no credentials -- and has to be enrolled again. Lose the log volume
 and any hits not yet delivered are gone.
+
+### The SMB lure
+
+A canary that offers a file share is the most ordinary thing on an office
+network, and it is the thing an intruder looks for first. So `birdcage
+canary enrol` also prints a second container: a real Samba, serving
+read-only guest shares on the canary's own address.
+
+Run these **after** the canary's own `docker run`, in this order. The
+volume has to exist before either container touches it, and the lure joins
+the canary container's network namespace, so that container has to be
+there first.
+
+```
+docker volume create --driver local \
+  --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=0755 \
+  smb-audit
+
+docker run -d --name smb-lure --restart unless-stopped \
+  --network container:mockingbird \
+  --read-only \
+  --cap-drop ALL \
+  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
+  --security-opt no-new-privileges \
+  --pids-limit 128 \
+  --memory 192m \
+  --ulimit core=0 \
+  --tmpfs /run:size=8m \
+  --tmpfs /var/lib/samba:size=8m \
+  --tmpfs /var/cache/samba:size=8m \
+  --tmpfs /var/log:size=8m \
+  -v smb-audit:/audit \
+  -e SMB_WORKGROUP=WORKGROUP \
+  -e SMB_SHARE_PUBLIC=public \
+  -e SMB_SHARE_BACKUP=backup \
+  -e SMB_SHARE_SCANS=scans \
+  smb-lure:latest
+```
+
+Port 445 then sits on the canary's own address beside telnet, ssh and
+http: one enrolment, one address, and a machine offering all four *is* a
+small NAS. The lure publishes no port of its own.
+
+#### Why nothing real is ever on the share
+
+Every file on those shares is invented, and is generated when the image is
+built. **Nothing you own is ever mounted there, and there is no setting
+that would let you.** Pointing a canary at a real file server was ruled
+out permanently.
+
+The reason is worth a sentence, because the temptation is real: bait made
+of real data turns the alarm into the breach. Whoever trips it walks away
+with something, and the thing that was supposed to warn you has cost you
+instead. What makes somebody open `IT/vpn-setup.pdf` is its **name**, and
+opening it is the whole alarm -- the contents do no further work. So the
+contents are fabricated, and deliberately contain nothing that is or even
+looks like a credential, a key or a token.
+
+You will see files with promising names -- a VPN setup document, a router
+configuration backup, a spreadsheet of salaries. All of them are invented.
+The addresses in them are the ranges reserved for documentation, the staff
+references have no names attached, and the one file that mentions
+passwords says they are kept somewhere else.
+
+#### Why every flag is there
+
+The Samba process inside runs as root and switches user for each
+connection -- there is no way to run it unprivileged. So the design makes
+that root worth as little as possible rather than pretending it is not
+root: a read-only filesystem, two capabilities out of about forty,
+no way to gain privileges, caps on processes and memory, no core dumps,
+and every path Samba writes to is memory that vanishes when the container
+restarts. Nothing an intruder changes in there survives.
+
+`build/smb-lure/README.md` has the per-flag table and the evidence for
+which capabilities are actually needed.
+
+#### Restarting the canary takes the lure with it
+
+The lure listens inside the canary container's network namespace, so
+restarting the canary destroys the namespace its Samba is listening in.
+The lure container stays `running` with nothing answering on port 445 --
+the most misleading state it could be in, because `docker ps` says it is
+fine. Docker will not re-attach it by itself.
+
+So restart the lure too, every time you restart the canary:
+
+```
+docker restart mockingbird
+docker restart smb-lure
+```
+
+`docker start smb-lure` does nothing, because the container never stopped.
+It has to be `restart`.
+
+Nothing is lost in the gap: the agent picks up where it left off in the
+audit file, so an access either side of a restart still reaches birdcage,
+and a line it reads twice raises one alert rather than two.
+
+#### Turning it off, and naming the shares
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--lure smb=off` | on | Deploy no SMB lure. The enrol output then prints no second block and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
+| `--smb-workgroup` | `WORKGROUP` | The workgroup the share announces. Use whatever the rest of your network uses; a share in a workgroup of its own is the one thing on the segment that looks odd. |
+| `--smb-shares` | `public,backup,scans` | The three share names, in that order: documents, configuration backups, scanner output. Names only -- what is on each share is part of the image. |
+
+A name outside `A-Z a-z 0-9 _ -` is refused when you enrol, rather than by
+a container that will not start.
+
+The lure's own NetBIOS name and description are not settable, on purpose:
+sharing the canary's network namespace shares its hostname, so the share
+already names itself after the canary, and a flag would only be a way to
+get that wrong.
 
 Copy the whole `docker run` block and paste it into a shell on the box
 you want to turn into a canary. That's it -- the canary's agent
@@ -349,3 +472,101 @@ non-root process any other way. Pick one:
   other capability, still runs as uid 65532, and still has no shell.
 - **Keep `no-new-privileges`, drop `--cap-add NET_RAW`** -- port-scan
   detection is off, and the agent logs one line saying so at startup.
+
+## Catching a poisoner on your segment
+
+When a Windows machine cannot find a name in DNS, it asks the whole
+local network instead: "does anyone know `fileserver`?" Nothing checks
+who answers. Tools like Responder sit on the network and answer every
+such question, claiming to be whatever was asked for, and the machine
+that asked then tries to log in to the attacker.
+
+Your canary asks for names that do not exist. Nothing on a clean
+network should ever answer. Anything that does answer is an attacker
+impersonating that name, so this alert almost never fires by mistake.
+
+The canary never connects to whatever answered. The answer itself is
+the proof an attacker is listening; connecting to it would be walking
+into the trap the attacker set.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `MOCKINGBIRD_POISONER` | on | Set to `0` to turn the whole thing off, including the listening part. Any other value, including unset, leaves it on. |
+| `MOCKINGBIRD_POISONER_NAMES` | empty | Two or three names in your own naming style, comma-separated. If you set none, the canary invents neighbours of its own hostname (a canary called `fs-lon-03` asks for things like `fs-lon-02`). |
+| `MOCKINGBIRD_POISONER_PROFILE` | `windows` | `windows`, `linux` or `off`. See below. |
+| `MOCKINGBIRD_POISONER_FLOOR` | `2h` | The longest the canary goes without asking anything during working hours. Provisional -- see below. |
+| `MOCKINGBIRD_POISONER_CEILING` | `30m` | The shortest gap between one round of questions and the next. Provisional -- see below. |
+| `MOCKINGBIRD_POISONER_HOURS` | `08:00-18:00` Mon-Fri | When the canary asks anything at all, in its own timezone. Write it as `HH:MM-HH:MM`, optionally followed by `/` and a comma-separated list of three-letter day names, for example `06:00-22:00/Mon,Tue,Wed,Thu,Fri,Sat`. |
+
+### Setting the names when you enrol
+
+`birdcage canary enrol` takes two optional flags, `--bait-names` and
+`--segment-profile`, which put the matching `-e` lines into the
+`docker run` command it prints for you:
+
+```
+birdcage canary enrol --name fs-lon-04 --lane prod \
+  --bait-names old-fs-01,printer-7 --segment-profile linux
+```
+
+A name must be 1 to 15 characters of letters, digits and hyphens, and
+cannot start or end with a hyphen; at most three are used. The command
+checks the names before it mints anything, so a typo does not waste a
+deploy token.
+
+Pick names that would have been plausible on your network and no
+longer exist -- a file server that was retired, a printer that moved.
+The canary also always asks for `wpad`, on top of whatever you set,
+because every Windows machine asks for that one and attackers answer
+it by name as a matter of course.
+
+These names are deliberately not written into the product anywhere
+and are not in this documentation: if an attacker knew which names
+were bait, they would simply not answer them. So do not put your real
+bait names into a shared runbook or a ticket either.
+
+### The segment profile
+
+- **`windows`** (the default): the canary asks over all three of the
+  protocols a Windows machine uses -- LLMNR, NBT-NS and mDNS -- shaped
+  the way Windows sends them.
+- **`linux`**: only the two a Linux machine uses, LLMNR and mDNS,
+  shaped the way `systemd-resolved` and Avahi send them. Use this if
+  your network is all Linux -- one Windows-looking machine on an
+  all-Linux network is itself conspicuous.
+- **`off`**: the canary asks nothing, so nothing is caught. It still
+  listens, which costs nothing and means the rate is already measured
+  if you turn it on later.
+
+### How often it asks
+
+A fixed timer would be a giveaway: one machine asking the same thing
+every ninety minutes all night is the easiest thing on the network to
+spot. So the canary listens to how much the other machines on the
+segment ask, and matches the middle one -- never the busiest, so one
+noisy machine cannot make the canary the loudest thing there. It asks
+in bursts of two to five questions inside a minute, like somebody
+retrying a share that will not open, only during working hours, plus
+one burst shortly after it starts up.
+
+The floor and ceiling defaults above are **provisional guesses**, not
+measured values. They will be replaced with real numbers taken from a
+packet capture (issue #121). Meanwhile you can change them yourself
+with the two variables above.
+
+### Changing these later
+
+These are per-canary settings, changed by restarting the container
+with a different `-e` value -- you do not need a new release of
+birdcage. They cannot yet be changed from the canary page in the
+dashboard: birdcage has no way to push a setting to a running canary
+today, so the container's environment is the only place they are set.
+
+### What the alert says
+
+When something answers, you get an alert under the service name
+`poisoner`, naming the address that answered, the hardware (MAC)
+address read from the canary's own neighbour table, which of the
+three protocols carried the answer, and which name was answered for.
+The canary reads the MAC passively and never sends anything to the
+answering machine.

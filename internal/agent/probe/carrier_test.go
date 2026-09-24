@@ -52,3 +52,42 @@ func TestNotProbeable_MatchesTheOutOfScopeList(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentHandled_IsThePoisonerAndNothingElse pins the other exclusion
+// (#86 slice C): a poisoner target is not this package's to run, because
+// the bait lookup is made by the live internal/agent/poisoner detector and
+// this package may import internal/selftest only (see doc.go). It must
+// classify as StatusAgentHandled rather than StatusNoCarrier, so a log
+// reader can tell "the caller runs this" apart from "this build doesn't
+// know how yet" -- the same distinction notProbeable exists for.
+func TestAgentHandled_IsThePoisonerAndNothingElse(t *testing.T) {
+	if !agentHandled["poisoner"] {
+		t.Error(`agentHandled["poisoner"] = false, want true`)
+	}
+	if !AgentHandled("poisoner") {
+		t.Error(`AgentHandled("poisoner") = false, want true`)
+	}
+	// Not also a carrier or ruled out: exactly one of the three tables may
+	// claim a service, or probeOne's ordering decides it silently.
+	if _, ok := carriers["poisoner"]; ok {
+		t.Error(`carriers["poisoner"] exists for a service cmd/mockingbird runs itself`)
+	}
+	if notProbeable["poisoner"] {
+		t.Error(`notProbeable["poisoner"] = true: the poisoner is probeable, just not here`)
+	}
+	// And nothing else is agent-handled, so a future addition has to be
+	// deliberate.
+	for svc := range carriers {
+		if AgentHandled(svc) {
+			t.Errorf("AgentHandled(%q) = true for a service with a carrier here", svc)
+		}
+	}
+	for svc := range notProbeable {
+		if AgentHandled(svc) {
+			t.Errorf("AgentHandled(%q) = true for a service ruled out of scope", svc)
+		}
+	}
+	if AgentHandled("made-up-service") {
+		t.Error(`AgentHandled("made-up-service") = true`)
+	}
+}

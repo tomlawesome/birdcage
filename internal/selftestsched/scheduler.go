@@ -241,6 +241,21 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	// gets at least this one target.
 	targets = append(targets, store.SelfTestTarget{Service: "portscan", DestPort: 0})
 
+	// poisoner (#86 slice C), on the same footing as portscan: the agent's
+	// own detector, not an OpenCanary module with a port, so it is always
+	// on for every honeypot canary regardless of what c.Ports lists, and
+	// DestPort 0 is selftest.Params.Validate's carve-out for it.
+	//
+	// Its pass is SILENCE -- the canary asks the segment for a name nobody
+	// should answer, and nothing answering is the correct outcome -- which
+	// no arriving alert can express. The agent therefore reports the result
+	// itself, in an ordinary marker-bearing event under the "selftest"
+	// service that internal/ingest matches and then refuses to store
+	// (opencanary.IsSelfTestResult). Without that reporting path this
+	// target could never match, so the two belong in one change and not in
+	// either order separately.
+	targets = append(targets, store.SelfTestTarget{Service: "poisoner", DestPort: 0})
+
 	deadline := now.Add(selfTestWindow)
 	cmd, err := store.MintSelfTestCommand(ctx, s.db, s.idx, c.ID, *c.LastSeenAddr, targets, now, deadline)
 	if err != nil {

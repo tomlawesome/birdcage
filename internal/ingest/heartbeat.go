@@ -44,6 +44,14 @@ type ingestHeartbeat struct {
 	Rejected          *int64 `json:"rejected,omitempty"`
 	EventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
 	PositionFound     *bool  `json:"position_found,omitempty"`
+
+	// PoisonerNames is the bait names the canary is asking for (#86 slice
+	// D), comma-separated, for the canary page's facts column. Absent from
+	// an agent built before the field existed, from one with the poisoner
+	// road off, and from every kind but a honeypot -- all of which are
+	// ordinary, and all of which are stored as NULL rather than as an empty
+	// list.
+	PoisonerNames string `json:"poisoner_names,omitempty"`
 }
 
 // ingestCommonHeartbeat is POST /ingest/heartbeat's body for every kind
@@ -130,6 +138,7 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 		Rejected:          body.Rejected,
 		EventIDCollisions: body.EventIDCollisions,
 		PositionFound:     body.PositionFound,
+		PoisonerNames:     body.PoisonerNames,
 	}
 	if err := store.RecordCanaryAgentHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), report); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {

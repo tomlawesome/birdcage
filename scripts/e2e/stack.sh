@@ -432,14 +432,30 @@ enrol_canary() {
 # ignore the agent's file capability and turn port-scan detection off
 # (docs/enrolment.md, and the trap comment in test:image:mockingbird).
 # ---------------------------------------------------------------------
+# Two of these edits are deletions, not substitutions: this stack deploys
+# no SMB lure, so its canary must not carry the lure's audit mount or
+# MOCKINGBIRD_SMB_AUDIT_PATH. Left in, `-v smb-audit:` has Docker create a
+# volume of that literal name -- unprefixed, shared by every stack on the
+# host, and removed by nobody's `down`. Found by finding one sitting there
+# after a run, which is also why this harness names everything else from
+# E2E_PREFIX.
+#
+# The sed range takes only the FIRST `docker run` block and quits. Since
+# #87 the enrolment output carries two -- the canary's, then the SMB
+# lure's -- and a range that did not quit would print both and eval a
+# concatenation of two commands. Found by running this, not by reading it:
+# the first stack.sh run after the lure landed failed with docker's own
+# usage message and nothing pointing at why.
 run_printed_command() {
   local command
   command="$(helper "
-sed -n '/^docker run /,/[^\\\\]\$/p' /work/enrol-output.txt \
+sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/enrol-output.txt \
   | sed -e 's|^docker run -d |docker run -d --network $NET |' \
         -e 's|--name mockingbird |--name $CANARY |' \
         -e 's|-v mockingbird-state:|-v $STATE_VOL:|' \
-        -e 's|-v mockingbird-log:|-v $LOG_VOL:|'
+        -e 's|-v mockingbird-log:|-v $LOG_VOL:|' \
+        -e '/-v smb-audit:/d' \
+        -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d'
 ")" || die "could not read the printed docker run command"
 
   case "$command" in

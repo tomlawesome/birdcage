@@ -67,6 +67,13 @@ Shipped as a binary in an agent image, never linked into birdcage:
   2026-09-22, #108. Chosen over Trivy against a verified comparison; the
   reasoning is in ADR-0010, "Engine: Grype". Its vulnerability database is
   fetched at runtime and cached, never vendored.
+- `samba-server` (Samba Team, via Alpine) — the SMB lure's whole reason to
+  exist, GPL-3.0-or-later; owner, 2026-09-23, #87 decision 1 ("Real Samba on
+  Alpine"). Pinned to an exact apk version in `build/smb-lure/Dockerfile` and
+  rebuilt on every Alpine security update to it. No apk licence gate exists,
+  so this entry and `supply-chain/dependency-inventory.md` row 226 are the
+  record; GPLv3 in a shipped image has the owner's precedent in
+  `hpfeeds@3.0.0`.
 
 Frontend (`frontend/package.json`), dev-only, never shipped:
 
@@ -137,3 +144,15 @@ request -- not a follow-up issue.
 Browser journeys run in Firefox, which is what the owner uses (#83).
 Safari and Edge are added at the `preview` -> `main` promotion, not on
 every change.
+
+## Attack-tool fixtures
+
+Owner, 2026-09-24: attack tooling used by the live checks -- Responder for
+#86, and anything like it later -- is never built in this repository.
+Its mirror is public, and a ready-to-run recipe for a poisoner is not
+something this project publishes. Such a fixture is built, scanned and
+kept current in the private fixtures project on GitLab
+(`ai/birdcage-fixtures`, #127) and pulled here by digest; the pin in
+`.gitlab-ci.yml` is the whole of what lives in this repository, and
+moving it is the version check. Never a Dockerfile, entrypoint or run
+recipe for such a tool here, not even under `build/e2e-*`.

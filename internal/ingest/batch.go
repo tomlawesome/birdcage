@@ -221,6 +221,32 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			insert.Synthetic = true
 		}
 
+		if opencanary.IsSelfTestResult(service) {
+			// Issue #86 slice C: the agent's own report of how a
+			// self-test target turned out. It has just been through the
+			// matcher above -- which is the whole point of it, since the
+			// target it belongs to grades silence as a pass and silence
+			// produces no other event to carry a marker -- and now it
+			// stops. Acked like any stored event so the agent's queue
+			// drains, never persisted as an alert, never counted in a
+			// canary's hits.
+			//
+			// Deliberately after the match rather than beside IsBase's
+			// skip above: a start-up line can never be a marker, so
+			// skipping it early costs nothing, whereas this event is
+			// nothing but a marker and skipping it early would throw the
+			// pass away.
+			//
+			// The raw is not logged. It carries the marker, and a marker
+			// in a log line is a marker an attacker who reads logs could
+			// replay to get their own traffic classified as synthetic --
+			// the inversion #46 decision 4 exists to prevent.
+			slog.Info("ingest: skipping a self-test result event",
+				"canary", tok.CanaryID, "event_id", ev.EventID, "synthetic", insert.Synthetic)
+			resp.Stored = append(resp.Stored, ev.EventID)
+			continue
+		}
+
 		stored, err := store.InsertAlertIfNew(r.Context(), h.db, insert)
 		if err != nil {
 			// An infrastructure failure is never turned into a rejection

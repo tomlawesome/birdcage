@@ -214,6 +214,83 @@ func (in *Intake) SubmitSNMPEvent(message []byte) error {
 	return nil
 }
 
+// SubmitSMBEvent is the fifth road into the queue (#87): a line the SMB
+// lure wrote into the audit file it shares with this container, read by
+// the tailer in smbaudit.go and parsed by internal/agent/smbaudit.
+// OpenCanary's own smb module stays disabled -- docs/opencanary.md's
+// table records why -- so, like the port-scan and snmp roads, this is our
+// own reader and not a wrapper around theirs.
+//
+// Same id scheme as every other road: SHA-256 of the emitted bytes,
+// verbatim. Those bytes are derived only from the audit line (see
+// smbaudit.Encode, which takes no clock), so re-reading a line -- which
+// is exactly what happens when the process restarts before its saved
+// position caught up -- mints the same id and Push drops the second copy.
+//
+// Unlike the port-scan and snmp roads, and like the log road, this one
+// waits for queue room before pushing: the audit file is a durable store
+// that will still hold the line in a moment, so blocking costs nothing
+// and dropping would cost the event. It appends no ledger entry, because
+// the ledger tracks positions in OpenCanary's log file and this line was
+// never in it; the audit file's own position is kept by smbaudit.go.
+func (in *Intake) SubmitSMBEvent(ctx context.Context, message []byte) error {
+	if err := in.waitForRoom(ctx); err != nil {
+		return err
+	}
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
+// SubmitPoisonerEvent is the sixth road into the queue (#86): something
+// on the segment answered a bait lookup for a name that does not exist,
+// which internal/agent/poisoner caught itself. OpenCanary's own llmnr
+// module is not behind it -- #85 ruled that module out of this image --
+// and it covers NBT-NS and mDNS as well, which upstream's does not.
+//
+// Same id scheme as the webhook, port-scan, snmp and smb roads -- SHA-256
+// of the emitted bytes, verbatim -- so Push's deduplication works across
+// all six roads without knowing which produced a given event. Like the
+// port-scan and snmp roads, it appends no ledger entry: this event was
+// never a line in OpenCanary's log file, so it has no log position to
+// record.
+func (in *Intake) SubmitPoisonerEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
+// SubmitSelfTestResultEvent is the seventh road into the queue (#86 slice C):
+// this agent's own report of how one self-test target turned out, which
+// exists because one target grades SILENCE as a pass and silence produces no
+// other event to carry the marker birdcage matches on.
+//
+// Same id scheme as every other road -- SHA-256 of the emitted bytes,
+// verbatim -- so Push's deduplication works across all seven without knowing
+// which produced a given event. Like the port-scan, snmp, smb and poisoner
+// roads, it appends no ledger entry: this event was never a line in
+// OpenCanary's log file, so it has no log position to record.
+//
+// It deliberately does not call observeClaim. An attributed-grade claim is
+// the agent saying "that other event over there was mine"; this event is the
+// self-test result itself, carrying its own marker, and birdcage matches it
+// by the ordinary substring path. Feeding it to the claim tracker as well
+// would offer it as a candidate for some other target's window.
+func (in *Intake) SubmitSelfTestResultEvent(message []byte) error {
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that
