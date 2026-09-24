@@ -36,11 +36,11 @@ func ensureEnrolled(stateDir, birdcageURL, caPin, deployToken string) error {
 // cmd/mockingbird/enrol.go's own writeEnrolmentState it writes only what
 // it actually reads back: the CA certificate, its mTLS identity, its
 // bearer token, and the ingest listener's own address.
-func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials) []enrolment.StateFile {
+func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []enrolment.StateFile {
 	return []enrolment.StateFile{
 		{Name: caFileName, Data: hello.CAPEM},
 		{Name: clientCertFileName, Data: creds.ClientCertPEM},
-		{Name: clientKeyFileName, Data: creds.ClientKeyPEM},
+		{Name: clientKeyFileName, Data: keyPEM},
 		{Name: tokenFileName, Data: []byte(creds.CanaryToken)},
 		{Name: ingestURLFileName, Data: []byte(hello.IngestURL)},
 	}
