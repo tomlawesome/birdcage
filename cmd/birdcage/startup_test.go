@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/history"
@@ -259,6 +262,83 @@ func TestLoadStartupConfigIngestURL(t *testing.T) {
 	}
 	if want := "https://canary.example.net:8443"; cfg.ingestURL != want {
 		t.Errorf("ingestURL = %q, want %q", cfg.ingestURL, want)
+	}
+}
+
+// TestLoadStartupConfigTestClientCertTTLUnsetIsZero proves #130's TTL
+// knob is a no-op -- zero, the "use the normal 7-day TTL" value -- when
+// BIRDCAGE_TEST_CLIENT_CERT_TTL is unset, matching every other cfg
+// field's plain-default behavior in TestLoadStartupConfigDefaults.
+func TestLoadStartupConfigTestClientCertTTLUnsetIsZero(t *testing.T) {
+	cfg, err := loadStartupConfig(envMap(nil), discardLog(), discardLog(), discardLog(), discardLog())
+	if err != nil {
+		t.Fatalf("loadStartupConfig: %v", err)
+	}
+	if cfg.testClientCertTTL != 0 {
+		t.Errorf("testClientCertTTL = %s, want 0 (unset)", cfg.testClientCertTTL)
+	}
+}
+
+// TestLoadStartupConfigTestClientCertTTLAccepted proves a short,
+// clearly-test-only value (minutes, the live-journey case #130 names)
+// parses through to cfg.testClientCertTTL untouched.
+func TestLoadStartupConfigTestClientCertTTLAccepted(t *testing.T) {
+	cfg, err := loadStartupConfig(envMap(map[string]string{
+		envTestClientCertTTL: "5m",
+	}), discardLog(), discardLog(), discardLog(), discardLog())
+	if err != nil {
+		t.Fatalf("loadStartupConfig: %v", err)
+	}
+	if cfg.testClientCertTTL != 5*time.Minute {
+		t.Errorf("testClientCertTTL = %s, want 5m", cfg.testClientCertTTL)
+	}
+}
+
+// TestLoadStartupConfigTestClientCertTTLRefusesUnparseable proves a
+// malformed value refuses startup rather than silently falling back to
+// the normal 7-day TTL.
+func TestLoadStartupConfigTestClientCertTTLRefusesUnparseable(t *testing.T) {
+	_, err := loadStartupConfig(envMap(map[string]string{
+		envTestClientCertTTL: "not-a-duration",
+	}), discardLog(), discardLog(), discardLog(), discardLog())
+	if err == nil {
+		t.Fatal("loadStartupConfig with an unparseable BIRDCAGE_TEST_CLIENT_CERT_TTL = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), envTestClientCertTTL) {
+		t.Errorf("error = %q, want it to name %s", err.Error(), envTestClientCertTTL)
+	}
+}
+
+// TestLoadStartupConfigTestClientCertTTLRefusesLongerThanSevenDays
+// proves the knob can only ever shorten ADR-0012 B2's 7-day certificate
+// life, never lengthen it: a value past 7 days refuses startup instead
+// of quietly becoming a longer-lived certificate than production ever
+// issues.
+func TestLoadStartupConfigTestClientCertTTLRefusesLongerThanSevenDays(t *testing.T) {
+	_, err := loadStartupConfig(envMap(map[string]string{
+		envTestClientCertTTL: "169h", // 7 days + 1 hour
+	}), discardLog(), discardLog(), discardLog(), discardLog())
+	if err == nil {
+		t.Fatal("loadStartupConfig with BIRDCAGE_TEST_CLIENT_CERT_TTL > 7 days = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), envTestClientCertTTL) {
+		t.Errorf("error = %q, want it to name %s", err.Error(), envTestClientCertTTL)
+	}
+}
+
+// TestLoadStartupConfigTestClientCertTTLRefusesZeroAndNegative proves
+// an explicit non-positive value is refused rather than silently
+// treated as "unset" -- an operator who typed BIRDCAGE_TEST_CLIENT_CERT_TTL=0m
+// meant something, and getting the normal 7-day TTL back without so
+// much as a warning would hide that mistake.
+func TestLoadStartupConfigTestClientCertTTLRefusesZeroAndNegative(t *testing.T) {
+	for _, raw := range []string{"0m", "-5m"} {
+		_, err := loadStartupConfig(envMap(map[string]string{
+			envTestClientCertTTL: raw,
+		}), discardLog(), discardLog(), discardLog(), discardLog())
+		if err == nil {
+			t.Fatalf("loadStartupConfig with BIRDCAGE_TEST_CLIENT_CERT_TTL=%s = nil error, want a refusal", raw)
+		}
 	}
 }
 
@@ -542,6 +622,97 @@ func TestBuildIngestServersOn(t *testing.T) {
 	}
 	if enrolSrv.Addr != cfg.enrolAddr {
 		t.Errorf("enrolSrv.Addr = %q, want %q", enrolSrv.Addr, cfg.enrolAddr)
+	}
+}
+
+// TestBuildIngestServersAppliesTestClientCertTTL is #130's proof that
+// BIRDCAGE_TEST_CLIENT_CERT_TTL actually reaches the certificate a live
+// enrolment gets, not just cfg.testClientCertTTL: before this, the
+// server's enrol.WithClientCertTTL/ingest.WithClientCertTTL options
+// existed but nothing in cmd/birdcage ever called them, so every
+// certificate lived the full 7 days regardless of what a test fixture
+// asked for. Drives a real POST /enrol/hello + POST /enrol/provision
+// through buildIngestServers' own enrol handler and checks the issued
+// certificate's lifetime is the short, test-only TTL, not
+// enrol.ClientCertTTL.
+func TestBuildIngestServersAppliesTestClientCertTTL(t *testing.T) {
+	birdcageCA := testCA(t)
+	database := openTestDB(t)
+	const shortTTL = 5 * time.Minute
+	cfg := startupConfig{
+		ingestAddr:        "127.0.0.1:18445",
+		enrolAddr:         "127.0.0.1:18446",
+		testClientCertTTL: shortTTL,
+	}
+	idx := store.NewSelfTestIndex()
+	_, enrolSrv, err := buildIngestServers(cfg, database, birdcageCA, nil, idx, nil, discardLog(), discardLog(), discardLog())
+	if err != nil {
+		t.Fatalf("buildIngestServers: %v", err)
+	}
+
+	now := time.Now().UTC()
+	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-ttl-test", "lane-a", agentkind.Honeypot, now)
+	if err != nil {
+		t.Fatalf("MintEnrolmentSession: %v", err)
+	}
+	secret, _, outcome, err := store.FirstContact(context.Background(), database, store.HashToken(raw), now)
+	if err != nil {
+		t.Fatalf("FirstContact: %v", err)
+	}
+	if outcome != store.Contacted {
+		t.Fatalf("FirstContact outcome = %v, want Contacted", outcome)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{}}, key)
+	if err != nil {
+		t.Fatalf("CreateCertificateRequest: %v", err)
+	}
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+
+	body, err := json.Marshal(struct {
+		EnrolmentSecret string `json:"enrolment_secret"`
+		CSRPEM          string `json:"csr_pem"`
+	}{EnrolmentSecret: secret, CSRPEM: string(csrPEM)})
+	if err != nil {
+		t.Fatalf("marshal provision request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/enrol/provision", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	enrolSrv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /enrol/provision status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		ClientCertPEM string `json:"client_cert_pem"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal provision response: %v", err)
+	}
+	block, _ := pem.Decode([]byte(resp.ClientCertPEM))
+	if block == nil {
+		t.Fatalf("client_cert_pem did not decode: %s", resp.ClientCertPEM)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	// internal/ca.SignClient backdates NotBefore by 5 minutes (clock
+	// skew allowance -- see internal/ca's own TestSignClientSignsTheRequestersKey),
+	// so a cert signed for shortTTL has a validity window of shortTTL
+	// plus that backdate, not shortTTL alone. Bounded well under
+	// enrol.ClientCertTTL (7 days), which is what this test exists to
+	// rule out.
+	gotTTL := cert.NotAfter.Sub(cert.NotBefore)
+	wantMin, wantMax := shortTTL, shortTTL+10*time.Minute
+	if gotTTL < wantMin || gotTTL > wantMax {
+		t.Errorf("issued certificate validity window = %s, want between %s and %s (BIRDCAGE_TEST_CLIENT_CERT_TTL was not applied)", gotTTL, wantMin, wantMax)
 	}
 }
 
