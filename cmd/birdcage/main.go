@@ -119,6 +119,19 @@ const (
 	// -- see the shared getCert closure in buildIngestServers below.
 	envEnrolAddr = "BIRDCAGE_ENROL_ADDR"
 
+	// envTestClientCertTTL is a test-only override for how long an
+	// issued or renewed client certificate lives (ADR-0012 B2's normal
+	// 7 days), so a live journey can drive a certificate to half-life
+	// and expiry in minutes instead of days (#130 scope: "TTL
+	// overridden to minutes in the fixture"). Refused above
+	// maxTestClientCertTTL so a typo or a value copied into a real
+	// deployment can never quietly outlive the real 7-day rule it is
+	// meant to shorten, not lengthen.
+	envTestClientCertTTL = "BIRDCAGE_TEST_CLIENT_CERT_TTL"
+	// maxTestClientCertTTL bounds envTestClientCertTTL: it can only ever
+	// shorten ADR-0012 B2's 7-day certificate life, never extend it.
+	maxTestClientCertTTL = 7 * 24 * time.Hour
+
 	defaultDBPath    = "birdcage.db"
 	defaultHTTPAddr  = ":8080"
 	defaultCADir     = "/var/lib/birdcage/ca"

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 )
 
 // Environment variables this agent reads -- the only configuration
@@ -159,6 +161,15 @@ func loadConfig() (Config, error) {
 
 	cfg.TokenPath = filepath.Join(cfg.StateDir, tokenFileName)
 	cfg.PositionPath = filepath.Join(cfg.StateDir, positionFileName)
+
+	// ADR-0012 B2: finish or discard whatever a certificate renewal left
+	// staged before this boot reads clientCertFileName/clientKeyFileName
+	// below -- see internal/agent/renewal's own doc comment for why a
+	// crash between the two files' writes needs this, and why it is safe
+	// to call unconditionally on every boot.
+	if err := renewal.RecoverPendingSwap(cfg.StateDir, clientKeyFileName, clientCertFileName); err != nil {
+		return Config{}, fmt.Errorf("recover pending certificate renewal: %s", safeErr(err))
+	}
 
 	// BaseURL prefers whatever enrolment itself learned the ingest
 	// listener's address to be -- envBirdcageURL, once enrolled, names

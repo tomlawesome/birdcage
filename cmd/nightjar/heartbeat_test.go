@@ -2,8 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -11,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 )
 
 // newTestClient builds a client.Client trusting ts's own certificate --
@@ -30,6 +37,36 @@ func newTestClient(t *testing.T, ts *httptest.Server) *client.Client {
 		t.Fatalf("client.New: %v", err)
 	}
 	return c
+}
+
+// newTestRenewalManager builds a renewal.Manager whose current
+// certificate is fresh (half-life 30 minutes out), so Tick is a no-op --
+// mirrors cmd/mockingbird/helpers_test.go's own helper of the same name,
+// needed here because this package's heartbeat loop now drives one
+// renewal check per tick alongside the heartbeat itself.
+func newTestRenewalManager(t *testing.T) *renewal.Manager {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "renewal-test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return renewal.NewManager(t.TempDir(), clientKeyFileName, clientCertFileName, certPEM, keyPEM)
 }
 
 // TestSendHeartbeatPostsCommonShapeOnly is issue #106's own required
@@ -109,7 +146,7 @@ func TestRunHeartbeatLoopSendsImmediatelyThenOnEachTick(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runHeartbeatLoop(ctx, c, "tok", "v-test", 10*time.Millisecond)
+		runHeartbeatLoop(ctx, c, "tok", newTestRenewalManager(t), "v-test", 10*time.Millisecond)
 	}()
 
 	select {

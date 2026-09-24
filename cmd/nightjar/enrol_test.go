@@ -27,10 +27,10 @@ func TestWriteEnrolmentStateWritesOnlyWhatNightjarReadsBack(t *testing.T) {
 		CanaryID:      "canary-1",
 		CanaryToken:   "tok-abc",
 		ClientCertPEM: []byte("client-cert-pem"),
-		ClientKeyPEM:  []byte("client-key-pem"),
 	}
+	keyPEM := []byte("client-key-pem")
 
-	files := writeEnrolmentState(hello, creds)
+	files := writeEnrolmentState(hello, creds, keyPEM)
 
 	want := map[string]string{
 		caFileName:         "ca-pem-bytes",

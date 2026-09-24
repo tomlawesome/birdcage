@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
@@ -38,17 +39,19 @@ const heartbeatInterval = 60 * time.Second
 // is logged and left for the next tick; the agent never invents a path
 // back to a token mint, and recovery is re-enrolment (#47), the same
 // stance every agent takes on its own dead credential.
-func runHeartbeatLoop(ctx context.Context, c *client.Client, token, version string, interval time.Duration) {
+func runHeartbeatLoop(ctx context.Context, c *client.Client, token string, rm *renewal.Manager, version string, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	sendHeartbeat(ctx, c, token, version)
+	runRenewalTick(ctx, rm, c, token)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			sendHeartbeat(ctx, c, token, version)
+			runRenewalTick(ctx, rm, c, token)
 		}
 	}
 }

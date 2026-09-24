@@ -34,7 +34,7 @@ func TestBootBadClientConfig(t *testing.T) {
 	cfg := Config{
 		TokenPath: filepath.Join(t.TempDir(), tokenFileName),
 	}
-	cli, token, err := boot(cfg)
+	cli, token, _, err := boot(cfg)
 	if err == nil {
 		t.Fatal("boot succeeded with an empty BirdcageURL, want an error")
 	}
@@ -63,7 +63,7 @@ func TestBootMissingTokenPath(t *testing.T) {
 		CACert:      serverCertPEM(t, ts),
 		TokenPath:   filepath.Join(t.TempDir(), "no-such-token"),
 	}
-	_, _, err := boot(cfg)
+	_, _, _, err := boot(cfg)
 	if err == nil {
 		t.Fatal("boot succeeded with a missing token file, want an error")
 	}
@@ -94,7 +94,7 @@ func TestBootSuccess(t *testing.T) {
 		CACert:      serverCertPEM(t, ts),
 		TokenPath:   tokenPath,
 	}
-	cli, token, err := boot(cfg)
+	cli, token, _, err := boot(cfg)
 	if err != nil {
 		t.Fatalf("boot: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRunStopsPromptlyOnCancelledContext(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		run(ctx, cfg, c, "tok", "v-test", slog.New(slog.DiscardHandler))
+		run(ctx, cfg, c, "tok", newTestRenewalManager(t), "v-test", slog.New(slog.DiscardHandler))
 		close(done)
 	}()
 

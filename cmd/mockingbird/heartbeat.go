@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
@@ -28,7 +29,11 @@ type selfReportFunc func() client.SelfReport
 // runHeartbeatLoop sends the agent's self-report immediately, then every
 // heartbeatInterval (#48 item 6, decision 4's cadence), on a
 // time.Ticker -- monotonic, per #48's hard constraint that no agent
-// cadence may evaluate wall-clock time.
+// cadence may evaluate wall-clock time. Each tick also drives one
+// certificate-renewal check (runRenewalTick, ADR-0012 B2: "on every
+// heartbeat tick") -- sharing this loop's cadence rather than running a
+// separate ticker, since both are meant to fire together and neither
+// needs finer timing than the other.
 //
 // 401 handling is this loop's instance of decision 4's uniform rule,
 // via authedRetry: on ErrUnauthorized, re-check the token store in case
@@ -37,17 +42,19 @@ type selfReportFunc func() client.SelfReport
 // next tick rather than stopping -- the agent never invents a path back
 // to a token mint (recovery is re-enrolment, #47), and a persistent 401
 // here is exactly the signal #45's token-conflict state reads.
-func runHeartbeatLoop(ctx context.Context, c *client.Client, ts *TokenStore, report selfReportFunc) {
+func runHeartbeatLoop(ctx context.Context, c *client.Client, ts *TokenStore, rm *renewal.Manager, report selfReportFunc) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	sendHeartbeat(ctx, c, ts, report)
+	runRenewalTick(ctx, rm, c, ts)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			sendHeartbeat(ctx, c, ts, report)
+			runRenewalTick(ctx, rm, c, ts)
 		}
 	}
 }

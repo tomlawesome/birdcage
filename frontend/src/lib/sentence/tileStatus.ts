@@ -10,7 +10,7 @@
 //   silent:           "○ silent 6 m 12 s · last heard 21:58:19"
 // Reads TraceCanary (fetchTrace), not Canary (fetchCanaries) -- the hit
 // times and kinds this needs only exist at that granularity.
-import type { CanaryStatus, LastHit, VisitorKind } from '../types'
+import type { CanaryStatus, CredentialConflict, LastHit, VisitorKind } from '../types'
 import { durationExact } from './duration'
 import { formatClock, formatClockShort, relativeDayLabel } from './time'
 import { portForService } from './ports'
@@ -39,6 +39,16 @@ export interface TileCanaryInput {
   rotation_stalled_for_s?: number
   rotation_stalled_escalated?: boolean
   token_conflict_for_s?: number
+  // ADR-0012 Part B (issue #130): renewal_stalled is rotation_stalled's
+  // certificate twin, same independent-of-`status` carrying.
+  // certificate_expired says why not_delivering is on when the agent's
+  // own log-read report did not. credential_conflict names the two
+  // source addresses and/or the two agent build versions seen.
+  renewal_stalled?: boolean
+  renewal_stalled_for_s?: number
+  renewal_stalled_escalated?: boolean
+  certificate_expired?: boolean
+  credential_conflict?: CredentialConflict
   // issue #46: the most recently completed self-test round, carried the
   // same independent way -- present whether or not it is what made
   // `status` self_test_failed, since a passing run still earns its own
@@ -94,17 +104,47 @@ function withSelfTest(lines: Segment[][], canary: TileCanaryInput): TileStatusRe
  * cls 'al' is the existing critical/alarm colour (Tiles.svelte); 'wn' is
  * new here for the degraded tier, reusing the existing --repeat colour
  * token rather than picking a new one. */
+/** The tile line's short clause for credential_conflict -- one line, no
+ * bold segments (the tile line is a single plain string, unlike the
+ * hero sentences' Segment[]), so addresses/versions render as text
+ * only. */
+function credentialConflictShort(cc: CredentialConflict | undefined): string {
+  const addrs = cc?.addresses
+  if (addrs && addrs.length >= 2) return `in use from two addresses: ${addrs[0]} and ${addrs[1]}`
+  const versions = cc?.versions
+  if (versions && versions.length >= 2) return `in use from two builds: ${versions[0]} and ${versions[1]}`
+  return 'in use from two places at once'
+}
+
 function otherStateLine(canary: TileCanaryInput): Segment[] | null {
   switch (canary.status as CanaryStatus) {
     case 'token_conflict':
+      // ADR-0012 Part B widens this to also mean a superseded
+      // certificate still in use, not tokens alone.
       return [
         {
-          text: `⚠ token conflict ${durationExact(canary.token_conflict_for_s ?? 0)} · a revoked token was reused — look at the box now`,
+          text: `⚠ token conflict ${durationExact(canary.token_conflict_for_s ?? 0)} · a revoked credential was reused — look at the box now`,
           cls: 'al',
         },
       ]
+    case 'credential_conflict':
+      // ADR-0012 Part B (#130): the same live credential seen from two
+      // places at once, ranked with token_conflict (same 'al' colour).
+      // The ADR's own sentence names the two source addresses when the
+      // API sent them, its build twin when only versions were sent, and
+      // a bare clause when the window caught neither.
+      return [{ text: `⚠ credential conflict · ${credentialConflictShort(canary.credential_conflict)} — revoke the node`, cls: 'al' }]
     case 'not_delivering':
-      return [{ text: `⚠ not delivering · the agent can't read its log`, cls: 'al' }]
+      // ADR-0012 Part B (#130): certificate_expired says why this is on
+      // when the agent's own log-read report did not.
+      return [
+        {
+          text: canary.certificate_expired
+            ? `⚠ not delivering · its certificate expired`
+            : `⚠ not delivering · the agent can't read its log`,
+          cls: 'al',
+        },
+      ]
     case 'self_test_failed':
       // Issue #46 (health.go's StateTestFailed, note 22577's tile line):
       // birdcage's own daily self-test found a service that never
@@ -144,6 +184,21 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
       return [
         {
           text: `⏳ rotation stalled ${durationExact(canary.rotation_stalled_for_s ?? 0)} · ${what} — check the agent`,
+          cls: 'wn',
+        },
+      ]
+    }
+    case 'renewal_stalled': {
+      // ADR-0012 Part B (#130): rotation_stalled's certificate twin --
+      // the agent renews its own certificate from half-life (ADR-0012
+      // B2) rather than birdcage issuing one, so the not-escalated
+      // clause names that instead of "a fresh token".
+      const what = canary.renewal_stalled_escalated
+        ? 'no renewal completed in over a day'
+        : "past its renewal point, not yet renewed"
+      return [
+        {
+          text: `⏳ renewal stalled ${durationExact(canary.renewal_stalled_for_s ?? 0)} · ${what} — check the agent can reach ingest`,
           cls: 'wn',
         },
       ]

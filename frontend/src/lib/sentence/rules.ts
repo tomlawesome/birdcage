@@ -117,9 +117,9 @@ function rule2(silent: Canary, canaries: Canary[], now: string, lastHit: LastHit
 // log-read report; rotation-stalled has two triggers the frontend
 // cannot tell apart except through `escalated`).
 
-/** Token conflict: a revoked token was presented while its successor is
- * active (#45 state 7) -- the one state whose next step is "look at the
- * box now". */
+/** Token conflict: a revoked credential -- token or, since ADR-0012 Part
+ * B, certificate -- was presented while its successor is active (#45
+ * state 7) -- the one state whose next step is "look at the box now". */
 function rule2TokenConflict(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
   return {
     rule: 2,
@@ -129,8 +129,8 @@ function rule2TokenConflict(c: Canary, canaries: Canary[], now: string, lastHit:
       { text: agoWords(c.token_conflict_for_s ?? 0), bold: true },
       {
         text:
-          ', while its successor was already active. Either the token was stolen and the thief rotated first, ' +
-          'or two boxes share one identity. ',
+          ', while its successor was already active. Either the credential was stolen and the thief rotated ' +
+          'first, or two boxes share one identity. ',
       },
       { text: 'Look at the box now.', bold: true },
       ...othersFine(canaries, c),
@@ -138,23 +138,81 @@ function rule2TokenConflict(c: Canary, canaries: Canary[], now: string, lastHit:
   }
 }
 
-/** Not delivering: the agent's own self-report says its log read is
- * failing while its heartbeats are fine (#45 state 3) -- the page would
- * read quiet whatever the canary caught, which is #45's founding case. */
+/** Credential conflict (ADR-0012 Part B, issue #130): the same live
+ * credential -- one certificate fingerprint -- seen from two places at
+ * once within a heartbeat interval, ranked with token_conflict (same red
+ * severity, never auto-cleared). The API's `credential_conflict` object
+ * (internal/store.CredentialConflict) names the two source addresses
+ * and/or the two agent build versions seen; the ADR's own sentence
+ * ("credential in use from two addresses: <a> and <b>") is used
+ * verbatim when addresses are present, its build twin when only
+ * versions are, and a bare sentence when the window caught neither. */
+function credentialConflictDetail(c: Canary): Segment[] {
+  const addrs = c.credential_conflict?.addresses
+  if (addrs && addrs.length >= 2) {
+    return [
+      { text: 'credential in use from two addresses: ' },
+      { text: addrs[0], bold: true },
+      { text: ' and ' },
+      { text: addrs[1], bold: true },
+      { text: '. A copy of its key may be in use elsewhere, or the node itself moved address. ' },
+    ]
+  }
+  const versions = c.credential_conflict?.versions
+  if (versions && versions.length >= 2) {
+    return [
+      { text: 'credential in use from two builds: ' },
+      { text: versions[0], bold: true },
+      { text: ' and ' },
+      { text: versions[1], bold: true },
+      { text: '. A copy of its key may be in use on a second install, or the node itself was reimaged. ' },
+    ]
+  }
+  return [
+    {
+      text:
+        'Its credential is in use from two places at once. A copy of its key may be in use elsewhere, or the ' +
+        'node itself moved. ',
+    },
+  ]
+}
+
+function rule2CredentialConflict(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s credential is live in two places at once.`, bold: true }],
+    sub: [...credentialConflictDetail(c), { text: 'Revoke the node and re-enrol it.', bold: true }, ...othersFine(canaries, c)],
+  }
+}
+
+/** Not delivering: normally the agent's own self-report saying its log
+ * read is failing while its heartbeats are fine (#45 state 3) -- the
+ * page would read quiet whatever the canary caught, which is #45's
+ * founding case. ADR-0012 Part B (#130) adds a second cause the agent
+ * never reports itself: `certificate_expired` when renewal_stalled ran
+ * out the clock and the certificate it was using has expired, so it can
+ * no longer authenticate at all. */
 function rule2NotDelivering(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const body: Segment[] = c.certificate_expired
+    ? [
+        {
+          text:
+            "Its certificate expired before the agent renewed it, so it can no longer authenticate to birdcage " +
+            '— whatever the canary catches never reaches this page. ',
+        },
+      ]
+    : [
+        {
+          text:
+            "Its heartbeats arrive on time, but its agent can't read OpenCanary's log, so whatever the canary " +
+            'catches never reaches this page — which would read just the same if the canary were catching someone ' +
+            'right now. ',
+        },
+      ]
   return {
     rule: 2,
     hero: [...quietBut(now, lastHit), { text: `${c.name} is not delivering.`, bold: true }],
-    sub: [
-      {
-        text:
-          "Its heartbeats arrive on time, but its agent can't read OpenCanary's log, so whatever the canary " +
-          'catches never reaches this page — which would read just the same if the canary were catching someone ' +
-          'right now. ',
-      },
-      { text: 'Check the agent on the box.', bold: true },
-      ...othersFine(canaries, c),
-    ],
+    sub: [...body, { text: 'Check the agent on the box.', bold: true }, ...othersFine(canaries, c)],
   }
 }
 
@@ -237,6 +295,36 @@ function rule2RotationStalled(c: Canary, canaries: Canary[], now: string, lastHi
   }
 }
 
+/** Renewal stalled (ADR-0012 Part B, issue #130): the certificate twin
+ * of rotation_stalled, same shape and the same degraded severity. The
+ * agent renews its own certificate from half-life (B2); past that point
+ * with no successful renewal, it becomes not_delivering once the
+ * certificate itself expires -- so nothing is missed yet, but the clock
+ * is running. */
+function rule2RenewalStalled(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const opening: Segment[] = c.renewal_stalled_escalated
+    ? [{ text: "It hasn't renewed its certificate in over a day past its renewal point." }]
+    : [
+        { text: 'Its certificate passed its renewal point ' },
+        { text: agoWords(c.renewal_stalled_for_s ?? 0), bold: true },
+        { text: " and the agent hasn't renewed it." },
+      ]
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s certificate renewal has stalled.`, bold: true }],
+    sub: [
+      ...opening,
+      {
+        text:
+          ' It still phones home every minute on the old certificate — nothing is being missed yet, but it will ' +
+          'stop working once the certificate expires. ',
+      },
+      { text: "Check the agent can reach birdcage's ingest listener.", bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** No fixture or shot covers this state; the issue gives only an example
  * shape ("One address swept all four on {day}; {ip} keeps knocking on
  * {canary} :{port}."), so this builds one line per visitor kind present
@@ -280,11 +368,15 @@ function rule3(visitors: Visitor[], canaries: Canary[], range: Range): SentenceR
 // response, not database logic).
 const HEALTH_RANK: Record<CanaryStatus, number> = {
   token_conflict: 0,
+  // ADR-0012 Part B (#130): ranked with token_conflict, same severity.
+  credential_conflict: 0,
   silent: 1,
   not_delivering: 2,
   self_test_failed: 3,
   throttled: 4,
   rotation_stalled: 5,
+  // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
+  renewal_stalled: 5,
   pending: 6,
   ok: 7,
 }
@@ -356,6 +448,8 @@ export function computeSentence(
     switch (worst.status) {
       case 'token_conflict':
         return rule2TokenConflict(worst, canaries, now, lastHit)
+      case 'credential_conflict':
+        return rule2CredentialConflict(worst, canaries, now, lastHit)
       case 'silent':
         return rule2(worst, canaries, now, lastHit)
       case 'not_delivering':
@@ -366,6 +460,8 @@ export function computeSentence(
         return rule2Throttled(worst, canaries, now, lastHit)
       case 'rotation_stalled':
         return rule2RotationStalled(worst, canaries, now, lastHit)
+      case 'renewal_stalled':
+        return rule2RenewalStalled(worst, canaries, now, lastHit)
     }
   }
 

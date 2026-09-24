@@ -33,11 +33,15 @@ export type StatusInfo =
 
 const RANK: Record<CanaryStatus, number> = {
   token_conflict: 0,
+  // ADR-0012 Part B (#130): ranked with token_conflict, same severity.
+  credential_conflict: 0,
   silent: 1,
   not_delivering: 2,
   self_test_failed: 3,
   throttled: 4,
   rotation_stalled: 5,
+  // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
+  renewal_stalled: 5,
   pending: 6,
   ok: 7,
 }
@@ -58,6 +62,8 @@ function label(c: Canary): string {
   switch (c.status) {
     case 'token_conflict':
       return `${c.name} token conflict ${durationCoarse(c.token_conflict_for_s ?? 0)} — look at the box now`
+    case 'credential_conflict':
+      return `${c.name} credential conflict — revoke the node`
     case 'not_delivering':
       return `${c.name} not delivering`
     case 'self_test_failed': {
@@ -68,6 +74,8 @@ function label(c: Canary): string {
       return `${c.name} throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
       return `${c.name} rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
+    case 'renewal_stalled':
+      return `${c.name} renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
     default:
       return c.name
   }
@@ -95,13 +103,14 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
   }
   if (
     worst?.status === 'token_conflict' ||
+    worst?.status === 'credential_conflict' ||
     worst?.status === 'not_delivering' ||
     worst?.status === 'self_test_failed' ||
     worst?.status === 'throttled'
   ) {
     return { kind: 'critical', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
-  if (worst?.status === 'rotation_stalled') {
+  if (worst?.status === 'rotation_stalled' || worst?.status === 'renewal_stalled') {
     return { kind: 'degraded', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
   if (visitorCount > 0) {

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agent/certkey"
 	"github.com/tomlawesome/birdcage/internal/agent/enrol"
 )
 
@@ -124,6 +125,7 @@ func newFakeEnrolServer(t *testing.T, deployToken, enrolmentSecret string) (ts *
 		atomic.AddInt32(&provision, 1)
 		var req struct {
 			EnrolmentSecret string `json:"enrolment_secret"`
+			CSRPEM          string `json:"csr_pem"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.EnrolmentSecret != enrolmentSecret {
@@ -131,12 +133,26 @@ func newFakeEnrolServer(t *testing.T, deployToken, enrolmentSecret string) (ts *
 			_, _ = w.Write([]byte(`{"error":"refused"}`))
 			return
 		}
+		// ADR-0012 B1: birdcage never sees a private key, only a CSR --
+		// prove this fake server (and therefore EnsureEnrolled's own
+		// request) really carries one, and never a client_key_pem in the
+		// response.
+		block, _ := pem.Decode([]byte(req.CSRPEM))
+		if block == nil || block.Type != "CERTIFICATE REQUEST" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"missing or invalid csr_pem"}`))
+			return
+		}
+		if _, err := x509.ParseCertificateRequest(block.Bytes); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unparseable csr_pem"}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"canary_id":            "node-lifecycle-1",
 			"canary_token":         "test-canary-token",
 			"client_cert_pem":      "PLACEHOLDER-CLIENT-CERT-PEM",
-			"client_key_pem":       "PLACEHOLDER-CLIENT-KEY-PEM",
 			"heartbeat_interval_s": 30,
 		})
 	})
@@ -165,11 +181,11 @@ func testParams(t *testing.T, dir string) Params {
 		DeployTokenEnvName: "TEST_DEPLOY_TOKEN",
 		RequiredFiles:      []string{"ca.pem", "client.pem", "client-key.pem", "token"},
 		NodeNoun:           "canary",
-		WriteState: func(hello enrol.Hello, creds enrol.Credentials) []StateFile {
+		WriteState: func(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []StateFile {
 			return []StateFile{
 				{Name: "ca.pem", Data: hello.CAPEM},
 				{Name: "client.pem", Data: creds.ClientCertPEM},
-				{Name: "client-key.pem", Data: creds.ClientKeyPEM},
+				{Name: "client-key.pem", Data: keyPEM},
 				{Name: "token", Data: []byte(creds.CanaryToken)},
 				{Name: "ingest-url", Data: []byte(hello.IngestURL)},
 			}
@@ -210,6 +226,21 @@ func TestEnsureEnrolledFullLifecycle(t *testing.T) {
 			t.Errorf("%s mode = %o, want 0600", name, perm)
 		}
 	}
+	// ADR-0012 B1: the client key on disk is the agent's own, never
+	// something birdcage sent -- it must parse as a real ECDSA key, and
+	// the staging file must be gone once enrolment has folded it into
+	// client-key.pem.
+	keyPEM, err := os.ReadFile(filepath.Join(dir, "client-key.pem"))
+	if err != nil {
+		t.Fatalf("read client-key.pem: %v", err)
+	}
+	if _, err := certkey.ParseKeyPEM(keyPEM); err != nil {
+		t.Errorf("client-key.pem does not parse as an ECDSA key: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); !os.IsNotExist(err) {
+		t.Errorf("pending key staging file still present after successful enrolment (err=%v)", err)
+	}
+
 	tok, err := os.ReadFile(filepath.Join(dir, "token"))
 	if err != nil {
 		t.Fatalf("read token: %v", err)
@@ -458,5 +489,393 @@ func TestWriteStateLeavesPartialWritesOnFailure(t *testing.T) {
 	}
 	if string(got) != "ok" {
 		t.Fatalf("first = %q, want %q", got, "ok")
+	}
+}
+
+// TestEnrolAtBootReusesPendingKeyAcrossProvisionRetries proves ADR-0012
+// B1's own requirement: a provisioning attempt that fails and is retried
+// signs its CSR with the same key every time, not a fresh one per
+// attempt. The fake server here refuses the first provision call (a
+// retryable network-shaped failure would also work, but a 401-then-200
+// sequence is not possible through this package's own retryEnrolStep,
+// which never retries a deterministic refusal -- so this drives the
+// retry via two genuinely separate EnsureEnrolled calls against the same
+// state directory instead, the same "crash and restart before
+// provisioning completed" case loadOrGeneratePendingKey's own doc
+// comment names).
+func TestEnrolAtBootReusesPendingKeyAcrossProvisionRetries(t *testing.T) {
+	caDER, caCert, caKey := genCA(t, "retry-test-ca")
+	leafDER, leafKey := genLeaf(t, caCert, caKey)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+
+	var provisionAttempts int32
+	var firstCSRPubKey atomic.Value
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /enrol/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"enrolment_secret":       "enrol-secret",
+			"ca_pem":                 string(caPEM),
+			"ingest_url":             "https://ingest.invalid:8443",
+			"window_deadline":        time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339),
+			"admin_approval_address": "admin@example.com",
+			"release_address":        "release@example.com",
+		})
+	})
+	mux.HandleFunc("POST /enrol/provision", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&provisionAttempts, 1)
+		var req struct {
+			CSRPEM string `json:"csr_pem"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		block, _ := pem.Decode([]byte(req.CSRPEM))
+		csr, err := x509.ParseCertificateRequest(block.Bytes)
+		if err != nil {
+			t.Fatalf("server: parse CSR: %v", err)
+		}
+		pubDER, err := x509.MarshalPKIXPublicKey(csr.PublicKey)
+		if err != nil {
+			t.Fatalf("server: marshal CSR public key: %v", err)
+		}
+
+		if n == 1 {
+			firstCSRPubKey.Store(pubDER)
+			// Refuse the first attempt outright -- an ordinary "boot
+			// crashed / provisioning window raced" style failure. This
+			// is deterministic (ErrRefused), so this package's own
+			// retryEnrolStep does not retry it internally; the test
+			// itself drives the second attempt via a second
+			// EnsureEnrolled call below, exactly like a restarted
+			// process would.
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"refused"}`))
+			return
+		}
+
+		if !bytes.Equal(pubDER, firstCSRPubKey.Load().([]byte)) {
+			t.Errorf("second provision attempt's CSR public key differs from the first's -- pending key was not reused")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"canary_id":            "node-retry-1",
+			"canary_token":         "test-canary-token",
+			"client_cert_pem":      "PLACEHOLDER-CLIENT-CERT-PEM",
+			"heartbeat_interval_s": 30,
+		})
+	})
+
+	server := httptest.NewUnstartedServer(mux)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{leafDER, caDER},
+			PrivateKey:  leafKey,
+		}},
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	p := testParams(t, dir)
+	p.BirdcageURL = server.URL
+	p.CAPin = pinFor(caDER)
+	p.DeployToken = "deploy-tok"
+
+	// First boot: hello succeeds, provision is refused. EnsureEnrolled
+	// itself fails, but the pending key it generated is left staged on
+	// disk -- exactly what a crashed or restarted process would find.
+	if err := EnsureEnrolled(context.Background(), p); err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite provision refusing the first attempt")
+	}
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); err != nil {
+		t.Fatalf("pending key staging file missing after a failed provision attempt: %v", err)
+	}
+
+	// Second boot, same state directory: provision succeeds this time.
+	// The server itself asserts the CSR's public key matches the first
+	// attempt's.
+	p2 := testParams(t, dir)
+	p2.BirdcageURL = server.URL
+	p2.CAPin = pinFor(caDER)
+	p2.DeployToken = "deploy-tok"
+	if err := EnsureEnrolled(context.Background(), p2); err != nil {
+		t.Fatalf("EnsureEnrolled (second attempt): %v", err)
+	}
+	if got := atomic.LoadInt32(&provisionAttempts); got != 2 {
+		t.Fatalf("provision attempts = %d, want 2", got)
+	}
+}
+
+// TestLoadOrGeneratePendingKeyReusesExistingKey proves the first branch
+// of ADR-0012 B1's reuse requirement directly: a pending key already
+// staged on disk by an earlier attempt is parsed and returned as-is,
+// never silently replaced by a fresh one.
+func TestLoadOrGeneratePendingKeyReusesExistingKey(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey (stage): %v", err)
+	}
+	stagedPEM, err := os.ReadFile(filepath.Join(dir, pendingKeyFileName))
+	if err != nil {
+		t.Fatalf("read staged key: %v", err)
+	}
+
+	second, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey (reuse): %v", err)
+	}
+	if !first.Equal(second) {
+		t.Error("loadOrGeneratePendingKey returned a different key on the second call, want the staged one reused")
+	}
+	gotPEM, err := os.ReadFile(filepath.Join(dir, pendingKeyFileName))
+	if err != nil {
+		t.Fatalf("read staged key after reuse: %v", err)
+	}
+	if !bytes.Equal(stagedPEM, gotPEM) {
+		t.Error("staged key file changed on a pure reuse call")
+	}
+}
+
+// TestLoadOrGeneratePendingKeyRegeneratesOnCorruptFile proves the
+// fall-through branch: a staged file that exists but does not parse as
+// an ECDSA key is not a fatal error -- it is replaced by a freshly
+// generated, parseable key, durably staged in its place.
+func TestLoadOrGeneratePendingKeyRegeneratesOnCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, pendingKeyFileName)
+	if err := os.WriteFile(path, []byte("not a valid pending key"), 0o600); err != nil {
+		t.Fatalf("seed corrupt pending key: %v", err)
+	}
+
+	key, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey against a corrupt staged file: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadOrGeneratePendingKey returned a nil key")
+	}
+
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read regenerated staged key: %v", err)
+	}
+	if string(onDisk) == "not a valid pending key" {
+		t.Fatal("corrupt staged key file was never replaced")
+	}
+	parsed, err := certkey.ParseKeyPEM(onDisk)
+	if err != nil {
+		t.Fatalf("regenerated staged key does not parse: %v", err)
+	}
+	if !key.Equal(parsed) {
+		t.Error("returned key does not match the key now staged on disk")
+	}
+}
+
+// TestEnrolAtBootWrapsPendingKeyFailure proves enrolAtBoot's "prepare
+// client key" error-wrapping branch: when loadOrGeneratePendingKey
+// cannot durably stage a key (here, the staging path is occupied by a
+// directory, so atomicfile.Write's rename can never land), EnsureEnrolled
+// fails with that step named, and never contacts /enrol/provision.
+func TestEnrolAtBootWrapsPendingKeyFailure(t *testing.T) {
+	ts, pin, helloHits, provisionHits := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, pendingKeyFileName), 0o700); err != nil {
+		t.Fatalf("seed pending-key directory collision: %v", err)
+	}
+
+	p := testParams(t, dir)
+	p.BirdcageURL = ts.URL
+	p.CAPin = pin
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite an unstageable pending key")
+	}
+	if !strings.Contains(err.Error(), "prepare client key") {
+		t.Errorf("error = %q, want it to name the prepare-client-key step", err)
+	}
+	if got, want := atomic.LoadInt32(helloHits), int32(1); got != want {
+		t.Errorf("hello hits = %d, want %d", got, want)
+	}
+	if got := atomic.LoadInt32(provisionHits); got != 0 {
+		t.Errorf("provision hits = %d, want 0 (must not be reached after key preparation fails)", got)
+	}
+}
+
+// TestEnrolAtBootWrapsFirstContactGenericError proves the non-refused,
+// non-retryable branch of FirstContact's own error handling: a
+// deterministic failure that is neither a network error nor an
+// ErrRefused (here, a CAPin that does not match the server's actual
+// certificate) is reported as a plain wrapped "first contact" error, not
+// the deploy-token-refused message and not retried.
+func TestEnrolAtBootWrapsFirstContactGenericError(t *testing.T) {
+	ts, _, helloHits, _ := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	p := testParams(t, dir)
+	p.BirdcageURL = ts.URL
+	p.CAPin = strings.Repeat("ab", sha256.Size) // well-formed, but matches nothing
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded with a CAPin matching no presented certificate")
+	}
+	if !strings.Contains(err.Error(), "first contact") {
+		t.Errorf("error = %q, want it to name the first-contact step", err)
+	}
+	if strings.Contains(err.Error(), "deploy token refused") {
+		t.Errorf("error = %q, a pin mismatch must not be reported as a refused deploy token", err)
+	}
+	if got, want := atomic.LoadInt32(helloHits), int32(0); got != want {
+		t.Errorf("hello hits = %d, want %d (the TLS handshake itself must fail before the handler runs)", got, want)
+	}
+}
+
+// TestEnrolAtBootWrapsProvisionGenericError proves the non-refused,
+// non-retryable branch of Provision's own error handling: a deterministic
+// non-200/401 response is reported as a plain wrapped "provision" error,
+// never the enrolment-secret-refused message.
+func TestEnrolAtBootWrapsProvisionGenericError(t *testing.T) {
+	caDER, caCert, caKey := genCA(t, "provision-error-test-ca")
+	leafDER, leafKey := genLeaf(t, caCert, caKey)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /enrol/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"enrolment_secret":       "enrol-secret",
+			"ca_pem":                 string(caPEM),
+			"ingest_url":             "https://ingest.invalid:8443",
+			"window_deadline":        time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339),
+			"admin_approval_address": "admin@example.com",
+			"release_address":        "release@example.com",
+		})
+	})
+	mux.HandleFunc("POST /enrol/provision", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
+	})
+
+	server := httptest.NewUnstartedServer(mux)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{leafDER, caDER},
+			PrivateKey:  leafKey,
+		}},
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	p := testParams(t, dir)
+	p.BirdcageURL = server.URL
+	p.CAPin = pinFor(caDER)
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite a 500 from /enrol/provision")
+	}
+	if !strings.Contains(err.Error(), "provision") {
+		t.Errorf("error = %q, want it to name the provision step", err)
+	}
+	if strings.Contains(err.Error(), "enrolment secret refused") {
+		t.Errorf("error = %q, a 500 must not be reported as a refused enrolment secret", err)
+	}
+	// The pending key stays staged -- a later retry (or crashed-process
+	// restart) can reuse it, same as TestEnrolAtBootReusesPendingKeyAcrossProvisionRetries.
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); err != nil {
+		t.Errorf("pending key staging file missing after a generic provision failure: %v", err)
+	}
+}
+
+// TestEnrolAtBootWrapsWriteStateFailure proves enrolAtBoot's "write
+// state" error-wrapping branch: when WriteState names a file under a
+// directory that does not exist, EnsureEnrolled reports that step by
+// name, having already completed FirstContact and Provision against a
+// real fake server.
+func TestEnrolAtBootWrapsWriteStateFailure(t *testing.T) {
+	ts, pin, _, provisionHits := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	p := Params{
+		StateDir:           dir,
+		DeployTokenEnvName: "TEST_DEPLOY_TOKEN",
+		RequiredFiles:      []string{"ca.pem"},
+		NodeNoun:           "canary",
+		WriteState: func(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []StateFile {
+			return []StateFile{
+				{Name: filepath.Join("no-such-subdir", "ca.pem"), Data: hello.CAPEM},
+			}
+		},
+		Log: slog.New(slog.NewTextHandler(&buf, nil)),
+	}
+	p.BirdcageURL = ts.URL
+	p.CAPin = pin
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite an unwritable state file path")
+	}
+	if !strings.Contains(err.Error(), "write state") {
+		t.Errorf("error = %q, want it to name the write-state step", err)
+	}
+	if got, want := atomic.LoadInt32(provisionHits), int32(1); got != want {
+		t.Errorf("provision hits = %d, want %d (provisioning must have completed before the write failed)", got, want)
+	}
+	// The pending key must still be staged: WriteState failing must not
+	// lose the only copy of the now-provisioned key.
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); err != nil {
+		t.Errorf("pending key staging file missing after a failed write-state: %v", err)
+	}
+}
+
+// TestRetryEnrolStepSucceedsAfterOneRetry proves the loop's other two
+// branches TestRetryEnrolStepStopsOnContextCancel does not reach: a
+// retryable failure followed by the backoff timer actually firing
+// (rather than the context being canceled first), the loop continuing to
+// a second attempt, and that attempt's success being returned as-is.
+func TestRetryEnrolStepSucceedsAfterOneRetry(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	ts, pin, _, _ := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+
+	var attempt int32
+	got, err := retryEnrolStep(context.Background(), log, func(ctx context.Context) (enrol.Hello, error) {
+		if atomic.AddInt32(&attempt, 1) == 1 {
+			// A real dial failure against a closed listener: the same
+			// retryable-network-error shape TestRetryEnrolStepStopsOnContextCancel
+			// uses, but this time nothing cancels the context, so the
+			// loop must wait out the backoff timer itself and retry.
+			return enrol.FirstContact(ctx, "https://"+deadAddr, strings.Repeat("00", sha256.Size), "tok")
+		}
+		return enrol.FirstContact(ctx, ts.URL, pin, "deploy-tok")
+	})
+	if err != nil {
+		t.Fatalf("retryEnrolStep: %v", err)
+	}
+	if got.EnrolmentSecret != "enrol-secret" {
+		t.Errorf("EnrolmentSecret = %q, want %q", got.EnrolmentSecret, "enrol-secret")
+	}
+	if attempt != 2 {
+		t.Errorf("attempts = %d, want 2", attempt)
+	}
+	if !strings.Contains(buf.String(), "network error, retrying") {
+		t.Errorf("log output = %q, want it to mention the retry", buf.String())
 	}
 }

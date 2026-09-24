@@ -5,42 +5,48 @@
 package enrol
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
-// maxProvisionBodyBytes mirrors maxHelloBodyBytes: the body is one
-// field, a hex secret well under 1 KiB.
-const maxProvisionBodyBytes = 1024
+// maxProvisionBodyBytes caps the body: a hex secret and one ECDSA
+// P-256 CSR in PEM (about 400 bytes; ca.ParseClientCSR itself refuses
+// more than 4 KiB), plus JSON structure.
+const maxProvisionBodyBytes = 6 * 1024
 
-// clientCertTTL is how long a provisioned canary's client certificate
-// (IssueClient below) is valid for.
-//
-// Refs #47: renewal of client certificates is not designed yet.
-const clientCertTTL = 365 * 24 * time.Hour
+// ClientCertTTL is how long an agent's client certificate is valid for
+// (issue #130, ADR-0012 B2): seven days, renewed by the agent from
+// half-life over POST /ingest/renew with a fresh key each time, so a
+// copied key stops working by itself within a week. internal/ingest's
+// renewal signs for the same period.
+const ClientCertTTL = 7 * 24 * time.Hour
 
 // provisionRequest is POST /enrol/provision's request body: the
-// enrolment secret POST /enrol/hello handed back, and nothing else --
+// enrolment secret POST /enrol/hello handed back and a CSR over the key
+// the agent generated for itself (ADR-0012 B1), and nothing else --
 // DisallowUnknownFields below rejects anything more.
 type provisionRequest struct {
 	EnrolmentSecret string `json:"enrolment_secret"`
+	CSRPEM          string `json:"csr_pem"`
 }
 
 // provisionResponse is POST /enrol/provision's success body: everything
-// a canary's agent needs to start posting to the ingest listener --
-// its bearer token, its client certificate/key for mutual TLS, and the
-// heartbeat interval it should use. Every field here is shown exactly
-// once; no later request can recover any of them.
+// a canary's agent needs to start posting to the ingest listener -- its
+// bearer token, its client certificate for mutual TLS, and the
+// heartbeat interval it should use. There is no private key in it: the
+// agent's key never left the agent (ADR-0012 B1). The token is shown
+// exactly once; no later request can recover it.
 type provisionResponse struct {
 	CanaryID           string `json:"canary_id"`
 	CanaryToken        string `json:"canary_token"`
 	ClientCertPEM      string `json:"client_cert_pem"`
-	ClientKeyPEM       string `json:"client_key_pem"`
 	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
 }
 
@@ -64,14 +70,25 @@ func (h *handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The CSR is checked before the secret is even looked up, so a bad
+	// CSR is a 400 that spends nothing: the one-shot secret is shredded
+	// only inside store.Provision's transaction, which this path never
+	// reaches, and the agent can retry with a good CSR inside its
+	// window. The error says what is wrong with the CSR and nothing
+	// about the secret.
+	csr, err := ca.ParseClientCSR([]byte(req.CSRPEM))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid csr: need one PEM CERTIFICATE REQUEST over an ECDSA P-256 key, correctly self-signed")
+		return
+	}
+
 	ctx := r.Context()
 	hash := store.HashToken(req.EnrolmentSecret)
-	// kind is the session's own kind (#105 put it in hand at
-	// certificate-issuance time precisely for this): #106 carries it
-	// into the certificate's subject as the OU IssueClient sets, so the
-	// ingest listener can authorise on it later.
-	result, outcome, err := store.Provision(ctx, h.db, hash, h.now(), func(canaryID string, kind agentkind.Kind) (certPEM, keyPEM []byte, err error) {
-		return h.ca.IssueClient(canaryID, kind, clientCertTTL)
+	// kind is the session's own kind (#105): SignClient writes it into
+	// the subject's OU, and the canary id into the CN, so nothing the
+	// CSR asked for survives but its public key (ADR-0012 B1).
+	result, outcome, err := store.Provision(ctx, h.db, hash, h.now(), func(canaryID string, kind agentkind.Kind) ([]byte, *x509.Certificate, error) {
+		return h.ca.SignClient(csr, canaryID, kind, h.certTTL)
 	})
 	if err != nil {
 		// birdcage's own storage or CA trouble, not the secret's fault --
@@ -88,7 +105,6 @@ func (h *handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 			CanaryID:           result.CanaryID,
 			CanaryToken:        result.CanaryToken,
 			ClientCertPEM:      result.ClientCertPEM,
-			ClientKeyPEM:       result.ClientKeyPEM,
 			HeartbeatIntervalS: result.HeartbeatIntervalS,
 		})
 	default: // store.UnknownSecret, store.WindowExpired

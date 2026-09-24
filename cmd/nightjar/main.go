@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
@@ -74,7 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cli, token, err := boot(cfg)
+	cli, token, rm, err := boot(cfg)
 	if err != nil {
 		mainLog.Error(safeErr(err))
 		os.Exit(1)
@@ -83,7 +84,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	run(ctx, cfg, cli, token, version, mainLog)
+	run(ctx, cfg, cli, token, rm, version, mainLog)
 }
 
 // boot builds the birdcage client and loads this agent's bearer token --
@@ -96,7 +97,7 @@ func main() {
 // cmd/mockingbird's boot/main pair uses -- harmless to repeat, since
 // safeErr's redaction is a no-op the second time a path or address has
 // already been replaced.
-func boot(cfg Config) (*client.Client, string, error) {
+func boot(cfg Config) (*client.Client, string, *renewal.Manager, error) {
 	cli, err := client.New(client.Config{
 		BaseURL:    cfg.BirdcageURL,
 		CACert:     cfg.CACert,
@@ -104,15 +105,17 @@ func boot(cfg Config) (*client.Client, string, error) {
 		ClientKey:  cfg.ClientKey,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("build birdcage client: %s", safeErr(err))
+		return nil, "", nil, fmt.Errorf("build birdcage client: %s", safeErr(err))
 	}
 
 	token, err := loadToken(cfg.TokenPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("load token: %s", safeErr(err))
+		return nil, "", nil, fmt.Errorf("load token: %s", safeErr(err))
 	}
 
-	return cli, token, nil
+	rm := renewal.NewManager(cfg.StateDir, clientKeyFileName, clientCertFileName, cfg.ClientCert, cfg.ClientKey)
+
+	return cli, token, rm, nil
 }
 
 // run starts nightjar's two independent loops -- scan and heartbeat --
@@ -121,7 +124,7 @@ func boot(cfg Config) (*client.Client, string, error) {
 // from main so a test can prove the cadence contract (both loops start,
 // both stop promptly on a cancelled context) without a real signal
 // handler -- see TestRunStopsPromptlyOnCancelledContext.
-func run(ctx context.Context, cfg Config, cli *client.Client, token, version string, log *slog.Logger) {
+func run(ctx context.Context, cfg Config, cli *client.Client, token string, rm *renewal.Manager, version string, log *slog.Logger) {
 	log.Info(fmt.Sprintf("nightjar %s started, talking to %s, scanning every %s", version, cfg.BirdcageURL, cfg.ScanInterval))
 
 	// Two independent loops (issue #106 adds the second): the scan loop
@@ -138,7 +141,7 @@ func run(ctx context.Context, cfg Config, cli *client.Client, token, version str
 	}()
 	go func() {
 		defer wg.Done()
-		runHeartbeatLoop(ctx, cli, token, version, heartbeatInterval)
+		runHeartbeatLoop(ctx, cli, token, rm, version, heartbeatInterval)
 	}()
 	wg.Wait()
 

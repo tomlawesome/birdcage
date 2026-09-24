@@ -14,6 +14,7 @@ package enrolment
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -26,8 +27,19 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/atomicfile"
+	"github.com/tomlawesome/birdcage/internal/agent/certkey"
 	"github.com/tomlawesome/birdcage/internal/agent/enrol"
 )
+
+// pendingKeyFileName holds the ECDSA P-256 key this boot generated for
+// provisioning while provisioning itself is still in flight (ADR-0012
+// B1). It is never one of Params.RequiredFiles -- "already enrolled" is
+// decided from the files WriteState produces, not from this staging
+// file -- and is removed once provisioning succeeds and the key has been
+// folded into WriteState's own output. Dot-prefixed and named for what
+// it is, since an operator inspecting the state volume mid-enrolment
+// should be able to tell a leftover retry artifact from a credential.
+const pendingKeyFileName = ".pending-client-key.pem"
 
 // RetryInitialBackoff and RetryMaxElapsed bound how long boot-time
 // enrolment ("The flow" steps 3, 5 and 6) keeps retrying a birdcage it
@@ -74,9 +86,12 @@ type Params struct {
 	// NodeNoun is the noun the success log line uses, e.g. "canary". An
 	// empty NodeNoun falls back to "agent".
 	NodeNoun string
-	// WriteState turns a successful enrolment's Hello/Credentials into
-	// the files this agent kind persists.
-	WriteState func(enrol.Hello, enrol.Credentials) []StateFile
+	// WriteState turns a successful enrolment's Hello/Credentials, plus
+	// the client private key this package generated for provisioning
+	// (ADR-0012 B1 -- Credentials itself no longer carries one), into the
+	// files this agent kind persists. keyPEM is PKCS#8 PEM, the same
+	// encoding certkey.MarshalKeyPEM always produces.
+	WriteState func(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []StateFile
 
 	// Log receives every line this package prints ("enrolling with ...",
 	// "already enrolled; ignoring ...", the retry warning, "enrolled as
@@ -141,8 +156,22 @@ func enrolAtBoot(ctx context.Context, p Params) error {
 		return fmt.Errorf("enrolment: first contact: %s", redactErr(err))
 	}
 
+	// ADR-0012 B1: the agent makes its own key; birdcage never sees it.
+	// loadOrGeneratePendingKey reuses whatever key an earlier, failed
+	// attempt (this call's own retries below, or a previous process that
+	// crashed before Provision succeeded) already staged, rather than
+	// generating -- and orphaning -- a fresh one every attempt.
+	key, err := loadOrGeneratePendingKey(p.StateDir)
+	if err != nil {
+		return fmt.Errorf("enrolment: prepare client key: %s", redactErr(err))
+	}
+	csrPEM, err := certkey.BuildCSR(key)
+	if err != nil {
+		return fmt.Errorf("enrolment: build CSR: %s", redactErr(err))
+	}
+
 	creds, err := retryEnrolStep(ctx, p.Log, func(ctx context.Context) (enrol.Credentials, error) {
-		return enrol.Provision(ctx, p.BirdcageURL, hello.CAPEM, hello.EnrolmentSecret)
+		return enrol.Provision(ctx, p.BirdcageURL, hello.CAPEM, hello.EnrolmentSecret, csrPEM)
 	})
 	if err != nil {
 		if errors.Is(err, enrol.ErrRefused) {
@@ -151,8 +180,23 @@ func enrolAtBoot(ctx context.Context, p Params) error {
 		return fmt.Errorf("enrolment: provision: %s", redactErr(err))
 	}
 
-	if err := writeState(p.StateDir, p.WriteState(hello, creds)); err != nil {
+	keyPEM, err := certkey.MarshalKeyPEM(key)
+	if err != nil {
+		return fmt.Errorf("enrolment: encode client key: %s", redactErr(err))
+	}
+
+	if err := writeState(p.StateDir, p.WriteState(hello, creds, keyPEM)); err != nil {
 		return fmt.Errorf("enrolment: write state: %s", redactErr(err))
+	}
+
+	// Best-effort: the pending key has now been folded into whichever
+	// permanent file WriteState wrote it to. Leaving the staging copy
+	// behind on a failed removal is harmless -- it is never one of
+	// RequiredFiles, so it can never make a fully-enrolled state
+	// directory look incomplete, and the next enrolment (there won't be
+	// one on this now-enrolled directory) would simply overwrite it.
+	if err := os.Remove(filepath.Join(p.StateDir, pendingKeyFileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		p.Log.Warn(fmt.Sprintf("enrolment: could not remove pending key staging file: %s", redactErr(err)))
 	}
 
 	noun := p.NodeNoun
@@ -161,6 +205,41 @@ func enrolAtBoot(ctx context.Context, p Params) error {
 	}
 	p.Log.Info(fmt.Sprintf("enrolled as %s %s", noun, creds.CanaryID))
 	return nil
+}
+
+// loadOrGeneratePendingKey returns the ECDSA P-256 key this boot's
+// provisioning attempt should sign its CSR with: the key staged at
+// pendingKeyFileName by an earlier attempt, if one exists and parses, or
+// a freshly generated one, durably staged before it is returned so a
+// later attempt (another retry in this same call, or another process
+// after a crash) finds and reuses it too. See ADR-0012 B1's own
+// requirement: "If provisioning fails and is retried, reuse the same
+// pending key rather than generating a new one each attempt" -- signing
+// a different CSR on every retry would mean whichever attempt happens to
+// land is racing every earlier one's now-orphaned key with no way to
+// tell which, if any, birdcage actually signed.
+func loadOrGeneratePendingKey(stateDir string) (*ecdsa.PrivateKey, error) {
+	path := filepath.Join(stateDir, pendingKeyFileName)
+	if raw, err := os.ReadFile(path); err == nil {
+		if key, err := certkey.ParseKeyPEM(raw); err == nil {
+			return key, nil
+		}
+		// Unparseable leftover: fall through and regenerate rather than
+		// fail enrolment over a corrupt staging file.
+	}
+
+	key, err := certkey.GenerateKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate key: %w", err)
+	}
+	keyPEM, err := certkey.MarshalKeyPEM(key)
+	if err != nil {
+		return nil, fmt.Errorf("encode key: %w", err)
+	}
+	if err := atomicfile.Write(path, keyPEM, 0o600); err != nil {
+		return nil, fmt.Errorf("stage pending key: %w", err)
+	}
+	return key, nil
 }
 
 // retryEnrolStep runs step once, and again on backoff

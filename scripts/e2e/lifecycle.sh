@@ -8,8 +8,12 @@
 # its own. It leaves that canary's live credential working when it
 # finishes, because surface.sh (issue #78 journey B) runs after this file
 # in the same job and needs to cause a hit on the same canary for its SSE
-# check -- see the revocation step below, which mints and revokes a
-# throwaway token rather than the one the running agent actually uses.
+# check -- see the revocation step below, which enrols and revokes its
+# own throwaway second canary rather than $E2E_CANARY_ID: #130 made
+# `birdcage canary revoke` take a canary id and end every token *and*
+# certificate that canary holds in one action (there is no more
+# per-token revoke), so revoking $E2E_CANARY_ID here would kill the
+# real agent's live certificate along with it.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   scripts/e2e/enrol-and-hit.sh
@@ -207,21 +211,50 @@ esac
 ok "the pre-rotation token is refused (401 unauthorized); the rotated token authenticates"
 
 step "revocation: birdcage canary revoke refuses the token's next request, and is audited"
-# A throwaway token, minted and revoked here, rather than the one
-# $E2E_CANARY is actually running on: surface.sh runs after this journey
-# in the same job and needs this canary's real credential still working.
-mint_output="$("$E2E_STACK" birdcage canary mint "$E2E_CANARY_ID")" \
-  || fail "birdcage canary mint did not run"
-mint_token_id="$(printf '%s\n' "$mint_output" | sed -n 's/^minted token \([^ ]*\) for canary .*$/\1/p')"
-mint_raw="$(printf '%s\n' "$mint_output" | sed -n 's/^token (shown once, record it now): //p')"
-[ -n "$mint_token_id" ] && [ -n "$mint_raw" ] \
-  || fail "could not parse a token id and raw token out of birdcage canary mint's output"
+# A throwaway second canary, enrolled and revoked here, rather than
+# $E2E_CANARY_ID: #130's `birdcage canary revoke <canary_id>` ends every
+# token *and* certificate that canary holds in one action, so revoking
+# $E2E_CANARY_ID would take the real agent's live certificate down with
+# it, and surface.sh (after this journey, same job) needs that
+# certificate still working for its SSE check.
+#
+# Enrolled through the real endpoints, the same way refusals.sh's
+# "other" canary is: POST /enrol/hello, then a CSR this step generates
+# itself (ADR-0012 B1 -- the agent makes its own key, so provisioning it
+# by hand means acting like one), then POST /enrol/provision, which now
+# hands back the token and certificate together in one response.
+"$E2E_STACK" birdcage canary enrol --name "$E2E_CANARY_NAME-revoke" --lane "$E2E_CANARY_LANE" \
+  | "$E2E_STACK" write-work revoke-enrol.txt \
+  || fail "minting a throwaway enrolment session for the revocation step failed"
 
-revoke_output="$("$E2E_STACK" birdcage canary revoke "$mint_token_id")" \
-  || fail "birdcage canary revoke $mint_token_id did not run"
+revoke_canary_id="$(helper '
+set -eu
+cd /tmp
+token=$(sed -n "s/^.*MOCKINGBIRD_DEPLOY_TOKEN=\([0-9a-f]*\).*$/\1/p" /work/revoke-enrol.txt)
+test -n "$token" || { echo "no deploy token for the throwaway canary"; exit 1; }
+secret=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/hello" \
+  -d "{\"token\":\"$token\"}" | jq -er .enrolment_secret)
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -subj "/CN=e2e-revoke-throwaway" -keyout /work/revoke-key.pem -out /tmp/revoke-csr.pem 2>/dev/null
+body=$(jq -n --arg secret "$secret" --rawfile csr /tmp/revoke-csr.pem \
+  "{enrolment_secret:\$secret, csr_pem:\$csr}")
+provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" -d "$body")
+printf "%s" "$provision" | jq -er .client_cert_pem > /work/revoke-cert.pem
+printf "%s" "$provision" | jq -er .canary_token > /work/revoke-token.txt
+printf "%s" "$provision" | jq -er .canary_id
+')" || fail "the throwaway revocation canary could not be provisioned: $revoke_canary_id"
+[ -n "$revoke_canary_id" ] || fail "the throwaway revocation canary was provisioned without a canary id"
+mint_raw="$(helper "cat /work/revoke-token.txt")" \
+  || fail "could not read the throwaway canary's bearer token back"
+ok "throwaway canary $revoke_canary_id holds its own token and certificate"
+
+# Provisioned seconds ago with nothing else ever minted or renewed for
+# it, so the counts are exact: one live token, one live certificate.
+revoke_output="$("$E2E_STACK" birdcage canary revoke "$revoke_canary_id")" \
+  || fail "birdcage canary revoke $revoke_canary_id did not run"
 case "$revoke_output" in
-  *"revoked token $mint_token_id for canary $E2E_CANARY_ID"*) ;;
-  *) fail "revoke did not confirm the expected token/canary: $revoke_output" ;;
+  *"revoked canary $revoke_canary_id: 1 token(s), 1 certificate(s)"*) ;;
+  *) fail "revoke did not confirm the expected canary/counts: $revoke_output" ;;
 esac
 
 # "Nothing was stored despite the 401" used to be proved by a global
@@ -244,7 +277,7 @@ event_id="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 marker="e2e-revoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 
 revoked_attempt="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem \
-  --cert /state/client.pem --key /state/client-key.pem \
+  --cert /work/revoke-cert.pem --key /work/revoke-key.pem \
   -H \"Authorization: Bearer $mint_raw\" \
   -X POST '$BIRDCAGE_INGEST_URL/ingest/events' \
   -d '{\"events\":[{\"event_id\":\"$event_id\",\"source_ip\":\"203.0.113.9\",\"dest_port\":22,\"service\":\"ssh\",\"raw\":\"marker $marker\"}]}'")" \
@@ -259,11 +292,11 @@ stored_with_marker="$("$E2E_STACK" query "select count(*) from alerts where raw 
 [ "$stored_with_marker" -eq 0 ] \
   || fail "an alert carrying marker $marker is stored ($stored_with_marker rows) despite the 401: the revoked token's batch was accepted" "$E2E_BIRDCAGE"
 
-audit="$("$E2E_STACK" query "select reason from audit_log where action = 'canary.token_revoked' and target = '$E2E_CANARY_ID' order by id desc limit 1")" \
+audit="$("$E2E_STACK" query "select reason from audit_log where action = 'canary.revoked' and target = '$revoke_canary_id' order by id desc limit 1")" \
   || fail "could not read the audit log for the revocation"
 case "$audit" in
   *"revoked via CLI"*) ok "revoked, refused with 401, marker $marker never stored, audited: $audit" ;;
-  *) fail "no canary.token_revoked entry naming $E2E_CANARY_ID; got: ${audit:-<nothing>}" ;;
+  *) fail "no canary.revoked entry naming $revoke_canary_id; got: ${audit:-<nothing>}" ;;
 esac
 
 finish

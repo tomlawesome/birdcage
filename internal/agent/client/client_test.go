@@ -85,6 +85,12 @@ func newIngestServer(t *testing.T, database *db.DB, kind agentkind.Kind) (*Clien
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
 	}
+	// ADR-0012 Part B: the ingest listener now refuses any client
+	// certificate that has no client_certs row, so the generated
+	// certificate above has to be recorded exactly as provisioning
+	// would record it, or every request here fails auth before this
+	// package's own logic is ever exercised.
+	recordClientCert(t, database, testCanaryID, clientCert)
 	handler := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	ts := httptest.NewUnstartedServer(handler)
 	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
@@ -314,6 +320,28 @@ func selfSignedKeyPair(t *testing.T, cn string, ou ...string) (certPEM, keyPEM [
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	return certPEM, keyPEM
+}
+
+// recordClientCert parses certPEM's single leaf certificate and records
+// it against canaryID via store.RecordClientCert, the same call
+// provisioning and renewal make -- so a test's self-signed certificate
+// authenticates against the real ingest handler's client_certs check
+// exactly as a real agent's CA-issued one would.
+func recordClientCert(t *testing.T, database *db.DB, canaryID string, certPEM []byte) store.ClientCert {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("recordClientCert: no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("recordClientCert: parse certificate: %v", err)
+	}
+	row, err := store.RecordClientCert(ctx(), database, canaryID, cert)
+	if err != nil {
+		t.Fatalf("RecordClientCert: %v", err)
+	}
+	return row
 }
 
 // TestClientPresentsCertificate is gap 1's required positive case: a

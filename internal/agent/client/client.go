@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,8 +75,17 @@ type Config struct {
 // and reused for the process's lifetime so connections are pooled across
 // calls.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL   string
+	http      *http.Client
+	transport *http.Transport
+	// clientCert backs tls.Config.GetClientCertificate below, so the
+	// certificate this Client presents can be swapped after
+	// construction (ADR-0012 B2: certificate renewal, "switch the mTLS
+	// client to the new pair for the next request") without racing
+	// in-flight handshakes reading it. A nil stored value (the zero
+	// atomic.Pointer, or Config supplied neither ClientCert nor
+	// ClientKey) means "present no client certificate".
+	clientCert atomic.Pointer[tls.Certificate]
 }
 
 // New builds a Client against cfg. It fails only if CACert cannot be
@@ -94,6 +104,9 @@ func New(cfg Config) (*Client, error) {
 		RootCAs:    pool,
 		MinVersion: tls.VersionTLS13, // matches internal/ingest/tlsserver.go's own floor
 	}
+
+	client := &Client{baseURL: strings.TrimRight(cfg.BaseURL, "/")}
+
 	// mTLS (#48 gap 1): present the agent's own certificate whenever
 	// either half is configured, so a caller that supplies only one of
 	// the pair fails loudly here -- X509KeyPair refuses to pair an empty
@@ -107,7 +120,19 @@ func New(cfg Config) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("client: Config.ClientCert/ClientKey: %w", err)
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
+		client.clientCert.Store(&cert)
+	}
+	// GetClientCertificate, not a static Certificates list: it is
+	// consulted fresh on every handshake, so SwapClientCert (renew.go)
+	// can replace client.clientCert's value at any time -- including
+	// concurrently with an in-flight handshake reading it -- and the
+	// very next handshake presents whatever is current, with no data
+	// race (atomic.Pointer) and no need to rebuild the transport.
+	tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		if cert := client.clientCert.Load(); cert != nil {
+			return cert, nil
+		}
+		return &tls.Certificate{}, nil
 	}
 
 	dialer := &net.Dialer{Timeout: dialTimeout}
@@ -130,14 +155,35 @@ func New(cfg Config) (*Client, error) {
 		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 
-	return &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		http: &http.Client{
-			Transport:     transport,
-			Timeout:       requestTimeout,
-			CheckRedirect: refuseRedirects,
-		},
-	}, nil
+	client.transport = transport
+	client.http = &http.Client{
+		Transport:     transport,
+		Timeout:       requestTimeout,
+		CheckRedirect: refuseRedirects,
+	}
+	return client, nil
+}
+
+// SwapClientCert replaces the certificate/key pair this Client presents
+// on every future TLS handshake (ADR-0012 B2: certificate renewal). It
+// takes effect immediately for any new connection -- CloseIdleConnections
+// drops every pooled connection presenting the old pair, so the very
+// next request opens a fresh connection and hands GetClientCertificate
+// (New, above) the new one; a request already in flight on an existing
+// connection is unaffected, since that connection's handshake already
+// happened.
+//
+// certPEM/keyPEM are validated as a matching pair before anything is
+// swapped: a bad pair leaves the Client presenting whatever it presented
+// before, exactly like New's own construction-time check.
+func (c *Client) SwapClientCert(certPEM, keyPEM []byte) error {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("client: SwapClientCert: %w", err)
+	}
+	c.clientCert.Store(&cert)
+	c.transport.CloseIdleConnections()
+	return nil
 }
 
 // refuseRedirects is the Client's CheckRedirect: #48 "What the research

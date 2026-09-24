@@ -1189,6 +1189,87 @@ e2e:enrol-and-hit:postgres:
   after_script:
     - scripts/e2e/stack.sh down
 
+# Issue #130 (ADR-0012 Part B): agent-made keys, seven-day client
+# certificates renewed from half-life, cert-bound tokens, conflict
+# detection and one-action revocation -- four journeys, one job, the
+# same shape as e2e:enrol-and-hit above: they share one credentials
+# stack (E2E_CLIENT_CERT_TTL turns the whole run's certificates into a
+# few minutes rather than seven days) and one failure surface --
+# everything here is the credential's own lifecycle, not four unrelated
+# things sharing a runner by coincidence. Four separate jobs would each
+# pay for their own stack.sh up (build, TLS, enrolment) to prove one
+# step of a lifecycle the others already stood up.
+e2e:agent-credentials:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  # agent-renewal.sh and agent-expiry.sh both poll for several minutes
+  # of real half-life and expiry; nothing here is CPU-bound, but the
+  # wall clock means this job runs longest of the e2e stage.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-cred-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    # Four minutes: long enough that the primary canary's own heartbeat
+    # (60s ticks) reaches half-life and renews well inside it, short
+    # enough that agent-expiry.sh's full wait for expiry stays a matter
+    # of minutes rather than the real seven days (docs/configuration.md).
+    E2E_CLIENT_CERT_TTL: 4m
+  before_script:
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/agent-provisioning.sh
+    - scripts/e2e/agent-renewal.sh
+    - scripts/e2e/agent-conflict.sh
+    - scripts/e2e/agent-expiry.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same four journeys against the other engine birdcage ships:
+# client_certs' own migration comment is explicit that the two engines
+# compare stored text timestamps at different resolutions
+# (docs/flakes.md), and this feature's health signals (renewal_stalled,
+# certificate_expired) are computed entirely from those comparisons --
+# the one class of bug this file exists to catch that SQLite alone
+# cannot.
+e2e:agent-credentials:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-cred-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_CLIENT_CERT_TTL: 4m
+  before_script:
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/agent-provisioning.sh
+    - scripts/e2e/agent-renewal.sh
+    - scripts/e2e/agent-conflict.sh
+    - scripts/e2e/agent-expiry.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
 # Issue #78 journey 3 (#46's front half): a real smbclient against a
 # real smbd with the full_audit VFS module, over the real chain proved
 # on 2026-09-20 -- OpenCanary parsing that audit line and the agent

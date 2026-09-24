@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
@@ -93,6 +94,12 @@ func newIngestServer(t *testing.T, database *db.DB) (*client.Client, *httptest.S
 	if !clientCAs.AppendCertsFromPEM(clientCert) {
 		t.Fatal("failed to add generated client cert to pool")
 	}
+	// ADR-0012 Part B: the ingest listener now refuses any client
+	// certificate that has no client_certs row, so the generated
+	// certificate above has to be recorded exactly as provisioning
+	// would record it, or every request here fails auth before this
+	// package's own logic is ever exercised.
+	recordClientCert(t, database, testCanaryID, clientCert)
 	handler := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	ts := httptest.NewUnstartedServer(handler)
 	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
@@ -143,6 +150,38 @@ func selfSignedKeyPair(t *testing.T, cn string, ou ...string) (certPEM, keyPEM [
 	return certPEM, keyPEM
 }
 
+// newTestRenewalManager builds a renewal.Manager whose current
+// certificate is freshly minted (NotBefore=now, one-hour lifetime), so
+// its half-life is 30 minutes out -- far enough that Tick is a no-op for
+// any test that just needs a heartbeat loop to run without also
+// triggering a real renewal attempt against a fake server that doesn't
+// implement POST /ingest/renew.
+func newTestRenewalManager(t *testing.T) *renewal.Manager {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "renewal-test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	dir := t.TempDir()
+	return renewal.NewManager(dir, clientKeyFileName, clientCertFileName, certPEM, keyPEM)
+}
+
 // enrollCanary inserts a canary row directly, the same shape
 // internal/agent/client's own command_test.go and heartbeat_test.go use.
 func enrollCanary(t *testing.T, database *db.DB, id string) {
@@ -175,15 +214,47 @@ func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind
 	}
 }
 
+// recordClientCert parses certPEM's single leaf certificate and records
+// it against canaryID via store.RecordClientCert, the same call
+// provisioning and renewal make -- so a test's self-signed certificate
+// authenticates against the real ingest handler's client_certs check
+// exactly as a real agent's CA-issued one would.
+func recordClientCert(t *testing.T, database *db.DB, canaryID string, certPEM []byte) store.ClientCert {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("recordClientCert: no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("recordClientCert: parse certificate: %v", err)
+	}
+	row, err := store.RecordClientCert(ctx(), database, canaryID, cert)
+	if err != nil {
+		t.Fatalf("RecordClientCert: %v", err)
+	}
+	return row
+}
+
 // mintToken mints a fresh, active bearer token for canaryID, registering
 // it as a Honeypot (issue #106: every ingest route now refuses a token
 // whose canary is unregistered) unless a canaries row already exists.
+//
+// ADR-0012 Part B3: the ingest listener also refuses any token that is
+// not bound to the certificate presented on the connection, so this
+// binds the new token to canaryID's current recorded certificate --
+// every caller mints via newIngestServer first, which has already
+// recorded one (recordClientCert above).
 func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 	t.Helper()
 	ensureCanary(t, database, canaryID, agentkind.Honeypot)
-	raw, _, err := store.MintCanaryToken(ctx(), database, canaryID, time.Now().UTC())
+	cert, err := store.CurrentClientCert(ctx(), database, canaryID)
 	if err != nil {
-		t.Fatalf("MintCanaryToken: %v", err)
+		t.Fatalf("CurrentClientCert(%s): %v (did the test call newIngestServer first?)", canaryID, err)
+	}
+	raw, _, err := store.MintCanaryTokenForCert(ctx(), database, canaryID, cert.Fingerprint, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("MintCanaryTokenForCert: %v", err)
 	}
 	return raw
 }

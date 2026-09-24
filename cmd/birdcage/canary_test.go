@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,10 +10,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/ingest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
+
+// insertTestCanary registers canaryID in the canaries table so
+// store.RevokeCanaryCredentials (which, unlike a plain token mint, does
+// require a canaries row -- see its ErrCanaryNotFound) has something to
+// find. A canary token can exist with no matching canaries row (the two
+// tables carry no foreign key), but a canary's credentials cannot be
+// revoked as a canary until it is registered.
+func insertTestCanary(t *testing.T, database *db.DB, canaryID string) {
+	t.Helper()
+	if err := store.InsertCanary(context.Background(), database, store.Canary{
+		ID: canaryID, Name: canaryID, Lane: "lan", Kind: agentkind.Honeypot,
+		HeartbeatIntervalS: store.DefaultHeartbeatIntervalS, EnrolledAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("insertTestCanary(%s): %v", canaryID, err)
+	}
+}
 
 // testDBPath points BIRDCAGE_DB_PATH at a fresh SQLite file per test, so
 // each test's canary tokens and audit rows are isolated. Postgres is not
@@ -145,20 +165,20 @@ func TestCanaryRevokeTakesEffectImmediately(t *testing.T) {
 		t.Fatalf("runCanaryMint: %v", err)
 	}
 	raw := extractMintedToken(t, mintOut)
-	tokenID := extractMintedTokenID(t, mintOut)
 
 	database, err := openCanaryDB()
 	if err != nil {
 		t.Fatalf("openCanaryDB: %v", err)
 	}
 	defer closeCanaryDB(database)
+	insertTestCanary(t, database, "canary-revoke-test")
 	h := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 
 	if status := heartbeatStatus(h, raw); status == http.StatusUnauthorized {
 		t.Fatalf("token was refused (401) before revocation; test setup is broken")
 	}
 
-	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{tokenID}) }); err != nil {
+	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{"canary-revoke-test"}) }); err != nil {
 		t.Fatalf("runCanaryRevoke: %v", err)
 	}
 
@@ -173,17 +193,22 @@ func TestCanaryRevokeTakesEffectImmediately(t *testing.T) {
 func TestCanaryMintAndRevokeRecordAuditEntries(t *testing.T) {
 	t.Setenv(envDBPath, testDBPath(t))
 
-	mintOut, err := captureStdout(t, func() error { return runCanaryMint([]string{"canary-audit-test"}) })
+	database, err := openCanaryDB()
 	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	insertTestCanary(t, database, "canary-audit-test")
+	closeCanaryDB(database)
+
+	if _, err := captureStdout(t, func() error { return runCanaryMint([]string{"canary-audit-test"}) }); err != nil {
 		t.Fatalf("runCanaryMint: %v", err)
 	}
-	tokenID := extractMintedTokenID(t, mintOut)
 
-	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{tokenID}) }); err != nil {
+	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{"canary-audit-test"}) }); err != nil {
 		t.Fatalf("runCanaryRevoke: %v", err)
 	}
 
-	database, err := openCanaryDB()
+	database, err = openCanaryDB()
 	if err != nil {
 		t.Fatalf("openCanaryDB: %v", err)
 	}
@@ -200,11 +225,11 @@ func TestCanaryMintAndRevokeRecordAuditEntries(t *testing.T) {
 	}
 	if err := database.QueryRow(
 		`SELECT COUNT(*) FROM audit_log WHERE action = ? AND target = ?`,
-		"canary.token_revoked", "canary-audit-test").Scan(&revokeCount); err != nil {
+		"canary.revoked", "canary-audit-test").Scan(&revokeCount); err != nil {
 		t.Fatalf("count revoke audit rows: %v", err)
 	}
 	if revokeCount != 1 {
-		t.Errorf("canary.token_revoked audit rows for canary-audit-test = %d, want 1", revokeCount)
+		t.Errorf("canary.revoked audit rows for canary-audit-test = %d, want 1", revokeCount)
 	}
 }
 
@@ -265,18 +290,18 @@ func TestCanaryRevokeFailsWithFailedAuditWriteAndTokenStaysLive(t *testing.T) {
 		t.Fatalf("runCanaryMint: %v", err)
 	}
 	raw := extractMintedToken(t, mintOut)
-	tokenID := extractMintedTokenID(t, mintOut)
 
 	database, err := openCanaryDB()
 	if err != nil {
 		t.Fatalf("openCanaryDB: %v", err)
 	}
+	insertTestCanary(t, database, "canary-revoke-fail-test")
 	if _, err := database.Exec(`DROP TABLE audit_log`); err != nil {
 		t.Fatalf("drop audit_log: %v", err)
 	}
 	closeCanaryDB(database)
 
-	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{tokenID}) }); err == nil {
+	if _, err := captureStdout(t, func() error { return runCanaryRevoke([]string{"canary-revoke-fail-test"}) }); err == nil {
 		t.Fatal("runCanaryRevoke succeeded despite a failed audit write, want an error")
 	}
 
@@ -288,6 +313,18 @@ func TestCanaryRevokeFailsWithFailedAuditWriteAndTokenStaysLive(t *testing.T) {
 	h := ingest.NewHandler(database, nil, store.NewSelfTestIndex(), nil)
 	if status := heartbeatStatus(h, raw); status == http.StatusUnauthorized {
 		t.Fatal("token stopped authenticating despite the revoke failing; the revoke must roll back with its audit write")
+	}
+}
+
+// TestCanaryRevokeUnknownID proves #130's B5 CLI path refuses a
+// mistyped or nonexistent canary id (store.ErrCanaryNotFound) rather
+// than silently doing nothing.
+func TestCanaryRevokeUnknownID(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+
+	err := runCanaryRevoke([]string{"no-such-canary"})
+	if !errors.Is(err, store.ErrCanaryNotFound) {
+		t.Fatalf("runCanaryRevoke(no-such-canary) err = %v, want ErrCanaryNotFound", err)
 	}
 }
 
@@ -325,7 +362,14 @@ func TestCanaryOutputEscapesControlCharactersInID(t *testing.T) {
 		t.Fatalf("list output %q does not contain the escaped canary id", listOut)
 	}
 
-	revokeOut, err := captureStdout(t, func() error { return runCanaryRevoke([]string{tokenID}) })
+	setupDB, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	insertTestCanary(t, setupDB, canaryID)
+	closeCanaryDB(setupDB)
+
+	revokeOut, err := captureStdout(t, func() error { return runCanaryRevoke([]string{canaryID}) })
 	if err != nil {
 		t.Fatalf("runCanaryRevoke: %v", err)
 	}

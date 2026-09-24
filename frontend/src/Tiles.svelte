@@ -37,6 +37,11 @@
         rotation_stalled_for_s: c.rotation_stalled_for_s,
         rotation_stalled_escalated: c.rotation_stalled_escalated,
         token_conflict_for_s: c.token_conflict_for_s,
+        renewal_stalled: c.renewal_stalled,
+        renewal_stalled_for_s: c.renewal_stalled_for_s,
+        renewal_stalled_escalated: c.renewal_stalled_escalated,
+        certificate_expired: c.certificate_expired,
+        credential_conflict: c.credential_conflict,
         last_self_test_at: c.last_self_test_at,
         last_self_test_passed: c.last_self_test_passed,
         self_test_failed_services: c.self_test_failed_services,
@@ -48,11 +53,12 @@
       class="tile k-{c.lane}"
       class:silent={c.status === 'silent'}
       class:critical={c.status === 'token_conflict' ||
+        c.status === 'credential_conflict' ||
         c.status === 'not_delivering' ||
         c.status === 'self_test_failed' ||
         c.status === 'throttled'}
-      class:conflict={c.status === 'token_conflict'}
-      class:degraded={c.status === 'rotation_stalled'}
+      class:conflict={c.status === 'token_conflict' || c.status === 'credential_conflict'}
+      class:degraded={c.status === 'rotation_stalled' || c.status === 'renewal_stalled'}
       class:pending={c.status === 'pending'}
     >
       <!-- The tile is the way into the canary's own page (issue #118).

@@ -176,8 +176,8 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     expect(s.rule).toBe(2)
     expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's revoked token came back.")
     expect(plainText(s.sub)).toBe(
-      'It was presented five minutes ago, while its successor was already active. Either the token was stolen ' +
-        'and the thief rotated first, or two boxes share one identity. Look at the box now. The other three are fine.',
+      'It was presented five minutes ago, while its successor was already active. Either the credential was ' +
+        'stolen and the thief rotated first, or two boxes share one identity. Look at the box now. The other three are fine.',
     )
     expect(s.sub.find((seg) => seg.text === 'five minutes ago')?.bold).toBe(true)
     expect(s.sub.find((seg) => seg.text === 'Look at the box now.')?.bold).toBe(true)
@@ -212,6 +212,17 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       "Its heartbeats arrive on time, but its agent can't read OpenCanary's log, so whatever the canary catches " +
         'never reaches this page — which would read just the same if the canary were catching someone right now. ' +
         'Check the agent on the box. The other three are fine.',
+    )
+  })
+
+  // ADR-0012 Part B (#130): certificate_expired says why not_delivering
+  // is on when the agent's own log-read report did not.
+  it('not delivering: certificate expired names that cause instead of the log read', () => {
+    const bad = canary('canary-iot', 'not_delivering', { not_delivering: true, certificate_expired: true })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(plainText(s.sub)).toBe(
+      "Its certificate expired before the agent renewed it, so it can no longer authenticate to birdcage — " +
+        'whatever the canary catches never reaches this page. Check the agent on the box. The other three are fine.',
     )
   })
 
@@ -256,6 +267,91 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     const bad = canary('canary-iot', 'token_conflict', { token_conflict_for_s: 72000 })
     const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
     expect(plainText(s.sub)).toContain('It was presented 20 hours ago')
+  })
+
+  // ADR-0012 Part B (issue #130): credential_conflict is ranked with
+  // token_conflict (same red severity), the same live credential --
+  // certificate or token -- seen from two addresses at once. The API's
+  // `credential_conflict` object names the two source addresses and/or
+  // the two agent build versions seen; the ADR's own sentence is used
+  // verbatim when addresses are present.
+  it('credential conflict: names the two addresses the ADR asks for', () => {
+    const bad = canary('canary-iot', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's credential is live in two places at once.")
+    expect(plainText(s.sub)).toBe(
+      'credential in use from two addresses: 10.0.0.1 and 10.0.0.2. A copy of its key may be in use elsewhere, ' +
+        'or the node itself moved address. Revoke the node and re-enrol it. The other three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === '10.0.0.1')?.bold).toBe(true)
+    expect(s.sub.find((seg) => seg.text === '10.0.0.2')?.bold).toBe(true)
+    expect(s.sub.find((seg) => seg.text === 'Revoke the node and re-enrol it.')?.bold).toBe(true)
+  })
+
+  it('credential conflict: names the two build versions when only they are sent', () => {
+    const bad = canary('canary-iot', 'credential_conflict', { credential_conflict: { versions: ['1.0.0', '0.9.9'] } })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(plainText(s.sub)).toContain('credential in use from two builds: 1.0.0 and 0.9.9.')
+    expect(plainText(s.sub)).not.toMatch(/\d+\.\d+\.\d+\.\d+ and \d/)
+  })
+
+  it('credential conflict: bare sentence when neither addresses nor versions are sent', () => {
+    const bad = canary('canary-iot', 'credential_conflict', {})
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(plainText(s.sub)).toContain('Its credential is in use from two places at once.')
+  })
+
+  it('credential conflict outranks silent, tied with token conflict', () => {
+    const s = computeSentence(
+      [
+        canary('canary-iot', 'silent', { silent_for_s: 372 }),
+        canary('canary-srv', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's credential is live in two places at once")
+  })
+
+  // ADR-0012 Part B: renewal_stalled is rotation_stalled's certificate
+  // twin, same shape, same degraded severity.
+  it('renewal stalled, not escalated: names the certificate past its renewal point', () => {
+    const bad = canary('canary-iot', 'renewal_stalled', { renewal_stalled: true, renewal_stalled_for_s: 1200 })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's certificate renewal has stalled.")
+    expect(plainText(s.sub)).toBe(
+      "Its certificate passed its renewal point 20 minutes ago and the agent hasn't renewed it. It still phones " +
+        'home every minute on the old certificate — nothing is being missed yet, but it will stop working once ' +
+        "the certificate expires. Check the agent can reach birdcage's ingest listener. The other three are fine.",
+    )
+  })
+
+  it('renewal stalled, escalated: claims only what both triggers make true', () => {
+    const bad = canary('canary-iot', 'renewal_stalled', {
+      renewal_stalled: true,
+      renewal_stalled_for_s: 93600,
+      renewal_stalled_escalated: true,
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    const text = plainText(s.sub)
+    expect(text).toContain("It hasn't renewed its certificate in over a day past its renewal point.")
+    expect(text).not.toContain('passed its renewal point')
+    expect(text).toContain('nothing is being missed')
+  })
+
+  it('renewal stalled is ranked with rotation stalled, both outrank pending', () => {
+    const s = computeSentence(
+      [canary('canary-lan', 'pending'), canary('canary-srv', 'renewal_stalled', { renewal_stalled: true, renewal_stalled_for_s: 1200 })],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's certificate renewal has stalled")
   })
 
   it('with no last_hit the opener is the contrast alone, as rule 2 already does', () => {

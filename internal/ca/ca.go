@@ -13,6 +13,7 @@
 package ca
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -44,11 +45,11 @@ const (
 
 	// caServerCommonName names the server leaf IssueServer mints --
 	// cosmetic only, since nothing authorizes on it; its SANs are what a
-	// client verifies. The client leaf's own CommonName (IssueClient) is
+	// client verifies. The client leaf's own CommonName (SignClient) is
 	// not cosmetic: internal/ingest's requireBearerToken compares it
 	// against the resolved bearer token's canary, and (issue #106) its
 	// Subject.OrganizationalUnit now carries the kind an ingest route
-	// authorises on -- see IssueClient's own doc comment.
+	// authorises on -- see SignClient's own doc comment.
 	caServerCommonName = "birdcage-ingest"
 
 	// dirPerm is the exact mode Load requires of the CA directory --
@@ -356,27 +357,108 @@ func (c *CA) IssueServer(hosts []string, ttl time.Duration) (tls.Certificate, er
 	}, nil
 }
 
-// IssueClient mints a fresh ECDSA P-256 key and client-auth leaf
-// certificate for canaryID (used as the certificate's CommonName), valid
-// for ttl. The subject's OrganizationalUnit carries kind, and exactly
-// kind -- one value, nothing else (issue #106, design note section 1):
-// the fleet's authorisation attribute, fixed for the life of this
-// identity, read back by internal/ingest's requireBearerToken as
-// Subject.OrganizationalUnit[0] when (and only when) that slice has
-// length exactly 1. There is no kindless variant of this function --
-// every caller must state a kind, which is what makes "every future
-// issuance path states a kind" true by construction rather than by
-// convention (design note section 4). A caller needing a legacy
-// (pre-#106) or malformed certificate for a test builds one with its own
-// throwaway CA instead; this function never produces one.
+// maxCSRPEMBytes bounds the PEM a caller may hand ParseClientCSR. An
+// ECDSA P-256 CSR is roughly 400 bytes of PEM; 4 KiB leaves room for a
+// few extensions (all of which SignClient ignores) and nothing more.
+const maxCSRPEMBytes = 4096
+
+// ErrInvalidCSR is returned by ParseClientCSR and SignClient for any CSR
+// they refuse: not exactly one PEM "CERTIFICATE REQUEST" block, a DER
+// body that does not parse, a self-signature that does not verify, or a
+// public key that is not ECDSA P-256 (issue #130, ADR-0012 B1). Callers
+// map it to a 400; it is the requester's fault, never birdcage's.
+var ErrInvalidCSR = errors.New("ca: invalid certificate signing request")
+
+// ParseClientCSR decodes and checks an agent's certificate signing
+// request (ADR-0012 B1): exactly one PEM block of type "CERTIFICATE
+// REQUEST" and nothing but whitespace after it, a DER body that parses,
+// a self-signature that verifies against the key it carries (proof the
+// requester holds that private key), and an ECDSA P-256 public key --
+// the only key type an agent generates. Every refusal wraps
+// ErrInvalidCSR.
 //
-// Returned as PEM, nothing written to disk -- for the enrolment
-// endpoint (internal/enrol) to hand a canary once it has been
-// provisioned.
-func (c *CA) IssueClient(canaryID string, kind agentkind.Kind, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// The subject, SANs, extensions and attributes the CSR asks for are
+// read by nothing: SignClient keeps only the public key. Parsing is
+// separate from signing so a caller (internal/enrol) can refuse a bad
+// CSR before it spends anything -- an enrolment secret, a transaction.
+func ParseClientCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
+	if len(csrPEM) == 0 {
+		return nil, fmt.Errorf("%w: empty", ErrInvalidCSR)
+	}
+	if len(csrPEM) > maxCSRPEMBytes {
+		return nil, fmt.Errorf("%w: larger than %d bytes", ErrInvalidCSR, maxCSRPEMBytes)
+	}
+	block, rest := pem.Decode(csrPEM)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return nil, fmt.Errorf("%w: not a PEM CERTIFICATE REQUEST", ErrInvalidCSR)
+	}
+	if len(block.Headers) != 0 {
+		return nil, fmt.Errorf("%w: PEM headers are not accepted", ErrInvalidCSR)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, fmt.Errorf("%w: trailing data after the PEM block", ErrInvalidCSR)
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ca: generate client key: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidCSR, err)
+	}
+	if err := checkClientCSR(csr); err != nil {
+		return nil, err
+	}
+	return csr, nil
+}
+
+// checkClientCSR is the part of ParseClientCSR that SignClient repeats
+// on a CSR it is handed already parsed: the key type and the
+// self-signature. Repeated, not trusted, because SignClient is the
+// function that puts birdcage's name on the key.
+func checkClientCSR(csr *x509.CertificateRequest) error {
+	if csr == nil {
+		return fmt.Errorf("%w: nil", ErrInvalidCSR)
+	}
+	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return fmt.Errorf("%w: public key must be ECDSA P-256", ErrInvalidCSR)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return fmt.Errorf("%w: self-signature does not verify: %v", ErrInvalidCSR, err)
+	}
+	return nil
+}
+
+// SignClient signs a client-auth leaf certificate over the public key in
+// csr, for canaryID, valid for ttl (issue #130, ADR-0012 B1: "the agent
+// makes its own key; birdcage never sees it"). It replaces IssueClient,
+// which generated the key here and handed it back -- so every key ever
+// issued passed through birdcage's memory, its provision responses and
+// anything that captured them.
+//
+// Nothing from the CSR but its public key survives. The subject is
+// written from the caller's arguments, which the caller reads from the
+// registry: CommonName is the server-minted canary id and
+// OrganizationalUnit is exactly one value, kind (ADR-0011 / issue #106:
+// internal/ingest's requireBearerToken reads it back as
+// Subject.OrganizationalUnit[0] when, and only when, that slice has
+// length exactly 1). No SANs, no requested extensions, no requested key
+// usage are copied. There is no kindless variant -- every caller states
+// a kind, so "every issuance path states a kind" holds by construction.
+//
+// csr is checked again here (key type, self-signature) even though
+// ParseClientCSR already did, because this is the function that signs.
+// Returns the certificate as PEM and parsed, so the caller can record
+// its serial, fingerprint and validity without re-parsing.
+func (c *CA) SignClient(csr *x509.CertificateRequest, canaryID string, kind agentkind.Kind, ttl time.Duration) (certPEM []byte, cert *x509.Certificate, err error) {
+	if err := checkClientCSR(csr); err != nil {
+		return nil, nil, err
+	}
+	if canaryID == "" {
+		return nil, nil, fmt.Errorf("ca: SignClient: empty canary id")
+	}
+	if kind == "" {
+		return nil, nil, fmt.Errorf("ca: SignClient: empty kind")
+	}
+	if ttl <= 0 {
+		return nil, nil, fmt.Errorf("ca: SignClient: ttl must be positive")
 	}
 
 	serial, err := randomSerial()
@@ -394,18 +476,15 @@ func (c *CA) IssueClient(canaryID string, kind agentkind.Kind, ttl time.Duration
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, csr.PublicKey, c.key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ca: create client certificate: %w", err)
 	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	cert, err = x509.ParseCertificate(der)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ca: marshal client key: %w", err)
+		return nil, nil, fmt.Errorf("ca: parse client certificate: %w", err)
 	}
-
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	return certPEM, keyPEM, nil
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), cert, nil
 }
 
 // ServerCertificateSource returns a tls.Config.GetCertificate function

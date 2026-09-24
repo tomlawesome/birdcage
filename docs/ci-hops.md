@@ -97,6 +97,8 @@ of it by this issue.
 | `test:image:mockingbird` | Proves nothing in the agent image runs as root. |
 | `e2e:enrol-and-hit` | Enrolment and the ingest path change often and are the product's spine. |
 | `e2e:enrol-and-hit:postgres` | The same spine against the other engine birdcage ships. |
+| `e2e:agent-credentials` | #130 (ADR-0012 Part B): the credential itself -- agent-made keys, renewal from half-life, conflict detection, one-action revocation. As much the product's spine as enrolment above; a regression here is a scanner an operator cannot trust or cannot get rid of. |
+| `e2e:agent-credentials:postgres` | The same journeys against the other engine: `client_certs`' own migration comment warns the two engines compare stored timestamps at different resolutions, and this feature's health signals (`renewal_stalled`, `certificate_expired`) are computed entirely from those comparisons. |
 | `e2e:smb` | The OpenCanary `full_audit` parse is brittle by nature -- a fixed-index read of a third-party log line. |
 | `e2e:smb-lure` | The lure is the one container the design expects to be attacked, and this is the only check that runs the image that ships: that its hardening flags actually let Samba start, that 445 really lands on the canary's own address, and that one file opened is one alert rather than the five audit lines behind it (#123). Three of its findings were things no unit test could reach -- see the journey's own comments. |
 | `e2e:dashboard-own-ca` | The minted-certificate default. TLS setup is easy to break and hard to notice. |

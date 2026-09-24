@@ -209,22 +209,91 @@ where it will post events once it has real credentials.
 
 ## What provisioning hands the canary
 
-The agent immediately spends that enrolment secret at `POST
-/enrol/provision`, within the 30-minute window `POST /enrol/hello`
-granted. On success it gets, in one response, shown exactly once:
+The agent generates its own key -- birdcage never sees it, not even for
+a second ([ADR-0012](adr/0012-scanner-enrolment-proof.md) Part B1) --
+and sends a certificate signing request (CSR) over it along with the
+enrolment secret to `POST /enrol/provision`, within the 30-minute window
+`POST /enrol/hello` granted. On success it gets, in one response, shown
+exactly once:
 
 - a **bearer token** for `POST /ingest/events` and the rest of the
   ingest listener's routes;
-- a **client certificate and private key**, issued by birdcage's own CA
-  (`(*ca.CA).IssueClient`), whose subject names this canary -- the
-  ingest listener now requires one on every connection, matching the
-  bearer token (see
-  [SECURITY.md](../SECURITY.md#network-exposure));
+- a **client certificate**, signed by birdcage's own CA
+  (`(*ca.CA).SignClient`) over the agent's own key -- its subject is
+  rewritten from the registry, never taken from the CSR, so nothing the
+  agent asked for survives but its public key. The ingest listener
+  requires this certificate on every connection, matching the bearer
+  token (see [SECURITY.md](../SECURITY.md#network-exposure));
 - the **heartbeat interval** it should use.
 
 Nothing about this step needs an operator's attention -- it happens
 automatically, seconds after the `docker run` command starts the
 container.
+
+## Certificate renewal, and what a stalled one means
+
+A client certificate lives seven days. From half-life (day 3.5) the
+agent tries `POST /ingest/renew` on every heartbeat tick until one
+succeeds: a fresh key, a fresh CSR, same subject. The old certificate
+stays valid until the new one's first use, at which point birdcage
+revokes it -- so a renewal never has a moment where the agent is left
+holding nothing usable.
+
+If renewal keeps failing, the canary's state moves through two stages,
+visible on its tile and its history the same way `rotation_stalled`
+already is for bearer tokens:
+
+- **`renewal_stalled`** -- the certificate is past half-life and no
+  renewal has landed yet. Nothing is broken yet; check the agent's own
+  logs for why `POST /ingest/renew` is failing (usually a network or
+  clock problem between the canary and birdcage).
+- **`not_delivering`** -- the certificate has now expired outright.
+  Every request from this canary is refused. Treat this like any other
+  `not_delivering` canary: something on the box needs fixing, or it
+  needs re-enrolling.
+
+## Credential conflicts: two holders of one credential
+
+Two states mean the same credential is answering from more than one
+place, which is what a copied key or token looks like:
+
+- **`token_conflict`** / **`credential_conflict`** -- a token or
+  certificate birdcage already revoked (because its successor is live)
+  is still being presented. Expected once, briefly, during an honest
+  rotation or renewal race; if it keeps recurring, something still holds
+  the old credential.
+- **`credential_conflict`** also covers the same live certificate being
+  used from two source addresses, or by two different agent build
+  versions, within one heartbeat interval (60 seconds). A canary whose
+  address legitimately changes (DHCP, a container restart onto a new
+  IP) flips this once and clears within a minute; the history keeps the
+  flap either way.
+
+Neither state revokes anything by itself -- a copied key must never be
+a button that silences the real canary. Both mean: **look at this node,
+then revoke if the second holder isn't yours.**
+
+## Revoking a canary's credentials
+
+```
+birdcage canary revoke <canary-id>
+```
+
+Ends every token and every certificate that canary has, in one action:
+from that moment, every request from any holder -- the honest agent or
+a copy of its credentials -- is refused, and the honest agent's own log
+says so. There is no way to revoke just one credential; a copied key
+means the token and certificate must die together.
+
+Recovery is re-enrolling: the same `birdcage canary enrol` command and
+printed `docker run` line as a first enrolment. The canary keeps its
+name and its history, but gets a new id and a new credential -- a
+second enrolment under an existing name never takes over the live
+node's credential, it starts a new one.
+
+**Every node enrolled before this landed needs re-enrolling once.**
+Nothing about its certificate or token changes on upgrade by itself;
+the fix is the same `birdcage canary enrol` command described above.
 
 ### The certificate carries the agent's kind
 

@@ -91,6 +91,7 @@ import (
 	"syscall"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
@@ -143,7 +144,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	c, ts, in, err := boot(cfg, version, mainLog)
+	c, ts, rm, in, err := boot(cfg, version, mainLog)
 	if err != nil {
 		mainLog.Error(safeErr(err))
 		os.Exit(1)
@@ -236,7 +237,7 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		runHeartbeatLoop(ctx, c, ts, func() client.SelfReport {
+		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
 			return currentSelfReport(version, in, poisonerDetector)
 		})
 	}()
@@ -331,7 +332,7 @@ func main() {
 // nolog_test.go) can run exactly this path with a fake config and
 // capture its log output, without also running main's blocking service
 // loops.
-func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *TokenStore, *Intake, error) {
+func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *TokenStore, *renewal.Manager, *Intake, error) {
 	c, err := client.New(client.Config{
 		BaseURL:    cfg.BirdcageURL,
 		CACert:     cfg.CACert,
@@ -339,13 +340,15 @@ func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *Tok
 		ClientKey:  cfg.ClientKey,
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("build birdcage client: %s", safeErr(err))
+		return nil, nil, nil, nil, fmt.Errorf("build birdcage client: %s", safeErr(err))
 	}
 
 	ts, err := loadTokenStore(cfg.TokenPath)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("load token: %s", safeErr(err))
+		return nil, nil, nil, nil, fmt.Errorf("load token: %s", safeErr(err))
 	}
+
+	rm := renewal.NewManager(cfg.StateDir, clientKeyFileName, clientCertFileName, cfg.ClientCert, cfg.ClientKey)
 
 	in, err := NewIntake(IntakeConfig{
 		LogPath:      cfg.LogPath,
@@ -353,11 +356,11 @@ func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *Tok
 		Listen:       cfg.Listen,
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("build intake: %s", safeErr(err))
+		return nil, nil, nil, nil, fmt.Errorf("build intake: %s", safeErr(err))
 	}
 
 	logger.Info(fmt.Sprintf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL))
-	return c, ts, in, nil
+	return c, ts, rm, in, nil
 }
 
 // currentSelfReport builds the heartbeat's self-report from the real

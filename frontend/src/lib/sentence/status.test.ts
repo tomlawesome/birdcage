@@ -143,4 +143,30 @@ describe('the status pill: issue #45 ranking', () => {
     expect(s.kind).toBe('critical')
     if (s.kind === 'critical') expect(s.canaryName).toBe('b')
   })
+
+  // ADR-0012 Part B (issue #130): credential_conflict ties token_conflict
+  // (same red severity); renewal_stalled ties rotation_stalled (its
+  // certificate twin).
+  it('credential_conflict reads as critical, ranked with token_conflict', () => {
+    const canaries = [
+      canary('a', 'silent', { silent_for_s: 60 }),
+      canary('b', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } }),
+    ]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') {
+      expect(s.canaryName).toBe('b')
+      expect(s.label).toBe('b credential conflict — revoke the node')
+    }
+  })
+
+  it('renewal_stalled reads as degraded, ranked with rotation_stalled', () => {
+    const canaries = [canary('a', 'pending'), canary('b', 'renewal_stalled', { renewal_stalled_for_s: 1800 })]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('degraded')
+    if (s.kind === 'degraded') {
+      expect(s.canaryName).toBe('b')
+      expect(s.label).toBe('b renewal stalled 30 m')
+    }
+  })
 })

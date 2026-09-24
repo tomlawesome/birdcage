@@ -496,3 +496,44 @@ func TestNilHookIsTheOldBehaviour(t *testing.T) {
 		}
 	})
 }
+
+// TestTickRecordsCredentialStates is issue #130's states going through
+// #56's period writer: a certificate conflict opens token_conflict (the
+// widened state), a dual use opens credential_conflict, and the dual use
+// clears by itself once it stops.
+func TestTickRecordsCredentialStates(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "certconflict", "a", t0)
+		addCanary(t, database, "dual", "b", t0)
+		r := New(database)
+
+		signal(t, database, "ingest.cert_conflict", "certconflict", t0)
+		if err := store.RecordCredentialDualUse(context.Background(), database, "dual", store.DualUseAddresses, "10.0.0.1", "10.0.0.2", t0); err != nil {
+			t.Fatalf("RecordCredentialDualUse: %v", err)
+		}
+		tick(t, r, t0.Add(time.Second))
+
+		open := func(id string) map[string]bool {
+			out := map[string]bool{}
+			for _, p := range periods(t, database, id) {
+				if p.EndedAt == nil {
+					out[p.State] = true
+				}
+			}
+			return out
+		}
+		if !open("certconflict")[string(store.StateTokenConflict)] {
+			t.Errorf("certconflict open periods = %v, want token_conflict", open("certconflict"))
+		}
+		if !open("dual")[string(store.StateCredentialConflict)] {
+			t.Errorf("dual open periods = %v, want credential_conflict", open("dual"))
+		}
+
+		beat(t, database, "dual", t0.Add(3*time.Minute))
+		tick(t, r, t0.Add(3*time.Minute))
+		if open("dual")[string(store.StateCredentialConflict)] {
+			t.Error("credential_conflict still open three minutes after the dual use stopped")
+		}
+	})
+}

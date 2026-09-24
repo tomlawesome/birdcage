@@ -39,11 +39,11 @@ func ensureEnrolled(stateDir, birdcageURL, caPin, deployToken string) error {
 // once, from POST /enrol/hello's own response, never configurable, never
 // written any other way (see config.go's own doc comment on these
 // constants).
-func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials) []enrolment.StateFile {
+func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []enrolment.StateFile {
 	return []enrolment.StateFile{
 		{Name: caFileName, Data: hello.CAPEM},
 		{Name: clientCertFileName, Data: creds.ClientCertPEM},
-		{Name: clientKeyFileName, Data: creds.ClientKeyPEM},
+		{Name: clientKeyFileName, Data: keyPEM},
 		{Name: tokenFileName, Data: []byte(creds.CanaryToken)},
 		{Name: ingestURLFileName, Data: []byte(hello.IngestURL)},
 		{Name: adminApprovalAddressFileName, Data: []byte(hello.AdminApprovalAddress)},

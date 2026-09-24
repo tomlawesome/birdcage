@@ -141,6 +141,23 @@ type Canary struct {
 	RotationStalledEscalated bool   `json:"rotation_stalled_escalated,omitempty"`
 	TokenConflictForS        *int64 `json:"token_conflict_for_s,omitempty"`
 
+	// Issue #130 (ADR-0012 B2/B4) detail, each present only while its
+	// state is active. CredentialConflict names the two addresses and/or
+	// the two agent builds seen on one certificate (credential_conflict).
+	// RenewalStalled/RenewalStalledForS are renewal_stalled, the seconds
+	// counted from the certificate's half-life. CertificateExpired says
+	// why not_delivering is on when the agent's own report did not say
+	// so: the certificate it was using has expired.
+	CredentialConflict *CredentialConflict `json:"credential_conflict,omitempty"`
+	RenewalStalled     bool                `json:"renewal_stalled,omitempty"`
+	RenewalStalledForS *int64              `json:"renewal_stalled_for_s,omitempty"`
+	CertificateExpired bool                `json:"certificate_expired,omitempty"`
+
+	// dualUse is the raw credential_dual_use_* columns, read by
+	// ListCanaries and turned into CredentialConflict by
+	// applyCredentialHealth. Never serialised.
+	dualUse dualUseColumns
+
 	// ActiveStates is every state active on this canary right now,
 	// worst first by healthStateRank -- the whole set Status names only
 	// the head of. Issue #56's history needs all of it: a canary that
@@ -587,7 +604,9 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, last_heartbeat_at, agent_log_read_ok,
 			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at,
-			agent_version, poisoner_names
+			agent_version, poisoner_names,
+			credential_dual_use_addrs, credential_dual_use_addrs_at,
+			credential_dual_use_versions, credential_dual_use_versions_at
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -611,7 +630,8 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
-			&agentVersion, &poisonerNames); err != nil {
+			&agentVersion, &poisonerNames,
+			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		c.LastSeenAddr = lastSeenAddr
@@ -670,6 +690,16 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if err != nil {
 			return nil, fmt.Errorf("token-conflict signal for %s: %w", canaries[i].ID, err)
 		}
+		// Issue #130: token_conflict widens to a superseded certificate
+		// too; the newer of the two signals is the one the quiet period
+		// counts from.
+		certConflictSince, err := latestAuditSince(ctx, database, "ingest.cert_conflict", canaries[i].ID, now.Add(-tokenConflictQuietPeriod))
+		if err != nil {
+			return nil, fmt.Errorf("cert-conflict signal for %s: %w", canaries[i].ID, err)
+		}
+		if certConflictSince != nil && (tokenConflictSince == nil || certConflictSince.After(*tokenConflictSince)) {
+			tokenConflictSince = certConflictSince
+		}
 		rotationStalled, rotationEscalated, rotationSinceS, err := rotationSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {
 			return nil, fmt.Errorf("rotation signal for %s: %w", canaries[i].ID, err)
@@ -687,6 +717,14 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		pending := canaries[i].RegisteredAt == nil
 
 		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
+
+		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
+		if err != nil {
+			return nil, fmt.Errorf("certificate signal for %s: %w", canaries[i].ID, err)
+		}
+		if err := applyCredentialHealth(&canaries[i], cert, now); err != nil {
+			return nil, fmt.Errorf("credential state for %s: %w", canaries[i].ID, err)
+		}
 	}
 	return canaries, nil
 }

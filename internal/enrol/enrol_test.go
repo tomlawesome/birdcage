@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -265,6 +266,149 @@ func TestHandleHelloMalformedBody(t *testing.T) {
 			}
 		})
 	})
+}
+
+// TestHandleHelloTrailingDataAfterValidJSON covers the dec.More() branch:
+// a syntactically valid JSON object followed by extra bytes on the same
+// body is rejected as malformed, distinct from "not JSON at all" and
+// "unknown field" (both already covered).
+func TestHandleHelloTrailingDataAfterValidJSON(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		h := NewHandler(database, testCA, "", nil, nil)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/hello", strings.NewReader(`{"token":"x"}{"token":"y"}`))
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error body: %v", err)
+		}
+		if body["error"] != "malformed request: trailing data" {
+			t.Errorf("error = %q, want %q", body["error"], "malformed request: trailing data")
+		}
+	})
+}
+
+// TestHandleHelloFirstContactStorageErrorReturns503 covers the branch
+// where store.FirstContact itself fails (birdcage's own storage
+// trouble, not the token's fault): a request whose context is already
+// canceled makes database.Begin fail inside store.FirstContact, and the
+// handler must answer 503, never the uniform 401 refusal reserved for a
+// bad token.
+func TestHandleHelloFirstContactStorageErrorReturns503(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		h := NewHandler(database, testCA, "", nil, nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody("whatever")).WithContext(ctx)
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error body: %v", err)
+		}
+		if body["error"] != "service unavailable" {
+			t.Errorf("error = %q, want %q", body["error"], "service unavailable")
+		}
+	})
+}
+
+// TestRespondContactedSettingsLookupFailureReturns503 covers
+// respondContacted's own storage-trouble branch: with the settings
+// table gone, store.GetSetting(AdminApprovalAddress) fails and the
+// handler must answer 503 rather than partially succeed or panic --
+// distinct from every other respondContacted test, which never touches
+// this path because the settings table is always present.
+func TestRespondContactedSettingsLookupFailureReturns503(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+
+		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+
+		if _, err := database.Exec(`DROP TABLE settings`); err != nil {
+			t.Fatalf("drop settings table: %v", err)
+		}
+
+		now := mintedAt.Add(time.Minute)
+		h := NewHandler(database, testCA, "", func() time.Time { return now }, nil)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/hello", helloRequestBody(raw))
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error body: %v", err)
+		}
+		if body["error"] != "service unavailable" {
+			t.Errorf("error = %q, want %q", body["error"], "service unavailable")
+		}
+	})
+}
+
+// TestRespondContactedNilWindowDeadlineLogsAndDefaultsToCreatedAt covers
+// respondContacted's documented wiring-bug fallback: store.FirstContact
+// always sets WindowDeadline on a Contacted outcome, but if it somehow
+// didn't, respondContacted must still answer 200 (using CreatedAt in its
+// place) rather than panic on the nil pointer -- calling the unexported
+// method directly, in-package, since store.FirstContact itself cannot
+// be made to produce this state through the public API.
+func TestRespondContactedNilWindowDeadlineLogsAndDefaultsToCreatedAt(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		setAddresses(t, database)
+		testCA := newTestCA(t)
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		h := newTestHandler(database, testCA, func() time.Time { return now })
+
+		createdAt := now.Add(-time.Hour)
+		session := store.EnrolmentSession{ID: "sess-nil-deadline", CreatedAt: createdAt, WindowDeadline: nil}
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/hello", nil)
+		h.respondContacted(rec, req, "some-secret", session)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp helloResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v; body: %s", err, rec.Body.String())
+		}
+		if resp.WindowDeadline != createdAt.UTC().Format(time.RFC3339) {
+			t.Errorf("WindowDeadline = %q, want CreatedAt fallback %q", resp.WindowDeadline, createdAt.UTC().Format(time.RFC3339))
+		}
+	})
+}
+
+// newTestHandler builds a *handler directly (same package, so its
+// unexported fields and methods are reachable) rather than through
+// NewHandler, whose return type is the assembled http.Handler mux and
+// so hides them -- for tests that need to drain the rate limiter
+// directly or call an unexported method like respondContacted on a
+// hand-built session. Mirrors NewHandler's own defaulting.
+func newTestHandler(database *db.DB, birdcageCA *ca.CA, now func() time.Time) *handler {
+	if now == nil {
+		now = time.Now
+	}
+	return &handler{db: database, ca: birdcageCA, now: now, logger: slog.Default(), limiters: newSourceLimiters(), certTTL: ClientCertTTL}
 }
 
 // TestHandleHelloServesOnlyPostEnrolHello proves the mux's isolation:
