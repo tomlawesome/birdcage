@@ -91,7 +91,7 @@ func TestSendHeartbeatPostsCommonShapeOnly(t *testing.T) {
 	defer ts.Close()
 	c := newTestClient(t, ts)
 
-	sendHeartbeat(context.Background(), c, "tok", "1.2.3")
+	sendHeartbeat(context.Background(), c, "tok", "1.2.3", nil, nil)
 
 	if gotPath != "/ingest/heartbeat" {
 		t.Errorf("path = %q, want /ingest/heartbeat", gotPath)
@@ -118,7 +118,7 @@ func TestSendHeartbeatUnauthorizedDoesNotPanic(t *testing.T) {
 	defer ts.Close()
 	c := newTestClient(t, ts)
 
-	sendHeartbeat(context.Background(), c, "not-a-real-token", "1.0.0")
+	sendHeartbeat(context.Background(), c, "not-a-real-token", "1.0.0", nil, nil)
 }
 
 // The loop sends once immediately and then on every tick, and stops when
@@ -146,7 +146,7 @@ func TestRunHeartbeatLoopSendsImmediatelyThenOnEachTick(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runHeartbeatLoop(ctx, c, "tok", newTestRenewalManager(t), "v-test", 10*time.Millisecond)
+		runHeartbeatLoop(ctx, c, "tok", newTestRenewalManager(t), "v-test", 10*time.Millisecond, nil, nil)
 	}()
 
 	select {

@@ -39,18 +39,18 @@ const heartbeatInterval = 60 * time.Second
 // is logged and left for the next tick; the agent never invents a path
 // back to a token mint, and recovery is re-enrolment (#47), the same
 // stance every agent takes on its own dead credential.
-func runHeartbeatLoop(ctx context.Context, c *client.Client, token string, rm *renewal.Manager, version string, interval time.Duration) {
+func runHeartbeatLoop(ctx context.Context, c *client.Client, token string, rm *renewal.Manager, version string, interval time.Duration, dbTracker *dbRefreshTracker, runTracker *currentRunTracker) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	sendHeartbeat(ctx, c, token, version)
+	sendHeartbeat(ctx, c, token, version, dbTracker, runTracker)
 	runRenewalTick(ctx, rm, c, token)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sendHeartbeat(ctx, c, token, version)
+			sendHeartbeat(ctx, c, token, version, dbTracker, runTracker)
 			runRenewalTick(ctx, rm, c, token)
 		}
 	}
@@ -61,8 +61,29 @@ func runHeartbeatLoop(ctx context.Context, c *client.Client, token string, rm *r
 // for the next tick, matching runScanOnce's own "log and continue"
 // stance: a heartbeat birdcage never saw simply means its last-seen
 // doesn't advance until the next one lands.
-func sendHeartbeat(ctx context.Context, c *client.Client, token, version string) {
-	err := c.SendCommonHeartbeat(ctx, token, client.CommonHeartbeat{AgentVersion: version})
+//
+// dbTracker and runTracker may be nil (every production call passes
+// both; tests exercising only the plain heartbeat shape, like this
+// file's own TestSendHeartbeatPostsCommonShapeOnly, pass neither) --
+// dbRefreshReportIfFailing already treats a nil tracker as healthy, and
+// runTracker.get() on a nil *currentRunTracker would panic, so this
+// checks it directly.
+//
+// ADR-0012 decision 9: "[Nightjar] repeats the current stage on every
+// ordinary tick until the run is answered" -- runTracker is what makes
+// that true here, independent of whichever loop (scan or command) last
+// changed it.
+func sendHeartbeat(ctx context.Context, c *client.Client, token, version string, dbTracker *dbRefreshTracker, runTracker *currentRunTracker) {
+	hb := client.CommonHeartbeat{
+		AgentVersion: version,
+		DBRefresh:    dbRefreshReportIfFailing(dbTracker),
+	}
+	if runTracker != nil {
+		if runID, stage := runTracker.get(); runID != "" {
+			hb.Run = &client.RunReport{RunID: runID, Stage: stage}
+		}
+	}
+	err := c.SendCommonHeartbeat(ctx, token, hb)
 	if err == nil {
 		return
 	}

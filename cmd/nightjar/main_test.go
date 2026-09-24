@@ -128,7 +128,7 @@ func TestRunStopsPromptlyOnCancelledContext(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		run(ctx, cfg, c, "tok", newTestRenewalManager(t), "v-test", slog.New(slog.DiscardHandler))
+		run(ctx, cfg, c, "tok", newTestRenewalManager(t), newDBRefreshTracker(t.TempDir(), dbRefreshStatus{}), "v-test", slog.New(slog.DiscardHandler))
 		close(done)
 	}()
 
