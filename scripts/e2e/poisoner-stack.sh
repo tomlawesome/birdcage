@@ -96,11 +96,13 @@ enrol() { # enrol <name> <lane> <work-file>
 # pacing, inserted after the --sysctl flag the printed command already
 # carries, so nothing else about it -- the capability, the CA pin, the
 # deploy token, the bait names the enrol flag put there, the image -- is
-# touched.
+# touched. Only the first `docker run` block is taken: enrolment now
+# prints the SMB lure's block after the canary's (#87), and evalling both
+# would start the lure with this harness's --network on top of its own.
 run() { # run <work-file> <container> <state-vol> <log-vol>
   local work_file="$1" container="$2" state_vol="$3" log_vol="$4"
   local command pacing
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/p' /work/$work_file")" \
+  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
     || die "could not read the printed docker run command for $container"
 
   pacing="--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\\\n  -e MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR \\\\\\n  -e MOCKINGBIRD_POISONER_CEILING=$POISONER_CEILING \\\\\\n  -e MOCKINGBIRD_POISONER_HOURS=$POISONER_HOURS \\\\"
