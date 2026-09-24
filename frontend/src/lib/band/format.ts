@@ -54,6 +54,18 @@ export function formatDuration(seconds: number): string {
   return m > 0 ? `${m} m ${s} s` : `${s} s`
 }
 
+/** Issue #59 (+ Fable's note 2026-09-24): only high-signal rises keep a
+ * label on the trace. A rise is high-signal when it is a credential attempt
+ * -- its `tried` is `user / pass`, which `triedFor` (internal/store/visitor.go)
+ * is the only producer of a ` / ` for -- or a poisoner answer, whose hits
+ * carry `service: "poisoner"` and a bare-protocol `tried` (LLMNR, mDNS...)
+ * with no ` / `. Path, SMB-share and bare-service rises are still drawn but
+ * carry no label. Keyed off the hit, not the label text alone, so a poisoner's
+ * bare protocol is not mistaken for a low-signal bare service (#86). */
+export function isHighSignalRise(hits: ReadonlyArray<{ service: string; tried: string }>): boolean {
+  return hits.some((h) => h.service === 'poisoner' || h.tried.includes(' / '))
+}
+
 /** Line 1's text (the "✱ " prefix is drawn separately, in the kind colour, same split as gen.py's label()). */
 export function joinTried(tried: string[]): string {
   const seen = new Set<string>()

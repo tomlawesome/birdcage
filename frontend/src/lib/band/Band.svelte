@@ -63,6 +63,7 @@
       {/each}
 
       {#each model.labels as label, i (i)}
+        <path d={label.stem} fill="none" stroke="var(--ink-3)" stroke-width="1" />
         <text x={label.x} y={label.y - 16} class="bl" text-anchor={label.anchor}
           ><tspan fill={kindColor(label.kind)}>✱ </tspan>{label.l1}</text
         >

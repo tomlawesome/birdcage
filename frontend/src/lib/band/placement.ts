@@ -42,6 +42,9 @@ export interface PlacedLabel {
   l1: string
   l2: string
   box: Box
+  /** SVG path joining the rise's peak to the label (#59): a hairline
+   * vertical stem that bends across to the label if a bump moved it aside. */
+  stem: string
 }
 
 export interface Box {
@@ -64,6 +67,11 @@ const RIPPLE_H = 16
 const RIPPLE_BW = 12
 const START_H = 34
 const H_STEP = 30
+/** Gap between a rise's peak and its label, spanned by the stem (#59) --
+ * the same hairline round 7 draws between a failed self-test tick and its
+ * words (single.ts). The label is placed this far above the peak and the
+ * stem joins the two. */
+const STEM_H = 14
 
 /** Scale options, for a caller whose line is not one of many (issue
  * #118's canary page): the unlabelled ripples are drawn taller there,
@@ -126,8 +134,8 @@ export function placeRises(
         const bx0 = anchor === 'end' ? ax - w : anchor === 'start' ? ax : ax - w / 2
         const bx1 = anchor === 'end' ? ax : anchor === 'start' ? ax + w : ax + w / 2
         if (bx0 < x0 - 140 || bx1 > x1) continue
-        const top = r.y - h - LH
-        const bottom = r.y - h
+        const top = r.y - h - STEM_H - LH
+        const bottom = r.y - h - STEM_H
         const blocked = obstacles.some(
           (p) => bx0 < p.xTo + 8 && bx1 > p.xFrom - 8 && top < p.bottom + 6 && bottom > p.top - 6,
         )
@@ -140,11 +148,21 @@ export function placeRises(
     }
 
     const { anchor, ax, bx0, bx1 } = chosen
-    obstacles.push({ xFrom: bx0, xTo: bx1, top: r.y - h - LH, bottom: r.y - h })
-    obstacles.push({ xFrom: r.xFrom - (14 + h * 0.2), xTo: Math.min(r.xTo + (14 + h * 0.2), x1), top: r.y - h, bottom: r.y })
+    const peakY = r.y - h
+    const labelY = peakY - STEM_H
+    obstacles.push({ xFrom: bx0, xTo: bx1, top: labelY - LH, bottom: labelY })
+    obstacles.push({ xFrom: r.xFrom - (14 + h * 0.2), xTo: Math.min(r.xTo + (14 + h * 0.2), x1), top: peakY, bottom: r.y })
     const bw = 14 + h * 0.2
+    // The stem's foot is the rise's own x (its peak centre), so it is fixed
+    // before any bump moved the label sideways; it climbs straight and then
+    // bends across to the label's final anchor x if the label did move.
+    const mid = (r.xFrom + r.xTo) / 2
+    const stem =
+      Math.abs(ax - mid) < 0.5
+        ? `M${mid.toFixed(1)},${peakY.toFixed(1)} L${mid.toFixed(1)},${labelY.toFixed(1)}`
+        : `M${mid.toFixed(1)},${peakY.toFixed(1)} L${mid.toFixed(1)},${(labelY + STEM_H * 0.5).toFixed(1)} L${ax.toFixed(1)},${labelY.toFixed(1)}`
     bumps.push({ xFrom: r.xFrom, xTo: r.xTo, y: r.y, h, bw, kind: r.kind, d: bumpPath(r.xFrom, r.xTo, r.y, h, x1, bw), labelled: true })
-    labels.push({ anchor, x: ax, y: r.y - h, kind: r.kind, l1: r.l1, l2: r.l2, box: { xFrom: bx0, xTo: bx1, top: r.y - h - LH, bottom: r.y - h } })
+    labels.push({ anchor, x: ax, y: labelY, kind: r.kind, l1: r.l1, l2: r.l2, box: { xFrom: bx0, xTo: bx1, top: labelY - LH, bottom: labelY }, stem })
   }
 
   const top = Math.min(bandTop - 60, ...obstacles.map((o) => o.top - 10))

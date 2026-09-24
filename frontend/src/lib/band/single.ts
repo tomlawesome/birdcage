@@ -8,7 +8,7 @@
 import type { Canary, SelfTestRunSummary, TraceCanary, TraceHit, VisitorKind } from '../types'
 import { axisCaptions, axisTicks, dayTicks, nowLabel, type AxisTick, type Caption, type DayTick } from './axis'
 import { beatAgos } from './beats'
-import { buildLine2, formatClockWithSeconds, formatDuration, joinTried } from './format'
+import { buildLine2, formatClockWithSeconds, formatDuration, joinTried, isHighSignalRise } from './format'
 import { cx, segmentsForRange, type Seg } from './segments'
 import { placeRises, type PlacedBump, type PlacedLabel, type Rise } from './placement'
 import type { Silence } from '../canary/model'
@@ -155,7 +155,9 @@ function risesFor(
     clusters.forEach((cluster, index) => {
       const ordered = [...cluster.items].sort((a, b) => a.index - b.index).map((i) => i.hit)
       const kind = ordered[0].kind
-      const labelled = index === widest
+      // Same rule as the band (#59): the group's representative rise keeps
+      // its label only when it is a credential attempt or a poisoner answer.
+      const labelled = index === widest && isHighSignalRise(ordered)
       let l1 = ''
       let l2 = ''
       if (labelled) {
