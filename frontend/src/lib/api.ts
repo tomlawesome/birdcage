@@ -18,6 +18,7 @@ import type {
   HistoryResponse,
   MailStatus,
   Range,
+  RunsResponse,
   TraceResponse,
   VisitorsResponse,
 } from './types'
@@ -45,6 +46,10 @@ interface Fixture {
    * fleet scene that has no canary page to draw. Keyed by canary id, so
    * one scene can answer for whichever tile was opened. */
   canary?: Record<string, CanaryPageResponse>
+  /** ADR-0012 (issue #116): a scanner's own scan-run history, keyed by
+   * canary id, present only for a scene that has one. None of the
+   * existing scenes are a scanner, so this is always absent today. */
+  runs?: Record<string, RunsResponse>
   /** Every scene carries one (issue #55). Mail is off in all of them
    * except 'alerts', which is the scene where something has gone wrong
    * and is therefore where a broken mailer is worth showing. A scene
@@ -202,4 +207,18 @@ export async function fetchCanary(id: string, range: Range = '14d'): Promise<Can
     return page
   }
   return getJSON<CanaryPageResponse>(`/api/canary?id=${encodeURIComponent(id)}&range=${range}`)
+}
+
+/** GET /api/canaries/{id}/runs (ADR-0012 decision 11): a scanner's own
+ * scan-run history -- proof and manual, newest first. A fixture scene
+ * without a `runs` block, or without this canary in it, answers as a
+ * canary with no run history rather than failing the section: every
+ * existing scene predates this endpoint. */
+export async function fetchCanaryRuns(id: string): Promise<RunsResponse> {
+  const scene = fixtureScene()
+  if (scene) {
+    const runs = (await loadFixture(scene)).runs?.[id]
+    return runs ?? { runs: [] }
+  }
+  return getJSON<RunsResponse>(`/api/canaries/${encodeURIComponent(id)}/runs`)
 }

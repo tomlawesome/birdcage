@@ -10,11 +10,12 @@
 //   silent:           "○ silent 6 m 12 s · last heard 21:58:19"
 // Reads TraceCanary (fetchTrace), not Canary (fetchCanaries) -- the hit
 // times and kinds this needs only exist at that granularity.
-import type { CanaryStatus, CredentialConflict, LastHit, VisitorKind } from '../types'
+import type { CanaryDbRefresh, CanaryLastRun, CanaryRun, CanaryStatus, CredentialConflict, LastHit, VisitorKind } from '../types'
 import { durationExact } from './duration'
 import { formatClock, formatClockShort, relativeDayLabel } from './time'
 import { portForService } from './ports'
 import { buildQuietStory, computeQuietDays } from './quietStory'
+import { stageLabel } from './stage'
 import type { Segment } from './types'
 
 export interface TileHit {
@@ -56,6 +57,15 @@ export interface TileCanaryInput {
   last_self_test_at?: string | null
   last_self_test_passed?: boolean
   self_test_failed_services?: string[]
+  // ADR-0012 (issue #116): a scanner's own ordered-scan proof. `run` is
+  // carried only while a run is open (drives the pending sentence's
+  // stage and minutes); `last_run` is the most recently completed one
+  // (drives self_test_failed's scan target and last stage); `db_refresh`
+  // is present only while the vulnerability database refresh is
+  // failing (drives db_stale). None ever carry a run id.
+  run?: CanaryRun
+  last_run?: CanaryLastRun
+  db_refresh?: CanaryDbRefresh
 }
 
 export interface TileStatusResult {
@@ -116,7 +126,19 @@ function credentialConflictShort(cc: CredentialConflict | undefined): string {
   return 'in use from two places at once'
 }
 
-function otherStateLine(canary: TileCanaryInput): Segment[] | null {
+/** Whole hours since an ISO timestamp, floored -- the db_stale sentence's
+ * "N hours", never a fraction. */
+function hoursSince(at: string, now: string): number {
+  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(at)) / 3_600_000))
+}
+
+/** Whole minutes since an ISO timestamp, floored -- the pending
+ * sentence's "how long it has sat there" (decision 9). */
+function minutesSince(at: string, now: string): number {
+  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(at)) / 60_000))
+}
+
+function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null {
   switch (canary.status as CanaryStatus) {
     case 'token_conflict':
       // ADR-0012 Part B widens this to also mean a superseded
@@ -146,6 +168,21 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
         },
       ]
     case 'self_test_failed':
+      // ADR-0012 (issue #116): a scanner's failed run names the `scan`
+      // target and the last stage reached, from `last_run` -- there is
+      // no per-service list to name, unlike a honeypot's self-test.
+      // `last_run` is only ever carried for a scanner (Decision 6), so
+      // its presence is how this branch tells the two kinds apart.
+      if (canary.last_run) {
+        return [
+          {
+            text:
+              `⚠ self-test · scan target failed — last stage ${stageLabel(canary.last_run.last_stage)}` +
+              `${canary.last_run.reason ? ` (${canary.last_run.reason})` : ''} — check the scanner`,
+            cls: 'al',
+          },
+        ]
+      }
       // Issue #46 (health.go's StateTestFailed, note 22577's tile line):
       // birdcage's own daily self-test found a service that never
       // answered its probe. The list names exactly the targets that
@@ -158,6 +195,20 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
           cls: 'al',
         },
       ]
+    // ADR-0012 decision 10 (issue #116): a scanner's vulnerability
+    // database refresh has been failing for over 24 hours, birdcage's
+    // own clock deciding. Coloured 'wn' -- the nearest existing warning
+    // state's tier -- even though db_stale ranks with the critical
+    // states in status.ts.
+    case 'db_stale':
+      return [
+        {
+          text:
+            `⚠ vulnerability database not refreshed for ${hoursSince(canary.db_refresh?.failing_since ?? now, now)} h` +
+            ` — check the scanner can reach the vulnerability database mirror`,
+          cls: 'wn',
+        },
+      ]
     case 'throttled':
       return [
         {
@@ -165,12 +216,27 @@ function otherStateLine(canary: TileCanaryInput): Segment[] | null {
           cls: 'al',
         },
       ]
-    case 'pending':
+    case 'pending': {
       // Issue #47 steps 7-9: provisioned but not yet proven end to end
       // -- #45's own third category, not a fault. No duration field: a
       // pending canary has no "since" the API carries (registered_at is
       // null by definition), unlike every other state's own *_for_s.
+      //
+      // ADR-0012 decision 9 (issue #116): while an ordered run is open,
+      // the sentence carries its current stage and how many minutes it
+      // has sat there (from stage_at) -- only ever present for a
+      // scanner's own proof run.
+      if (canary.run) {
+        const minutes = minutesSince(canary.run.stage_at, now)
+        return [
+          {
+            text: `◌ pending · ${stageLabel(canary.run.stage)}, ${minutes} min — waiting on its first self-test to confirm the chain works`,
+            cls: 'wn',
+          },
+        ]
+      }
       return [{ text: `◌ pending · waiting on its first self-test to confirm the chain works`, cls: 'wn' }]
+    }
     case 'rotation_stalled': {
       // Not escalated is signal A only (a freshly issued token unused for
       // 15 min to 24 h). Escalated is either signal A past 24 h or signal
@@ -213,7 +279,7 @@ export function computeTileStatus(
   now: string,
   lastHit: LastHit | null = null,
 ): TileStatusResult {
-  const other = otherStateLine(canary)
+  const other = otherStateLine(canary, now)
   if (other) {
     return { lines: [other] }
   }

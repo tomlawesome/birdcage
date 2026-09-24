@@ -44,6 +44,9 @@ const TIER: Record<HistoryState, HistoryTier> = {
   silent: 'crit',
   not_delivering: 'crit',
   self_test_failed: 'crit',
+  // ADR-0012 decision 10 (#116): coloured like the nearest existing
+  // warning state, even though it ranks with the critical states above.
+  db_stale: 'warn',
   throttled: 'crit',
   rotation_stalled: 'warn',
   // ADR-0012 Part B: rotation_stalled's certificate twin, same tier.
@@ -68,6 +71,7 @@ const STATE_ORDER: HistoryState[] = [
   'silent',
   'not_delivering',
   'self_test_failed',
+  'db_stale',
   'throttled',
   'rotation_stalled',
   'renewal_stalled',
@@ -85,6 +89,7 @@ const STATE_LABEL: Record<HistoryState, string> = {
   silent: 'silent',
   not_delivering: 'not delivering',
   self_test_failed: 'self-test failed',
+  db_stale: 'vulnerability database stale',
   throttled: 'throttled',
   rotation_stalled: 'rotation stalled',
   renewal_stalled: 'renewal stalled',

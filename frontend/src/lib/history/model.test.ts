@@ -170,6 +170,11 @@ describe('tierFor -- which colour a state carries', () => {
   it('renewal_stalled stays on the warning tier, ranked with rotation_stalled', () =>
     expect(tierFor('renewal_stalled')).toBe('warn'))
 
+  // ADR-0012 decision 10 (issue #116): db_stale is coloured like the
+  // nearest existing warning state, even though it ranks with the
+  // critical states in STATE_ORDER.
+  it('db_stale takes the warning tier', () => expect(tierFor('db_stale')).toBe('warn'))
+
   it('unobserved is neutral -- never the alarm tier, never a healthy one', () => {
     expect(tierFor('unobserved')).toBe('unobs')
     expect(tierFor('unobserved')).not.toBe('crit')
@@ -196,6 +201,15 @@ describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
     expect(summaryLine([entry({ state: 'pending', count: 1, longest_s: 60, total_s: 60 })])).toBe(
       'pending once, 1 m',
     ))
+
+  it('db_stale reads "vulnerability database stale", ranked between self_test_failed and throttled', () => {
+    const line = summaryLine([
+      entry({ state: 'throttled', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'db_stale', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'self_test_failed', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe('self-test failed once, 1 m · vulnerability database stale once, 1 m · throttled once, 1 m')
+  })
 
   it('ordering: self_test_failed sits between not_delivering and throttled, pending sits after rotation_stalled', () => {
     const line = summaryLine([
