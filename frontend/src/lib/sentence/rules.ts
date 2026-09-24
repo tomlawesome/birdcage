@@ -141,45 +141,78 @@ function rule2TokenConflict(c: Canary, canaries: Canary[], now: string, lastHit:
 /** Credential conflict (ADR-0012 Part B, issue #130): the same live
  * credential -- one certificate fingerprint -- seen from two places at
  * once within a heartbeat interval, ranked with token_conflict (same red
- * severity, never auto-cleared). The ADR's own sentence names the two
- * source addresses ("credential in use from two addresses: <a> and
- * <b>"); the Canary type carries no field for either, so this omits
- * them rather than inventing values. */
+ * severity, never auto-cleared). The API's `credential_conflict` object
+ * (internal/store.CredentialConflict) names the two source addresses
+ * and/or the two agent build versions seen; the ADR's own sentence
+ * ("credential in use from two addresses: <a> and <b>") is used
+ * verbatim when addresses are present, its build twin when only
+ * versions are, and a bare sentence when the window caught neither. */
+function credentialConflictDetail(c: Canary): Segment[] {
+  const addrs = c.credential_conflict?.addresses
+  if (addrs && addrs.length >= 2) {
+    return [
+      { text: 'credential in use from two addresses: ' },
+      { text: addrs[0], bold: true },
+      { text: ' and ' },
+      { text: addrs[1], bold: true },
+      { text: '. A copy of its key may be in use elsewhere, or the node itself moved address. ' },
+    ]
+  }
+  const versions = c.credential_conflict?.versions
+  if (versions && versions.length >= 2) {
+    return [
+      { text: 'credential in use from two builds: ' },
+      { text: versions[0], bold: true },
+      { text: ' and ' },
+      { text: versions[1], bold: true },
+      { text: '. A copy of its key may be in use on a second install, or the node itself was reimaged. ' },
+    ]
+  }
+  return [
+    {
+      text:
+        'Its credential is in use from two places at once. A copy of its key may be in use elsewhere, or the ' +
+        'node itself moved. ',
+    },
+  ]
+}
+
 function rule2CredentialConflict(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
   return {
     rule: 2,
     hero: [...quietBut(now, lastHit), { text: `${c.name}'s credential is live in two places at once.`, bold: true }],
-    sub: [
-      { text: 'It was seen from a second address ' },
-      { text: agoWords(c.credential_conflict_for_s ?? 0), bold: true },
-      {
-        text:
-          ' while its usual one was still live. A copy of its key may be in use elsewhere, or the node itself ' +
-          'moved address. ',
-      },
-      { text: 'Revoke the node and re-enrol it.', bold: true },
-      ...othersFine(canaries, c),
-    ],
+    sub: [...credentialConflictDetail(c), { text: 'Revoke the node and re-enrol it.', bold: true }, ...othersFine(canaries, c)],
   }
 }
 
-/** Not delivering: the agent's own self-report says its log read is
- * failing while its heartbeats are fine (#45 state 3) -- the page would
- * read quiet whatever the canary caught, which is #45's founding case. */
+/** Not delivering: normally the agent's own self-report saying its log
+ * read is failing while its heartbeats are fine (#45 state 3) -- the
+ * page would read quiet whatever the canary caught, which is #45's
+ * founding case. ADR-0012 Part B (#130) adds a second cause the agent
+ * never reports itself: `certificate_expired` when renewal_stalled ran
+ * out the clock and the certificate it was using has expired, so it can
+ * no longer authenticate at all. */
 function rule2NotDelivering(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const body: Segment[] = c.certificate_expired
+    ? [
+        {
+          text:
+            "Its certificate expired before the agent renewed it, so it can no longer authenticate to birdcage " +
+            '— whatever the canary catches never reaches this page. ',
+        },
+      ]
+    : [
+        {
+          text:
+            "Its heartbeats arrive on time, but its agent can't read OpenCanary's log, so whatever the canary " +
+            'catches never reaches this page — which would read just the same if the canary were catching someone ' +
+            'right now. ',
+        },
+      ]
   return {
     rule: 2,
     hero: [...quietBut(now, lastHit), { text: `${c.name} is not delivering.`, bold: true }],
-    sub: [
-      {
-        text:
-          "Its heartbeats arrive on time, but its agent can't read OpenCanary's log, so whatever the canary " +
-          'catches never reaches this page — which would read just the same if the canary were catching someone ' +
-          'right now. ',
-      },
-      { text: 'Check the agent on the box.', bold: true },
-      ...othersFine(canaries, c),
-    ],
+    sub: [...body, { text: 'Check the agent on the box.', bold: true }, ...othersFine(canaries, c)],
   }
 }
 

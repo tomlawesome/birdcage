@@ -148,12 +148,15 @@ describe('the status pill: issue #45 ranking', () => {
   // (same red severity); renewal_stalled ties rotation_stalled (its
   // certificate twin).
   it('credential_conflict reads as critical, ranked with token_conflict', () => {
-    const canaries = [canary('a', 'silent', { silent_for_s: 60 }), canary('b', 'credential_conflict', { credential_conflict_for_s: 1800 })]
+    const canaries = [
+      canary('a', 'silent', { silent_for_s: 60 }),
+      canary('b', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } }),
+    ]
     const s = computeStatus(canaries, [], '14d')
     expect(s.kind).toBe('critical')
     if (s.kind === 'critical') {
       expect(s.canaryName).toBe('b')
-      expect(s.label).toBe('b credential conflict 30 m — revoke the node')
+      expect(s.label).toBe('b credential conflict — revoke the node')
     }
   })
 

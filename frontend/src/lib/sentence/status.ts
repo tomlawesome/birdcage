@@ -63,7 +63,7 @@ function label(c: Canary): string {
     case 'token_conflict':
       return `${c.name} token conflict ${durationCoarse(c.token_conflict_for_s ?? 0)} — look at the box now`
     case 'credential_conflict':
-      return `${c.name} credential conflict ${durationCoarse(c.credential_conflict_for_s ?? 0)} — revoke the node`
+      return `${c.name} credential conflict — revoke the node`
     case 'not_delivering':
       return `${c.name} not delivering`
     case 'self_test_failed': {
