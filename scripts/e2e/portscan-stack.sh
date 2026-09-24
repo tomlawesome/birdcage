@@ -50,6 +50,8 @@ set -eu
   exit 2
 }
 
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
 POS_CANARY="${E2E_PREFIX}-portscan-pos"
 POS_STATE_VOL="${E2E_PREFIX}-portscan-pos-state"
 POS_LOG_VOL="${E2E_PREFIX}-portscan-pos-log"
@@ -131,6 +133,19 @@ run() { # run <work-file> <container> <state-vol> <log-vol> <extra-cap-flags> <m
     esac
   done
 
+  # Second (and, for the NEG canary, third) use of the mockingbird build
+  # tag in this job -- stack.sh's own enrol_canary already used it once,
+  # earlier, to start the base canary both portscan canaries are modelled
+  # on. A concurrent pipeline's prune (#112) can delete the local tag
+  # between uses even though the job's own before-script recovery
+  # already ran once; re-check immediately before each of these
+  # `docker run`s, same as the job's first call. A no-op outside CI,
+  # where these variables are unset.
+  if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" >&2 \
+      || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting $container"
+  fi
+
   log "running ($container): $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the docker run command for $container failed to start"
 }
@@ -206,9 +221,11 @@ up() {
   NEG_CANARY_ID="$(wait_for_provision "$NEG_NAME" "$NEG_CANARY")"
   wait_for_line "$NEG_CANARY" "port-scan detection is OFF"
 
+  # ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin (refs #128,
+  # .gitlab-ci.yml) when set, the plain Docker Hub tag on a workstation.
   docker run --detach --name "$SWEEPER" --network "$E2E_NET" --init \
     --pids-limit 32 --memory 64m --cpus 0.25 \
-    alpine:3.24 sleep 3600 >/dev/null || die "starting $SWEEPER failed"
+    "${ALPINE_IMAGE:-alpine:3.24}" sleep 3600 >/dev/null || die "starting $SWEEPER failed"
 
   cat <<EOF
 export PORTSCAN_POS_CANARY=$POS_CANARY

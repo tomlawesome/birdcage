@@ -25,6 +25,8 @@ set -eu
 
 . "$(dirname "$0")/journey.sh"
 
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
 [ -n "${SCANNER_NIGHTJAR_IMAGE:-}" ] && [ -n "${SCANNER_FIXTURE_VOL:-}" ] && [ -n "${SCANNER_DB_VOL:-}" ] && [ -n "${SCANNER_EMPTY_DB_VOL:-}" ] || {
   echo "SCANNER_NIGHTJAR_IMAGE/SCANNER_FIXTURE_VOL/SCANNER_DB_VOL/SCANNER_EMPTY_DB_VOL unset -- run: eval \"\$(scripts/e2e/scanner-stack.sh up)\"" >&2
   exit 2
@@ -74,6 +76,15 @@ scan_field() { # scan_field <canary_id> <jq-filter>
 # updates and the exact CVE set can drift (build_fixture's own comment
 # has the count measured when this file was written).
 reference_count() {
+  # First of several later uses of the nightjar build tag in this job,
+  # after scanner-stack.sh's own build_image/prefetch_db already used it
+  # -- and enrol_scanner and stack.sh up have run since, more window for
+  # a concurrent pipeline's prune (#112) to have deleted it again. A
+  # no-op outside CI, where these variables are unset.
+  if [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
+      || fail "could not ensure $NIGHTJAR_BUILD_IMAGE is present before computing the reference count"
+  fi
   docker run --rm \
     --volume "$SCANNER_FIXTURE_VOL:/host:ro" \
     --volume "$SCANNER_DB_VOL:/var/lib/nightjar-grype-db" \
@@ -112,6 +123,15 @@ run_scanner() { # run_scanner <container-name> <state-vol> <db-vol> <workfile> [
   local container="$1" statevol="$2" dbvol="$3" workfile="$4" drop="${5:-}" extra_env="${6:-}" command
 
   docker volume create "$statevol" >/dev/null || fail "creating volume $statevol failed"
+
+  # Another use of the nightjar build tag in this job (three per run,
+  # one per leg) -- re-check immediately before each one, same as
+  # reference_count above, rather than trust an earlier check still
+  # holds. A no-op outside CI, where these variables are unset.
+  if [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
+      || fail "could not ensure $NIGHTJAR_BUILD_IMAGE is present before starting $container"
+  fi
 
   # First `docker run` block only, and quit: the enrolment output has
   # carried two since #87 (see stack.sh run_printed_command).

@@ -32,7 +32,10 @@ build_snmp_image() {
   if docker image inspect "$SNMP_IMAGE" >/dev/null 2>&1; then
     return 0
   fi
-  docker build --file "$REPO_ROOT/build/e2e-snmp/Dockerfile" --tag "$SNMP_IMAGE" "$REPO_ROOT" >/dev/null \
+  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
+  docker build --build-arg BASE_IMAGE="${DEBIAN_TRIXIE_SLIM_IMAGE:-debian:trixie-slim}" \
+    --file "$REPO_ROOT/build/e2e-snmp/Dockerfile" --tag "$SNMP_IMAGE" "$REPO_ROOT" >/dev/null \
     || { echo "snmp: building $SNMP_IMAGE failed" >&2; exit 1; }
 }
 
