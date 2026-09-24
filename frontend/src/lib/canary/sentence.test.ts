@@ -83,18 +83,42 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     expect(canaryScene(input)).toEqual({ kind: 'state', status: 'credential_conflict' })
   })
 
-  it('credential_conflict: names the second address and the revoke action, without inventing the addresses', () => {
+  it('credential_conflict: names the two addresses and the revoke action', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict_for_s = 125
+    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
     const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
     expect(hero).toBe("canary-iot's credential is live in two places at once.")
-    expect(sub).toContain('It was seen from a second address two minutes ago')
+    expect(sub).toContain('credential in use from two addresses: 10.0.0.1 and 10.0.0.2.')
     expect(sub).toContain('Revoke the node (birdcage canary revoke <canary-id>) and re-enrol it.')
-    // The ADR's own sentence names the two source addresses; nothing in
-    // the Canary type carries either, so no address literal appears.
-    expect(sub).not.toMatch(/\d+\.\d+\.\d+\.\d+/)
+  })
+
+  it('credential_conflict: names the two build versions when only they are sent', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'credential_conflict'
+    input.page.canary.credential_conflict = { versions: ['1.0.0', '0.9.9'] }
+    const sub = plainText(canarySentence(input).sub)
+    expect(sub).toContain('credential in use from two builds: 1.0.0 and 0.9.9.')
+  })
+
+  it('credential_conflict: bare sentence when neither addresses nor versions are sent', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'credential_conflict'
+    const sub = plainText(canarySentence(input).sub)
+    expect(sub).toContain('Its credential is in use from two places at once.')
+  })
+
+  it('not_delivering: certificate expired names that cause instead of the log read', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'not_delivering'
+    input.page.canary.certificate_expired = true
+    const sub = plainText(canarySentence(input).sub)
+    expect(sub).toContain('Its certificate expired before it renewed, so it can no longer authenticate to birdcage')
+    expect(sub).not.toContain("can't read OpenCanary's log")
   })
 
   it('renewal_stalled: not yet escalated names the certificate past its renewal point', () => {
@@ -122,9 +146,9 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict_for_s = 3661
-    expect(plainText(canaryCrumb(input))).toContain('credential conflict 1 h')
-    expect(plainText(canaryFooter(input))).toContain('credential conflict 1 h')
+    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
+    expect(plainText(canaryCrumb(input))).toContain('credential conflict')
+    expect(plainText(canaryFooter(input))).toContain('credential conflict')
   })
 })
 

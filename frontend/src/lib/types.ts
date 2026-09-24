@@ -37,6 +37,15 @@ export type CanaryStatus =
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
 export type Range = '15m' | '1h' | '24h' | '14d' | '90d'
 
+/** ADR-0012 Part B (#130), internal/store.CredentialConflict's JSON
+ * twin: the two source addresses and/or the two agent build versions
+ * seen presenting one live credential within the detection window.
+ * Each list is omitted rather than sent empty. */
+export interface CredentialConflict {
+  addresses?: string[]
+  versions?: string[]
+}
+
 /** GET /api/canaries' per-canary shape (issue #34, widened by #45). */
 export interface Canary {
   id: string
@@ -63,12 +72,17 @@ export interface Canary {
   renewal_stalled?: boolean
   renewal_stalled_for_s?: number
   renewal_stalled_escalated?: boolean
+  /** ADR-0012 Part B: says why `not_delivering` is on when the agent's
+   * own log-read report did not say so -- the certificate it was using
+   * has expired (internal/store's CertificateExpired). */
+  certificate_expired?: boolean
   /** ADR-0012 Part B: one live credential seen from two places at once
-   * (#130's credential_conflict). The API does not carry the two source
-   * addresses the ADR's sentence names ("credential in use from two
-   * addresses: <a> and <b>") -- there is no field here for them, so the
-   * frontend sentence omits them until one exists. */
-  credential_conflict_for_s?: number
+   * (#130's credential_conflict) -- the two source addresses and/or the
+   * two agent build versions seen presenting it within the detection
+   * window (internal/store's CredentialConflict). Each list holds
+   * exactly two values or is omitted; the object itself is present only
+   * while the state holds. */
+  credential_conflict?: CredentialConflict
   /** issue #46: the most recently *completed* self-test run, or
    * null/undefined when none has ever completed (store/canary.go's
    * LastSelfTestAt/LastSelfTestPassed). SelfTestFailedServices names the
