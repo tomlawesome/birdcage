@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -93,6 +94,13 @@ type Result struct {
 // something honest to post: a Result whose Status is StatusFailed and
 // whose Reason says why. The only Go error this can return is ctx being
 // done before the subprocess could even be started.
+//
+// GRYPE_DB_AUTO_UPDATE=false is always set (ADR-0012 decision 10): the
+// caller's own UpdateDB, below, is the one place the database is ever
+// refreshed, run as its own loud step immediately before this call, so
+// Run itself must never let Grype's own two-hourly default check race
+// or duplicate that step -- what UpdateDB fetched is what this scans
+// with.
 func Run(ctx context.Context, grypeBin, path string) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -100,12 +108,46 @@ func Run(ctx context.Context, grypeBin, path string) (Result, error) {
 
 	target := "dir:" + path
 	cmd := exec.CommandContext(ctx, grypeBin, target, "-o", "json")
+	cmd.Env = append(os.Environ(), "GRYPE_DB_AUTO_UPDATE=false")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	runErr := cmd.Run()
 	return classify(target, stdout.Bytes(), stderr.Bytes(), runErr), nil
+}
+
+// UpdateDB invokes `<grypeBin> db update` as its own step, meant to run
+// immediately before every call to Run (ADR-0012 decision 10: "the
+// vulnerability database is refreshed immediately before every scan").
+// The `db update` subcommand sets Grype's own RequireUpdateCheck=true
+// (research: grype/cmd/grype/cli/commands/database_command.go), so a
+// mirror it cannot reach fails this call loudly rather than the silent,
+// at-most-two-hourly check Run's own defaults would otherwise make.
+//
+// Like Run, this never returns a Go error for an ordinary refresh
+// failure -- a network error, a stale signature, Grype exiting non-zero
+// -- only for ctx already being done before the subprocess could start.
+// The caller decides what a failed refresh means for the scan that
+// follows (still runs on the last good database, under Grype's own
+// five-day cap) and for what it reports to birdcage.
+func UpdateDB(ctx context.Context, grypeBin string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, grypeBin, "db", "update")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return errors.New(failureReason(stderr.Bytes(), exitErr.ExitCode()))
+		}
+		return fmt.Errorf("grype db update did not run: %s", err)
+	}
+	return nil
 }
 
 // classify turns one subprocess invocation's raw outcome into a Result.

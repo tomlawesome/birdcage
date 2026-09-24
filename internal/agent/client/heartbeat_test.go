@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -155,4 +156,107 @@ func TestSendCommonHeartbeatUnauthorized(t *testing.T) {
 			t.Fatalf("err = %v, want ErrUnauthorized", err)
 		}
 	})
+}
+
+// TestSendCommonHeartbeatWireCarriesRunAndDBRefresh proves the wire body
+// carries ADR-0012's run and db_refresh objects, against a plain test
+// server rather than internal/ingest's real handler (its own MR lands
+// separately) -- this proves the client's own encoding.
+func TestSendCommonHeartbeatWireCarriesRunAndDBRefresh(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	failingSince := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	lastOK := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	err := c.SendCommonHeartbeat(ctx(), "tok", CommonHeartbeat{
+		AgentVersion: "1.2.3",
+		Run:          &RunReport{RunID: "run-1", Stage: "db_refreshed"},
+		DBRefresh:    &DBRefreshReport{LastOKAt: lastOK, FailingSince: failingSince, LastError: "mirror down"},
+	})
+	if err != nil {
+		t.Fatalf("SendCommonHeartbeat: %v", err)
+	}
+
+	run, _ := gotBody["run"].(map[string]any)
+	if run == nil || run["run_id"] != "run-1" || run["stage"] != "db_refreshed" {
+		t.Errorf("run = %v, want {run_id: run-1, stage: db_refreshed}", run)
+	}
+	dbr, _ := gotBody["db_refresh"].(map[string]any)
+	if dbr == nil {
+		t.Fatal("db_refresh missing from body")
+	}
+	if dbr["last_ok_at"] != "2026-09-22T10:00:00Z" {
+		t.Errorf("db_refresh.last_ok_at = %v, want 2026-09-22T10:00:00Z", dbr["last_ok_at"])
+	}
+	if dbr["failing_since"] != "2026-09-23T10:00:00Z" {
+		t.Errorf("db_refresh.failing_since = %v, want 2026-09-23T10:00:00Z", dbr["failing_since"])
+	}
+	if dbr["last_error"] != "mirror down" {
+		t.Errorf("db_refresh.last_error = %v, want %q", dbr["last_error"], "mirror down")
+	}
+}
+
+// TestSendCommonHeartbeatWireOmitsRunAndDBRefreshWhenUnset proves an
+// ordinary healthy heartbeat -- no run, no failing refresh -- carries
+// neither object, exactly as today.
+func TestSendCommonHeartbeatWireOmitsRunAndDBRefreshWhenUnset(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	if err := c.SendCommonHeartbeat(ctx(), "tok", CommonHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+		t.Fatalf("SendCommonHeartbeat: %v", err)
+	}
+
+	if _, present := gotBody["run"]; present {
+		t.Errorf("run present in body, want omitted: %v", gotBody["run"])
+	}
+	if _, present := gotBody["db_refresh"]; present {
+		t.Errorf("db_refresh present in body, want omitted: %v", gotBody["db_refresh"])
+	}
+}
+
+// TestDBRefreshReportNullsWhenLastOKAtZero proves last_ok_at is an
+// explicit JSON null, never omitted or a zero-value time string, when no
+// refresh has ever succeeded -- the wire contract's own "<RFC3339>|null"
+// shape for that field.
+func TestDBRefreshReportNullsWhenLastOKAtZero(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	err := c.SendCommonHeartbeat(ctx(), "tok", CommonHeartbeat{
+		AgentVersion: "1.0.0",
+		DBRefresh:    &DBRefreshReport{FailingSince: time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC), LastError: "no db yet"},
+	})
+	if err != nil {
+		t.Fatalf("SendCommonHeartbeat: %v", err)
+	}
+
+	dbr, _ := gotBody["db_refresh"].(map[string]any)
+	if dbr == nil {
+		t.Fatal("db_refresh missing from body")
+	}
+	if v, present := dbr["last_ok_at"]; !present || v != nil {
+		t.Errorf("db_refresh.last_ok_at = %v (present=%v), want explicit null", v, present)
+	}
 }

@@ -6,16 +6,19 @@
 // as a subprocess over what remains, and posts the resulting snapshot to
 // birdcage's POST /ingest/scans.
 //
-// Unlike cmd/mockingbird, this binary has no receiver, no log tailer and
-// no command poll -- ADR-0010 decision 3 ("never runs inside mockingbird
-// ... no listener"). It does send the common heartbeat (issue #106
-// split /ingest/heartbeat's body into a log-tailer-shaped Honeypot half
-// and a common-only half every kind can send; #108's own scope had
-// deferred this exact loop to that split -- "a scanner sending
-// queue_depth would be lying" no longer applies, since the common shape
-// carries no such field). Otherwise its whole job is one loop: check the
-// mount, scan, post, wait, repeat -- see scanner.go; heartbeat.go is the
-// second, independent loop.
+// Unlike cmd/mockingbird, this binary has no receiver and no log tailer
+// -- ADR-0010 decision 3 ("never runs inside mockingbird ... no
+// listener"). It does send the common heartbeat (issue #106 split
+// /ingest/heartbeat's body into a log-tailer-shaped Honeypot half and a
+// common-only half every kind can send) and, since ADR-0012, an outbound
+// poll of its own commands: `/ingest/commands` widened to include a
+// `scan` order birdcage mints for a proof or an admin-ordered scan
+// (command.go). That poll is still outbound over the same mTLS channel
+// as the heartbeat -- decision 3's "no listener" stands -- and every
+// other command kind is logged and skipped, never executed. Four loops
+// run concurrently: scan (scanner.go), heartbeat (heartbeat.go), command
+// poll and order runner (command.go); a scanGate (command.go) keeps a
+// timer scan and an ordered scan from ever running at once.
 //
 // Never import internal/ingest, internal/store, internal/api or
 // internal/opencanary from this package or anything it calls -- doing so
@@ -45,6 +48,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/agent/client"
 	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
+	"github.com/tomlawesome/birdcage/internal/scan"
 )
 
 // envLogLevel selects internal/logging's threshold -- see config.go.
@@ -81,10 +85,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// ADR-0012 decision 10: whatever a previous boot recorded about the
+	// vulnerability-database refresh -- last success, an open failing
+	// span -- must survive this restart, so it is loaded before either
+	// loop that reads or writes it starts.
+	dbTracker, err := loadDBRefreshTracker(cfg.StateDir)
+	if err != nil {
+		mainLog.Error(fmt.Sprintf("database refresh state: %s", safeErr(err)))
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	run(ctx, cfg, cli, token, rm, version, mainLog)
+	run(ctx, cfg, cli, token, rm, dbTracker, version, mainLog)
 }
 
 // boot builds the birdcage client and loads this agent's bearer token --
@@ -124,24 +138,53 @@ func boot(cfg Config) (*client.Client, string, *renewal.Manager, error) {
 // from main so a test can prove the cadence contract (both loops start,
 // both stop promptly on a cancelled context) without a real signal
 // handler -- see TestRunStopsPromptlyOnCancelledContext.
-func run(ctx context.Context, cfg Config, cli *client.Client, token string, rm *renewal.Manager, version string, log *slog.Logger) {
+func run(ctx context.Context, cfg Config, cli *client.Client, token string, rm *renewal.Manager, dbTracker *dbRefreshTracker, version string, log *slog.Logger) {
 	log.Info(fmt.Sprintf("nightjar %s started, talking to %s, scanning every %s", version, cfg.BirdcageURL, cfg.ScanInterval))
 
-	// Two independent loops (issue #106 adds the second): the scan loop
-	// is this agent's whole reason to exist, and the heartbeat loop is
-	// the common self-report every kind now sends. Concurrent, not
-	// sequential, so a heartbeat is not gated behind however long a scan
-	// cycle takes -- mirroring cmd/mockingbird's own wg.Add/go-func
-	// shape for its several loops (main.go there), scaled down to two.
+	// gate serialises every scan cycle -- timer or ordered -- so at most
+	// one ever runs at once (ADR-0012 decision 2); runTracker is the
+	// in-flight ordered run's stage, read by the ordinary heartbeat loop
+	// so it keeps repeating that stage until the run is answered
+	// (decision 9).
+	gate := newScanGate()
+	runTracker := newCurrentRunTracker()
+
+	deps := scanCycleDeps{
+		version:     version,
+		now:         time.Now,
+		checkMounts: checkMounts,
+		refreshDB:   func(ctx context.Context) error { return scan.UpdateDB(ctx, grypeBin) },
+		runScan:     realScan,
+		dbTracker:   dbTracker,
+		reportStage: newStageReporter(cli, token, version, dbTracker, runTracker, commandLog),
+		runTracker:  runTracker,
+	}
+	orders := make(chan scanOrder, orderRunnerBuffer)
+
+	// Four independent loops: the scan loop is this agent's whole reason
+	// to exist; the heartbeat loop is the common self-report every kind
+	// sends; the command poll and order runner (ADR-0012) are the
+	// outbound half of an ordered scan. Concurrent, not sequential, so a
+	// heartbeat is never gated behind however long a scan cycle takes --
+	// mirroring cmd/mockingbird's own wg.Add/go-func shape for its
+	// several loops (main.go there).
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		runScanLoop(ctx, cli, token, version, cfg.ScanInterval, logging.New("scan"), time.Now)
+		runScanLoop(ctx, cli, token, deps, gate, cfg.ScanInterval, logging.New("scan"))
 	}()
 	go func() {
 		defer wg.Done()
-		runHeartbeatLoop(ctx, cli, token, rm, version, heartbeatInterval)
+		runHeartbeatLoop(ctx, cli, token, rm, version, heartbeatInterval, dbTracker, runTracker)
+	}()
+	go func() {
+		defer wg.Done()
+		runCommandPollLoop(ctx, cli, token, orders, time.Now)
+	}()
+	go func() {
+		defer wg.Done()
+		runOrderRunner(ctx, deps, gate, cli, token, commandLog, orders)
 	}()
 	wg.Wait()
 

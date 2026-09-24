@@ -366,3 +366,84 @@ func fixtureAbsPath(t *testing.T, name string) string {
 	}
 	return abs
 }
+
+// TestRunSetsAutoUpdateFalseEnv proves Run always passes
+// GRYPE_DB_AUTO_UPDATE=false to the subprocess (ADR-0012 decision 10):
+// UpdateDB, not Run, is the one place the database is ever refreshed.
+func TestRunSetsAutoUpdateFalseEnv(t *testing.T) {
+	stub := writeStubGrype(t, `#!/bin/sh
+echo "$GRYPE_DB_AUTO_UPDATE" > `+filepath.Join(t.TempDir(), "unused")+`
+if [ "$GRYPE_DB_AUTO_UPDATE" != "false" ]; then
+  echo "GRYPE_DB_AUTO_UPDATE=$GRYPE_DB_AUTO_UPDATE, want false" >&2
+  exit 1
+fi
+cat "`+fixtureAbsPath(t, "clean.json")+`"
+exit 0
+`)
+
+	result, err := Run(context.Background(), stub, "/host")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Status != StatusOK {
+		t.Fatalf("Status = %q, want %q (Reason: %q)", result.Status, StatusOK, result.Reason)
+	}
+}
+
+// TestUpdateDBSuccess proves UpdateDB's happy path: `db update`
+// invoked, subprocess exits zero, nil error.
+func TestUpdateDBSuccess(t *testing.T) {
+	stub := writeStubGrype(t, `#!/bin/sh
+if [ "$1" != "db" ] || [ "$2" != "update" ]; then
+  echo "unexpected args: $*" >&2
+  exit 1
+fi
+exit 0
+`)
+
+	if err := UpdateDB(context.Background(), stub); err != nil {
+		t.Fatalf("UpdateDB: %v", err)
+	}
+}
+
+// TestUpdateDBFailureCarriesStderr proves a failed refresh (a mirror
+// grype cannot reach, or any other non-zero exit) comes back as a Go
+// error carrying grype's own stderr explanation -- the caller posts this
+// as the snapshot's db_refresh_error and the heartbeat's db_refresh
+// object.
+func TestUpdateDBFailureCarriesStderr(t *testing.T) {
+	stub := writeStubGrype(t, `#!/bin/sh
+echo "failed to fetch db update: dial tcp: no route to host" >&2
+exit 1
+`)
+
+	err := UpdateDB(context.Background(), stub)
+	if err == nil {
+		t.Fatal("UpdateDB() = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "no route to host") {
+		t.Errorf("UpdateDB() error = %q, want it to carry grype's stderr", err.Error())
+	}
+}
+
+// TestUpdateDBMissingBinaryIsError proves UpdateDB against a binary that
+// does not exist still returns a Go error (unlike Run/scan Result, this
+// function has no wire snapshot to carry a failure in -- the caller
+// treats any error the same way).
+func TestUpdateDBMissingBinaryIsError(t *testing.T) {
+	err := UpdateDB(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"))
+	if err == nil {
+		t.Fatal("UpdateDB() = nil, want an error")
+	}
+}
+
+// TestUpdateDBContextAlreadyDone mirrors TestRunContextAlreadyDone.
+func TestUpdateDBContextAlreadyDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := UpdateDB(ctx, "irrelevant")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateDB error = %v, want context.Canceled", err)
+	}
+}
