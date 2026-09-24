@@ -164,7 +164,7 @@ run_smb_canary() {
   # first call, rather than assume the earlier check still holds. A
   # no-op outside CI, where these variables are unset.
   if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" >&2 \
       || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting the smb canary"
   fi
 

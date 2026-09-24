@@ -66,7 +66,7 @@ build_image() {
   # wrongly refuse to build a replacement. A no-op outside CI, where
   # these variables are unset.
   if [ -n "${E2E_NIGHTJAR_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
       || die "could not ensure $NIGHTJAR_BUILD_IMAGE is present before using it"
   fi
   if docker image inspect "$NIGHTJAR_IMAGE" >/dev/null 2>&1; then
@@ -166,7 +166,7 @@ prefetch_db() {
   # deleted it again. A no-op outside CI, where these variables are
   # unset.
   if [ -n "${E2E_NIGHTJAR_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
       || die "could not ensure $NIGHTJAR_BUILD_IMAGE is present before prefetching the database"
   fi
   docker volume create "$DB_VOL" >/dev/null || die "creating volume $DB_VOL failed"

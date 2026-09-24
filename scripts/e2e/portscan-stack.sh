@@ -142,7 +142,7 @@ run() { # run <work-file> <container> <state-vol> <log-vol> <extra-cap-flags> <m
   # `docker run`s, same as the job's first call. A no-op outside CI,
   # where these variables are unset.
   if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" >&2 \
       || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting $container"
   fi
 

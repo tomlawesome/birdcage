@@ -82,7 +82,7 @@ reference_count() {
   # a concurrent pipeline's prune (#112) to have deleted it again. A
   # no-op outside CI, where these variables are unset.
   if [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
       || fail "could not ensure $NIGHTJAR_BUILD_IMAGE is present before computing the reference count"
   fi
   docker run --rm \
@@ -129,7 +129,7 @@ run_scanner() { # run_scanner <container-name> <state-vol> <db-vol> <workfile> [
   # reference_count above, rather than trust an earlier check still
   # holds. A no-op outside CI, where these variables are unset.
   if [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
-    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" >&2 \
       || fail "could not ensure $NIGHTJAR_BUILD_IMAGE is present before starting $container"
   fi
 
