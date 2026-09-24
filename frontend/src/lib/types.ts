@@ -22,18 +22,70 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * 'rotation_stalled' -- the certificate past its renewal point that
  * hasn't renewed; it becomes 'not_delivering' once the certificate
  * itself expires. 'token_conflict' itself widens under B4 to also mean a
- * superseded certificate still in use, not tokens alone. */
+ * superseded certificate still in use, not tokens alone.
+ *
+ * ADR-0012 decision 10 (issue #116) adds 'db_stale', ranked between
+ * 'self_test_failed' and 'throttled': a scanner's vulnerability database
+ * refresh has been failing for over 24 hours, birdcage's own clock
+ * deciding, never the agent's. Coloured like the nearest existing
+ * warning state (rotation_stalled/renewal_stalled's tier), even though
+ * it ranks with the critical states above it. */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
   | 'self_test_failed'
+  | 'db_stale'
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
   | 'pending'
   | 'ok'
+
+/** ADR-0012 decision 9 (issue #116): the ordered vocabulary a scan run's
+ * stage moves through, forward only. Who sets each one is in the ADR's
+ * own table; the frontend only ever reads and labels it (stage.ts). */
+export type RunStage = 'ordered' | 'collected' | 'mounts_checked' | 'db_refreshed' | 'scanning' | 'answered'
+
+/** Who asked for the run: 'proof' is the scanner's own first-contact
+ * proof or a silent scanner's 30-minute retry; 'manual' is an admin's
+ * "scan now" (ADR-0012 decision 7, MR 2, not built by this slice). */
+export type RunTrigger = 'proof' | 'manual'
+
+/** How an ordered run ended (ADR-0012 decision 4): 'pass' settles
+ * pending for a proof run, 'fail' is a snapshot that answered but did
+ * not pass, 'expired' is the 30-minute cap reached with no answer. */
+export type RunVerdict = 'pass' | 'fail' | 'expired'
+
+/** On a canary (fleet list and canary page), present only while a scan
+ * run is open (ADR-0012 decisions 6 and 9). Never carries the run id --
+ * that never appears in any /api response (research, Fleet's
+ * order_key oracle). */
+export interface CanaryRun {
+  trigger: RunTrigger
+  stage: RunStage
+  stage_at: string
+  issued_at: string
+}
+
+/** On a canary, the most recently completed run (ADR-0012 decision 6),
+ * whether or not it is what made `status` self_test_failed -- a scanner
+ * that has since scanned cleanly still shows its history here. */
+export interface CanaryLastRun {
+  verdict: RunVerdict
+  last_stage: RunStage
+  reason: string
+  ended_at: string
+}
+
+/** On a canary, present only while the vulnerability database refresh
+ * is failing (ADR-0012 decision 10). `failing_since` is birdcage's own
+ * clock, not the agent's. */
+export interface CanaryDbRefresh {
+  failing_since: string
+  last_error: string
+}
 export type VisitorKind = 'sweep' | 'repeat' | 'inside' | 'touch'
 export type Range = '15m' | '1h' | '24h' | '14d' | '90d'
 
@@ -95,6 +147,14 @@ export interface Canary {
    * breakdown, absent entirely when no run has ever completed. The
    * canary page's ledger (#118) draws one card per entry. */
   self_test?: SelfTestServiceResult[]
+  /** ADR-0012 (issue #116): a scanner's own ordered-scan proof. `run` is
+   * present only while a run is open; `last_run` is the most recently
+   * completed one, independent of `run`; `db_refresh` is present only
+   * while the vulnerability database refresh is failing. None of these
+   * ever carry a run id. */
+  run?: CanaryRun
+  last_run?: CanaryLastRun
+  db_refresh?: CanaryDbRefresh
   hits: number
 }
 
@@ -199,6 +259,7 @@ export type HistoryState =
   | 'silent'
   | 'not_delivering'
   | 'self_test_failed'
+  | 'db_stale'
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
@@ -308,4 +369,23 @@ export interface CanaryPageResponse {
   canary: Canary
   facts: CanaryFacts
   self_test_runs: SelfTestRunSummary[]
+}
+
+/** One row of GET /api/canaries/{id}/runs (ADR-0012 decision 11): a
+ * scanner's proof and manual scan history, ordered runs only -- never
+ * the run id, and `ended_at`/`verdict` are null while the run is still
+ * open. */
+export interface RunRecord {
+  trigger: RunTrigger
+  issued_at: string
+  ended_at: string | null
+  verdict: RunVerdict | null
+  last_stage: RunStage
+  reason: string
+  snapshot_id: string | null
+}
+
+/** GET /api/canaries/{id}/runs, newest first. */
+export interface RunsResponse {
+  runs: RunRecord[]
 }

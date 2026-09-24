@@ -8,13 +8,15 @@
   // Takes its data as props, like every other block on the dashboard --
   // App.svelte owns the fetching (issue #39's rule), including this
   // page's own /api/canary read.
-  import type { CanaryPageResponse, HistoryResponse, Range, TraceResponse, Visitor } from './lib/types'
+  import type { CanaryPageResponse, HistoryResponse, Range, RunsResponse, TraceResponse, Visitor } from './lib/types'
   import CanaryLine from './lib/band/CanaryLine.svelte'
   import { selfTestCards, silences, traceOf, type CanaryPageInput } from './lib/canary/model'
   import { canaryActions, canaryCrumb, canarySentence, selfTestHeading } from './lib/canary/sentence'
   import { answerWords, cardClass, gradeWords, SELF_TEST_NOTE } from './lib/canary/ledger'
   import { threadFooter, threadRows } from './lib/canary/thread'
   import { factRows } from './lib/canary/facts'
+  import { runRows, stageTimeline } from './lib/canary/runs'
+  import { formatClock } from './lib/sentence/time'
 
   let {
     page,
@@ -22,12 +24,14 @@
     visitors,
     history,
     range,
+    runs = null,
   }: {
     page: CanaryPageResponse
     trace: TraceResponse
     visitors: Visitor[]
     history: HistoryResponse | null
     range: Range
+    runs?: RunsResponse | null
   } = $props()
 
   let input: CanaryPageInput = $derived({ page, trace, visitors, history })
@@ -39,6 +43,15 @@
   let rows = $derived(threadRows(input))
   let facts = $derived(factRows(input))
   let actions = $derived(canaryActions(input))
+
+  // ADR-0012 (issue #116): a scanner's own ordered-scan proof -- the
+  // open run's stage timeline and the Runs list, shown only on a
+  // scanner's own page (decision 11), beside the state history and
+  // self-test ledger every canary page already has.
+  let isScanner = $derived(page.facts.kind === 'scanner')
+  let stageSteps = $derived(stageTimeline(page.canary.run?.stage))
+  let runList = $derived(runRows(runs, trace.now))
+  let dbRefresh = $derived(page.canary.db_refresh)
 
   let lineInput = $derived({
     canary: page.canary,
@@ -139,6 +152,45 @@
   </div>
 </div>
 
+<!-- ADR-0012 decision 11 (issue #116): a scanner's own proof -- the
+     open run's stage timeline and the Runs list, beside the history
+     thread and the self-test ledger every canary page already has. -->
+{#if isScanner}
+  <div class="col scan-col" style:top="{THREAD_TOP + 260}px">
+    <h3>scan stage</h3>
+    {#if stageSteps.length > 0}
+      <div class="stages" role="list" aria-label="Scan stage">
+        {#each stageSteps as step (step.stage)}
+          <div class="stage {step.state}" role="listitem">{step.label}</div>
+        {/each}
+      </div>
+    {:else}
+      <div class="none">No scan is open right now.</div>
+    {/if}
+    {#if dbRefresh}
+      <div class="db-refresh">vulnerability list refresh failing since {formatClock(dbRefresh.failing_since)}</div>
+    {/if}
+
+    <h3 class="runs-h">runs</h3>
+    {#if runList.length === 0}
+      <div class="none">No scan has been ordered for this canary yet.</div>
+    {:else}
+      <div class="runs" role="table" aria-label="Runs">
+        {#each runList as row (row.key)}
+          <div class="run-row" role="row">
+            <span class="trig">{row.trigger}</span>
+            <span class="issued">{row.issued}</span>
+            <span class="ended">{row.ended}</span>
+            <span class="verdict {row.verdictCls}">{row.verdict}</span>
+            <span class="last-stage">{row.lastStage}</span>
+            <span class="reason">{row.reason}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/if}
+
 <div class="legend" style:top="912px">
   <span><span class="ln"></span>the line is this canary's heartbeat, unbroken</span>
   <span><span class="gap"></span>a drop is silence</span>
@@ -233,6 +285,61 @@
   .facts-col {
     left: 1100px;
     width: 400px;
+  }
+  /* ADR-0012 (issue #116): a scanner's own stage timeline and Runs
+     list, beside the thread and the facts columns above. */
+  .scan-col {
+    left: 54px;
+    width: 1440px;
+  }
+  .runs-h {
+    margin-top: 16px;
+  }
+  .stages {
+    display: flex;
+    gap: 6px;
+  }
+  .stage {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font: 600 11px var(--mono);
+    color: var(--ink-3);
+    border: 1px solid var(--hair-2);
+  }
+  .stage.done {
+    color: var(--ink);
+    border-color: var(--ok);
+  }
+  .stage.current {
+    color: var(--ink);
+    border-color: var(--repeat);
+    background: var(--raised);
+  }
+  .db-refresh {
+    margin-top: 8px;
+    font: 12px var(--sans);
+    color: var(--alarm);
+  }
+  .runs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .run-row {
+    display: grid;
+    grid-template-columns: 70px 140px 140px 70px 170px 1fr;
+    column-gap: 12px;
+    font: 11.5px var(--mono);
+    color: var(--ink-2);
+  }
+  .run-row .verdict.ok {
+    color: var(--ok);
+  }
+  .run-row .verdict.al {
+    color: var(--alarm);
+  }
+  .run-row .verdict.wn {
+    color: var(--repeat);
   }
   .col h3 {
     margin: 0 0 10px;

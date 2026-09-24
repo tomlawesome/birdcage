@@ -242,6 +242,32 @@ function rule2SelfTestFailed(c: Canary, canaries: Canary[], now: string, lastHit
   }
 }
 
+/** ADR-0012 decision 10 (issue #116): a scanner's vulnerability database
+ * refresh has been failing for over 24 hours, birdcage's own clock
+ * deciding, never the agent's -- the same "check it can reach" next
+ * step the tile line and the canary page give. */
+function rule2DbStale(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const hours = Math.max(
+    0,
+    Math.floor((Date.parse(now) - Date.parse(c.db_refresh?.failing_since ?? now)) / 3_600_000),
+  )
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s vulnerability database has gone stale.`, bold: true }],
+    sub: [
+      { text: 'Its refresh has been failing for ' },
+      { text: `${hours} hours`, bold: true },
+      {
+        text:
+          '. It is still scanning on the last database it could fetch, so a scan on it may be missing anything ' +
+          'found since. ',
+      },
+      { text: 'Check the scanner can reach the vulnerability database mirror.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** Throttled: the canary crossed its rate limit within the last few
  * minutes and birdcage refused part of what it sent (#45 state 2,
  * corrected: with a retrying agent a refusal is delay, not loss -- it
@@ -373,12 +399,15 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   silent: 1,
   not_delivering: 2,
   self_test_failed: 3,
-  throttled: 4,
-  rotation_stalled: 5,
+  // ADR-0012 decision 10 (#116): ranked between self_test_failed and
+  // throttled, exactly where the ADR puts it.
+  db_stale: 4,
+  throttled: 5,
+  rotation_stalled: 6,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
-  renewal_stalled: 5,
-  pending: 6,
-  ok: 7,
+  renewal_stalled: 6,
+  pending: 7,
+  ok: 8,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -456,6 +485,8 @@ export function computeSentence(
         return rule2NotDelivering(worst, canaries, now, lastHit)
       case 'self_test_failed':
         return rule2SelfTestFailed(worst, canaries, now, lastHit)
+      case 'db_stale':
+        return rule2DbStale(worst, canaries, now, lastHit)
       case 'throttled':
         return rule2Throttled(worst, canaries, now, lastHit)
       case 'rotation_stalled':

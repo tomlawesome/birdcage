@@ -17,8 +17,8 @@
   // footer sentence change -- and the page's own read joins the same
   // tick as the four above, so a canary page refreshes exactly as the
   // cage does.
-  import { fetchCanaries, fetchCanary, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
-  import type { CanaryPageResponse, HistoryResponse, MailStatus } from './lib/types'
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
+  import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
   import { initialLoaderState, onFetchError, onFetchSuccess, type LoaderState } from './lib/loader'
@@ -67,6 +67,14 @@
   // on its own page rather than stale the whole shell.
   let canaryPage: CanaryPageResponse | null = $state(null)
   let canaryFailed = $state(false)
+
+  // ADR-0012 (issue #116): a scanner's own scan-run history, fetched on
+  // the same tick as the canary page's own read and for the same
+  // reason -- it is one section of that page, not the page, so a failed
+  // read simply leaves the section with nothing to say rather than
+  // staling the rest of the page. Never fetched off the fleet page: it
+  // is per-canary, like the page read itself.
+  let canaryRuns: RunsResponse | null = $state(null)
 
   let loaderState: LoaderState = $state(initialLoaderState)
 
@@ -145,6 +153,21 @@
                 }
               })
           : Promise.resolve()
+      // ADR-0012 (issue #116): kept out of canaryLoad's own catch on
+      // purpose -- a failed runs read should not blank the rest of the
+      // canary page, the same reasoning historyLoad already follows.
+      const runsLoad =
+        currentRoute.name === 'canary'
+          ? fetchCanaryRuns(currentRoute.id)
+              .then((r) => {
+                if (range === activeRange) canaryRuns = r
+              })
+              .catch(() => {
+                if (range === activeRange) canaryRuns = null
+              })
+          : Promise.resolve().then(() => {
+              canaryRuns = null
+            })
       // Same tick, same "drop a response for a range we've since left"
       // check. Range-free itself -- "is mail working" is not a question
       // about a window -- but still guarded, so a slow response landing
@@ -167,6 +190,7 @@
         await historyLoad
         await mailLoad
         await canaryLoad
+        await runsLoad
         inFlight = false
       }
     }
@@ -344,7 +368,7 @@
       <!-- Issue #118: one canary's own page. The shell above is
            unchanged; only what fills main is. -->
       {#if canaryPage && trace}
-        <CanaryPage page={canaryPage} {trace} {visitors} {history} range={activeRange} />
+        <CanaryPage page={canaryPage} {trace} {visitors} {history} runs={canaryRuns} range={activeRange} />
       {:else}
         <div class="state-line">
           {#if canaryFailed}there is no canary called {route.id} &middot; <a href={cageHref}>back to the cage</a>{:else}listening
