@@ -279,7 +279,7 @@ review's brief:
 
 | # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
 |---|---|---|---|---|---|---|---|---|---|
-| 195 | `alpine:3.24` | 3.24 (floating minor) | 3.24.2 is the current patch (already what the floating tag resolves to). | MIT (Alpine) | direct | Alpine Linux project | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
+| 195 | `alpine:3.24` | 3.24 (floating minor) | 3.24.2 is the current patch (already what the floating tag resolves to). | MIT (Alpine) | direct | Alpine Linux project | very high (mainstream, widely deployed) | **Shipped** -- corrected 2026-09-23 (#87). It is the runtime base of `build/smb-lure/Dockerfile`, so it now ships. It remains a CI runner image here, and is build-only in `build/nightjar/Dockerfile`, whose `grype` stage uses it and is discarded before that image's distroless runtime. | Predates the rule -- not individually recorded |
 | 196 | `golang:1.27` | 1.27 (floating minor, distinct from the Dockerfiles' pinned 1.27.0-alpine) | Already resolves to 1.27.1, per go.dev/dl. | BSD-3-Clause (Go) | direct | Go team (Google), Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
 | 197 | `python:3.13-alpine` | 3.13-alpine (floating minor) | 3.13.13-alpine3.24 is the current patch; same 3.13-vs-3.14 gap as row 5. | PSF-2.0 (CPython) + Alpine's licences | direct | Python Software Foundation, Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
 | 198 | `node:22-trixie` | 22-trixie (floating minor) | 22.22-trixie is the current patch; Node 22 ("Jod") is the active LTS line, verified via nodejs.org. | MIT (Node.js) | direct | OpenJS Foundation (Node.js), Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
@@ -337,15 +337,37 @@ in it, is not invisible to this inventory.
 | 221 | `grype` (Anchore) | v0.119.0, `linux_amd64`, SHA-256 `3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b` -- pinned by both the version and the checksum in `build/nightjar/Dockerfile`'s `GRYPE_VERSION`/`GRYPE_SHA256` build args, verified against the release's own `grype_0.119.0_checksums.txt` and against a fresh download of the artefact itself (matched) | v0.119.0 -- current (GitHub releases API, verified 2026-09-22, same release the #108 engine-decision comment compared against) | Apache-2.0 | direct | Anchore | high (13k GitHub stars, ~147 contributors -- #108's own comparison record) | Shipped -- copied into the Nightjar runtime image as a pinned binary, never linked into any Go binary (AGENTS.md's approved-modules list) | Approved -- #108, 2026-09-22 |
 | 222 | Grype's vulnerability database | Not pinned by this repository at all -- fetched and refreshed by Grype itself at runtime into the `nightjar-grype-db` volume (`GRYPE_DB_CACHE_DIR`), never vendored or baked into the image. Grype's own default fail-closed behaviour (refuses a database older than five days) is kept unmodified. | N/A -- a live feed, not a versioned release this inventory tracks | Grype's own database build is Apache-2.0 per ADR-0010's engine comparison; the underlying vulnerability advisories it aggregates carry their own upstream licences (NVD, distro security trackers, GitHub advisories), which this repository never redistributes since the feed is fetched directly by the operator's own Nightjar instance, not by birdcage | direct (a runtime feed, not a code dependency) | Anchore (aggregates upstream vulnerability sources) | n/a -- not a popularity-ranked artefact | Runtime feed only -- never shipped in any image or binary | n/a -- a runtime feed, not a dependency in the sense this inventory otherwise tracks; recorded per this section's own header |
 
+### J. `build/smb-lure/Dockerfile` (#87: the SMB lure's own image)
+
+A real Samba, serving read-only guest shares beside a canary, in its own
+image (ADR-0008). Two rows: the Samba package it runs, and the Python that
+generates the share content in a build stage which is then discarded.
+
+The base image is `alpine:3.24`, row 195 above -- which this image is the
+reason to have corrected from "never shipped" to shipped.
+
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-23) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+|---|---|---|---|---|---|---|---|---|---|
+| 223 | `samba-server` (apk package) | `4.23.8-r0`, pinned exactly in `build/smb-lure/Dockerfile` | `4.23.8-r0` -- current in Alpine 3.24's `main` repository, read from `apk policy samba` in the image itself, 2026-09-23. Samba's own current release line is 4.23.x. | GPL-3.0-or-later | direct | Samba Team, packaged by Alpine Linux | very high (mainstream, widely deployed -- it is what the NAS this image imitates actually runs) | Shipped -- it is the service the image exists to run. Unmodified upstream, in its own container, linked into no binary of ours: the same shape as `grype` in the scanner image (AGENTS.md, "Shipped as a binary in an agent image, never linked into birdcage") | Approved -- #87, owner, 2026-09-23 ("Real Samba on Alpine", decision 1). GPLv3 in a shipped image has the owner's precedent in `hpfeeds@3.0.0` (`supply-chain/licence-policy.yml`) |
+| 224 | `python3` (apk package) | `3.14.7-r1`, pinned exactly in `build/smb-lure/Dockerfile` | `3.14.7-r1` -- current in Alpine 3.24's `main`, read from `apk policy python3` in the image, 2026-09-23 | PSF-2.0 (CPython) + Alpine's own licences | direct | Python Software Foundation, packaged by Alpine Linux | very high (mainstream, widely deployed) | Build-only -- runs `make-bait.py` in a stage that is discarded; no Python reaches the shipped image | Predates the rule -- not individually recorded (a build-stage tool, the same footing as row 191) |
+
+There is no licence gate covering apk packages. `scripts/licence-check.sh`
+covers Go modules, `-npm` covers npm and `-python` covers the pip packages
+in the mockingbird image; nothing reads an Alpine package's licence. So row
+223's GPL-3.0-or-later is recorded and approved here and in AGENTS.md, and
+is not enforced by CI. Worth closing if a third apk-pinned shipped package
+ever appears.
+
 ## Summary, by approval status
 
-222 rows total (210 from the issue's own table, 10 found in section H, 2 in section I).
+224 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
+2 in section J).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 6 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108) |
+| Approved, with issue number | 7 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
-| Predates the rule -- not individually recorded | 47 (every other **direct** dependency) |
+| Predates the rule -- not individually recorded | 48 (every other **direct** dependency) |
 | Runtime feed, not a dependency | 1 (Grype's vulnerability database, row 222) |
 | n/a -- transitive | 166 |
 

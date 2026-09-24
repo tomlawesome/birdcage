@@ -310,11 +310,20 @@ func runCanaryEnrol(args []string) error {
 		return runCanaryEnrolStatus()
 	}
 
-	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> [--kind <kind>] (or --status)"
+	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> " +
+		"[--kind <kind>] [--lure smb=off] [--smb-workgroup <name>] [--smb-shares <a,b,c>] (or --status)"
 	fs := flag.NewFlagSet("canary enrol", flag.ContinueOnError)
 	name := fs.String("name", "", "canary name (required)")
 	lane := fs.String("lane", "", "canary lane (required)")
 	kindFlag := fs.String("kind", string(agentkind.Honeypot), "agent kind (issue #105)")
+	// The lure flags (issue #87 slice C). They change what this command
+	// prints -- see canary_lure.go, lureState, for what that does and does
+	// not deliver.
+	lures := lureState{smb: true}
+	lureArg := &lureFlag{state: &lures}
+	fs.Var(lureArg, "lure", "turn a lure off, as name=state (the only lure is smb)")
+	smbWorkgroup := fs.String("smb-workgroup", defaultSMBWorkgroup, "workgroup the SMB lure announces")
+	smbShares := fs.String("smb-shares", defaultSMBShares, "the SMB lure's three share names, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -322,12 +331,24 @@ func runCanaryEnrol(args []string) error {
 		return errors.New(usage)
 	}
 	if *name == "" || *lane == "" {
-		return fmt.Errorf("%s: both flags are required", usage)
+		return fmt.Errorf("%s: --name and --lane are required", usage)
 	}
 	kind := agentkind.Kind(*kindFlag)
 	profile, ok := agentkind.Lookup(kind)
 	if !ok {
 		return fmt.Errorf("%s: unknown --kind %q (valid kinds: %s)", usage, *kindFlag, strings.Join(kindNames(), ", "))
+	}
+	// Only the honeypot has lures. Refusing rather than ignoring: an
+	// operator who asked a scanner for an SMB share has misunderstood
+	// something, and silence would leave them believing it worked.
+	smbFlagsSet := lureArg.set || *smbWorkgroup != defaultSMBWorkgroup || *smbShares != defaultSMBShares
+	if kind != agentkind.Honeypot && smbFlagsSet {
+		return fmt.Errorf("%s: --lure and the --smb-* flags apply to --kind %s only, not %q",
+			usage, agentkind.Honeypot, kind)
+	}
+	smb, err := parseSMBSettings(*smbWorkgroup, *smbShares)
+	if err != nil {
+		return err
 	}
 
 	advertiseHost := os.Getenv(envAdvertiseHost)
@@ -412,8 +433,27 @@ func runCanaryEnrol(args []string) error {
 		if image == "" {
 			image = profile.DefaultImage
 		}
-		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image); err != nil {
+		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image, lures.smb); err != nil {
 			return fmt.Errorf("print docker run command: %w", err)
+		}
+		// The lure is a second container, so it is a second command --
+		// printed after the canary's, because it joins that container's
+		// network namespace and cannot start before it exists. The volume
+		// comes first inside that block, for the reason smbAuditVolume's
+		// own comment gives.
+		if lures.smb {
+			if _, err := fmt.Println(); err != nil {
+				return fmt.Errorf("print smb lure run command: %w", err)
+			}
+			if err := printSMBLureRunCommand(os.Stdout, smbLureImage(), smb); err != nil {
+				return fmt.Errorf("print smb lure run command: %w", err)
+			}
+		} else {
+			// One line, so the ledger's "untested" smb card later is not
+			// a surprise. Issue #87 decision 10.
+			if _, err := fmt.Println("\nsmb lure off by request: this canary serves no SMB share, and smb stays untested on its ledger"); err != nil {
+				return fmt.Errorf("print smb lure note: %w", err)
+			}
 		}
 	case agentkind.Scanner:
 		// #108's own trap: this case has to land in the same commit as
@@ -449,7 +489,7 @@ func runCanaryEnrol(args []string) error {
 // random hex -- never attacker- or even operator-influenced, so neither
 // is escaped, the same distinction runCanaryMint draws between canaryID
 // and tok.ID/raw.
-func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
+func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string, smbLure bool) error {
 	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped --init \\\n"); err != nil {
 		return err
 	}
@@ -470,6 +510,21 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	}
 	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \\\n"); err != nil {
 		return err
+	}
+	// The SMB lure's audit volume (#87), mounted READ-ONLY and only when
+	// the lure is being deployed. Read-only is the whole of decision 6:
+	// the volume is the only thing the two containers share, the lure
+	// writes and this container reads, so a compromised smbd can forge
+	// SMB alerts on its own canary and nothing else. Without
+	// MOCKINGBIRD_SMB_AUDIT_PATH the agent's smb road does not run at
+	// all, which is what `--lure smb=off` leaves behind.
+	if smbLure {
+		if _, err := fmt.Fprintf(w, "  -v %s:/audit:ro \\\n", smbAuditVolume); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_SMB_AUDIT_PATH=%s \\\n", smbAuditPath); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
 		return err

@@ -113,7 +113,9 @@ run_scanner() { # run_scanner <container-name> <state-vol> <db-vol> <workfile> [
 
   docker volume create "$statevol" >/dev/null || fail "creating volume $statevol failed"
 
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/p' /work/$workfile")" \
+  # First `docker run` block only, and quit: the enrolment output has
+  # carried two since #87 (see stack.sh run_printed_command).
+  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$workfile")" \
     || fail "could not read $container's printed docker run command"
 
   command="$(printf '%s\n' "$command" | sed \

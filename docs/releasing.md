@@ -143,7 +143,7 @@ server that issued it, so it names a version rather than a moving tag.
 ## Cutting a release
 
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
-   runs the full gate, then the release jobs: both images are pushed under
+   runs the full gate, then the release jobs: the two published images are pushed under
    `sha-<commit>`, attested, given the `preview` tag on GitLab, and mirrored
    to the `preview` tag on GHCR.
 2. Do the production-like manual test on `preview`. That test is the point
@@ -211,7 +211,7 @@ drift (Mirroring to GHCR, above).
 
 The evidence binds a digest to a commit and to the policy version that
 judged it. Read plainly, "this digest passed the full bar" is true of the
-image checks — `build:images` builds both images once and `test:image:*`
+image checks — `build:images` builds every shipped image once and `test:image:*`
 tests those exact bytes — and, since #98, true of the live journeys too:
 the `e2e:*` jobs that call `scripts/e2e/stack.sh` point it at the same
 tags via `E2E_BIRDCAGE_IMAGE`/`E2E_MOCKINGBIRD_IMAGE`, and `stack.sh`

@@ -131,11 +131,15 @@ enrol_smb_canary() {
 # it.
 run_smb_canary() {
   local command
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/p' /work/smb-enrol-output.txt")" \
+  # First `docker run` block only, and quit: the enrolment output has
+  # carried two since #87 (see stack.sh run_printed_command).
+  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/smb-enrol-output.txt")" \
     || die "could not read the smb canary's printed docker run command"
 
   command="$(printf '%s\n' "$command" | sed \
     -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
+    -e "/-v smb-audit:/d" \
+    -e "/MOCKINGBIRD_SMB_AUDIT_PATH/d" \
     -e "s|--name mockingbird |--name $SMB_CANARY |" \
     -e "s|-v mockingbird-state:|-v $SMB_CANARY_STATE_VOL:|" \
     -e "s|-v mockingbird-log:|-v $SMB_CANARY_LOG_VOL:|" \

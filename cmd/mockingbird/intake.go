@@ -214,6 +214,37 @@ func (in *Intake) SubmitSNMPEvent(message []byte) error {
 	return nil
 }
 
+// SubmitSMBEvent is the fifth road into the queue (#87): a line the SMB
+// lure wrote into the audit file it shares with this container, read by
+// the tailer in smbaudit.go and parsed by internal/agent/smbaudit.
+// OpenCanary's own smb module stays disabled -- docs/opencanary.md's
+// table records why -- so, like the port-scan and snmp roads, this is our
+// own reader and not a wrapper around theirs.
+//
+// Same id scheme as every other road: SHA-256 of the emitted bytes,
+// verbatim. Those bytes are derived only from the audit line (see
+// smbaudit.Encode, which takes no clock), so re-reading a line -- which
+// is exactly what happens when the process restarts before its saved
+// position caught up -- mints the same id and Push drops the second copy.
+//
+// Unlike the port-scan and snmp roads, and like the log road, this one
+// waits for queue room before pushing: the audit file is a durable store
+// that will still hold the line in a moment, so blocking costs nothing
+// and dropping would cost the event. It appends no ledger entry, because
+// the ledger tracks positions in OpenCanary's log file and this line was
+// never in it; the audit file's own position is kept by smbaudit.go.
+func (in *Intake) SubmitSMBEvent(ctx context.Context, message []byte) error {
+	if err := in.waitForRoom(ctx); err != nil {
+		return err
+	}
+	id, err := event.IDFromEmittedMessage(message)
+	if err != nil {
+		return err
+	}
+	in.Queue.Push(queue.Event{ID: id, Payload: message})
+	return nil
+}
+
 // RunLogRoad runs the log road until ctx is done: load the saved
 // position, run a fresh ledger and a fresh tailer.Follow session, and
 // -- per #48 decision 2's "Recovery without a restart" -- restart that

@@ -638,7 +638,7 @@ build:images:
     # self-healing -- whatever was left behind goes on the next run.
     - |
       set -eu
-      for repo in birdcage-build mockingbird-build nightjar-build; do
+      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
           | grep -v ":${CI_PIPELINE_ID}$" \
           | xargs -r docker image rm --force >/dev/null 2>&1 || true
@@ -654,7 +654,7 @@ build:images:
       : > release.env
       # One list entry per image -- the build, the local tag, the registry
       # push and the dotenv lines below all read from $name.
-      for name in birdcage mockingbird nightjar; do
+      for name in birdcage mockingbird nightjar smb-lure; do
         local_tag="${name}-build:${CI_PIPELINE_ID}"
         # --provenance=false --sbom=false: with the containerd image store
         # (Docker 29's default on the runner) a build otherwise produces an
@@ -682,7 +682,11 @@ build:images:
         registry_tag="${CI_REGISTRY_IMAGE}/${name}-build:ci-${CI_PIPELINE_ID}"
         docker tag "$local_tag" "$registry_tag"
         digest="$(scripts/publish-image.sh "$registry_tag" "$image_id")"
-        upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+        # `-` becomes `_` as well as upper-casing: smb-lure's dotenv keys
+        # would otherwise be SMB-LURE_BUILD_IMAGE, which is not a usable
+        # variable name, and the dotenv report would be rejected rather
+        # than the pipeline failing anywhere near the cause.
+        upper="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
         {
           echo "${upper}_BUILD_IMAGE=$local_tag"
           echo "${upper}_BUILD_ID=$image_id"
@@ -1158,6 +1162,106 @@ e2e:smb:
     # tolerates -- but need not be made to work around -- a network that
     # still has endpoints on it.
     - scripts/e2e/smb-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #87's own journey, and #123's acceptance. Deliberately separate
+# from e2e:smb above rather than a third line added to it: that job drives
+# build/e2e-samba and OpenCanary's own smb module, which is the arrangement
+# #78 proved and #87 decision 40b replaced, and it still guards that path.
+# This one runs the image that actually ships (build/smb-lure) beside a
+# canary that reads the audit file with the agent's own tailer and parse,
+# and asserts that one file opened is exactly ONE alert naming the share
+# and the path -- across a restart of the canary.
+e2e:smb-lure:
+  stage: e2e
+  image: docker:29-cli
+  <<: *gate
+  # build:images' dotenv names the tags this job points the harness at
+  # (#98), so the journey tests the bytes that would ship -- including the
+  # lure's own -- rather than a second build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (a small Alpine smbclient; the lure and the
+  # canary are both tags build:images already built) and runs a second
+  # canary plus the lure alongside the base stack's four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-lure-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-lure-stack.sh up)"
+    - scripts/e2e/smb-lure.sh
+  after_script:
+    # smb-lure-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/smb-lure-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request. It is worth a
+# twin because this journey's assertions run through the store rather than
+# past it: the alert ids the run counts from, and the "exactly one" the
+# collapser is judged by, are both reads of stored alerts.
+#
+# It sits here beside its own gate job rather than with the other `:postgres`
+# twins further down, so every #87 edit to this file is one contiguous block
+# and a parallel branch editing the same file has one place to merge.
+e2e:smb-lure:postgres:
+  stage: e2e
+  image: docker:29-cli
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points the harness at
+  # (#98), so the journey tests the bytes that would ship -- including the
+  # lure's own -- rather than a second build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (a small Alpine smbclient; the lure and the
+  # canary are both tags build:images already built) and runs a second
+  # canary plus the lure alongside the base stack's four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-lure-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-lure-stack.sh up)"
+    - scripts/e2e/smb-lure.sh
+  after_script:
+    # smb-lure-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/smb-lure-stack.sh down
     - scripts/e2e/stack.sh down
 
 # Issue #63's new default: no operator certificate configured at all,
