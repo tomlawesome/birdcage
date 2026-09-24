@@ -7,7 +7,18 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/opencanary"
 )
+
+// mustCIDR parses a CIDR block for the classifyKind fixtures.
+func mustCIDR(t *testing.T, cidr string) *net.IPNet {
+	t.Helper()
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatalf("ParseCIDR(%q): %v", cidr, err)
+	}
+	return n
+}
 
 // --- classifyKind: pure Go, no database -- one fixture per rule that
 // only that rule matches, per issue #35, plus the rule-ordering cases.
@@ -520,5 +531,97 @@ func TestNormalizeVisitorLimitDefaultAndCap(t *testing.T) {
 	}
 	if got := NormalizeVisitorLimit(50); got != 50 {
 		t.Errorf("NormalizeVisitorLimit(50) = %d, want 50", got)
+	}
+}
+
+// TestClassifyKindPoisonerIsAlwaysInside is #86 decision 34's ranking, and
+// the reason it needs no fifth rise colour: LLMNR, NBT-NS and mDNS are
+// link-local, so something that answered one of this canary's bait queries
+// received a link-local multicast or a subnet broadcast -- which only a host
+// on the segment can do. It is inside by definition, not by address.
+func TestClassifyKindPoisonerIsAlwaysInside(t *testing.T) {
+	at := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		sourceIP string
+		hits     []hitPoint
+		ranges   []*net.IPNet
+	}{
+		{
+			name:     "a public source address, with no ranges configured",
+			sourceIP: "203.0.113.9",
+			hits:     []hitPoint{{At: at, CanaryID: "c1", Service: "poisoner"}},
+		},
+		{
+			// The case that makes the rule matter: an operator whose LAN
+			// uses public address space and who has not set
+			// BIRDCAGE_INTERNAL_RANGES must not see the one near-certain
+			// hit demoted to "one touch".
+			name:     "a public source address, with unrelated ranges configured",
+			sourceIP: "198.51.100.4",
+			hits:     []hitPoint{{At: at, CanaryID: "c1", Service: "poisoner"}},
+			ranges:   []*net.IPNet{mustCIDR(t, "203.0.113.0/24")},
+		},
+		{
+			// Outranks sweep: five canaries inside the sweep window would
+			// otherwise classify as a sweep.
+			name:     "alongside enough hits to be a sweep",
+			sourceIP: "203.0.113.9",
+			hits: []hitPoint{
+				{At: at, CanaryID: "c1", Service: "poisoner"},
+				{At: at.Add(time.Minute), CanaryID: "c2", Service: "ssh"},
+				{At: at.Add(2 * time.Minute), CanaryID: "c3", Service: "ssh"},
+				{At: at.Add(3 * time.Minute), CanaryID: "c4", Service: "ssh"},
+				{At: at.Add(4 * time.Minute), CanaryID: "c5", Service: "ssh"},
+				{At: at.Add(5 * time.Minute), CanaryID: "c6", Service: "ssh"},
+			},
+		},
+		{
+			name:     "the poisoner hit is not the first one",
+			sourceIP: "203.0.113.9",
+			hits: []hitPoint{
+				{At: at, CanaryID: "c1", Service: "ssh"},
+				{At: at.Add(time.Minute), CanaryID: "c1", Service: "poisoner"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyKind(tc.sourceIP, tc.hits, tc.ranges); got != KindInside {
+				t.Errorf("classifyKind = %q, want %q", got, KindInside)
+			}
+		})
+	}
+}
+
+// TestClassifyKindWithoutAPoisonerHitIsUnchanged proves the new rule only
+// fires on a poisoner hit -- every other classification behaves exactly as
+// issue #35 set it.
+func TestClassifyKindWithoutAPoisonerHitIsUnchanged(t *testing.T) {
+	at := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	// One hit from a public address, nothing else: still "one touch".
+	if got := classifyKind("203.0.113.9", []hitPoint{{At: at, CanaryID: "c1", Service: "ssh"}}, nil); got != KindTouch {
+		t.Errorf("a single public hit classified as %q, want %q", got, KindTouch)
+	}
+	// A hit with no service at all must not be mistaken for one.
+	if got := classifyKind("203.0.113.9", []hitPoint{{At: at, CanaryID: "c1"}}, nil); got != KindTouch {
+		t.Errorf("a hit with no service classified as %q, want %q", got, KindTouch)
+	}
+	// And a private source is inside as before, poisoner or not.
+	if got := classifyKind("10.0.0.9", []hitPoint{{At: at, CanaryID: "c1", Service: "ssh"}}, nil); got != KindInside {
+		t.Errorf("a private-address hit classified as %q, want %q", got, KindInside)
+	}
+}
+
+// TestPoisonerServiceMatchesTheMapping pins this file's written-out service
+// name to the one internal/opencanary actually derives from #86's logtype,
+// so the two cannot drift apart silently.
+func TestPoisonerServiceMatchesTheMapping(t *testing.T) {
+	logType := 30001
+	if got := opencanary.ServiceForLogType(&logType); got != poisonerService {
+		t.Errorf("ServiceForLogType(30001) = %q, but this package classifies on %q", got, poisonerService)
 	}
 }

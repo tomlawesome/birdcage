@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -569,6 +570,119 @@ func TestHandleBatchBaseLineAckedNotStored(t *testing.T) {
 			if a.Service == "base" {
 				t.Errorf("alert stored with service=base: %+v", a)
 			}
+		}
+	})
+}
+
+// TestHandleBatchSelfTestResultAckedMatchedNotStored is #86 slice C's
+// acceptance test, and the twin of the base-line one above with one crucial
+// difference: a base line is skipped BEFORE the self-test matcher, because
+// it can never be a marker, whereas a self-test result is nothing but a
+// marker and has to go through the matcher and only then be dropped.
+//
+// So this asserts three things at once: the event acks (the agent's queue
+// drains), the marker it carries records the target as passed (which is the
+// whole reason the event exists -- the poisoner target's pass is silence,
+// which no arriving alert can express), and nothing is stored as an alert or
+// counted as a hit.
+func TestHandleBatchSelfTestResultAckedMatchedNotStored(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		raw := mintToken(t, database, "canary-a")
+		idx := store.NewSelfTestIndex()
+		now := time.Date(2026, 1, 1, 4, 12, 0, 0, time.UTC)
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, idx, nil)
+
+		// A real run, minted the way the scheduler mints one, so the marker
+		// under test is one birdcage actually issued.
+		cmd, err := store.MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
+			[]store.SelfTestTarget{{Service: "poisoner", DestPort: 0}}, now, now.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
+		var params selftest.Params
+		if err := json.Unmarshal([]byte(cmd.Params), &params); err != nil {
+			t.Fatalf("unmarshal minted params: %v", err)
+		}
+		if len(params.Targets) != 1 {
+			t.Fatalf("minted %d targets, want 1", len(params.Targets))
+		}
+		marker := params.Targets[0].Marker
+
+		// The result the agent reports: the marker inside logdata, where
+		// store.SelfTestIndex.match's substring search over the raw event
+		// finds it.
+		resultRaw := fmt.Sprintf(
+			`{"dst_host":"","dst_port":0,"logdata":{"MARKER":%q,"OUTCOME":"silence","TARGET":"poisoner"},"logtype":30002,"node_id":"mockingbird","src_host":"","src_port":0}`,
+			marker)
+		resultEvent := fmt.Sprintf(`{"event_id":%q,"source_ip":"","dest_port":-1,"service":"selftest","raw":%q}`,
+			validEventID1, resultRaw)
+		body := fmt.Sprintf(`{"events":[%s,%s]}`, resultEvent, validEventJSON(validEventID2))
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, batchRequest(raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp ackResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		stored := map[string]bool{}
+		for _, id := range resp.Stored {
+			stored[id] = true
+		}
+		if !stored[validEventID1] {
+			t.Errorf("stored = %v, want the self-test result's id acked", resp.Stored)
+		}
+		if !stored[validEventID2] {
+			t.Errorf("stored = %v, want the real event's id acked", resp.Stored)
+		}
+		if len(resp.Rejected) != 0 {
+			t.Errorf("rejected = %v, want none -- a self-test result acks, it is never rejected", resp.Rejected)
+		}
+
+		// The pass landed: this is what the whole event is for.
+		results, ok, err := store.SelfTestServiceResults(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("SelfTestServiceResults: %v", err)
+		}
+		if !ok {
+			t.Fatal("no completed self-test run for canary-a: the marker did not record a pass")
+		}
+		var sawPoisoner bool
+		for _, r := range results {
+			if r.Service != "poisoner" {
+				continue
+			}
+			sawPoisoner = true
+			if !r.Passed {
+				t.Error("the poisoner target did not pass on a reported silence")
+			}
+			if r.Grade != store.GradeAttributed {
+				t.Errorf("poisoner grade = %q, want %q", r.Grade, store.GradeAttributed)
+			}
+		}
+		if !sawPoisoner {
+			t.Errorf("no poisoner result among %+v", results)
+		}
+
+		// And nothing was stored: hits unchanged, and the service never
+		// appears among the alerts.
+		var alertCount int
+		row := database.QueryRow(`SELECT COUNT(*) FROM alerts WHERE instance_id = ?`, "canary-a")
+		if err := row.Scan(&alertCount); err != nil {
+			t.Fatalf("count alerts: %v", err)
+		}
+		if alertCount != 1 {
+			t.Errorf("alerts stored for canary-a = %d, want 1 (the self-test result must not be stored)", alertCount)
+		}
+		alerts, err := store.ListAlerts(context.Background(), database, store.AlertFilter{InstanceID: "canary-a", Service: "selftest"})
+		if err != nil {
+			t.Fatalf("ListAlerts(service=selftest): %v", err)
+		}
+		if len(alerts) != 0 {
+			t.Errorf("/api/alerts?service=selftest returned %d alerts, want none: %+v", len(alerts), alerts)
 		}
 	})
 }

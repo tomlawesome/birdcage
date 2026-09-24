@@ -230,3 +230,67 @@ describe('computeEventsHeading', () => {
     expect(h.showQuietLine).toBe(false)
   })
 })
+
+describe('whoSentence: poisoner answered a name nobody should answer', () => {
+  const poisoned = (mac: string) =>
+    visitor({
+      kind: 'inside',
+      source_ip: '10.30.0.51',
+      services: ['poisoner'],
+      tried: ['llmnr'],
+      poisoner: { name: 'fs-lon-02', protocol: 'llmnr', mac },
+    })
+
+  it('says what answered, for which name, and why that matters', () => {
+    const row = computeEventRow(poisoned('52:54:00:8a:1c:3d'), canaries, '2026-09-12T21:05:00Z')
+    expect(plainText(row.who)).toBe(
+      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr · 52:54:00:8a:1c:3d',
+    )
+  })
+
+  it('bolds the bait name, because it is the point -- nothing should have answered for it', () => {
+    const row = computeEventRow(poisoned('52:54:00:8a:1c:3d'), canaries, '2026-09-12T21:05:00Z')
+    expect(row.who.find((s) => s.bold)?.text).toBe('fs-lon-02')
+  })
+
+  it('leaves the MAC out when the canary had no neighbour entry for the answerer', () => {
+    // An answer from off-segment or over IPv6 has none to read
+    // (internal/agent/poisoner/arp.go), which is ordinary rather than a gap.
+    const row = computeEventRow(poisoned(''), canaries, '2026-09-12T21:05:00Z')
+    expect(plainText(row.who)).toBe(
+      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr',
+    )
+  })
+
+  it('is labelled with the protocol, not with the kind it shares', () => {
+    // Its kind has to be "inside" -- a link-local protocol can only be
+    // answered from the segment -- but "FROM INSIDE" says nothing an operator
+    // can act on where "LLMNR" says which question was answered.
+    for (const [protocol, label] of [
+      ['llmnr', 'LLMNR'],
+      ['nbt-ns', 'NBT-NS'],
+      ['mdns', 'MDNS'],
+    ]) {
+      const v = poisoned('52:54:00:8a:1c:3d')
+      v.poisoner!.protocol = protocol
+      expect(computeEventRow(v, canaries, '2026-09-12T21:05:00Z').kind.label).toBe(label)
+    }
+  })
+
+  it('keeps the inside rise colour, so no fifth colour enters the palette', () => {
+    // ADR-0004: the palette is the four kind colours validated in round 1.
+    const row = computeEventRow(poisoned('52:54:00:8a:1c:3d'), canaries, '2026-09-12T21:05:00Z')
+    expect(row.cls).toBe(computeEventRow(visitor({ kind: 'inside' }), canaries, '2026-09-12T21:05:00Z').cls)
+  })
+
+  it('leaves every other visitor untouched', () => {
+    // No poisoner block means the ordinary "inside" sentence, unchanged.
+    const row = computeEventRow(
+      visitor({ kind: 'inside', tried: ['/admin', '/etc/passwd'] }),
+      canaries,
+      '2026-09-12T21:05:00Z',
+    )
+    expect(plainText(row.who)).toContain('browsed')
+    expect(row.kind.label).toBe('FROM INSIDE')
+  })
+})

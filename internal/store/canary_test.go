@@ -287,6 +287,66 @@ func TestRecordCanaryAgentHeartbeatStoresReport(t *testing.T) {
 	})
 }
 
+// TestRecordCanaryAgentHeartbeatStoresPoisonerNames is #86 slice D's
+// storage half: the bait names the agent reports land against the canary
+// and come back out on the Canary the canary page is built from.
+//
+// The empty case is the one that matters. A canary with the poisoner road
+// off, or an agent built before the field existed, reports nothing -- and
+// that has to be stored as NULL rather than as an empty string, so the
+// facts column can leave the row out entirely instead of rendering a label
+// with nothing beside it.
+func TestRecordCanaryAgentHeartbeatStoresPoisonerNames(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+
+		// Nothing reported yet: NULL, and absent from the Canary.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		var stored *string
+		row := database.QueryRow(`SELECT poisoner_names FROM canaries WHERE id = ?`, "canary-a")
+		if err := row.Scan(&stored); err != nil {
+			t.Fatalf("scan poisoner_names: %v", err)
+		}
+		if stored != nil {
+			t.Errorf("poisoner_names = %q, want NULL when the agent reported none", *stored)
+		}
+		c := findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames != nil {
+			t.Errorf("Canary.PoisonerNames = %q, want nil", *c.PoisonerNames)
+		}
+
+		// Then a report with names in it.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3", PoisonerNames: "old-fs-01,printer-7,wpad"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames == nil || *c.PoisonerNames != "old-fs-01,printer-7,wpad" {
+			t.Fatalf("Canary.PoisonerNames = %v, want the three names", c.PoisonerNames)
+		}
+
+		// And a later report with none clears it back to NULL rather than
+		// leaving a stale list on the page: an operator who switches the
+		// detector off must stop seeing names it is no longer asking for.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames != nil {
+			t.Errorf("Canary.PoisonerNames = %q after a report with none, want nil", *c.PoisonerNames)
+		}
+	})
+}
+
 // TestRecordCanaryAgentHeartbeatUnknownCanary mirrors RecordHeartbeat's
 // own contract: an unregistered canary id reports ErrCanaryNotFound and
 // touches nothing.

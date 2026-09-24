@@ -36,6 +36,17 @@ type canaryFacts struct {
 	EnrolledAt       time.Time  `json:"enrolled_at"`
 	RegisteredAt     *time.Time `json:"registered_at,omitempty"`
 	AgentVersion     *string    `json:"agent_version,omitempty"`
+	// PoisonerNames is the bait names this canary is asking for (#86 slice
+	// D), comma-separated, as the agent last reported them. Absent for a
+	// canary that reports none: the poisoner road off, an agent built
+	// before the field existed, or any kind but a honeypot.
+	//
+	// These are visible here and nowhere else. The canary side keeps them
+	// out of every log line on purpose (internal/agent/poisoner's package
+	// comment) because the bait only works while nobody knows which names
+	// it uses; this screen is the operator's own, and is where they are
+	// meant to be readable.
+	PoisonerNames *string `json:"poisoner_names,omitempty"`
 	// TokenRotatedAt is when this canary's newest live token was minted,
 	// and TokenRotatesAt the next occurrence of the rotation schedule --
 	// the two halves of the facts column's "rotated <day> · next in
@@ -155,6 +166,7 @@ func (h *handler) canaryFacts(r *http.Request, c store.Canary, now time.Time) (c
 		EnrolledAt:         c.EnrolledAt,
 		RegisteredAt:       c.RegisteredAt,
 		AgentVersion:       c.AgentVersion,
+		PoisonerNames:      c.PoisonerNames,
 	}
 
 	enabled, err := store.GetSetting(r.Context(), h.db, store.SettingSelfTestEnabled)

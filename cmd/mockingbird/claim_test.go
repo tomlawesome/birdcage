@@ -189,7 +189,7 @@ func TestRunSelfTestWindowOpensBeforeSweep(t *testing.T) {
 	params := fmt.Sprintf(`{"run_id":"r1","address":"127.0.0.1","targets":[{"service":"ssh","dest_port":%d,"marker":"m-ssh"},{"service":"portscan","dest_port":0,"marker":"m-portscan"}]}`, port)
 	finished := make(chan error, 1)
 	go func() {
-		finished <- runSelfTest(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: []byte(params)})
+		finished <- runSelfTest(context.Background(), in, nil, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: []byte(params)})
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)

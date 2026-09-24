@@ -67,6 +67,16 @@ type Target struct {
 	Marker string `json:"marker"`
 }
 
+// portless is the set of services whose target names no socket on the
+// canary and so carries DestPort 0. See Validate's own comment for what
+// each one is and why. A service is added here only alongside the code
+// that actually probes it, so a target can never validate for a service
+// nothing knows how to run.
+var portless = map[string]bool{
+	"portscan": true,
+	"poisoner": true,
+}
+
 // ErrNoTargets reports a run with nothing to probe. It is an error
 // rather than a silent success: a sweep that probes nothing must not
 // report a canary healthy.
@@ -94,15 +104,22 @@ func (p Params) Validate() error {
 		if t.Service == "" {
 			return fmt.Errorf("selftest: target %d has an empty service", i)
 		}
-		// portscan names no real socket (#46 slice 3:
-		// internal/selftestsched.mintForCanary mints it with DestPort 0
-		// for every honeypot canary, regardless of which ports
-		// OpenCanary itself listens on; internal/agent/probe's carrier
-		// picks its own range to touch). Every other service still
-		// needs a real 1-65535 port.
-		if t.Service == "portscan" {
+		// Two services name no real socket on the canary, so they carry
+		// DestPort 0 and every other service still needs a real 1-65535
+		// port:
+		//
+		//   - portscan (#46 slice 3): internal/selftestsched.mintForCanary
+		//     mints it for every honeypot canary regardless of which ports
+		//     OpenCanary listens on, and internal/agent/probe's carrier
+		//     picks its own range to touch.
+		//   - poisoner (#86 slice C): the canary asks the segment for a
+		//     name nobody should answer. There is no port on the canary to
+		//     name -- the query goes out to a multicast group or a subnet
+		//     broadcast, and the detector's own sockets are its business,
+		//     not the run's.
+		if portless[t.Service] {
 			if t.DestPort != 0 {
-				return fmt.Errorf("selftest: target %d (portscan) has dest_port %d, want 0 -- portscan names no real socket", i, t.DestPort)
+				return fmt.Errorf("selftest: target %d (%s) has dest_port %d, want 0 -- %s names no real socket", i, t.Service, t.DestPort, t.Service)
 			}
 		} else if t.DestPort < 1 || t.DestPort > 65535 {
 			return fmt.Errorf("selftest: target %d (%s) has dest_port %d outside 1-65535", i, t.Service, t.DestPort)

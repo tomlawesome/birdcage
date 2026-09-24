@@ -27,7 +27,7 @@ var validSelfTestParams = []byte(`{"run_id":"r1","address":"127.0.0.1","targets"
 // refusal rather than act on it.
 func TestRunCommandUnknownKindRefused(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
-	err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: "upgrade"})
+	err := runCommand(context.Background(), in, nil, &client.Command{ID: "cmd-1", Kind: "upgrade"})
 	if err == nil {
 		t.Fatal("runCommand(unknown kind) = nil, want a refusal")
 	}
@@ -40,7 +40,7 @@ func TestRunCommandUnknownKindRefused(t *testing.T) {
 // result, not an error).
 func TestRunCommandSelfTestAccepted(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
-	err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	err := runCommand(context.Background(), in, nil, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
 	if err != nil {
 		t.Errorf("runCommand(selftest, params=%s) = %v, want nil", validSelfTestParams, err)
 	}
@@ -63,7 +63,7 @@ func TestRunCommandSelfTestUnparseableParamsRefused(t *testing.T) {
 		[]byte(`[1,2,3]`),
 		[]byte(`{not valid json`),
 	} {
-		err := runCommand(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
+		err := runCommand(context.Background(), in, nil, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: params})
 		if err == nil {
 			t.Errorf("runCommand(selftest, params=%s) = nil, want a refusal", params)
 		}
@@ -93,7 +93,7 @@ func TestJitteredIntervalStaysInBound(t *testing.T) {
 // internal/agent/probe's own tests).
 func TestRunSelfTestLogsOutcomesAndReturnsNil(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
-	err := runSelfTest(context.Background(), in, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
+	err := runSelfTest(context.Background(), in, nil, &client.Command{ID: "cmd-1", Kind: kindSelfTest, Params: validSelfTestParams})
 	if err != nil {
 		t.Fatalf("runSelfTest(%s) = %v, want nil", validSelfTestParams, err)
 	}
@@ -232,7 +232,7 @@ func TestRunCommandRunnerDispatchesCommands(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runCommandRunner(runCtx, in, run)
+		runCommandRunner(runCtx, in, nil, run)
 		close(done)
 	}()
 

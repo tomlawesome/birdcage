@@ -7,7 +7,7 @@ import "testing"
 // TestServiceForLogTypeRangeBoundaries and TestServiceForLogTypeRangeMinMax
 // below rather than bumping this number -- that is the whole point of the
 // check.
-const wantRangeCount = 23
+const wantRangeCount = 25
 
 func TestLogTypeRangesCount(t *testing.T) {
 	if len(logTypeRanges) != wantRangeCount {
@@ -85,6 +85,62 @@ func expectedService(logType int) string {
 		}
 	}
 	return UnknownService
+}
+
+// TestPoisonerRangeIsBirdcagesOwn pins the one range in the table that does
+// not mirror an upstream LOG_* constant (issue #86 decision 34: the service
+// name is "poisoner", and upstream has no logtype for it). It is pinned by
+// value rather than derived from the table, so moving the number has to be a
+// deliberate change here as well -- an agent in the field keeps sending the
+// old one until it is upgraded.
+func TestPoisonerRangeIsBirdcagesOwn(t *testing.T) {
+	logType := 30001
+	if got := ServiceForLogType(&logType); got != "poisoner" {
+		t.Errorf("ServiceForLogType(30001) = %q, want %q", got, "poisoner")
+	}
+	// 30002 is taken, by the self-test result range below -- the "somewhere
+	// obvious" this band was reserved for. The rest around it stays free.
+	for _, near := range []int{30000, 30003, 30010} {
+		if got := ServiceForLogType(&near); got != UnknownService {
+			t.Errorf("ServiceForLogType(%d) = %q, want %q", near, got, UnknownService)
+		}
+	}
+}
+
+// TestSelfTestResultRangeIsBirdcagesOwn pins the second birdcage-only
+// logtype (#86 slice C): 30002 is an agent's report of how one self-test
+// target turned out, and IsSelfTestResult is what keeps it from ever being
+// stored as an alert.
+func TestSelfTestResultRangeIsBirdcagesOwn(t *testing.T) {
+	logType := 30002
+	if got := ServiceForLogType(&logType); got != "selftest" {
+		t.Errorf("ServiceForLogType(30002) = %q, want %q", got, "selftest")
+	}
+	if !IsSelfTestResult("selftest") {
+		t.Error(`IsSelfTestResult("selftest") = false`)
+	}
+	// It must not catch anything else, least of all the poisoner alerts it
+	// sits next to: those are real hits and have to be stored.
+	for _, other := range []string{"poisoner", "base", "portscan", "snmp", "unknown", ""} {
+		if IsSelfTestResult(other) {
+			t.Errorf("IsSelfTestResult(%q) = true, want false", other)
+		}
+	}
+	// And the two checks are distinct: a start-up line is skipped before the
+	// self-test matcher, a self-test result after it (see
+	// internal/ingest/batch.go), so conflating them would lose every pass.
+	if IsBase("selftest") {
+		t.Error(`IsBase("selftest") = true: a self-test result would skip the matcher and the pass would be lost`)
+	}
+	if IsSelfTestResult(baseService) {
+		t.Errorf("IsSelfTestResult(%q) = true", baseService)
+	}
+	// The band around it stays free.
+	for _, near := range []int{30003, 30010} {
+		if got := ServiceForLogType(&near); got != UnknownService {
+			t.Errorf("ServiceForLogType(%d) = %q, want %q", near, got, UnknownService)
+		}
+	}
 }
 
 // TestServiceForLogTypeFarOutsideEveryRange is the "wildly wrong logtype"

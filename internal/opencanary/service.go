@@ -62,8 +62,38 @@ var logTypeRanges = []logTypeRange{
 	{18001, 18005, "tcpbanner"},
 	{19001, 19001, "llmnr"},
 	{20001, 20001, "mongodb"},
+	// Birdcage's own, not upstream's: see the note below.
+	{30001, 30001, "poisoner"},
+	{30002, 30002, "selftest"},
 	{99000, 99009, "user"},
 }
+
+// The 30000 band is birdcage's own. Every other range above mirrors a
+// LOG_* constant in upstream OpenCanary's logger.py, and the two agent-side
+// detectors that came before this one (internal/agent/portscan,
+// internal/agent/snmp) deliberately reuse upstream's numbers so their events
+// need no special case anywhere downstream.
+//
+// 30001 exists because issue #86's detector has nothing upstream to reuse:
+// upstream has no logtype for "something answered a name that does not
+// exist". Its nearest, 19001 (LOG_LLMNR_QUERY_RESPONSE, service "llmnr"),
+// names one of the three protocols that detector uses rather than what the
+// operator is being told about, and #86 decision 34 settled the service name
+// as "poisoner" for exactly that reason.
+//
+// 30002 is the second: a self-test result the agent reports about itself
+// (#86 slice C). It exists because one self-test target grades SILENCE as a
+// pass -- the canary asks the segment for a name nobody should answer, and
+// nothing answering is the correct outcome -- and silence produces no event
+// of its own to carry the marker birdcage matches on. So the agent says what
+// happened, in an ordinary marker-bearing event, and IsSelfTestResult below
+// is what keeps that statement from ever being stored as an alert.
+//
+// Both sit clear of upstream's numbering in both directions: its service
+// ranges run contiguously from 1000 to 20001 and then jump to the
+// 99000-99009 user band, so a new upstream service lands near 21001, not
+// here. A future birdcage-only detector takes the next value in this band
+// and adds a line to this note saying what it is.
 
 // ServiceForLogType maps an OpenCanary logtype to a service name. Values
 // outside every range -- including an absent logtype -- map to
@@ -100,4 +130,30 @@ const baseService = "base"
 // exactly equivalent to testing logtype membership in that range.
 func IsBase(service string) bool {
 	return service == baseService
+}
+
+// selfTestResultService is the service name the 30002 range produces -- an
+// agent's own report of how one self-test target turned out, not a visitor.
+const selfTestResultService = "selftest"
+
+// IsSelfTestResult reports whether service is that name.
+//
+// Issue #86 slice C: these events exist only to carry a marker for a target
+// whose pass is silence, and they must never be stored as an alert or
+// counted as a hit -- the same treatment IsBase's start-up lines get, and
+// for a sharper reason. A start-up line is merely uninteresting; this one is
+// the canary talking about itself, so storing it would put the agent's own
+// self-report on the dashboard as though something had visited.
+//
+// The difference from the IsBase path, and it matters: a start-up line is
+// skipped before the self-test matcher ever sees it, because it can never be
+// a marker. This event is nothing but a marker, so it has to go through the
+// matcher first and only then be dropped. See internal/ingest/batch.go,
+// which does them in that order for exactly this reason.
+//
+// Takes the service name rather than a logtype for the same reason IsBase
+// does: the ingest wire carries no logtype, only the service the agent
+// already derived through ServiceForLogType.
+func IsSelfTestResult(service string) bool {
+	return service == selfTestResultService
 }

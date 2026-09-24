@@ -71,7 +71,7 @@ Shipped as a binary in an agent image, never linked into birdcage:
   exist, GPL-3.0-or-later; owner, 2026-09-23, #87 decision 1 ("Real Samba on
   Alpine"). Pinned to an exact apk version in `build/smb-lure/Dockerfile` and
   rebuilt on every Alpine security update to it. No apk licence gate exists,
-  so this entry and `supply-chain/dependency-inventory.md` row 223 are the
+  so this entry and `supply-chain/dependency-inventory.md` row 226 are the
   record; GPLv3 in a shipped image has the owner's precedent in
   `hpfeeds@3.0.0`.
 

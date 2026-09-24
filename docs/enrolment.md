@@ -472,3 +472,101 @@ non-root process any other way. Pick one:
   other capability, still runs as uid 65532, and still has no shell.
 - **Keep `no-new-privileges`, drop `--cap-add NET_RAW`** -- port-scan
   detection is off, and the agent logs one line saying so at startup.
+
+## Catching a poisoner on your segment
+
+When a Windows machine cannot find a name in DNS, it asks the whole
+local network instead: "does anyone know `fileserver`?" Nothing checks
+who answers. Tools like Responder sit on the network and answer every
+such question, claiming to be whatever was asked for, and the machine
+that asked then tries to log in to the attacker.
+
+Your canary asks for names that do not exist. Nothing on a clean
+network should ever answer. Anything that does answer is an attacker
+impersonating that name, so this alert almost never fires by mistake.
+
+The canary never connects to whatever answered. The answer itself is
+the proof an attacker is listening; connecting to it would be walking
+into the trap the attacker set.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `MOCKINGBIRD_POISONER` | on | Set to `0` to turn the whole thing off, including the listening part. Any other value, including unset, leaves it on. |
+| `MOCKINGBIRD_POISONER_NAMES` | empty | Two or three names in your own naming style, comma-separated. If you set none, the canary invents neighbours of its own hostname (a canary called `fs-lon-03` asks for things like `fs-lon-02`). |
+| `MOCKINGBIRD_POISONER_PROFILE` | `windows` | `windows`, `linux` or `off`. See below. |
+| `MOCKINGBIRD_POISONER_FLOOR` | `2h` | The longest the canary goes without asking anything during working hours. Provisional -- see below. |
+| `MOCKINGBIRD_POISONER_CEILING` | `30m` | The shortest gap between one round of questions and the next. Provisional -- see below. |
+| `MOCKINGBIRD_POISONER_HOURS` | `08:00-18:00` Mon-Fri | When the canary asks anything at all, in its own timezone. Write it as `HH:MM-HH:MM`, optionally followed by `/` and a comma-separated list of three-letter day names, for example `06:00-22:00/Mon,Tue,Wed,Thu,Fri,Sat`. |
+
+### Setting the names when you enrol
+
+`birdcage canary enrol` takes two optional flags, `--bait-names` and
+`--segment-profile`, which put the matching `-e` lines into the
+`docker run` command it prints for you:
+
+```
+birdcage canary enrol --name fs-lon-04 --lane prod \
+  --bait-names old-fs-01,printer-7 --segment-profile linux
+```
+
+A name must be 1 to 15 characters of letters, digits and hyphens, and
+cannot start or end with a hyphen; at most three are used. The command
+checks the names before it mints anything, so a typo does not waste a
+deploy token.
+
+Pick names that would have been plausible on your network and no
+longer exist -- a file server that was retired, a printer that moved.
+The canary also always asks for `wpad`, on top of whatever you set,
+because every Windows machine asks for that one and attackers answer
+it by name as a matter of course.
+
+These names are deliberately not written into the product anywhere
+and are not in this documentation: if an attacker knew which names
+were bait, they would simply not answer them. So do not put your real
+bait names into a shared runbook or a ticket either.
+
+### The segment profile
+
+- **`windows`** (the default): the canary asks over all three of the
+  protocols a Windows machine uses -- LLMNR, NBT-NS and mDNS -- shaped
+  the way Windows sends them.
+- **`linux`**: only the two a Linux machine uses, LLMNR and mDNS,
+  shaped the way `systemd-resolved` and Avahi send them. Use this if
+  your network is all Linux -- one Windows-looking machine on an
+  all-Linux network is itself conspicuous.
+- **`off`**: the canary asks nothing, so nothing is caught. It still
+  listens, which costs nothing and means the rate is already measured
+  if you turn it on later.
+
+### How often it asks
+
+A fixed timer would be a giveaway: one machine asking the same thing
+every ninety minutes all night is the easiest thing on the network to
+spot. So the canary listens to how much the other machines on the
+segment ask, and matches the middle one -- never the busiest, so one
+noisy machine cannot make the canary the loudest thing there. It asks
+in bursts of two to five questions inside a minute, like somebody
+retrying a share that will not open, only during working hours, plus
+one burst shortly after it starts up.
+
+The floor and ceiling defaults above are **provisional guesses**, not
+measured values. They will be replaced with real numbers taken from a
+packet capture (issue #121). Meanwhile you can change them yourself
+with the two variables above.
+
+### Changing these later
+
+These are per-canary settings, changed by restarting the container
+with a different `-e` value -- you do not need a new release of
+birdcage. They cannot yet be changed from the canary page in the
+dashboard: birdcage has no way to push a setting to a running canary
+today, so the container's environment is the only place they are set.
+
+### What the alert says
+
+When something answers, you get an alert under the service name
+`poisoner`, naming the address that answered, the hardware (MAC)
+address read from the canary's own neighbour table, which of the
+three protocols carried the answer, and which name was answered for.
+The canary reads the MAC passively and never sends anything to the
+answering machine.

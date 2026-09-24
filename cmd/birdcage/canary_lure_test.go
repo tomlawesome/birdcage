@@ -225,7 +225,7 @@ func TestLureFlag(t *testing.T) {
 // the variable being set is the whole of what starts the agent's smb road.
 func TestEnrolRunCommandWithoutTheLure(t *testing.T) {
 	var out strings.Builder
-	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", false); err != nil {
+	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", false, "", ""); err != nil {
 		t.Fatalf("printEnrolRunCommand: %v", err)
 	}
 	got := out.String()

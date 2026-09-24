@@ -128,3 +128,14 @@ still. Refs #119.
 The test now cancels once the server has answered a second poll, which the
 loop only starts after the first cycle's drop is logged. No sleep left.
 
+
+## TestSourceLimitersAllowBoundary (internal/enrol)
+
+- 2026-09-23 · ed9668f · local `go test ./... -race` in a `golang:1.27`
+  container reproducing the `test:go` conditions (real Postgres, non-root
+  uid 1001) · "allow() call 3001 = true, want false (burst exhausted)".
+  Passed on an immediate rerun of the identical command against the same
+  code and the same containers. The assertion is on the exact boundary of a
+  rate limiter's burst, so it looks timing-sensitive under `-race`'s added
+  scheduling overhead -- but that is a guess from one sighting, not a
+  diagnosis. First sighting; nothing changed on the strength of it.

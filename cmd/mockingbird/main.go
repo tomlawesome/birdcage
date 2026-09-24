@@ -13,8 +13,8 @@
 // context and one TokenStore: the receiver, the log road (tailer plus its
 // eviction-recovery restart), the sender, the heartbeat, the command
 // poll, the command runner, token rotation, (#69) the OpenCanary child
-// supervisor, (#65) the port-scan road, (#88) the snmp road, and (#87)
-// the smb audit road.
+// supervisor, (#65) the port-scan road, (#88) the snmp road, (#87) the
+// smb audit road, and (#86) the poisoner road.
 //
 // The port-scan road (#65) is the third way an event reaches the queue,
 // alongside the webhook receiver and the log tailer, and the only one
@@ -38,6 +38,17 @@
 // it with a second internal/agent/tailer instance and parses it with
 // internal/agent/smbaudit. Off unless an audit file is named, which is
 // how a canary deployed without the lure behaves. See smbaudit.go.
+//
+// The poisoner road (#86) is the sixth, and the only one that speaks
+// first: internal/agent/poisoner asks the local segment for names nobody
+// should answer -- over LLMNR, NBT-NS and mDNS, shaped like the client
+// the segment expects -- and treats any answer as an intrusion, because a
+// name that does not exist has no correct answer but silence. It also
+// listens on those three ports to count how much the segment's own hosts
+// ask, so its rate is matched to theirs rather than being a timer an
+// attacker could spot. Those listening sockets are shut for writing when
+// they open, so the kernel, not this code, is what guarantees the canary
+// can never answer another machine's lookup. See poisoner.go.
 //
 // Never import internal/ingest from this package or anything it calls:
 // doing so would pull db, store, api and stream in behind it, linking
@@ -207,7 +218,18 @@ func main() {
 		runSMBAuditRoad(ctx, smbRoad, smbLog)
 	}()
 
-	wg.Add(8)
+	// The poisoner road (#86): receive-only sockets on 5355, 5353 and 137
+	// counting the segment's own name lookups, and bait lookups for names
+	// nobody should answer. Opened here for the same reason as the two
+	// above -- the three ports are privileged, so an operator who ran the
+	// container without the sysctl sees one WARN at startup. A nil
+	// detector means the road is off or nothing bound, and
+	// runPoisonerRoad is then a no-op.
+	poisonerLog := logging.New("poisoner")
+	poisonerDetector, poisonerInv := newPoisonerRoad(in, poisonerLog)
+	poisonerLog.Info(poisonerInv.line())
+
+	wg.Add(9)
 	go func() {
 		defer wg.Done()
 		runSenderLoop(ctx, c, ts, in, pacer)
@@ -215,7 +237,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runHeartbeatLoop(ctx, c, ts, func() client.SelfReport {
-			return currentSelfReport(version, in)
+			return currentSelfReport(version, in, poisonerDetector)
 		})
 	}()
 	go func() {
@@ -224,7 +246,12 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		runCommandRunner(ctx, in, commands)
+		// The poisoner detector doubles as the self-test's bait probe
+		// (#86 slice C): internal/agent/probe cannot reach it, so the
+		// command runner is handed it here. A nil detector -- the road
+		// off -- makes a poisoner target report itself skipped rather
+		// than silently pass.
+		runCommandRunner(ctx, in, poisonerDetector, commands)
 	}()
 	go func() {
 		defer wg.Done()
@@ -241,6 +268,10 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runSNMPRoad(ctx, snmpDetector, snmpLog)
+	}()
+	go func() {
+		defer wg.Done()
+		runPoisonerRoad(ctx, poisonerDetector, poisonerLog)
 	}()
 
 	// OpenCanary as mockingbird's child process (#69): the receiver above
@@ -341,8 +372,9 @@ func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *Tok
 // reported" (the previous slice's honest zero SelfReport) stays distinct
 // from "reported zero," and an agent that has actually measured these
 // values must say so.
-func currentSelfReport(version string, in *Intake) client.SelfReport {
+func currentSelfReport(version string, in *Intake, bait baitNames) client.SelfReport {
 	return client.SelfReport{
+		PoisonerNames:     reportedBaitNames(bait),
 		QueueDepth:        in.Queue.Depth(),
 		LogReadOK:         in.LogReadOK(),
 		LastEventID:       in.LastEventID(),
