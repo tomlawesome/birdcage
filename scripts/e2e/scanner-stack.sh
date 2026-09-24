@@ -57,6 +57,18 @@ log() { echo "scanner-stack: $*" >&2; }
 die() { echo "scanner-stack: $*" >&2; exit 1; }
 
 build_image() {
+  # In CI, $NIGHTJAR_IMAGE is the shared build tag build:images built and
+  # this job's own before-script already recovered once (#112). It is
+  # also the first thing in this script's `up` to touch that tag, but
+  # only after `stack.sh up` has already run, which is enough of a
+  # window for a concurrent pipeline's prune to have deleted it again
+  # since -- re-check rather than let the "no local image" branch below
+  # wrongly refuse to build a replacement. A no-op outside CI, where
+  # these variables are unset.
+  if [ -n "${E2E_NIGHTJAR_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+      || die "could not ensure $NIGHTJAR_BUILD_IMAGE is present before using it"
+  fi
   if docker image inspect "$NIGHTJAR_IMAGE" >/dev/null 2>&1; then
     log "using existing image $NIGHTJAR_IMAGE"
     return 0
@@ -148,6 +160,15 @@ build_fixture() {
 # see the commit message. If that ever grows past about three minutes
 # or turns flaky, this is the line to look at first.
 prefetch_db() {
+  # Second use of the nightjar build tag in this job -- build_image
+  # above already used it once, and build_fixture's own run in between
+  # is more window for a concurrent pipeline's prune (#112) to have
+  # deleted it again. A no-op outside CI, where these variables are
+  # unset.
+  if [ -n "${E2E_NIGHTJAR_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_IMAGE:-}" ] && [ -n "${NIGHTJAR_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST" \
+      || die "could not ensure $NIGHTJAR_BUILD_IMAGE is present before prefetching the database"
+  fi
   docker volume create "$DB_VOL" >/dev/null || die "creating volume $DB_VOL failed"
   log "fetching Grype's vulnerability database into $DB_VOL (a couple of minutes the first time)"
   docker run --rm \

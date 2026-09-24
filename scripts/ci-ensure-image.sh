@@ -10,13 +10,19 @@
 # each other, and whichever job loses the race fails for a reason that has
 # nothing to do with the code under test.
 #
-# The fix keeps that daemon-local prune exactly as it was and makes
-# deletion harmless instead of forbidden: build:images also pushes each
-# image to this project's own container registry and records its
+# The fix has two parts. build:images' prune only removes a tag old
+# enough that no pipeline still running could have built it (see that
+# job's own comment in .gitlab-ci.yml), so it can no longer delete a tag
+# a live pipeline is mid-use of. Belt and braces: build:images also pushes
+# each image to this project's own container registry and records its
 # repo@digest in release.env. This script is what every consumer calls
-# first -- test:image:*, every e2e:* journey that consumes build:images'
-# output, and release:push -- so a pruned local tag costs one recovery
-# pull instead of a failed job.
+# before EACH use of a shared build tag -- not just once per job -- so a
+# pruned local tag (a late prune from before the age guard existed, or a
+# window the age guard's margin does not cover) costs one recovery pull
+# instead of a failed job. test:image:*, every e2e:* journey that
+# consumes build:images' output, release:push, and any script within
+# those jobs that uses the same tag a second time (e.g.
+# scripts/e2e/smb-stack.sh's run_smb_canary) all call it.
 #
 # Usage:
 #   scripts/ci-ensure-image.sh <local-tag> <repo@digest>

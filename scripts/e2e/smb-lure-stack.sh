@@ -143,6 +143,18 @@ run_lure_canary() {
     *) die "the lure canary's printed docker run command did not look the way this harness expects; got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
   esac
 
+  # Second use of the mockingbird build tag in this job -- stack.sh's own
+  # enrol_canary already used it once, earlier, to start the base canary
+  # this lure canary is modelled on. A concurrent pipeline's prune (#112)
+  # can delete the local tag between the two uses even though the job's
+  # own before-script recovery already ran once; re-check immediately
+  # before this second `docker run`, same as the job's first call. A
+  # no-op outside CI, where these variables are unset.
+  if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" \
+      || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting the lure canary"
+  fi
+
   log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the lure canary's docker run command failed to start"
 }

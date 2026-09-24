@@ -618,13 +618,19 @@ test:smoke:postgres:
 # uses one of these images calls scripts/ci-ensure-image.sh first, which
 # pulls that digest back and retags it locally if the daemon's local copy
 # is ever missing. Whoever prunes, and whenever, the worst case is now one
-# recovery pull instead of a failed job. The daemon-local prune below is
-# unchanged -- it still runs, and still deletes another pipeline's tag; that
-# is fine now, because the registry is what makes the local tag disposable.
-# This registry push is transport between this pipeline's own jobs, not a
-# release: publication that customers or an attacker's search engine would
-# ever see is still `release:push`'s alone, to $GHCR_BIRDCAGE_REPO /
-# $GHCR_MOCKINGBIRD_REPO, unchanged by any of this.
+# recovery pull instead of a failed job -- unless a job uses the same tag
+# TWICE (#112, second incident): the first use's ci-ensure-image.sh call
+# already recovered it, but nothing stopped a second concurrent prune from
+# deleting it again before the second use, and nothing re-checked before
+# that second use ran. That is now fixed at both ends: the prune below
+# only removes a tag old enough that no pipeline still running could have
+# built it (see that job's own comment), and every script with a second
+# use of a shared tag re-runs scripts/ci-ensure-image.sh immediately
+# before that second use. This registry push is transport between this
+# pipeline's own jobs, not a release: publication that customers or an
+# attacker's search engine would ever see is still `release:push`'s
+# alone, to $GHCR_BIRDCAGE_REPO / $GHCR_MOCKINGBIRD_REPO, unchanged by any
+# of this.
 #
 # The internal registry needs a cleanup policy of its own -- deleting
 # `ci-.*` tags older than about a week is plenty, since nothing here is
@@ -659,14 +665,46 @@ build:images:
     # Build images from earlier pipelines are pruned here rather than in an
     # after_script somewhere: a later job cannot know whether the pipeline
     # still needs them, and a cancelled pipeline never reaches its cleanup
-    # at all. Matching on the name and excluding this pipeline's own tag is
-    # self-healing -- whatever was left behind goes on the next run.
+    # at all. Matching on the name and excluding this pipeline's own tag
+    # used to be enough (#112): every other pipeline's tag was assumed
+    # dead. On this shared daemon that assumption is false whenever
+    # another pipeline is still running, so a tag only goes now if it is
+    # also OLD -- older than any pipeline still on this host could be,
+    # so it cannot be a tag someone is mid-use of. 6 hours is that
+    # cutoff: this project sets no per-job or per-pipeline `timeout:`, so
+    # the GitLab default (1h per job) applies, and 6h leaves a wide
+    # margin over that for a job a runner picked up late, clock skew
+    # between runners, or a future job whose timeout is raised, without
+    # ever getting close to how long a genuinely abandoned tag sits
+    # around before the next pipeline's prune finds it anyway. Age comes
+    # from `docker image inspect`'s own Created timestamp, not
+    # CI_PIPELINE_ID or a file mtime -- these Dockerfiles set no
+    # SOURCE_DATE_EPOCH or other reproducible-build stamp (grep
+    # build/*/Dockerfile), so Created is the real wall-clock build time,
+    # not a fixed value every rebuild of the same commit would share.
+    # docker:29-cli is Alpine/busybox, so GNU `date -d` (which parses
+    # RFC3339 directly) is not available; busybox `date -D` instead
+    # takes the input format explicitly, so the fractional seconds
+    # RFC3339Nano always includes are stripped first since busybox's
+    # parser has no token for them -- tested directly against
+    # `docker:29-cli` (see #112's write-up in docs/ci-hops.md). A
+    # missing or unparseable image just gets skipped rather than
+    # counted as young, and `|| true` on the removal itself (as
+    # before) means a prune failure never fails this build.
     - |
       set -eu
+      max_age_seconds=$((6 * 3600))
+      now_epoch="$(date -u +%s)"
       for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
           | grep -v ":${CI_PIPELINE_ID}$" \
-          | xargs -r docker image rm --force >/dev/null 2>&1 || true
+          | while IFS= read -r tag; do
+              created="$(docker image inspect --format '{{.Created}}' "$tag" 2>/dev/null)" || continue
+              created_epoch="$(date -u -D '%Y-%m-%dT%H:%M:%S' -d "${created%%.*}" +%s 2>/dev/null)" || continue
+              age=$((now_epoch - created_epoch))
+              [ "$age" -gt "$max_age_seconds" ] || continue
+              docker image rm --force "$tag" >/dev/null 2>&1 || true
+            done || true
       done
     - |
       set -eu
