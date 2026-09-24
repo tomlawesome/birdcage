@@ -1444,7 +1444,7 @@ e2e:poisoner:
     E2E_POISONER_FIXTURE_IMAGE: poisoner-fixture:pinned
     # Responder v3.2.2.0. Filled in by #127 once the fixtures project has
     # published its first build; until then this job fails at the pull.
-    E2E_POISONER_FIXTURE_DIGEST: registry.gitlab.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    E2E_POISONER_FIXTURE_DIGEST: registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture@sha256:0000000000000000000000000000000000000000000000000000000000000000
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
