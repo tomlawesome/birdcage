@@ -1364,6 +1364,15 @@ e2e:smb-lure:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    # The lure has no test:image job of its own; its version stamp, which
+    # release:promote relies on (#125), is checked here.
+    - |
+      got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -1417,6 +1426,15 @@ e2e:smb-lure:postgres:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    # The lure has no test:image job of its own; its version stamp, which
+    # release:promote relies on (#125), is checked here.
+    - |
+      got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -2235,19 +2253,13 @@ release:promote:
     - |
       set -eu
       commit="$(cat .release-commit)"
-      # --expect-stamp (#97): each of these three has a `version` command
-      # to ask, so promotion proves the released bytes carry the released
-      # version. smb-lure has neither an ARG VERSION build stage nor a
-      # `version` command -- it is a vendored Samba (build/smb-lure/Dockerfile),
-      # not a stamped Go binary -- so --expect-stamp is omitted here rather
-      # than added speculatively (see #125 handoff: running
-      # `docker run --rm <image> version` against it would just start smbd
-      # in the foreground and hang the job). Flagged for the owner rather
-      # than guessed at.
+      # --expect-stamp (#97): each image has a `version` command to ask,
+      # so promotion proves the released bytes carry the released version
+      # for all four (smb-lure's since #125).
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
-      smb_lure_digest="$(scripts/promote-release.sh "$SMB_LURE_RELEASE_REPO" "$commit")"
+      smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
       # `latest` moves on every release, pre-release or not. Whether a
       # beta is the right thing to run is the decision of whoever pulls it,
       # not this pipeline's.
