@@ -33,6 +33,18 @@ type Engine struct {
 	Name      string
 	Version   string
 	DBBuiltAt time.Time
+
+	// DBRefreshedAt is ADR-0012 decision 10: the time of the last
+	// successful `grype db update`, persisted across restarts by
+	// cmd/nightjar's own state directory. Zero when no refresh has ever
+	// succeeded.
+	DBRefreshedAt time.Time
+	// DBRefreshError is the refresh's error text when this scan's own
+	// `grype db update` step failed -- empty when it succeeded. The scan
+	// still ran on the last good database (Grype's own five-day cap
+	// permitting), so a non-empty value here never implies Status ==
+	// "failed".
+	DBRefreshError string
 }
 
 // Snapshot is one scan's outcome, the shape SendScan posts to POST
@@ -55,6 +67,11 @@ type Snapshot struct {
 	Reason       string
 	Findings     []Finding
 	MaskedPaths  []string
+
+	// RunID is ADR-0012 decision 1: present when this snapshot answers a
+	// birdcage-minted `scan` command (proof or manual, decision 7), empty
+	// for an ordinary timer scan -- exactly as today.
+	RunID string
 }
 
 // wireScanEngine, wireScanFinding and wireScan mirror
@@ -66,9 +83,11 @@ type Snapshot struct {
 // package's own tests -- run against internal/ingest's real handler, not
 // a hand-written fake -- would catch.
 type wireScanEngine struct {
-	Name      string `json:"name,omitempty"`
-	Version   string `json:"version,omitempty"`
-	DBBuiltAt string `json:"db_built_at,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Version        string `json:"version,omitempty"`
+	DBBuiltAt      string `json:"db_built_at,omitempty"`
+	DBRefreshedAt  string `json:"db_refreshed_at,omitempty"`
+	DBRefreshError string `json:"db_refresh_error,omitempty"`
 }
 
 type wireScanFinding struct {
@@ -89,6 +108,7 @@ type wireScan struct {
 	Reason       string            `json:"reason,omitempty"`
 	Findings     []wireScanFinding `json:"findings"`
 	MaskedPaths  []string          `json:"masked_paths"`
+	RunID        string            `json:"run_id,omitempty"`
 }
 
 // SendScan posts snapshot to POST /ingest/scans on token.
@@ -116,19 +136,26 @@ func (c *Client) SendScan(ctx context.Context, token string, snapshot Snapshot) 
 	if !snapshot.Engine.DBBuiltAt.IsZero() {
 		dbBuiltAt = snapshot.Engine.DBBuiltAt.UTC().Format(time.RFC3339)
 	}
+	var dbRefreshedAt string
+	if !snapshot.Engine.DBRefreshedAt.IsZero() {
+		dbRefreshedAt = snapshot.Engine.DBRefreshedAt.UTC().Format(time.RFC3339)
+	}
 
 	body, err := json.Marshal(wireScan{
 		TakenAt:      snapshot.TakenAt.UTC().Format(time.RFC3339),
 		AgentVersion: snapshot.AgentVersion,
 		Engine: wireScanEngine{
-			Name:      snapshot.Engine.Name,
-			Version:   snapshot.Engine.Version,
-			DBBuiltAt: dbBuiltAt,
+			Name:           snapshot.Engine.Name,
+			Version:        snapshot.Engine.Version,
+			DBBuiltAt:      dbBuiltAt,
+			DBRefreshedAt:  dbRefreshedAt,
+			DBRefreshError: snapshot.Engine.DBRefreshError,
 		},
 		Status:      snapshot.Status,
 		Reason:      snapshot.Reason,
 		Findings:    findings,
 		MaskedPaths: maskedPaths,
+		RunID:       snapshot.RunID,
 	})
 	if err != nil {
 		return fmt.Errorf("client: encode scan: %w", err)

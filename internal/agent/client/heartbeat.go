@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // SelfReport is the agent's heartbeat body (#48 item 6, #32 item 6):
@@ -119,6 +120,38 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 // other fields could report truthfully).
 type CommonHeartbeat struct {
 	AgentVersion string
+
+	// Run is ADR-0012 decision 9: the scanner's own report of where an
+	// ordered scan (a `scan` command's run_id) currently stands. Sent
+	// immediately on every stage change, outside the ordinary heartbeat
+	// tick, and repeated on every ordinary tick until the run is
+	// answered. Nil on every heartbeat that is not reporting a run --
+	// which is every heartbeat a timer scan or an idle scanner sends.
+	Run *RunReport
+
+	// DBRefresh is ADR-0012 decision 10: present on every heartbeat
+	// while the vulnerability database refresh has been failing since
+	// its last success, omitted entirely once healthy again -- so
+	// birdcage learns of a failing refresh within one heartbeat
+	// interval, never waiting on a 24-hour poll.
+	DBRefresh *DBRefreshReport
+}
+
+// RunReport is CommonHeartbeat's per-stage report of one ordered scan.
+type RunReport struct {
+	RunID string
+	Stage string
+}
+
+// DBRefreshReport is CommonHeartbeat's report of a failing vulnerability
+// database refresh. LastOKAt is the zero time when no refresh has ever
+// succeeded; FailingSince is never zero when this struct is sent at all
+// (dbRefreshReportIfFailing in cmd/nightjar only builds one once a
+// failure has been recorded).
+type DBRefreshReport struct {
+	LastOKAt     time.Time
+	FailingSince time.Time
+	LastError    string
 }
 
 // wireCommonHeartbeat mirrors internal/ingest/heartbeat.go's own
@@ -127,7 +160,36 @@ type CommonHeartbeat struct {
 // CanaryID is not carried here for the same reason wireHeartbeat omits
 // it: identity comes from the token on every route on this submux.
 type wireCommonHeartbeat struct {
-	AgentVersion string `json:"agent_version,omitempty"`
+	AgentVersion string               `json:"agent_version,omitempty"`
+	Run          *wireRunReport       `json:"run,omitempty"`
+	DBRefresh    *wireDBRefreshReport `json:"db_refresh,omitempty"`
+}
+
+type wireRunReport struct {
+	RunID string `json:"run_id"`
+	Stage string `json:"stage"`
+}
+
+// wireDBRefreshReport carries last_ok_at and failing_since as explicit
+// nulls when unknown/zero, matching the wire contract's own
+// "<RFC3339>|null" shape -- unlike most of this package's optional
+// fields, these are never simply omitted, since their presence (even as
+// null) is what tells birdcage this object is the real db_refresh
+// report and not absent.
+type wireDBRefreshReport struct {
+	LastOKAt     *string `json:"last_ok_at"`
+	FailingSince *string `json:"failing_since"`
+	LastError    string  `json:"last_error"`
+}
+
+// rfc3339OrNil renders t as an RFC3339 string pointer, or nil when t is
+// the zero time -- the wire shape wireDBRefreshReport's own fields need.
+func rfc3339OrNil(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	s := t.UTC().Format(time.RFC3339)
+	return &s
 }
 
 // SendCommonHeartbeat posts report to POST /ingest/heartbeat on token,
@@ -136,7 +198,18 @@ type wireCommonHeartbeat struct {
 // carrying any of SelfReport's own fields, so this function must never
 // be used to send one. Same status handling as SendHeartbeat.
 func (c *Client) SendCommonHeartbeat(ctx context.Context, token string, report CommonHeartbeat) error {
-	body, err := json.Marshal(wireCommonHeartbeat(report))
+	wire := wireCommonHeartbeat{AgentVersion: report.AgentVersion}
+	if report.Run != nil {
+		wire.Run = &wireRunReport{RunID: report.Run.RunID, Stage: report.Run.Stage}
+	}
+	if report.DBRefresh != nil {
+		wire.DBRefresh = &wireDBRefreshReport{
+			LastOKAt:     rfc3339OrNil(report.DBRefresh.LastOKAt),
+			FailingSince: rfc3339OrNil(report.DBRefresh.FailingSince),
+			LastError:    report.DBRefresh.LastError,
+		}
+	}
+	body, err := json.Marshal(wire)
 	if err != nil {
 		return fmt.Errorf("client: encode common heartbeat: %w", err)
 	}

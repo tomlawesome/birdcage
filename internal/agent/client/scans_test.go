@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -176,4 +177,86 @@ func TestSendScanRejectedBodyIsRetryable(t *testing.T) {
 			t.Fatalf("err = %v, want a *RetryableError (birdcage's own 400)", err)
 		}
 	})
+}
+
+// TestSendScanWireCarriesRunIDAndDBRefresh proves the wire body
+// SendScan posts carries ADR-0012's new fields -- run_id at the top
+// level, db_refreshed_at and db_refresh_error under engine -- against a
+// plain test server rather than internal/ingest's real handler: that
+// handler's own MR (server side of #116) lands separately, so this
+// proves the client's own encoding, not the round trip through it.
+func TestSendScanWireCarriesRunIDAndDBRefresh(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	refreshedAt := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	err := c.SendScan(ctx(), "tok", Snapshot{
+		TakenAt: time.Date(2026, 9, 24, 8, 5, 0, 0, time.UTC),
+		Status:  "ok",
+		Engine: Engine{
+			Name: "grype", Version: "v0.119.0",
+			DBRefreshedAt:  refreshedAt,
+			DBRefreshError: "mirror unreachable",
+		},
+		RunID: "run-123",
+	})
+	if err != nil {
+		t.Fatalf("SendScan: %v", err)
+	}
+
+	if gotBody["run_id"] != "run-123" {
+		t.Errorf("run_id = %v, want run-123", gotBody["run_id"])
+	}
+	engine, _ := gotBody["engine"].(map[string]any)
+	if engine == nil {
+		t.Fatal("engine missing from body")
+	}
+	if engine["db_refreshed_at"] != "2026-09-24T08:00:00Z" {
+		t.Errorf("engine.db_refreshed_at = %v, want 2026-09-24T08:00:00Z", engine["db_refreshed_at"])
+	}
+	if engine["db_refresh_error"] != "mirror unreachable" {
+		t.Errorf("engine.db_refresh_error = %v, want %q", engine["db_refresh_error"], "mirror unreachable")
+	}
+}
+
+// TestSendScanWireOmitsRunIDAndDBRefreshWhenUnset proves a timer scan's
+// ordinary body -- no run_id, database refresh healthy -- carries
+// neither field, exactly as today.
+func TestSendScanWireOmitsRunIDAndDBRefreshWhenUnset(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	err := c.SendScan(ctx(), "tok", Snapshot{
+		TakenAt: time.Now(),
+		Status:  "ok",
+		Engine:  Engine{Name: "grype", Version: "v0.119.0"},
+	})
+	if err != nil {
+		t.Fatalf("SendScan: %v", err)
+	}
+
+	if _, present := gotBody["run_id"]; present {
+		t.Errorf("run_id present in body, want omitted: %v", gotBody["run_id"])
+	}
+	engine, _ := gotBody["engine"].(map[string]any)
+	if _, present := engine["db_refreshed_at"]; present {
+		t.Errorf("engine.db_refreshed_at present, want omitted: %v", engine["db_refreshed_at"])
+	}
+	if _, present := engine["db_refresh_error"]; present {
+		t.Errorf("engine.db_refresh_error present, want omitted: %v", engine["db_refresh_error"])
+	}
 }
