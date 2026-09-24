@@ -226,6 +226,23 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
   })
 
+  // ADR-0012 decision 10 (#116): db_stale gets its own rule 2 copy,
+  // shaped like rule2Throttled -- named hours, next action, "others fine".
+  it('db_stale: hero and sub name the hours and the next action', () => {
+    const bad = canary('canary-iot', 'db_stale', {
+      db_refresh: { failing_since: '2026-09-04T22:04:31Z', last_error: 'dial tcp: i/o timeout' },
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's vulnerability database has gone stale.")
+    expect(plainText(s.sub)).toBe(
+      'Its refresh has been failing for 24 hours. It is still scanning on the last database it could fetch, so ' +
+        'a scan on it may be missing anything found since. Check the scanner can reach the vulnerability ' +
+        'database mirror. The other three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === '24 hours')?.bold).toBe(true)
+  })
+
   it('throttled: hero and sub, delay not loss', () => {
     const bad = canary('canary-iot', 'throttled', { throttled_for_s: 120 })
     const s = computeSentence(fleet(bad), [], '14d', now, lastHit)

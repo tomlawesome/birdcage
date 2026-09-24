@@ -96,7 +96,8 @@ func TestRunScanOnceMountFailurePostsFailedSnapshot(t *testing.T) {
 		return scan.Result{}, nil
 	}
 
-	runScanOnce(context.Background(), c, "tok", "v1", slog.New(slog.DiscardHandler), fixedNow(time.Now()), checkMounts, runScan)
+	deps, _ := testDeps(fixedNow(time.Now()), checkMounts, runScan)
+	runScanOnce(context.Background(), c, "tok", deps, slog.New(slog.DiscardHandler), "")
 
 	if scanCalled {
 		t.Error("runScan was called despite a failed mount check")
@@ -138,7 +139,8 @@ func TestRunScanOncePostsOKSnapshot(t *testing.T) {
 		}, nil
 	}
 
-	runScanOnce(context.Background(), c, "tok", "v1", slog.New(slog.DiscardHandler), fixedNow(time.Now()), checkMounts, runScan)
+	deps, _ := testDeps(fixedNow(time.Now()), checkMounts, runScan)
+	runScanOnce(context.Background(), c, "tok", deps, slog.New(slog.DiscardHandler), "")
 
 	if gotBody == nil {
 		t.Fatal("server never received a request")
@@ -171,7 +173,8 @@ func TestRunScanOnceLogsWarnOnSendFailure(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runScanOnce(context.Background(), c, "tok", "v1", slog.New(slog.DiscardHandler), fixedNow(time.Now()), checkMounts, runScan)
+		deps, _ := testDeps(fixedNow(time.Now()), checkMounts, runScan)
+		runScanOnce(context.Background(), c, "tok", deps, slog.New(slog.DiscardHandler), "")
 		close(done)
 	}()
 	select {
@@ -202,7 +205,8 @@ func TestRunScanLoopRunsAndStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runScanLoop(ctx, c, "tok", "v1", time.Hour, slog.New(slog.DiscardHandler), fixedNow(time.Now()))
+		deps, _ := testDeps(fixedNow(time.Now()), checkMounts, realScan)
+		runScanLoop(ctx, c, "tok", deps, newScanGate(), time.Hour, slog.New(slog.DiscardHandler))
 		close(done)
 	}()
 

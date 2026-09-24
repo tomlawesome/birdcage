@@ -170,3 +170,31 @@ describe('the status pill: issue #45 ranking', () => {
     }
   })
 })
+
+// ADR-0012 decision 10 (issue #116): db_stale joins the critical kind,
+// ranked between self_test_failed and throttled.
+describe('the status pill: ADR-0012 db_stale', () => {
+  it('a lone db_stale canary reads as critical, naming the canary', () => {
+    const canaries = [canary('a', 'db_stale', { db_refresh: { failing_since: '2026-01-01T00:00:00Z', last_error: 'timeout' } }), canary('b', 'ok')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') {
+      expect(s.canaryName).toBe('a')
+      expect(s.label).toContain('vulnerability database stale')
+    }
+  })
+
+  it('self_test_failed outranks db_stale, which outranks throttled', () => {
+    const canaries = [
+      canary('a', 'throttled', { throttled_for_s: 60 }),
+      canary('b', 'db_stale'),
+      canary('c', 'self_test_failed'),
+    ]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') expect(s.canaryName).toBe('c')
+
+    const s2 = computeStatus([canaries[0], canaries[1]], [], '14d')
+    if (s2.kind === 'critical') expect(s2.canaryName).toBe('b')
+  })
+})

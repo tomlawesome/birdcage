@@ -38,12 +38,15 @@ const RANK: Record<CanaryStatus, number> = {
   silent: 1,
   not_delivering: 2,
   self_test_failed: 3,
-  throttled: 4,
-  rotation_stalled: 5,
+  // ADR-0012 decision 10 (#116): ranked between self_test_failed and
+  // throttled, exactly where the ADR puts it.
+  db_stale: 4,
+  throttled: 5,
+  rotation_stalled: 6,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
-  renewal_stalled: 5,
-  pending: 6,
-  ok: 7,
+  renewal_stalled: 6,
+  pending: 7,
+  ok: 8,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {
@@ -70,6 +73,14 @@ function label(c: Canary): string {
       const services = c.self_test_failed_services ?? []
       return `${c.name} self-test failed${services.length > 0 ? `: ${services.join(', ')}` : ''}`
     }
+    // ADR-0012 decision 10 (#116): no *_for_s field is sent for this
+    // state -- the hours are computed from db_refresh.failing_since,
+    // which this compact pill does not have `now` to measure against
+    // (computeStatus takes no `now`, unlike computeSentence/tileStatus).
+    // The pill names the canary and the state; the hours are on the
+    // tile and the canary page, which both take `now`.
+    case 'db_stale':
+      return `${c.name} vulnerability database stale`
     case 'throttled':
       return `${c.name} throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
@@ -106,6 +117,7 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
     worst?.status === 'credential_conflict' ||
     worst?.status === 'not_delivering' ||
     worst?.status === 'self_test_failed' ||
+    worst?.status === 'db_stale' ||
     worst?.status === 'throttled'
   ) {
     return { kind: 'critical', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }

@@ -158,6 +158,21 @@ type Canary struct {
 	// applyCredentialHealth. Never serialised.
 	dualUse dualUseColumns
 
+	// Run, LastRun and DBRefresh are a scanner's proof and database
+	// refresh (issue #116, ADR-0012 decisions 6, 9-11). Run is present
+	// only while a scan run is open, LastRun names the most recently
+	// completed one, DBRefresh is present only while the refresh is
+	// failing. Never the run id. Nil for every other kind.
+	Run       *ScanRunOpen      `json:"run,omitempty"`
+	LastRun   *ScanRunLast      `json:"last_run,omitempty"`
+	DBRefresh *DBRefreshFailure `json:"db_refresh,omitempty"`
+
+	// dbRefreshFailingSince and dbRefreshError are the raw
+	// canaries.db_refresh_* columns, turned into DBRefresh and db_stale
+	// by applyDBRefreshHealth.
+	dbRefreshFailingSince *time.Time
+	dbRefreshError        string
+
 	// ActiveStates is every state active on this canary right now,
 	// worst first by healthStateRank -- the whole set Status names only
 	// the head of. Issue #56's history needs all of it: a canary that
@@ -169,6 +184,14 @@ type Canary struct {
 	ActiveStates []string `json:"active_states,omitempty"`
 
 	Hits int64 `json:"hits"`
+}
+
+// DBRefreshFailure is a scanner's failing database refresh, as birdcage
+// saw it: FailingSince is birdcage's own clock at the first failing
+// report since the last success.
+type DBRefreshFailure struct {
+	FailingSince time.Time `json:"failing_since"`
+	LastError    string    `json:"last_error"`
 }
 
 // ErrCanaryNotFound is returned by RecordHeartbeat when canaryID names no
@@ -316,6 +339,38 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate honeypot canaries: %w", err)
+	}
+	return out, nil
+}
+
+// ListPendingCanariesForSelfTest returns every pending canary
+// (registered_at NULL) of every kind (issue #116, ADR-0012 decision 5):
+// internal/selftestsched's pending retry re-mints each one's proof, by
+// kind, until it passes.
+func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
+	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM canaries WHERE registered_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("query pending canaries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SelfTestCanary
+	for rows.Next() {
+		var (
+			sc       SelfTestCanary
+			kind     string
+			portsRaw string
+		)
+		if err := rows.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr); err != nil {
+			return nil, fmt.Errorf("scan pending canary: %w", err)
+		}
+		sc.Kind = agentkind.Kind(kind)
+		sc.Pending = true
+		sc.Ports = parsePorts(portsRaw)
+		out = append(out, sc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending canaries: %w", err)
 	}
 	return out, nil
 }
@@ -606,7 +661,8 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, last_seen_addr, registered_at,
 			agent_version, poisoner_names,
 			credential_dual_use_addrs, credential_dual_use_addrs_at,
-			credential_dual_use_versions, credential_dual_use_versions_at
+			credential_dual_use_versions, credential_dual_use_versions_at,
+			db_refresh_failing_since, db_refresh_error
 		FROM canaries ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -627,12 +683,21 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			registeredAt       *string
 			agentVersion       *string
 			poisonerNames      *string
+			dbFailingSince     *string
+			dbRefreshError     *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
 			&agentVersion, &poisonerNames,
-			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt); err != nil {
+			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt,
+			&dbFailingSince, &dbRefreshError); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
+		}
+		if c.dbRefreshFailingSince, err = parseNullableTime(dbFailingSince, "db_refresh_failing_since"); err != nil {
+			return nil, err
+		}
+		if dbRefreshError != nil {
+			c.dbRefreshError = *dbRefreshError
 		}
 		c.LastSeenAddr = lastSeenAddr
 		c.AgentVersion = agentVersion
@@ -709,6 +774,11 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if err != nil {
 			return nil, fmt.Errorf("self-test state for %s: %w", canaries[i].ID, err)
 		}
+		if canaries[i].Kind == agentkind.Scanner {
+			if testFailed, err = applyScanRunState(ctx, database, &canaries[i], testFailed, now); err != nil {
+				return nil, fmt.Errorf("scan run state for %s: %w", canaries[i].ID, err)
+			}
+		}
 
 		// Issue #47 step 9: RegisteredAt nil is #45 state 5, computed
 		// straight off the column ListCanaries already scanned above --
@@ -725,6 +795,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if err := applyCredentialHealth(&canaries[i], cert, now); err != nil {
 			return nil, fmt.Errorf("credential state for %s: %w", canaries[i].ID, err)
 		}
+		applyDBRefreshHealth(&canaries[i], now)
 	}
 	return canaries, nil
 }

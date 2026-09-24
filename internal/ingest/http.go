@@ -110,18 +110,17 @@ type ingestRoute struct {
 //     the heartbeat's common part are generic across every kind.
 //   - /ingest/renew -- both kinds: certificate renewal (issue #130,
 //     ADR-0012 B2) is the certificate twin of rotation.
-//   - /ingest/commands -- honeypot only, for now: the only command kind
-//     that exists is the self-test, a honeypot concept, and nightjar
-//     never polls this route. The set widens in the same commit that
-//     ever mints a scanner command -- minimum grant, not maximum
-//     convenience.
+//   - /ingest/commands -- both kinds since issue #116 (ADR-0012 decision
+//     2), the commit that mints the first scanner command (scan).
+//     handleCommands' commandKindsFor still lets each kind claim only its
+//     own command kinds, failing closed for any other.
 func ingestRoutes(h *ingestHandler) []ingestRoute {
 	return []ingestRoute{
 		{"POST /ingest/events", []agentkind.Kind{agentkind.Honeypot}, h.handleBatch},
 		{"POST /ingest/rotate", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleRotate},
 		{"POST /ingest/renew", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleRenew},
 		{"POST /ingest/heartbeat", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleHeartbeat},
-		{"POST /ingest/commands", []agentkind.Kind{agentkind.Honeypot}, h.handleCommands},
+		{"POST /ingest/commands", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleCommands},
 		{"POST /ingest/scans", []agentkind.Kind{agentkind.Scanner}, h.handleScan},
 	}
 }

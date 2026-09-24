@@ -14,6 +14,8 @@ package selftestsched
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -44,6 +46,14 @@ import (
 // that an operator watching the tile has to wonder whether it will ever
 // resolve.
 const selfTestWindow = 10 * time.Minute
+
+// scanRunWindow is a scanner run's deadline, from issued_at (issue #116,
+// ADR-0012 decision 3): the outer cap, not the signal. A first run can
+// include Grype's cold database download, so a shorter cap fails honest
+// scanners; everything before the cap is reported stage by stage, and a
+// failed snapshot closes the run at once. The pending retry's guard
+// equals the cap, so a silent scanner is re-ordered every 30 minutes.
+const scanRunWindow = 30 * time.Minute
 
 // doubleMintGuard is how recently a run must have been issued to block
 // minting a second one for the same canary -- issue #46 item 5b: "never
@@ -152,28 +162,43 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	s.retryPending(ctx, now)
 }
 
-// retryPending re-mints the enrolment proof for every honeypot canary
-// still pending (issue #47 step 9: "retried the same way over the
-// command channel"): FirstContact minted its first run; if that run
-// expired unmatched the canary would otherwise stay pending until the
-// daily schedule happened to reach it, or forever with the daily
-// self-test switched off. One run per selfTestWindow, not per tick
-// (mintForCanary's guard is the whole window here), so a canary that
-// never answers costs one open run at a time and one failed run per
-// window. Runs after the sweep so the run that just expired is the one
-// being replaced, not a reason to wait.
+// retryPending re-mints the enrolment proof for every canary still
+// pending, of every kind (issue #47 step 9, widened by issue #116):
+// FirstContact minted its first run; if that run expired or failed the
+// canary would otherwise stay pending until the daily schedule happened
+// to reach it (a honeypot), or forever (a scanner, which has no daily
+// schedule). One run per window, not per tick -- the guard is the whole
+// window for the canary's kind -- so a canary that never answers costs
+// one open run at a time and one failed run per window. Runs after the
+// sweep so the run that just expired is the one being replaced, not a
+// reason to wait.
 func (s *Scheduler) retryPending(ctx context.Context, now time.Time) {
-	canaries, err := store.ListHoneypotCanariesForSelfTest(ctx, s.db)
+	canaries, err := store.ListPendingCanariesForSelfTest(ctx, s.db)
 	if err != nil {
-		s.log.Error("list honeypot canaries for pending retry", "err", err)
+		s.log.Error("list pending canaries for retry", "err", err)
 		return
 	}
 	for _, c := range canaries {
-		if !c.Pending || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
+		if !c.Pending || !eligible(c) {
 			continue
 		}
-		s.mintForCanary(ctx, c, now, selfTestWindow)
+		guard := selfTestWindow
+		if c.Kind == agentkind.Scanner {
+			guard = scanRunWindow
+		}
+		s.mintLogged(ctx, "pending retry", c, now, guard)
 	}
+}
+
+// eligible reports whether c has what its kind's proof needs: a honeypot
+// an address to probe and at least one port; a scanner nothing (it scans
+// the host it mounts). Any other kind is "eligible" so mintForCanary
+// reaches it and refuses it loudly rather than it being skipped here.
+func eligible(c store.SelfTestCanary) bool {
+	if c.Kind == agentkind.Honeypot {
+		return c.LastSeenAddr != nil && *c.LastSeenAddr != "" && len(c.Ports) > 0
+	}
+	return true
 }
 
 // readBool reads a "true"/"false" setting (store.validateSettingBool's
@@ -200,7 +225,21 @@ func (s *Scheduler) mintForEligibleCanaries(ctx context.Context, now time.Time) 
 		if c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
 			continue
 		}
-		s.mintForCanary(ctx, c, now, doubleMintGuard)
+		s.mintLogged(ctx, "scheduled", c, now, doubleMintGuard)
+	}
+}
+
+// ErrUnknownKind is mintForCanary's refusal for a canary whose kind has
+// no proof minter (issue #116, ADR-0012 decision 5): a bug, never a
+// silent skip. The canary stays pending.
+var ErrUnknownKind = errors.New("selftestsched: no proof minter for this canary kind")
+
+// mintLogged is every trigger path's call into mintForCanary: a mint
+// failure is logged, with the path that asked, and swallowed -- none of
+// the callers has a response a self-test concern may change.
+func (s *Scheduler) mintLogged(ctx context.Context, path string, c store.SelfTestCanary, now time.Time, guard time.Duration) {
+	if err := s.mintForCanary(ctx, c, now, guard); err != nil {
+		s.log.Error("mint proof", "path", path, "canary", c.ID, "kind", c.Kind, "err", err)
 	}
 }
 
@@ -212,14 +251,40 @@ func (s *Scheduler) mintForEligibleCanaries(ctx context.Context, now time.Time) 
 // never disagree about any of it. guard is how recently a run must have
 // been issued to block this one: doubleMintGuard for every trigger but
 // the pending retry, which uses the whole selfTestWindow.
-func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, now time.Time, guard time.Duration) {
+//
+// It branches on c.Kind (issue #116): a honeypot gets marker targets
+// (mintHoneypotSelfTest), a scanner one ordered scan (MintScanCommand,
+// scanRunWindow), and any other kind ErrUnknownKind -- nothing minted.
+// A guard hit, or a scanner run already open, is not an error.
+func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, now time.Time, guard time.Duration) error {
+	if c.Kind != agentkind.Honeypot && c.Kind != agentkind.Scanner {
+		return fmt.Errorf("%w: canary %s is kind %q", ErrUnknownKind, c.ID, c.Kind)
+	}
 	recent, err := store.HasRecentSelfTestRun(ctx, s.db, c.ID, now.Add(-guard))
 	if err != nil {
-		s.log.Error("check recent self-test runs", "canary", c.ID, "err", err)
-		return
+		return fmt.Errorf("check recent self-test runs: %w", err)
 	}
 	if recent {
-		return
+		return nil
+	}
+	if c.Kind == agentkind.Scanner {
+		cmd, err := store.MintScanCommand(ctx, s.db, c.ID, store.TriggerProof, now, now.Add(scanRunWindow))
+		if errors.Is(err, store.ErrScanRunOpen) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("mint scan command: %w", err)
+		}
+		s.log.Info("minted scan proof command", "canary", c.ID, "command_id", cmd.ID)
+		return nil
+	}
+	return s.mintHoneypotSelfTest(ctx, c, now)
+}
+
+// mintHoneypotSelfTest derives a honeypot's targets and mints its run.
+func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCanary, now time.Time) error {
+	if c.LastSeenAddr == nil || *c.LastSeenAddr == "" {
+		return fmt.Errorf("honeypot %s has no last-seen address to probe", c.ID)
 	}
 
 	var targets []store.SelfTestTarget
@@ -259,10 +324,10 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	deadline := now.Add(selfTestWindow)
 	cmd, err := store.MintSelfTestCommand(ctx, s.db, s.idx, c.ID, *c.LastSeenAddr, targets, now, deadline)
 	if err != nil {
-		s.log.Error("mint self-test command", "canary", c.ID, "err", err)
-		return
+		return fmt.Errorf("mint self-test command: %w", err)
 	}
 	s.log.Info("minted self-test command", "canary", c.ID, "command_id", cmd.ID, "targets", len(targets))
+	return nil
 }
 
 // FirstContact implements internal/ingest.SelfTestRotationHook's second
@@ -278,15 +343,10 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 // every mint path shares -- so a first contact landing moments before or
 // after a scheduled tick can never mint the run twice.
 //
-// Honeypot-only, the same restriction RotationSucceeded applies and for
-// the same reason: a self-test command is only ever delivered to a
-// kind-honeypot canary (internal/ingest's ingestRoutes gates POST
-// /ingest/commands to Honeypot alone), so minting one for any other kind
-// would only ever expire unmatched -- and here specifically would leave
-// that canary's tile stuck on both "pending" and "self_test_failed" for
-// a proof it can never pass. A canary of a kind with no self-test
-// mechanism has no path off pending through this hook; see this build's
-// report.
+// Every kind (issue #116, ADR-0012 decision 3): a honeypot's first
+// contact mints its marker self-test, a scanner's its first ordered
+// scan. mintForCanary refuses any other kind with an error, logged here;
+// that canary stays pending, visibly.
 //
 // c.LastSeenAddr would ordinarily still be nil at this exact moment (no
 // heartbeat, and no earlier request, has ever run for this canary) -- the
@@ -300,10 +360,10 @@ func (s *Scheduler) FirstContact(ctx context.Context, canaryID string, at time.T
 		s.log.Error("look up canary for first-contact self-test", "canary", canaryID, "err", err)
 		return
 	}
-	if !ok || c.Kind != agentkind.Honeypot || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
+	if !ok || !eligible(c) {
 		return
 	}
-	s.mintForCanary(ctx, c, at.UTC(), doubleMintGuard)
+	s.mintLogged(ctx, "first contact", c, at.UTC(), doubleMintGuard)
 }
 
 // RotationSucceeded implements internal/ingest.SelfTestRotationHook
@@ -340,8 +400,8 @@ func (s *Scheduler) RotationSucceeded(ctx context.Context, canaryID string, at t
 		s.log.Error("look up canary for rotation-coupled self-test", "canary", canaryID, "err", err)
 		return
 	}
-	if !ok || c.Kind != agentkind.Honeypot || c.LastSeenAddr == nil || *c.LastSeenAddr == "" || len(c.Ports) == 0 {
+	if !ok || c.Kind != agentkind.Honeypot || !eligible(c) {
 		return
 	}
-	s.mintForCanary(ctx, c, at.UTC(), doubleMintGuard)
+	s.mintLogged(ctx, "rotation", c, at.UTC(), doubleMintGuard)
 }

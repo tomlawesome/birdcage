@@ -254,3 +254,71 @@ describe('computeTileStatus: issue #46 self-test line', () => {
     expect(plainText(result.lines[1])).toBe('self-test 04:00 · failed: ntp')
   })
 })
+
+// ADR-0012 (issue #116): the scanner proof's own tile branches -- the
+// pending sentence carrying stage and minutes, self_test_failed naming
+// the scan target and last stage, and the new db_stale state.
+describe('computeTileStatus: ADR-0012 scanner proof', () => {
+  it('pending with an open run: carries the stage label and minutes sat there', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'pending',
+        run: { trigger: 'proof', stage: 'mounts_checked', stage_at: '2026-01-01T00:00:00Z', issued_at: '2026-01-01T00:00:00Z' },
+      },
+      '2026-01-01T00:07:30Z',
+    )
+    const text = plainText(result.lines[0])
+    expect(text).toContain('mounts checked, 7 min')
+    expect(text).toContain('waiting on its first self-test')
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+
+  it('pending with no open run: unchanged from before this slice', () => {
+    const result = computeTileStatus({ ...base, status: 'pending' }, '2026-01-01T00:00:00Z')
+    expect(plainText(result.lines[0])).toBe('◌ pending · waiting on its first self-test to confirm the chain works')
+  })
+
+  it('self_test_failed with a last_run: names the scan target and last stage, not a service list', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'self_test_failed',
+        last_run: { verdict: 'fail', last_stage: 'scanning', reason: 'grype exited non-zero', ended_at: '2026-01-01T00:10:00Z' },
+      },
+      '2026-01-01T00:12:00Z',
+    )
+    const text = plainText(result.lines[0])
+    expect(text).toContain('scan target failed')
+    expect(text).toContain('scanning')
+    expect(text).toContain('grype exited non-zero')
+    expect(text).toContain('check the scanner')
+    expect(result.lines[0][0].cls).toBe('al')
+  })
+
+  it('self_test_failed with no last_run: the existing honeypot service-list wording', () => {
+    const result = computeTileStatus(
+      {
+        ...base,
+        status: 'self_test_failed',
+        last_self_test_at: '2026-01-01T00:00:00Z',
+        last_self_test_passed: false,
+        self_test_failed_services: ['telnet'],
+      },
+      '2026-01-01T00:05:00Z',
+    )
+    expect(plainText(result.lines[0])).toContain('failed: telnet')
+  })
+
+  it('db_stale: names the hours since failing_since and the next action', () => {
+    const result = computeTileStatus(
+      { ...base, status: 'db_stale', db_refresh: { failing_since: '2026-01-01T00:00:00Z', last_error: 'connection refused' } },
+      '2026-01-02T02:00:00Z',
+    )
+    const text = plainText(result.lines[0])
+    expect(text).toBe(
+      '⚠ vulnerability database not refreshed for 26 h — check the scanner can reach the vulnerability database mirror',
+    )
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+})

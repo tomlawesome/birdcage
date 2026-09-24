@@ -346,10 +346,10 @@ minutes until one passes, whether or not the daily self-test is switched
 on, with nothing to rebuild on the box. There is no operator action that
 skips this step; it is the proof, not a formality.
 
-A scanner has no self-test yet, so nothing could ever prove it this way:
-it registers on provisioning, and its first heartbeat is the only proof
-it works. [Issue #116](https://gitlab.tomlawson.io/ai/birdcage/-/issues/116)
-gives the scanner kind a proof of its own.
+A scanner proves itself the same way, on the same machinery, differently
+shaped -- see ["Proving a scanner
+works"](#proving-a-scanner-works) below, under its own `--kind scanner`
+section.
 
 ## Why the token is single-use and five minutes
 
@@ -487,6 +487,74 @@ If the database cannot be fetched or refreshed, or is older than five
 days, Grype refuses to run against it -- Nightjar reports that scan as
 `status: "failed"` with the reason, never as a clean host with zero
 findings.
+
+### Proving a scanner works
+
+A freshly enrolled scanner is **pending**, same as a honeypot, but it
+clears pending differently: not on its first heartbeat, on its first
+*passing ordered scan*. The moment its credential is first used,
+birdcage mints a scan command; Nightjar picks it up on its usual poll,
+runs its ordinary job -- mount check, database refresh, Grype over
+`/host` -- and posts the result tagged with that command's run id. Only
+a pass clears pending. Nothing else does, and nothing about it needs
+operator action.
+
+While that run is open, the scanner's tile and its canary page show
+which stage it has reached:
+
+| stage | set by | what it means if the run stops here |
+| --- | --- | --- |
+| `ordered` | birdcage, at mint | connected, but the order was never collected -- the poll loop isn't reaching birdcage, or the build predates it |
+| `collected` | birdcage, on claim | collected and nothing came back: the agent died, or ignores `scan` commands |
+| `mounts_checked` | Nightjar | the mount covering passed; the database refresh is running (a cold download can sit here for minutes) |
+| `db_refreshed` | Nightjar | `grype db update` finished, pass or fail; Grype itself hasn't run yet |
+| `scanning` | Nightjar | Grype is running over `/host` |
+| `answered` | birdcage | the result landed; pass or fail is on the run |
+
+**Thirty minutes is the outer cap, not the ordinary wait** -- long enough
+to cover a cold database download, short enough that a scanner gone
+quiet doesn't sit unexplained for hours. A run that reaches the cap
+unanswered fails the scanner as **self-test failed**, naming the target
+(`scan`) and the last stage reached, and birdcage mints another run
+every thirty minutes until one passes -- the honeypot's own retry,
+spaced to the scanner's longer cap. A failure Nightjar can see for itself (a missing mask,
+Grype exiting non-zero) is reported at once as a failed scan, with no
+stage reports in between; the cap only matters for a run that goes
+silent.
+
+Every ordered run -- pass, fail or expired -- stays on the canary page's
+**Runs** list: trigger, when, verdict, last stage, reason, and a link to
+the snapshot that answered it. The tile clears on a pass; the list
+never does, so a scanner that failed three times before finally proving
+itself still shows those three failures.
+
+Once registered, nothing re-proves a scanner on its own -- there is no
+daily self-test the way a honeypot gets one. An admin-ordered scan from
+the canary page, behind a fresh sign-in, is planned
+([#129](https://gitlab.tomlawson.io/ai/birdcage/-/issues/129)); it will
+run the same proof again without touching pending.
+
+### The database refresh is loud, not just late
+
+Every scan -- timer, proof or admin-ordered -- starts with `grype db
+update` as its own step, before Grype ever runs. A refresh that fails is
+reported at once, not after some delay: the scanner's heartbeat carries
+it, and the canary page shows "database refresh failing since `<time>`:
+`<error>`" from the very first failed attempt.
+
+A failing refresh doesn't stop scanning by itself. While Grype's own
+database is still under its five-day age limit, the scan runs on the
+last good list and the snapshot says so -- real data on an aging
+database, not a scan withheld (#46's rule: when in doubt, it is real).
+Past five days Grype refuses outright, and the scan fails closed instead
+of reporting a clean host.
+
+**Twenty-four hours of a failing refresh turns the tile amber**, state
+`db_stale`, sentence "vulnerability database not refreshed for `<n>`
+hours" -- birdcage's own clock decides this, not the scanner's, so a
+wrong clock on the box can't hide or hasten it. It clears on the next
+refresh that succeeds; either way, the failing span stays on the
+canary's history.
 
 ## Tuning port-scan detection
 

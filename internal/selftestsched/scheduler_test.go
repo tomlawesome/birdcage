@@ -682,27 +682,43 @@ func TestFirstContactMintsRegardlessOfSettings(t *testing.T) {
 	})
 }
 
-// TestFirstContactSkipsNonHoneypotCanary mirrors
-// TestRotationSucceededSkipsNonHoneypotCanary: a self-test command is
-// never delivered to any kind but Honeypot, so a Scanner's own first
-// contact must not mint one it can never pass.
-func TestFirstContactSkipsNonHoneypotCanary(t *testing.T) {
+// TestFirstContactMintsScanForScanner: issue #116 (ADR-0012 decision 3)
+// -- a scanner's first contact mints its ordered scan, one "scan"
+// command and one run at stage ordered with the 30-minute cap, and needs
+// no address or ports to do it.
+func TestFirstContactMintsScanForScanner(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		if err := store.InsertCanary(context.Background(), database, store.Canary{
-			ID: "scanner-a", Name: "scanner-a", Lane: "lan", Kind: agentkind.Scanner, EnrolledAt: time.Now().UTC(),
+			ID: "scanner-a", Name: "scanner-a", Lane: "lan", Kind: agentkind.Scanner, EnrolledAt: time.Now().UTC(), Pending: true,
 		}); err != nil {
 			t.Fatalf("InsertCanary: %v", err)
-		}
-		if err := store.SetCanaryLastSeenAddr(context.Background(), database, "scanner-a", "192.0.2.20"); err != nil {
-			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
 		}
 
 		now := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.FirstContact(context.Background(), "scanner-a", now)
 
-		if n := selfTestRunCount(t, database, "scanner-a"); n != 0 {
-			t.Fatalf("self_test_runs for scanner-a = %d, want 0 (self-test is honeypot-only)", n)
+		if n := selfTestRunCount(t, database, "scanner-a"); n != 1 {
+			t.Fatalf("self_test_runs for scanner-a = %d, want 1", n)
+		}
+		var kind, deadline, stage string
+		if err := database.QueryRow(`
+			SELECT c.kind, r.deadline_at, r.stage FROM self_test_runs r JOIN canary_commands c ON c.id = r.command_id
+			WHERE r.canary_id = ?`, "scanner-a").Scan(&kind, &deadline, &stage); err != nil {
+			t.Fatalf("read run: %v", err)
+		}
+		if kind != string(store.CommandScan) || stage != string(store.StageOrdered) {
+			t.Errorf("command kind/stage = %q/%q, want scan/ordered", kind, stage)
+		}
+		d, err := time.Parse(time.RFC3339Nano, deadline)
+		if err != nil || !d.Equal(now.Add(scanRunWindow)) {
+			t.Errorf("deadline = %q, want %s", deadline, now.Add(scanRunWindow))
+		}
+
+		// A second first contact while the run is open mints nothing.
+		s.FirstContact(context.Background(), "scanner-a", now.Add(5*time.Minute))
+		if n := selfTestRunCount(t, database, "scanner-a"); n != 1 {
+			t.Fatalf("self_test_runs after second contact = %d, want 1", n)
 		}
 	})
 }
