@@ -194,10 +194,10 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 		if ports != "" {
 			t.Errorf("canaries ports = %q, want empty", ports)
 		}
-		// A scanner has no self-test to settle it (issue #116), so it
-		// must register on provisioning rather than stay pending forever.
-		if registeredAt == nil {
-			t.Error("registered_at is NULL for a provisioned scanner; want registered at once")
+		// Issue #116 (ADR-0012 decision 5): a scanner is pending until
+		// its first ordered scan passes, like a honeypot's self-test.
+		if registeredAt != nil {
+			t.Errorf("registered_at = %q for a provisioned scanner; want NULL (pending until its proof passes)", *registeredAt)
 		}
 	})
 }
