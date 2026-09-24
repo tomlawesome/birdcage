@@ -52,7 +52,10 @@ build_samba_image() {
     return 0
   fi
   log "building $SAMBA_IMAGE from build/e2e-samba/Dockerfile"
-  docker build --file "$REPO_ROOT/build/e2e-samba/Dockerfile" --tag "$SAMBA_IMAGE" "$REPO_ROOT" >/dev/null \
+  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
+  docker build --build-arg BASE_IMAGE="${DEBIAN_TRIXIE_SLIM_IMAGE:-debian:trixie-slim}" \
+    --file "$REPO_ROOT/build/e2e-samba/Dockerfile" --tag "$SAMBA_IMAGE" "$REPO_ROOT" >/dev/null \
     || die "building $SAMBA_IMAGE failed"
 }
 
@@ -69,12 +72,14 @@ write_smb_conf() {
     -e 's|"smb.enabled": false|"smb.enabled": true|' \
     -e 's|"smb.auditfile": "/var/log/samba-audit.log"|"smb.auditfile": "/samba-audit/samba-audit.log"|' \
     "$REPO_ROOT/build/mockingbird/opencanary.conf" \
-    | docker run --rm --interactive --volume "$SMB_CONF_VOL:/out" alpine:3.24 sh -c 'cat > /out/opencanary.conf' \
+    | docker run --rm --interactive --volume "$SMB_CONF_VOL:/out" "${ALPINE_IMAGE:-alpine:3.24}" sh -c 'cat > /out/opencanary.conf' \
     || die "writing the overriding opencanary.conf failed"
   # Fails loudly rather than silently shipping the stock conf (smb
   # disabled) if either sed pattern ever stops matching the file it is
-  # editing.
-  docker run --rm --volume "$SMB_CONF_VOL:/out:ro" alpine:3.24 \
+  # editing. ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin
+  # (refs #128, .gitlab-ci.yml) when set, the plain Docker Hub tag on a
+  # workstation.
+  docker run --rm --volume "$SMB_CONF_VOL:/out:ro" "${ALPINE_IMAGE:-alpine:3.24}" \
     sh -c 'grep -q "\"smb.enabled\": true" /out/opencanary.conf && grep -q "/samba-audit/samba-audit.log" /out/opencanary.conf' \
     || die "the overriding opencanary.conf does not enable smb -- sed pattern out of date?"
 }

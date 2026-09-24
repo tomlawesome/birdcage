@@ -147,8 +147,10 @@ helper_in() {
 
 build_helper_image() {
   # Built from a Dockerfile on stdin: no context to send, and nothing
-  # written to the repository.
-  printf 'FROM alpine:3.24\nRUN apk add --no-cache curl openssl sqlite jq\n' \
+  # written to the repository. $ALPINE_IMAGE is CI's dependency-proxy
+  # pin (refs #128, .gitlab-ci.yml); unset on a workstation, where the
+  # plain Docker Hub tag is what was always pulled here.
+  printf 'FROM %s\nRUN apk add --no-cache curl openssl sqlite jq\n' "${ALPINE_IMAGE:-alpine:3.24}" \
     | docker build --quiet --tag "$HELPER_IMAGE" - >/dev/null
 }
 
@@ -235,8 +237,11 @@ build_postgres_tls_image() {
     -keyout "$ctx/server.key" -out "$ctx/server.crt" \
     -subj "/CN=$PG" -addext "subjectAltName=DNS:$PG" \
     || { rm -rf "$ctx"; die "generating the postgres TLS certificate failed"; }
+  # $POSTGRES18_IMAGE is CI's dependency-proxy pin (refs #128,
+  # .gitlab-ci.yml); unset on a workstation, where the plain Docker Hub
+  # tag is what was always pulled here.
   cat > "$ctx/Dockerfile" <<DOCKERFILE
-FROM postgres:18-alpine
+FROM ${POSTGRES18_IMAGE:-postgres:18-alpine}
 COPY server.crt server.key /certs/
 RUN chown postgres:postgres /certs/server.crt /certs/server.key \\
  && chmod 644 /certs/server.crt && chmod 600 /certs/server.key
