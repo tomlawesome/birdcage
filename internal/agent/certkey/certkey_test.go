@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -41,7 +42,7 @@ func TestMarshalParseKeyRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseKeyPEM: %v", err)
 	}
-	if got.X.Cmp(key.X) != 0 || got.Y.Cmp(key.Y) != 0 || got.D.Cmp(key.D) != 0 {
+	if !key.Equal(got) {
 		t.Fatal("ParseKeyPEM did not round-trip the same key")
 	}
 }
@@ -53,6 +54,28 @@ func TestMarshalParseKeyRoundTrips(t *testing.T) {
 func TestParseKeyPEMRejectsGarbage(t *testing.T) {
 	if _, err := ParseKeyPEM([]byte("not a key")); err == nil {
 		t.Fatal("ParseKeyPEM accepted garbage input")
+	}
+}
+
+// TestParseKeyPEMRejectsNonECDSAKey proves ParseKeyPEM refuses a
+// well-formed PKCS#8 key that is not ECDSA (loadOrGeneratePendingKey's
+// staging file is always written by MarshalKeyPEM itself, so this only
+// matters for a staging file mangled some other way, but the check
+// exists and must fire rather than silently returning a key of the
+// wrong type).
+func TestParseKeyPEMRejectsNonECDSAKey(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(rsaKey)
+	if err != nil {
+		t.Fatalf("marshal PKCS8: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+
+	if _, err := ParseKeyPEM(keyPEM); err == nil {
+		t.Fatal("ParseKeyPEM accepted a non-ECDSA key")
 	}
 }
 
@@ -85,7 +108,7 @@ func TestBuildCSRIsValidP256AndSelfProves(t *testing.T) {
 	if !ok {
 		t.Fatalf("CSR public key type = %T, want *ecdsa.PublicKey", csr.PublicKey)
 	}
-	if pub.X.Cmp(key.PublicKey.X) != 0 || pub.Y.Cmp(key.PublicKey.Y) != 0 {
+	if !key.PublicKey.Equal(pub) {
 		t.Fatal("CSR public key does not match the key it was built from")
 	}
 	if csr.Subject.CommonName != SubjectPlaceholder {
@@ -137,5 +160,33 @@ func TestHalfLifeIsMidpoint(t *testing.T) {
 func TestHalfLifeRejectsGarbage(t *testing.T) {
 	if _, err := HalfLife([]byte("not a certificate")); err == nil {
 		t.Fatal("HalfLife accepted garbage input")
+	}
+}
+
+// TestHalfLifeRejectsWrongPEMType proves a well-formed PEM block that is
+// not a CERTIFICATE (e.g. the agent's own key file, read by mistake) is
+// an error, exercising parseSingleCert's block.Type check separately
+// from "no PEM block at all" above.
+func TestHalfLifeRejectsWrongPEMType(t *testing.T) {
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	keyPEM, err := MarshalKeyPEM(key)
+	if err != nil {
+		t.Fatalf("MarshalKeyPEM: %v", err)
+	}
+	if _, err := HalfLife(keyPEM); err == nil {
+		t.Fatal("HalfLife accepted a PRIVATE KEY PEM block as a certificate")
+	}
+}
+
+// TestHalfLifeRejectsMalformedCertificateDER proves a CERTIFICATE PEM
+// block whose bytes are not a valid DER certificate is an error,
+// exercising parseSingleCert's x509.ParseCertificate failure branch.
+func TestHalfLifeRejectsMalformedCertificateDER(t *testing.T) {
+	badPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not real DER")})
+	if _, err := HalfLife(badPEM); err == nil {
+		t.Fatal("HalfLife accepted a CERTIFICATE block with malformed DER")
 	}
 }

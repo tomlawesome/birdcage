@@ -605,3 +605,277 @@ func TestEnrolAtBootReusesPendingKeyAcrossProvisionRetries(t *testing.T) {
 		t.Fatalf("provision attempts = %d, want 2", got)
 	}
 }
+
+// TestLoadOrGeneratePendingKeyReusesExistingKey proves the first branch
+// of ADR-0012 B1's reuse requirement directly: a pending key already
+// staged on disk by an earlier attempt is parsed and returned as-is,
+// never silently replaced by a fresh one.
+func TestLoadOrGeneratePendingKeyReusesExistingKey(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey (stage): %v", err)
+	}
+	stagedPEM, err := os.ReadFile(filepath.Join(dir, pendingKeyFileName))
+	if err != nil {
+		t.Fatalf("read staged key: %v", err)
+	}
+
+	second, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey (reuse): %v", err)
+	}
+	if !first.Equal(second) {
+		t.Error("loadOrGeneratePendingKey returned a different key on the second call, want the staged one reused")
+	}
+	gotPEM, err := os.ReadFile(filepath.Join(dir, pendingKeyFileName))
+	if err != nil {
+		t.Fatalf("read staged key after reuse: %v", err)
+	}
+	if !bytes.Equal(stagedPEM, gotPEM) {
+		t.Error("staged key file changed on a pure reuse call")
+	}
+}
+
+// TestLoadOrGeneratePendingKeyRegeneratesOnCorruptFile proves the
+// fall-through branch: a staged file that exists but does not parse as
+// an ECDSA key is not a fatal error -- it is replaced by a freshly
+// generated, parseable key, durably staged in its place.
+func TestLoadOrGeneratePendingKeyRegeneratesOnCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, pendingKeyFileName)
+	if err := os.WriteFile(path, []byte("not a valid pending key"), 0o600); err != nil {
+		t.Fatalf("seed corrupt pending key: %v", err)
+	}
+
+	key, err := loadOrGeneratePendingKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrGeneratePendingKey against a corrupt staged file: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadOrGeneratePendingKey returned a nil key")
+	}
+
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read regenerated staged key: %v", err)
+	}
+	if string(onDisk) == "not a valid pending key" {
+		t.Fatal("corrupt staged key file was never replaced")
+	}
+	parsed, err := certkey.ParseKeyPEM(onDisk)
+	if err != nil {
+		t.Fatalf("regenerated staged key does not parse: %v", err)
+	}
+	if !key.Equal(parsed) {
+		t.Error("returned key does not match the key now staged on disk")
+	}
+}
+
+// TestEnrolAtBootWrapsPendingKeyFailure proves enrolAtBoot's "prepare
+// client key" error-wrapping branch: when loadOrGeneratePendingKey
+// cannot durably stage a key (here, the staging path is occupied by a
+// directory, so atomicfile.Write's rename can never land), EnsureEnrolled
+// fails with that step named, and never contacts /enrol/provision.
+func TestEnrolAtBootWrapsPendingKeyFailure(t *testing.T) {
+	ts, pin, helloHits, provisionHits := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, pendingKeyFileName), 0o700); err != nil {
+		t.Fatalf("seed pending-key directory collision: %v", err)
+	}
+
+	p := testParams(t, dir)
+	p.BirdcageURL = ts.URL
+	p.CAPin = pin
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite an unstageable pending key")
+	}
+	if !strings.Contains(err.Error(), "prepare client key") {
+		t.Errorf("error = %q, want it to name the prepare-client-key step", err)
+	}
+	if got, want := atomic.LoadInt32(helloHits), int32(1); got != want {
+		t.Errorf("hello hits = %d, want %d", got, want)
+	}
+	if got := atomic.LoadInt32(provisionHits); got != 0 {
+		t.Errorf("provision hits = %d, want 0 (must not be reached after key preparation fails)", got)
+	}
+}
+
+// TestEnrolAtBootWrapsFirstContactGenericError proves the non-refused,
+// non-retryable branch of FirstContact's own error handling: a
+// deterministic failure that is neither a network error nor an
+// ErrRefused (here, a CAPin that does not match the server's actual
+// certificate) is reported as a plain wrapped "first contact" error, not
+// the deploy-token-refused message and not retried.
+func TestEnrolAtBootWrapsFirstContactGenericError(t *testing.T) {
+	ts, _, helloHits, _ := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	p := testParams(t, dir)
+	p.BirdcageURL = ts.URL
+	p.CAPin = strings.Repeat("ab", sha256.Size) // well-formed, but matches nothing
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded with a CAPin matching no presented certificate")
+	}
+	if !strings.Contains(err.Error(), "first contact") {
+		t.Errorf("error = %q, want it to name the first-contact step", err)
+	}
+	if strings.Contains(err.Error(), "deploy token refused") {
+		t.Errorf("error = %q, a pin mismatch must not be reported as a refused deploy token", err)
+	}
+	if got, want := atomic.LoadInt32(helloHits), int32(0); got != want {
+		t.Errorf("hello hits = %d, want %d (the TLS handshake itself must fail before the handler runs)", got, want)
+	}
+}
+
+// TestEnrolAtBootWrapsProvisionGenericError proves the non-refused,
+// non-retryable branch of Provision's own error handling: a deterministic
+// non-200/401 response is reported as a plain wrapped "provision" error,
+// never the enrolment-secret-refused message.
+func TestEnrolAtBootWrapsProvisionGenericError(t *testing.T) {
+	caDER, caCert, caKey := genCA(t, "provision-error-test-ca")
+	leafDER, leafKey := genLeaf(t, caCert, caKey)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /enrol/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"enrolment_secret":       "enrol-secret",
+			"ca_pem":                 string(caPEM),
+			"ingest_url":             "https://ingest.invalid:8443",
+			"window_deadline":        time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339),
+			"admin_approval_address": "admin@example.com",
+			"release_address":        "release@example.com",
+		})
+	})
+	mux.HandleFunc("POST /enrol/provision", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
+	})
+
+	server := httptest.NewUnstartedServer(mux)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{leafDER, caDER},
+			PrivateKey:  leafKey,
+		}},
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	p := testParams(t, dir)
+	p.BirdcageURL = server.URL
+	p.CAPin = pinFor(caDER)
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite a 500 from /enrol/provision")
+	}
+	if !strings.Contains(err.Error(), "provision") {
+		t.Errorf("error = %q, want it to name the provision step", err)
+	}
+	if strings.Contains(err.Error(), "enrolment secret refused") {
+		t.Errorf("error = %q, a 500 must not be reported as a refused enrolment secret", err)
+	}
+	// The pending key stays staged -- a later retry (or crashed-process
+	// restart) can reuse it, same as TestEnrolAtBootReusesPendingKeyAcrossProvisionRetries.
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); err != nil {
+		t.Errorf("pending key staging file missing after a generic provision failure: %v", err)
+	}
+}
+
+// TestEnrolAtBootWrapsWriteStateFailure proves enrolAtBoot's "write
+// state" error-wrapping branch: when WriteState names a file under a
+// directory that does not exist, EnsureEnrolled reports that step by
+// name, having already completed FirstContact and Provision against a
+// real fake server.
+func TestEnrolAtBootWrapsWriteStateFailure(t *testing.T) {
+	ts, pin, _, provisionHits := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	p := Params{
+		StateDir:           dir,
+		DeployTokenEnvName: "TEST_DEPLOY_TOKEN",
+		RequiredFiles:      []string{"ca.pem"},
+		NodeNoun:           "canary",
+		WriteState: func(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []StateFile {
+			return []StateFile{
+				{Name: filepath.Join("no-such-subdir", "ca.pem"), Data: hello.CAPEM},
+			}
+		},
+		Log: slog.New(slog.NewTextHandler(&buf, nil)),
+	}
+	p.BirdcageURL = ts.URL
+	p.CAPin = pin
+	p.DeployToken = "deploy-tok"
+
+	err := EnsureEnrolled(context.Background(), p)
+	if err == nil {
+		t.Fatal("EnsureEnrolled succeeded despite an unwritable state file path")
+	}
+	if !strings.Contains(err.Error(), "write state") {
+		t.Errorf("error = %q, want it to name the write-state step", err)
+	}
+	if got, want := atomic.LoadInt32(provisionHits), int32(1); got != want {
+		t.Errorf("provision hits = %d, want %d (provisioning must have completed before the write failed)", got, want)
+	}
+	// The pending key must still be staged: WriteState failing must not
+	// lose the only copy of the now-provisioned key.
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFileName)); err != nil {
+		t.Errorf("pending key staging file missing after a failed write-state: %v", err)
+	}
+}
+
+// TestRetryEnrolStepSucceedsAfterOneRetry proves the loop's other two
+// branches TestRetryEnrolStepStopsOnContextCancel does not reach: a
+// retryable failure followed by the backoff timer actually firing
+// (rather than the context being canceled first), the loop continuing to
+// a second attempt, and that attempt's success being returned as-is.
+func TestRetryEnrolStepSucceedsAfterOneRetry(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	ts, pin, _, _ := newFakeEnrolServer(t, "deploy-tok", "enrol-secret")
+
+	var attempt int32
+	got, err := retryEnrolStep(context.Background(), log, func(ctx context.Context) (enrol.Hello, error) {
+		if atomic.AddInt32(&attempt, 1) == 1 {
+			// A real dial failure against a closed listener: the same
+			// retryable-network-error shape TestRetryEnrolStepStopsOnContextCancel
+			// uses, but this time nothing cancels the context, so the
+			// loop must wait out the backoff timer itself and retry.
+			return enrol.FirstContact(ctx, "https://"+deadAddr, strings.Repeat("00", sha256.Size), "tok")
+		}
+		return enrol.FirstContact(ctx, ts.URL, pin, "deploy-tok")
+	})
+	if err != nil {
+		t.Fatalf("retryEnrolStep: %v", err)
+	}
+	if got.EnrolmentSecret != "enrol-secret" {
+		t.Errorf("EnrolmentSecret = %q, want %q", got.EnrolmentSecret, "enrol-secret")
+	}
+	if attempt != 2 {
+		t.Errorf("attempts = %d, want 2", attempt)
+	}
+	if !strings.Contains(buf.String(), "network error, retrying") {
+		t.Errorf("log output = %q, want it to mention the retry", buf.String())
+	}
+}

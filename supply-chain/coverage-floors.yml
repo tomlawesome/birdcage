@@ -160,7 +160,14 @@ floors:
                              # checkStartupFiles' remaining branch) that need
                              # a filesystem failure this pass did not find a
                              # deterministic way to induce.
-  cmd/nightjar: 82           # 82.2% measured with -race, 2026-09-23 (#74).
+  cmd/nightjar: 83           # 83.3% measured with -race, 2026-09-24 (#130):
+                             # runRenewalTick's success, unauthorized and
+                             # server-error branches (renewal_test.go,
+                             # new file) gained tests, against a real
+                             # fake-birdcage mTLS server, recovering the
+                             # coverage #130's own renewal.go had cost
+                             # this package when it landed untested.
+                             # 82.2% measured with -race, 2026-09-23 (#74).
                              # Moved out of the below-70% section this pass:
                              # main() is now factored the way
                              # cmd/mockingbird/main.go's own boot/run split
@@ -197,9 +204,23 @@ floors:
                               # failure branches (temp-dir Chmod/Sync/Rename
                               # errors) exercised by cmd/mockingbird's own
                               # token_test.go, not duplicated here.
+  internal/agent/certkey: 89  # New package (#130, ADR-0012 Part B1/B2):
+                              # ECDSA P-256 key/CSR generation and
+                              # certificate half-life parsing. 89.5%
+                              # measured, 2026-09-24. Uncovered remainder
+                              # is ecdsa.GenerateKey/x509.MarshalPKCS8Priv
+                              # ateKey/x509.CreateCertificateRequest's own
+                              # internal error returns, which this package
+                              # has no seam to induce deterministically.
   internal/agent/client: 87
   internal/agent/enrol: 81
-  internal/agent/enrolment: 88  # 88.4% measured, 2026-09-22 (#108, slice 1
+  internal/agent/enrolment: 92  # 92.5% measured with -race, 2026-09-24
+                              # (#130): enrolAtBoot's key/CSR/write-state
+                              # error-wrap branches, loadOrGeneratePending
+                              # Key's reuse-vs-regenerate-on-corruption
+                              # paths, and retryEnrolStep's backoff-and-
+                              # succeed branch gained tests. 88.4%
+                              # measured, 2026-09-22 (#108, slice 1
                               # commit 1). Factored out of cmd/mockingbird's
                               # enrol.go so a second agent kind can import
                               # it rather than copy-pasting it; every
@@ -240,6 +261,17 @@ floors:
                              # is a context-cancellation race in Check that
                              # is exercised but not always the branch hit.
   internal/agent/receiver: 95
+  internal/agent/renewal: 85  # New package (#130, ADR-0012 Part B2): the
+                              # crash-safe key/certificate swap and the
+                              # Manager that drives renewal from a
+                              # certificate's half-life. 85.9% measured,
+                              # 2026-09-24, against a real fake-birdcage
+                              # mTLS server (manager_test.go) plus
+                              # swap_test.go's own crash-recovery fixtures.
+                              # Uncovered remainder is os-level failure
+                              # branches (Rename/Remove errors) this
+                              # package has no seam to induce
+                              # deterministically.
   internal/agent/smbaudit: 98 # New package (#87): the parse of the SMB
                              # lure's audit file. 98.9% measured with
                              # -race, 2026-09-23. A small, closed parser
@@ -272,7 +304,13 @@ floors:
                              # migration names always exist for a defined
                              # Engine, so nothing reaches them without fault
                              # injection this package doesn't have a seam for.
-  internal/enrol: 84         # 84.6% measured with -race and Postgres,
+  internal/enrol: 96         # 96.0% measured with -race and Postgres,
+                             # 2026-09-24 (#130): handleHello/handleProvision's
+                             # trailing-data and storage-error branches,
+                             # respondContacted's settings-lookup failure
+                             # and nil-WindowDeadline fallback, and
+                             # WithClientCertTTL (0% before) all gained
+                             # tests. 84.6% measured with -race and Postgres,
                              # 2026-09-23 (#47 steps 7-9: rate limiting
                              # POST /enrol/hello by source address gained
                              # its own tests, raising this package's
@@ -283,7 +321,15 @@ floors:
                              # -- every branch is driven by fixture mountinfo
                              # content, no real container required.
   internal/history: 82
-  internal/ingest: 82
+  internal/ingest: 84         # 84.9% measured with -race and Postgres,
+                             # 2026-09-24 (#130): POST /ingest/renew's
+                             # refusal paths (no-cert, trailing-data,
+                             # audit-failure rollback on both the issued
+                             # and the superseded certificate), the
+                             # dual-use tracker's pruning bound, and
+                             # several heartbeat/batch branches gained
+                             # tests, all through the real handler and
+                             # mTLS test harness.
   internal/logging: 91
   internal/mail: 90
   internal/mailbox: 86

@@ -310,6 +310,140 @@ func TestHandleProvisionSignsTheAgentsKeyAndReturnsNoKey(t *testing.T) {
 	})
 }
 
+// TestHandleProvisionTrailingDataAfterValidJSON mirrors
+// TestHandleHelloTrailingDataAfterValidJSON: a syntactically valid JSON
+// object followed by extra bytes is rejected as malformed, the
+// dec.More() branch none of the other malformed-body cases reach.
+func TestHandleProvisionTrailingDataAfterValidJSON(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		h := NewHandler(database, testCA, "", nil, nil)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/provision", strings.NewReader(`{"enrolment_secret":"x"}{"enrolment_secret":"y"}`))
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error body: %v", err)
+		}
+		if body["error"] != "malformed request: trailing data" {
+			t.Errorf("error = %q, want %q", body["error"], "malformed request: trailing data")
+		}
+	})
+}
+
+// TestHandleProvisionStorageErrorReturns503 covers the branch where
+// store.Provision itself fails (birdcage's own storage trouble, not the
+// secret's fault): a request whose context is already canceled makes
+// database.Begin fail inside store.Provision, and the handler must
+// answer 503, never the uniform 401 refusal reserved for a bad or
+// expired secret.
+func TestHandleProvisionStorageErrorReturns503(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		secret := contactedSecret(t, database, mintedAt, mintedAt.Add(time.Minute))
+		h := NewHandler(database, testCA, "", func() time.Time { return mintedAt.Add(2 * time.Minute) }, nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/provision", provisionRequestBody(secret)).WithContext(ctx)
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error body: %v", err)
+		}
+		if body["error"] != "service unavailable" {
+			t.Errorf("error = %q, want %q", body["error"], "service unavailable")
+		}
+	})
+}
+
+// TestWithClientCertTTLOverridesIssuedCertificateValidity covers the
+// WithClientCertTTL option end to end (ADR-0012 #130: "TTL overridden to
+// minutes in the fixture") -- a handler built with it signs certificates
+// good for the overridden duration, not the package default
+// ClientCertTTL, proven by inspecting the issued certificate's own
+// NotBefore/NotAfter rather than the unexported field directly.
+func TestWithClientCertTTLOverridesIssuedCertificateValidity(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		secret := contactedSecret(t, database, mintedAt, mintedAt.Add(time.Minute))
+
+		const overrideTTL = 5 * time.Minute
+		h := NewHandler(database, testCA, "", func() time.Time { return mintedAt.Add(2 * time.Minute) }, nil, WithClientCertTTL(overrideTTL))
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/provision", provisionRequestBody(secret))
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp provisionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v; body: %s", err, rec.Body.String())
+		}
+		block, _ := pem.Decode([]byte(resp.ClientCertPEM))
+		if block == nil {
+			t.Fatalf("ClientCertPEM did not decode as PEM: %q", resp.ClientCertPEM)
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatalf("parse leaf: %v", err)
+		}
+		if got := leaf.NotAfter.Sub(leaf.NotBefore); got < overrideTTL || got > overrideTTL+10*time.Minute {
+			t.Errorf("validity = %s, want about %s (not the package default %s)", got, overrideTTL, ClientCertTTL)
+		}
+	})
+}
+
+// TestWithClientCertTTLIgnoresNonPositiveDuration covers
+// WithClientCertTTL's documented "ttl <= 0 is ignored": a handler built
+// with a zero override still signs at the package default ClientCertTTL.
+func TestWithClientCertTTLIgnoresNonPositiveDuration(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		testCA := newTestCA(t)
+		mintedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		secret := contactedSecret(t, database, mintedAt, mintedAt.Add(time.Minute))
+
+		h := NewHandler(database, testCA, "", func() time.Time { return mintedAt.Add(2 * time.Minute) }, nil, WithClientCertTTL(0))
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/enrol/provision", provisionRequestBody(secret))
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp provisionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v; body: %s", err, rec.Body.String())
+		}
+		block, _ := pem.Decode([]byte(resp.ClientCertPEM))
+		if block == nil {
+			t.Fatalf("ClientCertPEM did not decode as PEM: %q", resp.ClientCertPEM)
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatalf("parse leaf: %v", err)
+		}
+		if got := leaf.NotAfter.Sub(leaf.NotBefore); got < ClientCertTTL || got > ClientCertTTL+10*time.Minute {
+			t.Errorf("validity = %s, want about the package default %s", got, ClientCertTTL)
+		}
+	})
+}
+
 // TestHandleProvisionBadCSRIsRetryable: every refused CSR is a 400 that
 // spends nothing -- the same secret with a good CSR afterwards still
 // provisions. Fails if the CSR check moves after the secret is spent.

@@ -147,6 +147,20 @@ func serverCACertPEM(t *testing.T, ts *httptest.Server) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 }
 
+// TestManagerKeyPEMReturnsCurrentKey proves KeyPEM (the counterpart to
+// CertPEM, already exercised throughout this file) returns the exact
+// key a Manager was constructed with -- callers must never log it, but
+// they do need to read it back, e.g. to rebuild a client.Config after a
+// restart.
+func TestManagerKeyPEMReturnsCurrentKey(t *testing.T) {
+	certPEM, keyPEM, _ := selfSignedCert(t, "agent-a", time.Now(), time.Now().Add(time.Hour))
+	m := NewManager(t.TempDir(), "client-key.pem", "client.pem", certPEM, keyPEM)
+
+	if string(m.KeyPEM()) != string(keyPEM) {
+		t.Fatal("KeyPEM did not return the key the Manager was constructed with")
+	}
+}
+
 // TestManagerTickNoopBeforeHalfLife proves Tick makes no request at all
 // while the current certificate has not reached its half-life yet.
 func TestManagerTickNoopBeforeHalfLife(t *testing.T) {
