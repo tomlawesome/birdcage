@@ -39,11 +39,15 @@ export type HistoryTier = 'crit' | 'warn' | 'unobs'
 
 const TIER: Record<HistoryState, HistoryTier> = {
   token_conflict: 'crit',
+  // ADR-0012 Part B (#130): ranked with token_conflict, same tier.
+  credential_conflict: 'crit',
   silent: 'crit',
   not_delivering: 'crit',
   self_test_failed: 'crit',
   throttled: 'crit',
   rotation_stalled: 'warn',
+  // ADR-0012 Part B: rotation_stalled's certificate twin, same tier.
+  renewal_stalled: 'warn',
   // pending (issue #47) is neither a fault nor health, the same reasoning
   // 'unobserved' above already carries -- provisioned but not yet proven,
   // never the canary's own doing.
@@ -60,11 +64,13 @@ export function tierFor(state: HistoryState): HistoryTier {
  * which clause opens a summary line. */
 const STATE_ORDER: HistoryState[] = [
   'token_conflict',
+  'credential_conflict',
   'silent',
   'not_delivering',
   'self_test_failed',
   'throttled',
   'rotation_stalled',
+  'renewal_stalled',
   'pending',
   'unobserved',
 ]
@@ -75,11 +81,13 @@ function stateRank(state: HistoryState): number {
 
 const STATE_LABEL: Record<HistoryState, string> = {
   token_conflict: 'token conflict',
+  credential_conflict: 'credential conflict',
   silent: 'silent',
   not_delivering: 'not delivering',
   self_test_failed: 'self-test failed',
   throttled: 'throttled',
   rotation_stalled: 'rotation stalled',
+  renewal_stalled: 'renewal stalled',
   pending: 'pending',
   unobserved: 'birdcage was not watching',
 }

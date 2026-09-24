@@ -161,6 +161,15 @@ describe('tierFor -- which colour a state carries', () => {
   it('a stalled rotation stays on the warning tier, as it does on the tile', () =>
     expect(tierFor('rotation_stalled')).toBe('warn'))
 
+  // ADR-0012 Part B (issue #130): credential_conflict is ranked with
+  // token_conflict (same red severity); renewal_stalled is
+  // rotation_stalled's certificate twin (same warning tier).
+  it('credential_conflict takes the alarm tier, ranked with token_conflict', () =>
+    expect(tierFor('credential_conflict')).toBe('crit'))
+
+  it('renewal_stalled stays on the warning tier, ranked with rotation_stalled', () =>
+    expect(tierFor('renewal_stalled')).toBe('warn'))
+
   it('unobserved is neutral -- never the alarm tier, never a healthy one', () => {
     expect(tierFor('unobserved')).toBe('unobs')
     expect(tierFor('unobserved')).not.toBe('crit')
@@ -199,6 +208,26 @@ describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
       'not delivering once, 1 m · self-test failed once, 1 m · throttled once, 1 m · pending once, 1 m',
     )
   })
+
+  // ADR-0012 Part B (issue #130).
+  it('credential_conflict reads "credential conflict"', () =>
+    expect(summaryLine([entry({ state: 'credential_conflict', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'credential conflict once, 1 m',
+    ))
+
+  it('renewal_stalled reads "renewal stalled"', () =>
+    expect(summaryLine([entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'renewal stalled once, 1 m',
+    ))
+
+  it('ordering: credential_conflict sits with token_conflict, renewal_stalled sits with rotation_stalled', () => {
+    const line = summaryLine([
+      entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'credential_conflict', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'silent', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe('credential conflict once, 1 m · silent once, 1 m · renewal stalled once, 1 m')
+  })
 })
 
 describe('layoutLanes -- two states at once on one canary', () => {
@@ -214,6 +243,23 @@ describe('layoutLanes -- two states at once on one canary', () => {
     expect(lanes).toHaveLength(2)
     expect(lanes[0][0].state).toBe('token_conflict')
     expect(lanes[1][0].state).toBe('rotation_stalled')
+  })
+
+  // ADR-0012 Part B (issue #130): credential_conflict stacks above
+  // renewal_stalled the same way token_conflict stacks above
+  // rotation_stalled -- both twins keep their parent's rank.
+  it('credential_conflict stacks above renewal_stalled, its twins\' own ranking', () => {
+    const lanes = layoutLanes(
+      [
+        period({ state: 'renewal_stalled', started_at: '2026-09-16T04:00:00Z', ended_at: '2026-09-16T14:00:00Z' }),
+        period({ state: 'credential_conflict', started_at: '2026-09-16T06:00:00Z', ended_at: '2026-09-16T12:00:00Z' }),
+      ],
+      SINCE,
+      UNTIL,
+    )
+    expect(lanes).toHaveLength(2)
+    expect(lanes[0][0].state).toBe('credential_conflict')
+    expect(lanes[1][0].state).toBe('renewal_stalled')
   })
 
   it('states that never overlap share one lane', () => {
