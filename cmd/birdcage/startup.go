@@ -208,6 +208,12 @@ type startupConfig struct {
 	advertiseHost    string
 	ingestURL        string
 	dashboardHostEnv string
+
+	// testClientCertTTL is envTestClientCertTTL's parsed value, zero
+	// meaning unset (the normal 7-day TTL applies). Set only by a live
+	// test fixture that needs a certificate to reach half-life and
+	// expiry in minutes.
+	testClientCertTTL time.Duration
 }
 
 // loadStartupConfig resolves every environment variable the
@@ -307,6 +313,26 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 			return startupConfig{}, &startupError{ingestLog, fmt.Sprintf("%s=%q is not a valid address: %v", envIngestAddr, cfg.ingestAddr, err)}
 		}
 		cfg.ingestURL = fmt.Sprintf("https://%s:%s", cfg.advertiseHost, ingestPort)
+	}
+
+	// envTestClientCertTTL: a live test fixture's way to drive a
+	// client certificate to half-life and expiry in minutes rather than
+	// ADR-0012 B2's normal 7 days (#130 scope). Refused outright, never
+	// silently clamped, when malformed or longer than the real TTL it
+	// exists to shorten -- so a typo or a value copied into a real
+	// deployment cannot quietly lengthen the certificate life it is
+	// named to cut. Logged loudly (Warn, not Info) so it is never
+	// mistaken for ordinary configuration in a log stream.
+	if raw := getenv(envTestClientCertTTL); raw != "" {
+		ttl, err := time.ParseDuration(raw)
+		if err != nil {
+			return startupConfig{}, &startupError{ingestLog, fmt.Sprintf("%s=%q is not a valid duration: %v", envTestClientCertTTL, raw, err)}
+		}
+		if ttl <= 0 || ttl > maxTestClientCertTTL {
+			return startupConfig{}, &startupError{ingestLog, fmt.Sprintf("%s=%s must be greater than zero and at most %s (ADR-0012 B2's 7-day certificate life); refusing to start", envTestClientCertTTL, raw, maxTestClientCertTTL)}
+		}
+		cfg.testClientCertTTL = ttl
+		ingestLog.Warn(fmt.Sprintf("TEST ONLY: %s=%s -- client certificates will expire in %s, not the normal 7 days; never set this in production", envTestClientCertTTL, raw, ttl))
 	}
 
 	cfg.dashboardHostEnv = getenv(envDashboardHost)
@@ -602,10 +628,21 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	// birdcageCA issued (issue #47 slice 3's mutual TLS); the
 	// enrolment listener below passes nil -- a canary has no
 	// certificate to present before it is provisioned.
-	ingestServer = ingest.NewTLSServer(cfg.ingestAddr, ingest.NewHandler(database, hub, idx, hook, ingest.WithClientCertSigner(birdcageCA)), getCert, birdcageCA.Pool())
+	// #130: testClientCertTTL is zero (a no-op) unless
+	// envTestClientCertTTL was set and validated by loadStartupConfig;
+	// both WithClientCertTTL implementations already ignore ttl <= 0,
+	// so passing it unconditionally is safe whether or not the test
+	// knob is in use.
+	ingestOpts := []ingest.Option{ingest.WithClientCertSigner(birdcageCA)}
+	enrolOpts := []enrol.Option{}
+	if cfg.testClientCertTTL > 0 {
+		ingestOpts = append(ingestOpts, ingest.WithClientCertTTL(cfg.testClientCertTTL))
+		enrolOpts = append(enrolOpts, enrol.WithClientCertTTL(cfg.testClientCertTTL))
+	}
+	ingestServer = ingest.NewTLSServer(cfg.ingestAddr, ingest.NewHandler(database, hub, idx, hook, ingestOpts...), getCert, birdcageCA.Pool())
 
 	configLog.Info(fmt.Sprintf("%s=%s", envEnrolAddr, cfg.enrolAddr))
-	enrolServer = ingest.NewTLSServer(cfg.enrolAddr, enrol.NewHandler(database, birdcageCA, cfg.ingestURL, nil, enrolLog), getCert, nil)
+	enrolServer = ingest.NewTLSServer(cfg.enrolAddr, enrol.NewHandler(database, birdcageCA, cfg.ingestURL, nil, enrolLog, enrolOpts...), getCert, nil)
 
 	return ingestServer, enrolServer, nil
 }
