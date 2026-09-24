@@ -54,6 +54,12 @@ COPY build/smb-lure/smb.conf /etc/samba/smb.conf.in
 COPY build/smb-lure/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 
+# The release stamp, for `docker run <image> version` (#125): promotion
+# asks every shipped image which build it is before naming the digest.
+# build:images passes the same VERSION it gives the Go images.
+ARG VERSION=dev
+RUN printf '%s\n' "$VERSION" > /etc/image-version && chmod 444 /etc/image-version
+
 # Owned by root, readable by everybody, writable by nobody. The share is
 # `read only` in the configuration, the root filesystem is mounted
 # read-only in the run command, and the files themselves are 0444: three

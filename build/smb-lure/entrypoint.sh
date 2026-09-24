@@ -22,6 +22,13 @@
 # is worse than not coming up.
 set -eu
 
+# `version` prints the build stamp and exits, as the Go images do, so
+# promotion can check it (#125) without starting smbd.
+if [ "${1:-}" = version ]; then
+  cat /etc/image-version
+  exit 0
+fi
+
 CONF_TEMPLATE=/etc/samba/smb.conf.in
 CONF=/run/samba/smb.conf
 
