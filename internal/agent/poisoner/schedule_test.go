@@ -231,7 +231,9 @@ func TestScheduleIsSeededPerCanary(t *testing.T) {
 	// Seed is a stored value, not a draw: asking for it must not shift the
 	// rhythm, or the derived names would depend on when the caller asked.
 	s := NewSchedule("canary-a")
-	if s.Seed() != s.Seed() {
+	firstSeed := s.Seed()
+	secondSeed := s.Seed()
+	if firstSeed != secondSeed {
 		t.Error("Seed changes between calls")
 	}
 	if got := s.BurstSize(); got != same[0] {

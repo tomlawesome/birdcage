@@ -63,7 +63,7 @@ func writeLines(t *testing.T, path string, lines []string) {
 	if err != nil {
 		t.Fatalf("open audit file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	for _, line := range lines {
 		if _, err := f.WriteString(line + "\n"); err != nil {
 			t.Fatalf("write audit line: %v", err)

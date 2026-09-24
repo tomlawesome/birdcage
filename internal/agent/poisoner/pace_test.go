@@ -174,7 +174,7 @@ func TestMatchedGapFollowsTheSegment(t *testing.T) {
 	s := PaceSettings{FloorGap: 24 * time.Hour, CeilingGap: time.Second, Hours: AllHours()}
 	quieter := matchedGap(10, minTalkingHosts, s)
 	busier := matchedGap(100, minTalkingHosts, s)
-	if !(busier < quieter) {
+	if busier >= quieter {
 		t.Errorf("a busier segment gave %v, not shorter than the quieter segment's %v", busier, quieter)
 	}
 
