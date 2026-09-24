@@ -97,10 +97,14 @@ case "$mint_output" in
 esac
 
 step "birdcage canary revoke's output is asserted"
-revoke_output="$("$E2E_STACK" birdcage canary revoke "$mint_token_id")" || fail "birdcage canary revoke did not run"
+# #130: revoke now takes the canary id, not a token id -- it ends every
+# token and every certificate that canary has in one action, so the
+# mint above is only here to prove there is at least one live token to
+# be counted.
+revoke_output="$("$E2E_STACK" birdcage canary revoke "$E2E_CANARY_ID")" || fail "birdcage canary revoke did not run"
 case "$revoke_output" in
-  *"revoked token $mint_token_id for canary $E2E_CANARY_ID"*) ok "$revoke_output" ;;
-  *) fail "revoke did not confirm the expected token/canary: $revoke_output" ;;
+  *"revoked canary $E2E_CANARY_ID: "*" token(s), "*" certificate(s)"*) ok "$revoke_output" ;;
+  *) fail "revoke did not confirm the expected canary/counts: $revoke_output" ;;
 esac
 
 step "birdcage canary enrol's printed instructions are asserted"

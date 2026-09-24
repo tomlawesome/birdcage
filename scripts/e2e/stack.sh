@@ -110,6 +110,14 @@ CANARY_LANE="${E2E_CANARY_LANE:-e2e}"
 # coverage for either.
 E2E_DASHBOARD_MODE="${E2E_DASHBOARD_MODE:-cert}"
 
+# E2E_CLIENT_CERT_TTL, when set, is handed to birdcage as
+# BIRDCAGE_TEST_CLIENT_CERT_TTL (docs/configuration.md) -- a Go
+# duration that shortens every issued or renewed client certificate's
+# life, for scripts/e2e/agent-credentials.sh's renewal and expiry
+# journeys (#130). Unset by default: every other journey gets the real
+# seven-day certificate, which is what "test only" means.
+E2E_CLIENT_CERT_TTL="${E2E_CLIENT_CERT_TTL:-}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 log() { echo "stack: $*" >&2; }
@@ -302,6 +310,12 @@ start_birdcage() {
     db_env=(--env "DATABASE_URL=$E2E_DATABASE_URL")
   fi
 
+  local ttl_env=()
+  if [ -n "$E2E_CLIENT_CERT_TTL" ]; then
+    log "BIRDCAGE_TEST_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL -- every certificate this stack issues is short-lived, test only"
+    ttl_env=(--env "BIRDCAGE_TEST_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL")
+  fi
+
   # dashboard_env picks the two dashboard TLS modes this harness
   # exercises: "cert" points BIRDCAGE_HTTP_TLS_CERT/_KEY at the
   # throwaway CA's leaf (generate_tls above); "own-ca" sets neither, so
@@ -338,6 +352,7 @@ start_birdcage() {
     --env BIRDCAGE_ENROL_ADDR=:8444 \
     --env BIRDCAGE_ADVERTISE_HOST="$BIRDCAGE" \
     "${db_env[@]}" \
+    "${ttl_env[@]}" \
     "$BIRDCAGE_IMAGE" >/dev/null || die "starting $BIRDCAGE failed"
 
   # own-ca mode has no throwaway dashboard CA to trust against -- wait
@@ -538,6 +553,7 @@ export E2E_BIRDCAGE=$BIRDCAGE
 export E2E_CANARY=$CANARY
 export E2E_BACKEND=$E2E_BACKEND
 export E2E_DASHBOARD_MODE=$E2E_DASHBOARD_MODE
+export E2E_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL
 export E2E_CANARY_ID=$CANARY_ID
 export E2E_CANARY_NAME=$CANARY_NAME
 export E2E_CANARY_LANE=$CANARY_LANE

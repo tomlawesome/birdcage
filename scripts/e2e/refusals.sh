@@ -65,8 +65,9 @@ esac
 
 step "a client certificate naming a different canary is refused"
 # A second canary, enrolled through the real endpoints rather than by
-# forging a certificate: POST /enrol/hello then POST /enrol/provision
-# is exactly what the agent does, and it is the only way to get a
+# forging a certificate: POST /enrol/hello, a CSR generated the way an
+# agent generates its own (ADR-0012 B1 -- birdcage never sees the
+# private key), then POST /enrol/provision -- the only way to get a
 # certificate this CA signed whose CN names somebody else.
 #
 # Its printed output carries a live deploy token, so it goes straight
@@ -82,10 +83,12 @@ token=$(sed -n "s/^.*MOCKINGBIRD_DEPLOY_TOKEN=\([0-9a-f]*\).*$/\1/p" /work/other
 test -n "$token" || { echo "no deploy token for the second canary"; exit 1; }
 secret=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/hello" \
   -d "{\"token\":\"$token\"}" | jq -er .enrolment_secret)
-provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" \
-  -d "{\"enrolment_secret\":\"$secret\"}")
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -subj "/CN=e2e-second-throwaway" -keyout /work/other-key.pem -out /tmp/other-csr.pem 2>/dev/null
+body=$(jq -n --arg secret "$secret" --rawfile csr /tmp/other-csr.pem \
+  "{enrolment_secret:\$secret, csr_pem:\$csr}")
+provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" -d "$body")
 printf "%s" "$provision" | jq -er .client_cert_pem > /work/other-cert.pem
-printf "%s" "$provision" | jq -er .client_key_pem > /work/other-key.pem
 printf "%s" "$provision" | jq -er .canary_id
 ')" || fail "the second canary could not be provisioned: $other"
 [ -n "$other" ] || fail "the second canary was provisioned without a canary id"
@@ -173,10 +176,12 @@ token=$(sed -n "s/^.*NIGHTJAR_DEPLOY_TOKEN=\([0-9a-f]*\).*$/\1/p" /work/scanner-
 test -n "$token" || { echo "no deploy token for the scanner"; exit 1; }
 secret=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/hello" \
   -d "{\"token\":\"$token\"}" | jq -er .enrolment_secret)
-provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" \
-  -d "{\"enrolment_secret\":\"$secret\"}")
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -subj "/CN=e2e-scanner-throwaway" -keyout /work/scanner-key.pem -out /tmp/scanner-csr.pem 2>/dev/null
+body=$(jq -n --arg secret "$secret" --rawfile csr /tmp/scanner-csr.pem \
+  "{enrolment_secret:\$secret, csr_pem:\$csr}")
+provision=$(curl -sS --cacert /work/birdcage-ca.pem -X POST "'"$BIRDCAGE_ENROL_URL"'/enrol/provision" -d "$body")
 printf "%s" "$provision" | jq -er .client_cert_pem > /work/scanner-cert.pem
-printf "%s" "$provision" | jq -er .client_key_pem > /work/scanner-key.pem
 printf "%s" "$provision" | jq -er .canary_token > /work/scanner-token
 chmod 600 /work/scanner-cert.pem /work/scanner-key.pem /work/scanner-token
 printf "%s" "$provision" | jq -er .canary_id
