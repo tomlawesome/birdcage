@@ -443,10 +443,9 @@ string is `400`.
   update` before the scan) and stage reports on its heartbeat. #113's
   image scanning inherits an order road that already exists.
 - The manual scan and its re-authentication wait for a session to bind
-  to. #8 is deferred to M3, so today the "scan now" button has no
-  earliest date; decision 8 is the design gauntlet's birdcage wiring
-  must satisfy when it lands. The owner decides the order (open
-  question).
+  to. #8 is deferred to M3, and the manual scan waits with it (owner,
+  2026-09-24); decision 8 is the design gauntlet's birdcage wiring
+  must satisfy when it lands.
 - The daily self-test stays a honeypot concept. Nothing schedules
   scanner runs after registration; only an admin orders one.
 
@@ -565,7 +564,6 @@ route in `internal/api`):
 
 ## Open questions for the owner
 
-- Sequencing: #8 (dashboard authentication) sits in M3 "Deferred". The
-  manual scan cannot ship before it. Either the auth-module wiring from
-  ADR-0005 moves earlier so MR 2 has a milestone, or "scan now" waits
-  for M3. Which?
+None. Sequencing was settled by the owner, 2026-09-24: #8 (dashboard
+authentication) stays in M3, and MR 2 (the manual scan) waits for it --
+"Not everything needs to be in m1."
