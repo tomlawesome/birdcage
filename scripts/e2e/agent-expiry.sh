@@ -70,12 +70,24 @@ poll 300 renewal_stalled_true \
 ok "$expiry_canary_id: renewal_stalled"
 
 not_delivering_expired() {
-  [ "$(canary_field status)" = "not_delivering" ] && [ "$(canary_field certificate_expired)" = "true" ]
+  # status is the single worst-ranked active state (healthStateRank,
+  # issue #45's own precedent: internal/store/credhealth.go re-derives
+  # Status as ActiveStates' head). A canary that never ran an agent
+  # never heartbeats either, so it is also "silent" -- which outranks
+  # "not_delivering" -- by the time its certificate expires, and status
+  # legitimately reads "silent", not "not_delivering". not_delivering
+  # and certificate_expired are the fields #130 actually adds; check
+  # those directly, and that not_delivering is still in the active set.
+  [ "$(canary_field not_delivering)" = "true" ] \
+    && [ "$(canary_field certificate_expired)" = "true" ] \
+    && helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+        | jq -e --arg id '$expiry_canary_id' \
+          '.canaries[] | select(.id == \$id) | .active_states | index(\"not_delivering\")' >/dev/null" 2>/dev/null
 }
 
 step "the canary reaches not_delivering with reason certificate_expired once the certificate actually expires"
 poll 300 not_delivering_expired \
-  || fail "status never became not_delivering with certificate_expired for $expiry_canary_id within 300s (E2E_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL)" "$E2E_BIRDCAGE"
-ok "$expiry_canary_id: status=not_delivering, certificate_expired=true"
+  || fail "not_delivering with certificate_expired never became true for $expiry_canary_id within 300s (E2E_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL)" "$E2E_BIRDCAGE"
+ok "$expiry_canary_id: not_delivering=true, certificate_expired=true"
 
 finish
