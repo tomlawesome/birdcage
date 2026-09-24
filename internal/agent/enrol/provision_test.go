@@ -33,18 +33,20 @@ func TestProvisionHappyPath(t *testing.T) {
 		if req.EnrolmentSecret != "secret-abc" {
 			t.Errorf("EnrolmentSecret = %q, want %q", req.EnrolmentSecret, "secret-abc")
 		}
+		if req.CSRPEM != "PLACEHOLDER-CSR-PEM-CONTENT" {
+			t.Errorf("CSRPEM = %q, want the caller's own CSR carried through unchanged", req.CSRPEM)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(wireProvisionResponse{
 			CanaryID:           "canary-1",
 			CanaryToken:        "raw-token",
 			ClientCertPEM:      "PLACEHOLDER-CLIENT-CERT-PEM-CONTENT",
-			ClientKeyPEM:       "PLACEHOLDER-CLIENT-KEY-PEM-CONTENT",
 			HeartbeatIntervalS: 30,
 		})
 	}))
 	defer ts.Close()
 
-	creds, err := Provision(ctx(), ts.URL, certPEMOf(t, ts), "secret-abc")
+	creds, err := Provision(ctx(), ts.URL, certPEMOf(t, ts), "secret-abc", []byte("PLACEHOLDER-CSR-PEM-CONTENT"))
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -56,6 +58,30 @@ func TestProvisionHappyPath(t *testing.T) {
 	}
 	if creds.HeartbeatIntervalS != 30 {
 		t.Errorf("HeartbeatIntervalS = %d", creds.HeartbeatIntervalS)
+	}
+	if string(creds.ClientCertPEM) != "PLACEHOLDER-CLIENT-CERT-PEM-CONTENT" {
+		t.Errorf("ClientCertPEM = %q", creds.ClientCertPEM)
+	}
+}
+
+// TestProvisionRejectsMissingCertPEM proves a response missing
+// client_cert_pem is an error rather than a Credentials with a nil
+// certificate -- Credentials no longer carries a key at all (ADR-0012
+// B1), so the certificate is the one field left that must never be
+// silently absent.
+func TestProvisionRejectsMissingCertPEM(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(wireProvisionResponse{
+			CanaryID:           "canary-1",
+			CanaryToken:        "raw-token",
+			HeartbeatIntervalS: 30,
+		})
+	}))
+	defer ts.Close()
+
+	if _, err := Provision(ctx(), ts.URL, certPEMOf(t, ts), "secret-abc", []byte("csr")); err == nil {
+		t.Fatal("Provision succeeded with no client_cert_pem in the response")
 	}
 }
 
@@ -69,7 +95,7 @@ func TestProvisionRefused401IsTypedErrRefused(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := Provision(ctx(), ts.URL, certPEMOf(t, ts), "secret-abc")
+	_, err := Provision(ctx(), ts.URL, certPEMOf(t, ts), "secret-abc", []byte("csr"))
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
@@ -85,7 +111,7 @@ func TestProvisionRejectsUntrustedServer(t *testing.T) {
 
 	unrelatedDER, _, _ := genCA(t, "unrelated-ca")
 
-	_, err := Provision(ctx(), ts.URL, pemCert(unrelatedDER), "secret-abc")
+	_, err := Provision(ctx(), ts.URL, pemCert(unrelatedDER), "secret-abc", []byte("csr"))
 	if err == nil {
 		t.Fatal("Provision succeeded against a server whose certificate does not chain to caPEM")
 	}

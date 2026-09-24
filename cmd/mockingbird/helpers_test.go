@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/db/dbtest"
@@ -141,6 +142,38 @@ func selfSignedKeyPair(t *testing.T, cn string, ou ...string) (certPEM, keyPEM [
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	return certPEM, keyPEM
+}
+
+// newTestRenewalManager builds a renewal.Manager whose current
+// certificate is freshly minted (NotBefore=now, one-hour lifetime), so
+// its half-life is 30 minutes out -- far enough that Tick is a no-op for
+// any test that just needs a heartbeat loop to run without also
+// triggering a real renewal attempt against a fake server that doesn't
+// implement POST /ingest/renew.
+func newTestRenewalManager(t *testing.T) *renewal.Manager {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "renewal-test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	dir := t.TempDir()
+	return renewal.NewManager(dir, clientKeyFileName, clientCertFileName, certPEM, keyPEM)
 }
 
 // enrollCanary inserts a canary row directly, the same shape

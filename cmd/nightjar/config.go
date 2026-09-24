@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 )
 
 // Environment variables this agent reads -- the only configuration
@@ -124,6 +126,14 @@ func loadConfig() (Config, error) {
 	}
 
 	cfg.TokenPath = filepath.Join(cfg.StateDir, tokenFileName)
+
+	// ADR-0012 B2: finish or discard whatever a certificate renewal left
+	// staged before this boot reads clientCertFileName/clientKeyFileName
+	// below -- see internal/agent/renewal's own doc comment and
+	// cmd/mockingbird/config.go's identical call for why.
+	if err := renewal.RecoverPendingSwap(cfg.StateDir, clientKeyFileName, clientCertFileName); err != nil {
+		return Config{}, fmt.Errorf("recover pending certificate renewal: %s", safeErr(err))
+	}
 
 	// BaseURL prefers whatever enrolment itself learned the ingest
 	// listener's address to be, exactly as cmd/mockingbird/config.go's
