@@ -602,7 +602,7 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	// birdcageCA issued (issue #47 slice 3's mutual TLS); the
 	// enrolment listener below passes nil -- a canary has no
 	// certificate to present before it is provisioned.
-	ingestServer = ingest.NewTLSServer(cfg.ingestAddr, ingest.NewHandler(database, hub, idx, hook), getCert, birdcageCA.Pool())
+	ingestServer = ingest.NewTLSServer(cfg.ingestAddr, ingest.NewHandler(database, hub, idx, hook, ingest.WithClientCertSigner(birdcageCA)), getCert, birdcageCA.Pool())
 
 	configLog.Info(fmt.Sprintf("%s=%s", envEnrolAddr, cfg.enrolAddr))
 	enrolServer = ingest.NewTLSServer(cfg.enrolAddr, enrol.NewHandler(database, birdcageCA, cfg.ingestURL, nil, enrolLog), getCert, nil)

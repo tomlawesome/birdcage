@@ -129,6 +129,8 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 			"token_canary", tok.CanaryID, "payload_canary_id", body.CanaryID)
 	}
 
+	h.observeAgentVersion(r.Context(), tok, body.AgentVersion)
+
 	report := store.AgentHeartbeat{
 		QueueDepth:        body.QueueDepth,
 		LogReadOK:         body.LogReadOK,
@@ -207,6 +209,8 @@ func (h *ingestHandler) handleCommonHeartbeat(w http.ResponseWriter, r *http.Req
 		slog.Warn("ingest: heartbeat payload named a different canary than its token; ignoring",
 			"token_canary", tok.CanaryID, "payload_canary_id", body.CanaryID)
 	}
+
+	h.observeAgentVersion(r.Context(), tok, body.AgentVersion)
 
 	if err := store.RecordCanaryCommonHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), body.AgentVersion); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {

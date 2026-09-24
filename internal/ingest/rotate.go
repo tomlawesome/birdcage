@@ -96,7 +96,23 @@ func (h *ingestHandler) handleRotate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	raw, newTok, err := store.MintCanaryToken(r.Context(), tx, tok.CanaryID, h.now().UTC())
+	// Issue #130, ADR-0012 B3: the new token is bound to the canary's
+	// current certificate (store.CurrentClientCert: its newest live
+	// one, so a rotation during a renewal binds to the certificate the
+	// agent is switching to). A canary with no certificate on record can
+	// only reach here without TLS (handler tests); its token is minted
+	// unbound, and an unbound token never authenticates over mutual TLS.
+	var (
+		raw    string
+		newTok store.CanaryToken
+	)
+	current, err := store.CurrentClientCert(r.Context(), tx, tok.CanaryID)
+	switch {
+	case err == nil:
+		raw, newTok, err = store.MintCanaryTokenForCert(r.Context(), tx, tok.CanaryID, current.Fingerprint, h.now().UTC())
+	case errors.Is(err, store.ErrClientCertNotFound):
+		raw, newTok, err = store.MintCanaryToken(r.Context(), tx, tok.CanaryID, h.now().UTC())
+	}
 	if err != nil {
 		// A mint failure is birdcage's own storage trouble, not the
 		// credential's fault -- the presented token (tok) remains fully

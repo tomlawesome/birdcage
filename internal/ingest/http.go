@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
@@ -36,6 +37,13 @@ type ingestHandler struct {
 	coalescer     *auditCoalescer
 	selfTestIndex *store.SelfTestIndex
 	rotationHook  SelfTestRotationHook
+
+	// Issue #130 (ADR-0012 Part B): signer and certTTL serve POST
+	// /ingest/renew (see WithClientCertSigner, WithClientCertTTL);
+	// dualUse is B4's per-certificate address/version memory.
+	signer  *ca.CA
+	certTTL time.Duration
+	dualUse *dualUseTracker
 }
 
 // NewHandler returns the ingest submux: bearer-token auth in front of
@@ -62,8 +70,11 @@ type ingestHandler struct {
 // instant a rotation succeeds; nil disables the rotation-coupled
 // self-test schedule entirely (see hook's own doc comment for why this
 // is a structural interface rather than a concrete import).
-func NewHandler(database *db.DB, hub *stream.Hub, idx *store.SelfTestIndex, hook SelfTestRotationHook) http.Handler {
-	return newHandler(database, hub, time.Now, defaultLimiterLimits, idx, hook)
+//
+// opts (issue #130) are WithClientCertSigner, which POST /ingest/renew
+// needs to do anything but refuse, and WithClientCertTTL.
+func NewHandler(database *db.DB, hub *stream.Hub, idx *store.SelfTestIndex, hook SelfTestRotationHook, opts ...Option) http.Handler {
+	return newHandler(database, hub, time.Now, defaultLimiterLimits, idx, hook, opts...)
 }
 
 // ingestRoute is the whole registration surface for this mux (issue
@@ -91,6 +102,8 @@ type ingestRoute struct {
 //   - /ingest/scans -- scanner only, its sole write path.
 //   - /ingest/rotate and /ingest/heartbeat -- both kinds: rotation and
 //     the heartbeat's common part are generic across every kind.
+//   - /ingest/renew -- both kinds: certificate renewal (issue #130,
+//     ADR-0012 B2) is the certificate twin of rotation.
 //   - /ingest/commands -- honeypot only, for now: the only command kind
 //     that exists is the self-test, a honeypot concept, and nightjar
 //     never polls this route. The set widens in the same commit that
@@ -100,6 +113,7 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 	return []ingestRoute{
 		{"POST /ingest/events", []agentkind.Kind{agentkind.Honeypot}, h.handleBatch},
 		{"POST /ingest/rotate", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleRotate},
+		{"POST /ingest/renew", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleRenew},
 		{"POST /ingest/heartbeat", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleHeartbeat},
 		{"POST /ingest/commands", []agentkind.Kind{agentkind.Honeypot}, h.handleCommands},
 		{"POST /ingest/scans", []agentkind.Kind{agentkind.Scanner}, h.handleScan},
@@ -110,8 +124,12 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 // that need a pinned clock or (far more often) rate limits small enough
 // to cross in a handful of calls rather than thousands -- mirroring
 // internal/api's own newHandler/NewHandler split.
-func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits, idx *store.SelfTestIndex, hook SelfTestRotationHook) http.Handler {
-	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook}
+func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits, idx *store.SelfTestIndex, hook SelfTestRotationHook, opts ...Option) http.Handler {
+	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook,
+		certTTL: DefaultClientCertTTL, dualUse: newDualUseTracker()}
+	for _, opt := range opts {
+		opt(h)
+	}
 
 	// Every route on this mux is behind requireBearerToken, extended
 	// with the route's own allowed kinds (issue #106) -- ingestRoute's
@@ -125,7 +143,7 @@ func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits l
 	// TestDashboardMuxCannotReachIngestRoute in http_test.go.
 	mux := http.NewServeMux()
 	for _, route := range ingestRoutes(h) {
-		mux.Handle(route.pattern, requireBearerToken(database, now, h.limiters, h.coalescer, h.rotationHook, route))
+		mux.Handle(route.pattern, requireBearerToken(database, now, h.limiters, h.coalescer, h.dualUse, h.rotationHook, route))
 	}
 	mux.HandleFunc("/", notFoundJSON)
 	return mux
