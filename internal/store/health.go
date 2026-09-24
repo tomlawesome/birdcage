@@ -31,9 +31,19 @@ import (
 type HealthState string
 
 const (
+	// StateTokenConflict is a superseded credential presented while its
+	// successor is live: a revoked token (ingest.token_conflict, #45) or,
+	// since issue #130, a revoked client certificate
+	// (ingest.cert_conflict) -- ADR-0012 B4: "the state widens to mean
+	// either".
 	StateTokenConflict HealthState = "token_conflict"
-	StateSilent        HealthState = "silent"
-	StateNotDelivering HealthState = "not_delivering"
+	// StateCredentialConflict (issue #130, ADR-0012 B4) is one live
+	// certificate used from two source addresses, or by two agent
+	// builds, within credentialConflictWindow. Ranked with token
+	// conflict, immediately after it. Never revokes anything.
+	StateCredentialConflict HealthState = "credential_conflict"
+	StateSilent             HealthState = "silent"
+	StateNotDelivering      HealthState = "not_delivering"
 	// StateTestFailed (issue #46) is a canary whose most recently
 	// *completed* scheduled self-test run has passed=false -- see
 	// applySelfTestState in selftest.go. Ranked between not-delivering
@@ -42,6 +52,12 @@ const (
 	StateTestFailed      HealthState = "self_test_failed"
 	StateThrottled       HealthState = "throttled"
 	StateRotationStalled HealthState = "rotation_stalled"
+	// StateRenewalStalled (issue #130, ADR-0012 B2; answers #72) is
+	// rotation-stalled's certificate twin: the certificate the agent is
+	// using is past half-life plus renewalStalledMargin with no renewal
+	// completed. Ranked immediately after rotation-stalled. At the
+	// certificate's expiry it gives way to not-delivering.
+	StateRenewalStalled HealthState = "renewal_stalled"
 	// StatePending (issue #47 steps 7-9) is a canary provisioned through
 	// POST /enrol/provision whose first self-test round trip has not yet
 	// passed -- store.Canary.RegisteredAt nil. Ranked last of the fault
@@ -64,15 +80,22 @@ const (
 // gap isn't filled by anything built here. The issue itself calls this
 // order "proposed, not yet ratified"; it is implemented as specified and
 // flagged as contested, not silently finalized.
+//
+// Issue #130 adds two states, each beside its twin: credential-conflict
+// straight after token-conflict (both are "two holders of one
+// credential"), renewal-stalled straight after rotation-stalled (the
+// same failure for the certificate instead of the token).
 var healthStateRank = map[HealthState]int{
-	StateTokenConflict:   0,
-	StateSilent:          1,
-	StateNotDelivering:   2,
-	StateTestFailed:      3,
-	StateThrottled:       4,
-	StateRotationStalled: 5,
-	StatePending:         6,
-	StateOK:              7,
+	StateTokenConflict:      0,
+	StateCredentialConflict: 1,
+	StateSilent:             2,
+	StateNotDelivering:      3,
+	StateTestFailed:         4,
+	StateThrottled:          5,
+	StateRotationStalled:    6,
+	StateRenewalStalled:     7,
+	StatePending:            8,
+	StateOK:                 9,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
