@@ -38,6 +38,8 @@
 #   scripts/e2e/stack.sh down
 set -eu
 
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
 STATE_VOL="${E2E_PREFIX}-poisoner-state"
 LOG_VOL="${E2E_PREFIX}-poisoner-log"
 CANARY="${E2E_PREFIX}-poisoner-canary"
@@ -135,6 +137,18 @@ run() { # run <work-file> <container> <state-vol> <log-vol>
       *) die "the docker run command for $container is missing $want after editing -- got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
     esac
   done
+
+  # Second use of the mockingbird build tag in this job -- stack.sh's
+  # own enrol_canary already used it once, earlier, to start the base
+  # canary this poisoner canary is modelled on. A concurrent pipeline's
+  # prune (#112) can delete the local tag between the two uses even
+  # though the job's own before-script recovery already ran once;
+  # re-check immediately before this second `docker run`, same as the
+  # job's first call. A no-op outside CI, where these variables are unset.
+  if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" >&2 \
+      || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting $container"
+  fi
 
   log "running ($container): $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed -e 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/' -e 's/MOCKINGBIRD_POISONER_NAMES=[^ ]*/MOCKINGBIRD_POISONER_NAMES=<names>/')"
   eval "$command" >/dev/null || die "the docker run command for $container failed to start"

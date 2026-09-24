@@ -12,7 +12,11 @@
 #
 # Never anywhere near build/smb-lure or build/mockingbird (ADR-0008). It
 # is a client this harness runs, not part of any product image.
-FROM alpine:3.24
+# BASE_IMAGE defaults to the plain Docker Hub tag for a workstation
+# build; scripts/e2e/smb-lure-stack.sh passes CI's dependency-proxy pin
+# (refs #128, .gitlab-ci.yml's ALPINE_IMAGE) as a build arg.
+ARG BASE_IMAGE=alpine:3.24
+FROM ${BASE_IMAGE}
 
 # Pinned to the same Samba version build/smb-lure/Dockerfile pins its
 # server to, from the same Alpine release, so the client and server in

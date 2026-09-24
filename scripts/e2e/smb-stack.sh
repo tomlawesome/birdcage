@@ -52,7 +52,10 @@ build_samba_image() {
     return 0
   fi
   log "building $SAMBA_IMAGE from build/e2e-samba/Dockerfile"
-  docker build --file "$REPO_ROOT/build/e2e-samba/Dockerfile" --tag "$SAMBA_IMAGE" "$REPO_ROOT" >/dev/null \
+  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
+  docker build --build-arg BASE_IMAGE="${DEBIAN_TRIXIE_SLIM_IMAGE:-debian:trixie-slim}" \
+    --file "$REPO_ROOT/build/e2e-samba/Dockerfile" --tag "$SAMBA_IMAGE" "$REPO_ROOT" >/dev/null \
     || die "building $SAMBA_IMAGE failed"
 }
 
@@ -69,12 +72,14 @@ write_smb_conf() {
     -e 's|"smb.enabled": false|"smb.enabled": true|' \
     -e 's|"smb.auditfile": "/var/log/samba-audit.log"|"smb.auditfile": "/samba-audit/samba-audit.log"|' \
     "$REPO_ROOT/build/mockingbird/opencanary.conf" \
-    | docker run --rm --interactive --volume "$SMB_CONF_VOL:/out" alpine:3.24 sh -c 'cat > /out/opencanary.conf' \
+    | docker run --rm --interactive --volume "$SMB_CONF_VOL:/out" "${ALPINE_IMAGE:-alpine:3.24}" sh -c 'cat > /out/opencanary.conf' \
     || die "writing the overriding opencanary.conf failed"
   # Fails loudly rather than silently shipping the stock conf (smb
   # disabled) if either sed pattern ever stops matching the file it is
-  # editing.
-  docker run --rm --volume "$SMB_CONF_VOL:/out:ro" alpine:3.24 \
+  # editing. ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin
+  # (refs #128, .gitlab-ci.yml) when set, the plain Docker Hub tag on a
+  # workstation.
+  docker run --rm --volume "$SMB_CONF_VOL:/out:ro" "${ALPINE_IMAGE:-alpine:3.24}" \
     sh -c 'grep -q "\"smb.enabled\": true" /out/opencanary.conf && grep -q "/samba-audit/samba-audit.log" /out/opencanary.conf' \
     || die "the overriding opencanary.conf does not enable smb -- sed pattern out of date?"
 }
@@ -149,6 +154,19 @@ run_smb_canary() {
     docker\ run\ *"$SMB_CANARY"*) ;;
     *) die "the smb canary's printed docker run command did not look the way this harness expects; got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
   esac
+
+  # Second use of the mockingbird build tag in this job -- stack.sh's own
+  # enrol_canary already used it once, earlier, to start the primary
+  # canary this smb canary is modelled on. In CI a concurrent pipeline's
+  # prune (#112) can delete the local tag between the two uses even
+  # though the job's own before-script recovery already ran once; re-run
+  # it immediately before this second `docker run`, same as the job's
+  # first call, rather than assume the earlier check still holds. A
+  # no-op outside CI, where these variables are unset.
+  if [ -n "${MOCKINGBIRD_BUILD_IMAGE:-}" ] && [ -n "${MOCKINGBIRD_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST" >&2 \
+      || die "could not ensure $MOCKINGBIRD_BUILD_IMAGE is present before starting the smb canary"
+  fi
 
   log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the smb canary's docker run command failed to start"
