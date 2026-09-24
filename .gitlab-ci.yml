@@ -27,7 +27,7 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
-  # Where the two images are published (#90). Deliberately NOT named
+  # Where the four images are published (#90, #125). Deliberately NOT named
   # BIRDCAGE_IMAGE: that is the environment variable
   # scripts/verify-validation-evidence.sh reads to know which repository it
   # is judging, and a pipeline-wide value of that name would be inherited by
@@ -35,6 +35,8 @@ variables:
   # which would then verify the wrong repository and still pass.
   BIRDCAGE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/birdcage
   MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
+  NIGHTJAR_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/nightjar
+  SMB_LURE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/smb-lure
   # Where the same digests are mirrored, read-only, for the public (#90,
   # note 22233): GitLab is where a release is published and promoted --
   # the evidence is bound to the digest here -- and GHCR is only ever a
@@ -42,6 +44,8 @@ variables:
   # to publish from.
   BIRDCAGE_MIRROR_REPO: ghcr.io/tomlawesome/birdcage
   MOCKINGBIRD_MIRROR_REPO: ghcr.io/tomlawesome/mockingbird
+  NIGHTJAR_MIRROR_REPO: ghcr.io/tomlawesome/nightjar
+  SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
   # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
   # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
   # was failing e2e and test:go before they ever ran. Same bytes, cached on
@@ -629,8 +633,8 @@ test:smoke:postgres:
 # before that second use. This registry push is transport between this
 # pipeline's own jobs, not a release: publication that customers or an
 # attacker's search engine would ever see is still `release:push`'s
-# alone, to $GHCR_BIRDCAGE_REPO / $GHCR_MOCKINGBIRD_REPO, unchanged by any
-# of this.
+# alone, to the four *_MIRROR_REPO variables above, unchanged by any of
+# this.
 #
 # The internal registry needs a cleanup policy of its own -- deleting
 # `ci-.*` tags older than about a week is plenty, since nothing here is
@@ -2005,6 +2009,8 @@ release:push:
       # Recovers it from this project's own registry if so.
       scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
       # Only the anchor is pushed here. It is immutable by construction (a
       # commit sha names one build) and it is never what a user pulls: the
       # channel name is release:preview's to create, after the evidence has
@@ -2013,12 +2019,16 @@ release:push:
       # inside its own evidence window by routine maintenance.
       docker tag "$BIRDCAGE_BUILD_IMAGE" "${BIRDCAGE_RELEASE_REPO}:${anchor}"
       docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${MOCKINGBIRD_RELEASE_REPO}:${anchor}"
+      docker tag "$NIGHTJAR_BUILD_IMAGE" "${NIGHTJAR_RELEASE_REPO}:${anchor}"
+      docker tag "$SMB_LURE_BUILD_IMAGE" "${SMB_LURE_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
       # which is also what would happen if a second runner host ever meant
       # "the same pipeline" no longer implied "the same daemon".
       birdcage_digest="$(scripts/publish-image.sh "${BIRDCAGE_RELEASE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
       mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
+      nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
+      smb_lure_digest="$(scripts/publish-image.sh "${SMB_LURE_RELEASE_REPO}:${anchor}" "$SMB_LURE_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
       # docker:29-cli has no python and no jq, and a digest read wrongly is
       # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
@@ -2028,6 +2038,8 @@ release:push:
       {
         echo "RELEASE_BIRDCAGE_DIGEST=$birdcage_digest"
         echo "RELEASE_MOCKINGBIRD_DIGEST=$mockingbird_digest"
+        echo "RELEASE_NIGHTJAR_DIGEST=$nightjar_digest"
+        echo "RELEASE_SMB_LURE_DIGEST=$smb_lure_digest"
       } > digests.env
       cat digests.env
       # The durable record of what this pipeline published, kept for 90
@@ -2041,7 +2053,9 @@ release:push:
         "  \"stamp\": \"${BIRDCAGE_STAMP}\"," \
         '  "images": {' \
         "    \"birdcage\": { \"repository\": \"${BIRDCAGE_RELEASE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
-        "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }" \
+        "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }," \
+        "    \"nightjar\": { \"repository\": \"${NIGHTJAR_RELEASE_REPO}\", \"digest\": \"${nightjar_digest}\" }," \
+        "    \"smb-lure\": { \"repository\": \"${SMB_LURE_RELEASE_REPO}\", \"digest\": \"${smb_lure_digest}\" }" \
         '  }' \
         '}' > .birdcage-release/tested-images.json
       cat .birdcage-release/tested-images.json
@@ -2074,7 +2088,7 @@ release:attest:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         echo "attesting $repo@$digest"
@@ -2098,7 +2112,7 @@ release:preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
@@ -2143,7 +2157,7 @@ release:mirror-preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
@@ -2221,11 +2235,19 @@ release:promote:
     - |
       set -eu
       commit="$(cat .release-commit)"
-      # --expect-stamp for both images (#97): each now has a `version`
-      # command to ask, so promotion proves the released bytes carry the
-      # released version for birdcage and mockingbird alike.
+      # --expect-stamp (#97): each of these three has a `version` command
+      # to ask, so promotion proves the released bytes carry the released
+      # version. smb-lure has neither an ARG VERSION build stage nor a
+      # `version` command -- it is a vendored Samba (build/smb-lure/Dockerfile),
+      # not a stamped Go binary -- so --expect-stamp is omitted here rather
+      # than added speculatively (see #125 handoff: running
+      # `docker run --rm <image> version` against it would just start smbd
+      # in the foreground and hang the job). Flagged for the owner rather
+      # than guessed at.
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
+      nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
+      smb_lure_digest="$(scripts/promote-release.sh "$SMB_LURE_RELEASE_REPO" "$commit")"
       # `latest` moves on every release, pre-release or not. Whether a
       # beta is the right thing to run is the decision of whoever pulls it,
       # not this pipeline's.
@@ -2236,7 +2258,7 @@ release:promote:
       # -- which re-verifies the validation evidence before it moves any
       # name at all. Nobody moves it by hand. A tag that moves is not a
       # weaker promise when the moving is gated.
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}"; do
         BIRDCAGE_COMMIT="$commit" \
           scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
       done
@@ -2273,7 +2295,7 @@ release:mirror-release:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
@@ -2316,6 +2338,8 @@ release:gitlab:
 
       - `$BIRDCAGE_RELEASE_REPO:$RELEASE_TAG`
       - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
+      - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
+      - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
 
       Verify before you run either of them -- docs/releasing.md has the
       commands. Both carry a key-based validation attestation; the keyless
