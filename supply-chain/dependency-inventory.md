@@ -296,7 +296,7 @@ review's brief:
 | 204 | `postgresql-client (apt package)` | unpinned -- `apt-get install -y postgresql-client` in `test:go` | Unverified -- Debian's current package version wasn't checked this session. | PostgreSQL Licence | direct | PostgreSQL Global Development Group, packaged by Debian | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 205 | `pyyaml (pip package)` | unpinned -- `pip install --quiet pyyaml` in `lint:ci` | 6.0.3 (PyPI JSON API, verified). | MIT | direct | PyYAML community | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 206 | `bash (apk package)` | unpinned -- `apk add --no-cache bash` in `lint:ci` and every `e2e:*` job | Unverified -- Alpine's current package version wasn't checked this session. | GPL-3.0-or-later (GNU project; not confirmed against a registry API this session). | direct | GNU Project, packaged by Alpine | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
-| 223 | `Responder` (fixture image, `registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture`, pulled by digest) | the `E2E_POISONER_FIXTURE_DIGEST` pin in `.gitlab-ci.yml` (`e2e:poisoner`); a placeholder until #127 publishes the first build | v3.2.2.0 is the newest upstream tag (verified 2026-09-24 via `git ls-remote --tags https://github.com/lgandx/Responder`); the fixtures project records which tag its image was built from, and moving the digest here is the version check. | GPL-3.0 | direct | Laurent Gaffie (lgandx); image built, scanned and published by the private `ai/birdcage-fixtures` project | high (the reference LLMNR/NBT-NS/mDNS poisoner; what #86 exists to catch) | CI-only -- `e2e:poisoner`'s sibling container, pulled by `scripts/ci-ensure-image.sh`, never built here and never in any shipped image | Directed by the coordinator for #86 slice C as CI-only; **the owner has not individually approved it** -- see "What needs the owner's attention". Owner, 2026-09-24 (#86, 45b): built once in the private fixtures project, never in this repository |
+| 223 | `Responder` (fixture image, `registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture`, pulled by digest) | the `E2E_POISONER_FIXTURE_DIGEST` pin in `.gitlab-ci.yml` (`e2e:poisoner`), published once by the fixtures project (#127) and pulled by digest | v3.2.2.0 is the newest upstream tag (verified 2026-09-24 via `git ls-remote --tags https://github.com/lgandx/Responder`); the fixtures project records which tag its image was built from, and moving the digest here is the version check. | GPL-3.0 | direct | Laurent Gaffie (lgandx); image built, scanned and published by the private `ai/birdcage-fixtures` project | high (the reference LLMNR/NBT-NS/mDNS poisoner; what #86 exists to catch) | CI-only -- `e2e:poisoner`'s sibling container, pulled by `scripts/ci-ensure-image.sh`, never built here and never in any shipped image | Directed by the coordinator for #86 slice C as CI-only; **the owner has not individually approved it** -- see "What needs the owner's attention". Owner, 2026-09-24 (#86, 45b): built once in the private fixtures project, never in this repository |
 | 224 | `debian:trixie-slim` (base of `build/e2e-samba` and `build/e2e-snmp`) | trixie-slim (floating minor) | Unverified -- Debian's current point release wasn't checked this session; the tag is floating, so "latest" and "pinned" are the same moving target. | Mixed, Debian main (DFSG-free) | direct | Debian project, Docker Official Images | very high (mainstream, widely deployed) | CI-only -- journey fixture image, never shipped | Predates the rule -- recorded here because the fixtures' packages were not; the Responder fixture no longer uses it in this repository (#127) |
 
 ### G. GitHub Actions, `.github/workflows/*.yml` (CodeQL + dependency review mirror only -- GitLab is where the gate actually runs)
@@ -393,10 +393,17 @@ explicitly (AGENTS.md, #108). Two things worth a decision:
   that attack tooling is never built in this repository, whose mirror is
   public: the image is built, scanned and published once by the private
   `ai/birdcage-fixtures` project (#127) and this repository only pins its
-  digest. Until that project publishes its first build the pin is a
-  placeholder and `e2e:poisoner` fails at the pull. There is no published
-  upstream image to pin instead: `lgandx/responder` does not exist on
-  Docker Hub (checked 2026-09-24) and Debian does not package it.
+  digest. The first build was published on 2026-09-24 and scanned before
+  release (findings below). There is no published upstream image to pin
+  instead: `lgandx/responder` does not exist on Docker Hub (checked
+  2026-09-24) and Debian does not package it.
+- Scan of the published image (grype, 2026-09-24): 8 Critical, 82 High,
+  86 Medium, all in Debian base packages, not the tool. Every Critical is
+  `libcurl`, marked "won't fix" by Debian, exploit probability near zero.
+  Six Highs are fixable in principle but Debian trixie has not shipped the
+  patched packages yet; the image's `apt-get upgrade` clears them on the
+  next rebuild once it does. Accepted for a CI-only, isolated, throwaway
+  fixture with no real attack surface.
 
 **Journey fixture images were already unrecorded before this:**
 `build/e2e-samba` and `build/e2e-snmp` build on `debian:trixie-slim` and
