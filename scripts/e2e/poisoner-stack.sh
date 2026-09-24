@@ -99,6 +99,9 @@ enrol() { # enrol <name> <lane> <work-file>
 # touched. Only the first `docker run` block is taken: enrolment now
 # prints the SMB lure's block after the canary's (#87), and evalling both
 # would start the lure with this harness's --network on top of its own.
+# And, as stack.sh does, the lure's audit mount and its variable are
+# deleted: this stack deploys no lure, and left in they create an
+# unprefixed `smb-audit` volume that no `down` removes.
 run() { # run <work-file> <container> <state-vol> <log-vol>
   local work_file="$1" container="$2" state_vol="$3" log_vol="$4"
   local command pacing
@@ -112,6 +115,8 @@ run() { # run <work-file> <container> <state-vol> <log-vol>
     -e "s|--name mockingbird |--name $container |" \
     -e "s|-v mockingbird-state:|-v $state_vol:|" \
     -e "s|-v mockingbird-log:|-v $log_vol:|" \
+    -e '/-v smb-audit:/d' \
+    -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d' \
     -e "s|--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\|$pacing|")"
 
   case "$command" in
