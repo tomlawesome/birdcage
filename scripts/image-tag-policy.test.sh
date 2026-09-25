@@ -44,7 +44,7 @@ done
 
 # --- ci- transport tags: GitLab registry only -------------------------------
 assert_allowed "ci-1234 is allowed on the GitLab registry" "$gitlab" ci-1234
-assert_allowed "ci-x is allowed on the GitLab registry" "$gitlab" ci-x
+assert_refused "ci-x is refused: transport tags are ci-<pipeline id>" "$gitlab" ci-x
 assert_refused "ci-x is refused on GHCR" "$ghcr" ci-x
 assert_refused "ci-1234 is refused on any other registry" "registry.example.com/a/b" ci-1234
 assert_refused "a bare ci- with nothing after it is refused" "$gitlab" ci-

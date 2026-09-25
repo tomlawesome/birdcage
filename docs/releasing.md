@@ -88,9 +88,10 @@ Owner, 2026-09-25 (#90). The release path puts these names on a digest,
 and no others:
 
 - `vX.Y.Z`, digits only -- the version tag; never moves.
-- `preview`, `latest` -- channel names; they move.
+- `preview`, `latest` -- channel names; they move, and are the only names
+  `publish-channel.sh` will move.
 - `sha-<40 lowercase hex>` -- the per-commit anchor.
-- `ci-...` -- `build:images` transport tags; GitLab registry only, never
+- `ci-<pipeline id>` -- `build:images` transport tags; GitLab registry only, never
   mirrored to GHCR.
 - `sha256-<hex>.att` -- cosign's own attestation object, named by cosign;
   only `scripts/mirror-image.sh` may copy it.

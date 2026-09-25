@@ -108,6 +108,10 @@ main() {
     fail "not a valid Docker channel tag: ${tag}"
   image_tag_check "$repo" "$tag" ||
     fail "refusing to publish ${repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
+  # A channel moves; a version or anchor tag never does, so this script
+  # only ever moves the two channel names.
+  [[ "$tag" =~ ^(preview|latest)$ ]] ||
+    fail "refusing to move ${repo}:${tag}: only preview and latest are channels; version and sha- tags never move"
 
   : "${BIRDCAGE_COMMIT:?BIRDCAGE_COMMIT is required: the commit the publisher is acting for}"
   [[ "$BIRDCAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||

@@ -26,7 +26,7 @@ IMAGE_TAG_POLICY_GITLAB_REGISTRY="registry.gitlab.tomlawson.io"
 image_tag_check() {
   local repo="${1:-}" tag="${2:-}" allow_att="${3:-}"
   local host="${repo%%/*}"
-  local why="allowed: vX.Y.Z, preview, latest, sha-<40 lowercase hex>, ci-* on ${IMAGE_TAG_POLICY_GITLAB_REGISTRY} only"
+  local why="allowed: vX.Y.Z, preview, latest, sha-<40 lowercase hex>, ci-<pipeline id> on ${IMAGE_TAG_POLICY_GITLAB_REGISTRY} only"
 
   case "$allow_att" in
     ''|--cosign-attestation) ;;
@@ -37,7 +37,7 @@ image_tag_check() {
      [[ "$tag" =~ ^sha-[0-9a-f]{40}$ ]]; then
     return 0
   fi
-  if [[ "$tag" =~ ^ci-[A-Za-z0-9._-]{1,125}$ ]]; then
+  if [[ "$tag" =~ ^ci-[0-9]{1,20}$ ]]; then
     [ "$host" = "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" ] && return 0
     printf 'image-tag-policy: refused tag %s on %s: ci- transport tags live on %s only\n' \
       "'$tag'" "$repo" "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" >&2
