@@ -532,4 +532,63 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
     expect(plainText(s.hero)).toContain("canary-srv's token rotation has stalled")
   })
+
+  // Gap closed for #45: "all quiet" (rule 4) must never render while any
+  // agent is in one of status.ts's alarm tiers -- kind 'silent' and kind
+  // 'critical' (token_conflict, credential_conflict, not_delivering,
+  // self_test_failed, db_stale, throttled). status.ts's kind 'degraded'
+  // (rotation_stalled, renewal_stalled) is a separate, softer tier and
+  // is already covered above ("still outranks pending" etc.), not here.
+  // Table-driven so a future alarm-tier state added to status.ts without
+  // a matching row here is a visible gap, not a silent one.
+  describe('"all quiet" never renders while an agent is in an alarm-tier state', () => {
+    const alarmStates: [string, Canary['status'], Partial<Canary>][] = [
+      ['silent', 'silent', { silent_for_s: 372 }],
+      ['token_conflict', 'token_conflict', { token_conflict_for_s: 300 }],
+      [
+        'credential_conflict',
+        'credential_conflict',
+        { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } },
+      ],
+      ['not_delivering', 'not_delivering', { not_delivering: true }],
+      [
+        'not_delivering (certificate_expired)',
+        'not_delivering',
+        { not_delivering: true, certificate_expired: true },
+      ],
+      ['self_test_failed', 'self_test_failed', { self_test_failed_services: ['vnc'] }],
+      [
+        'db_stale',
+        'db_stale',
+        { db_refresh: { failing_since: '2026-09-04T22:04:31Z', last_error: 'dial tcp: i/o timeout' } },
+      ],
+      ['throttled', 'throttled', { throttled_for_s: 120 }],
+    ]
+
+    it.each(alarmStates)(
+      '%s with no recent hits: hero is not rule 4 (all quiet)',
+      (_label, status, extra) => {
+        const bad = canary('canary-iot', status, extra)
+        const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+        expect(s.rule).not.toBe(4)
+      },
+    )
+
+    it('several agents, only one alarm-tier: still not rule 4', () => {
+      const s = computeSentence(
+        [
+          canary('canary-lan', 'ok'),
+          canary('canary-srv', 'ok'),
+          canary('canary-iot', 'self_test_failed', { self_test_failed_services: ['vnc'] }),
+          canary('canary-guest', 'ok'),
+          canary('canary-extra', 'ok'),
+        ],
+        [],
+        '14d',
+        now,
+        lastHit,
+      )
+      expect(s.rule).not.toBe(4)
+    })
+  })
 })
