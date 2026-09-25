@@ -299,6 +299,9 @@ start_postgres() {
   die "postgres did not become ready"
 }
 
+# start_birdcage's arguments, if any, are extra `docker run` flags placed
+# before the image name -- only ever from restart_birdcage below, for a
+# journey whose configuration has to exist before birdcage reads it.
 start_birdcage() {
   # Hardening matches test:image:birdcage: read-only root, every
   # capability dropped, no-new-privileges. A journey that only passes
@@ -353,6 +356,7 @@ start_birdcage() {
     --env BIRDCAGE_ADVERTISE_HOST="$BIRDCAGE" \
     "${db_env[@]}" \
     "${ttl_env[@]}" \
+    "$@" \
     "$BIRDCAGE_IMAGE" >/dev/null || die "starting $BIRDCAGE failed"
 
   # own-ca mode has no throwaway dashboard CA to trust against -- wait
@@ -384,6 +388,35 @@ start_birdcage() {
   log "the dashboard never answered GET /api/alerts over TLS; birdcage log follows"
   docker logs "$BIRDCAGE" >&2 || true
   die "birdcage did not become ready"
+}
+
+# restart_birdcage replaces the birdcage container with a new one on the
+# same data volume, the same flags start_birdcage always uses, plus the
+# `docker run` flags it was given -- for configuration birdcage only
+# reads at startup and that depends on something a later stack script
+# stands up (scripts/e2e/mail-stack.sh's mail server, #80). The database
+# and birdcage's own CA live in the data volume, so the canary enrolled
+# by `up` carries on against the new process without re-enrolling.
+#
+# Everything start_birdcage reads from `up`'s own variables arrives here
+# through the environment `up` exported (E2E_BACKEND and the rest), so a
+# restart comes back on the same engine and in the same dashboard mode.
+restart_birdcage() {
+  [ -n "${E2E_BIRDCAGE:-}" ] || die "E2E_BIRDCAGE unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
+  if [ "$E2E_BACKEND" = postgres ] && [ -z "${E2E_DATABASE_URL:-}" ]; then
+    E2E_DATABASE_URL="$(postgres_url)"
+  fi
+  docker rm --force "$BIRDCAGE" >/dev/null || die "removing $BIRDCAGE failed"
+  start_birdcage "$@"
+  log "restarted $BIRDCAGE with $# extra docker run argument(s)"
+}
+
+# postgres_url is the DATABASE_URL for the Postgres `up` starts itself.
+# sslrootcert names a path inside the birdcage container, not this
+# host: /tls is TLS_VOL, mounted read-only into $BIRDCAGE, and
+# build_postgres_tls_image already wrote the CA there.
+postgres_url() {
+  printf 'postgres://postgres:e2e@%s:5432/birdcage?sslmode=verify-full&sslrootcert=/tls/postgres-ca.pem' "$PG"
 }
 
 # copy_birdcage_ca puts birdcage's *own* CA certificate (the one that
@@ -530,10 +563,7 @@ up() {
   if [ "$E2E_BACKEND" = postgres ] && [ -z "${E2E_DATABASE_URL:-}" ]; then
     build_postgres_tls_image
     start_postgres
-    # sslrootcert names a path inside the birdcage container, not this
-    # host: /tls is TLS_VOL, mounted read-only into $BIRDCAGE below, and
-    # build_postgres_tls_image already wrote the CA there.
-    E2E_DATABASE_URL="postgres://postgres:e2e@$PG:5432/birdcage?sslmode=verify-full&sslrootcert=/tls/postgres-ca.pem"
+    E2E_DATABASE_URL="$(postgres_url)"
   fi
   start_birdcage
   copy_birdcage_ca
@@ -593,6 +623,7 @@ case "${1:-}" in
   logs) shift; docker logs "${1:-$BIRDCAGE}" 2>&1 ;;
   helper) shift; helper "$@" ;;
   birdcage) shift; docker exec "$BIRDCAGE" /birdcage "$@" ;;
+  restart-birdcage) shift; restart_birdcage "$@" ;;
   # query runs one read-only SQL statement against whichever engine is
   # underneath and prints the rows, so a journey asserting on something
   # with no API -- the audit log, today -- reads the same on both.
@@ -622,6 +653,6 @@ case "${1:-}" in
     case "$1" in */*|"") die "write-work takes a bare file name, not a path" ;; esac
     helper_in "cat > /work/$1; chmod 600 /work/$1" ;;
   *)
-    echo "usage: $0 {up|down|logs [container]|helper <sh command>|birdcage <args>|query <sql>|write-work <name>}" >&2
+    echo "usage: $0 {up|down|logs [container]|helper <sh command>|birdcage <args>|restart-birdcage [docker run flags]|query <sql>|write-work <name>}" >&2
     exit 2 ;;
 esac
