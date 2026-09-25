@@ -101,6 +101,7 @@ of it by this issue.
 | `e2e:agent-credentials:postgres` | The same journeys against the other engine: `client_certs`' own migration comment warns the two engines compare stored timestamps at different resolutions, and this feature's health signals (`renewal_stalled`, `certificate_expired`) are computed entirely from those comparisons. |
 | `e2e:smb` | The OpenCanary `full_audit` parse is brittle by nature -- a fixed-index read of a third-party log line. |
 | `e2e:smb-lure` | The lure is the one container the design expects to be attacked, and this is the only check that runs the image that ships: that its hardening flags actually let Samba start, that 445 really lands on the canary's own address, and that one file opened is one alert rather than the five audit lines behind it (#123). Three of its findings were things no unit test could reach -- see the journey's own comments. |
+| `e2e:mail` | #80: outbound mail and the approval mailbox against a real Postfix and Dovecot (`build/e2e-mail`, test-only). Mail is where servers disagree with a client -- the first run found Postfix refusing an oversize message at the end of DATA in words no unit test had used -- and the refusal to send in the clear only means something against a server that really does not offer STARTTLS. |
 | `e2e:dashboard-own-ca` | The minted-certificate default. TLS setup is easy to break and hard to notice. |
 | `e2e:snmp` | Our own UDP parser, not a third party's. Parser changes are source changes. |
 | `e2e:portscan` | The capability and the BPF filter only prove anything against the real image -- #65's own trap was a filter that passed every unit test and matched nothing. `test:image:mockingbird` deliberately cannot cover this: it keeps `--security-opt no-new-privileges`, which is exactly what turns the feature off. |
@@ -119,6 +120,7 @@ only for `enrol-and-hit`.
 | `e2e:snmp:postgres` | As above. |
 | `e2e:smb-lure:postgres` | More than "as above": this journey's assertions are reads of stored alerts rather than of a log line -- the ids it counts from, and the "exactly one" the collapser is judged by, both come out of the store -- so the engine is in the path being tested, not beside it. |
 | `e2e:dashboard-own-ca:postgres` | As above. |
+| `e2e:mail:postgres` | More than "as above", for the reason `e2e:smb-lure:postgres` gives: every assertion reads `mail_outbox` -- sent or not, attempts, the scrubbed error, what is still owed -- and the fleet-wide hourly cap counts those rows with an engine-specific time comparison. |
 | `e2e:scanner:postgres` | As above -- migration 0014's `scan_snapshots` table has a Postgres variant, and the difference worth catching is in how the receipt is written, not in how Nightjar scans. |
 | `test:smoke:safari` | Browser coverage widens here (#83): Safari (WebKit in Playwright) is worth a release pipeline and not worth every branch. `test:smoke` itself stays at hop 1 too -- this adds to it, nothing moved off Firefox. |
 | `test:smoke:edge` | As above, Edge (Chromium with the `msedge` channel). |
