@@ -334,7 +334,7 @@
       >
       <span>&#9678; {status.visitorCount} visitors &middot; {RANGE_LABELS[activeRange]}</span>
     {:else if status.kind === 'live'}
-      <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {status.total} canaries</span>
+      <span><span class="dot" aria-hidden="true"></span>LIVE &middot; {status.total} agents</span>
       {#if status.flagCount > 0}<span class="flag">&#9873; <b>{status.flagCount}</b></span>{/if}
       <span>&#9678; {status.visitorCount} visitors</span>
     {:else}
@@ -371,7 +371,7 @@
         <CanaryPage page={canaryPage} {trace} {visitors} {history} runs={canaryRuns} range={activeRange} />
       {:else}
         <div class="state-line">
-          {#if canaryFailed}there is no canary called {route.id} &middot; <a href={cageHref}>back to the cage</a>{:else}listening
+          {#if canaryFailed}there is no agent called {route.id} &middot; <a href={cageHref}>back to the cage</a>{:else}listening
             for {route.id}&hellip;{/if}
         </div>
       {/if}

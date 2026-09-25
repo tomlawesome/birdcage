@@ -65,7 +65,7 @@ func TestMigrateIdempotent(t *testing.T) {
 
 			assertTableHasColumns(t, database, "alerts",
 				"id,instance_id,source_ip,dest_port,service,raw,received_at,event_id,synthetic")
-			assertRowInsertable(t, database, "alerts", "audit_log", "canary_tokens")
+			assertRowInsertable(t, database, "alerts", "audit_log", "agent_tokens")
 			assertAuditLogAppendOnly(t, database)
 		})
 	}

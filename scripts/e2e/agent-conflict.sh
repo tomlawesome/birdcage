@@ -62,7 +62,7 @@ step "birdcage canary revoke ends the credential for both holders"
 revoke_output="$("$E2E_STACK" birdcage canary revoke "$E2E_CANARY_ID")" \
   || fail "birdcage canary revoke $E2E_CANARY_ID did not run"
 case "$revoke_output" in
-  *"revoked canary $E2E_CANARY_ID: "*" token(s), "*" certificate(s)"*) ok "$revoke_output" ;;
+  *"revoked agent $E2E_CANARY_ID: "*" token(s), "*" certificate(s)"*) ok "$revoke_output" ;;
   *) fail "revoke did not confirm the expected canary/counts: $revoke_output" ;;
 esac
 

@@ -102,7 +102,7 @@ type mailConn interface {
 
 // mailColumns is the one SELECT list every reader below shares, so a
 // column added to the table has one place to be added to the scan.
-const mailColumns = `id, kind, canary_id, subject, body, created_at, attempts, next_attempt_at, last_error, sent_at, suppressed_count`
+const mailColumns = `id, kind, agent_id, subject, body, created_at, attempts, next_attempt_at, last_error, sent_at, suppressed_count`
 
 // EnqueueMail writes m as a row still owed. Normally that is called
 // inside internal/history's own transaction, so the mail and the state
@@ -135,7 +135,7 @@ func EnqueueMail(ctx context.Context, database db.Conn, m MailMessage) error {
 		suppressed = 0
 	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO mail_outbox (kind, canary_id, subject, body, created_at, attempts, next_attempt_at, last_error, sent_at, suppressed_count)
+		INSERT INTO mail_outbox (kind, agent_id, subject, body, created_at, attempts, next_attempt_at, last_error, sent_at, suppressed_count)
 		VALUES (?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?)`,
 		m.Kind, canaryID, m.Subject, m.Body,
 		m.CreatedAt.UTC().Format(receivedAtLayout),
@@ -190,7 +190,7 @@ func LatestMail(ctx context.Context, database mailConn, kind MailKind, canaryID 
 	query := `SELECT ` + mailColumns + ` FROM mail_outbox WHERE kind = ?`
 	args := []any{string(kind)}
 	if canaryID != "" {
-		query += ` AND canary_id = ?`
+		query += ` AND agent_id = ?`
 		args = append(args, canaryID)
 	}
 	messages, err := queryMail(ctx, database, query, args...)

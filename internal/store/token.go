@@ -100,7 +100,7 @@ func MintCanaryToken(ctx context.Context, database db.Conn, canaryID string, cre
 	createdAt = createdAt.UTC()
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO canary_tokens (id, canary_id, token_hash, created_at)
+		INSERT INTO agent_tokens (id, agent_id, token_hash, created_at)
 		VALUES (?, ?, ?, ?)`,
 		id, canaryID, HashToken(raw), createdAt.Format(receivedAtLayout))
 	if err != nil {
@@ -120,12 +120,12 @@ func MintCanaryToken(ctx context.Context, database db.Conn, canaryID string, cre
 // from a hash that matches no row at all: both return ErrTokenNotFound.
 func LookupCanaryTokenByHash(ctx context.Context, database *db.DB, hash string) (CanaryToken, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT canary_tokens.id, canary_tokens.canary_id, canary_tokens.created_at,
-			canary_tokens.last_used_at, canary_tokens.revoked_at, canaries.kind,
-			canary_tokens.cert_fingerprint
-		FROM canary_tokens
-		LEFT JOIN canaries ON canaries.id = canary_tokens.canary_id
-		WHERE canary_tokens.token_hash = ? AND canary_tokens.revoked_at IS NULL`, hash)
+		SELECT agent_tokens.id, agent_tokens.agent_id, agent_tokens.created_at,
+			agent_tokens.last_used_at, agent_tokens.revoked_at, agents.kind,
+			agent_tokens.cert_fingerprint
+		FROM agent_tokens
+		LEFT JOIN agents ON agents.id = agent_tokens.agent_id
+		WHERE agent_tokens.token_hash = ? AND agent_tokens.revoked_at IS NULL`, hash)
 	return scanCanaryTokenWithKind(row)
 }
 
@@ -223,8 +223,8 @@ func finishCanaryToken(t CanaryToken, createdAt string, lastUsedAt, revokedAt *s
 // at all is exactly what the ingest auth path must not be able to do.
 func LookupCanaryTokenByHashAnyStatus(ctx context.Context, database *db.DB, hash string) (CanaryToken, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT id, canary_id, created_at, last_used_at, revoked_at
-		FROM canary_tokens
+		SELECT id, agent_id, created_at, last_used_at, revoked_at
+		FROM agent_tokens
 		WHERE token_hash = ?`, hash)
 	return scanCanaryToken(row)
 }
@@ -240,8 +240,8 @@ func LookupCanaryTokenByHashAnyStatus(ctx context.Context, database *db.DB, hash
 // transaction as the revoke and its audit write.
 func LookupCanaryTokenByID(ctx context.Context, database db.Conn, id string) (CanaryToken, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT id, canary_id, created_at, last_used_at, revoked_at
-		FROM canary_tokens
+		SELECT id, agent_id, created_at, last_used_at, revoked_at
+		FROM agent_tokens
 		WHERE id = ?`, id)
 	return scanCanaryToken(row)
 }
@@ -253,9 +253,9 @@ func LookupCanaryTokenByID(ctx context.Context, database db.Conn, id string) (Ca
 // either, so there is nothing here a caller could print by mistake.
 func ListCanaryTokens(ctx context.Context, database *db.DB) ([]CanaryToken, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_id, created_at, last_used_at, revoked_at
-		FROM canary_tokens
-		ORDER BY canary_id, created_at`)
+		SELECT id, agent_id, created_at, last_used_at, revoked_at
+		FROM agent_tokens
+		ORDER BY agent_id, created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list canary tokens: %w", err)
 	}
@@ -284,9 +284,9 @@ func ListCanaryTokens(ctx context.Context, database *db.DB) ([]CanaryToken, erro
 // reintroduce the trimmed-fractional-second bug).
 func ListCanaryTokensForCanary(ctx context.Context, database *db.DB, canaryID string) ([]CanaryToken, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_id, created_at, last_used_at, revoked_at
-		FROM canary_tokens
-		WHERE canary_id = ?`, canaryID)
+		SELECT id, agent_id, created_at, last_used_at, revoked_at
+		FROM agent_tokens
+		WHERE agent_id = ?`, canaryID)
 	if err != nil {
 		return nil, fmt.Errorf("list canary tokens for canary: %w", err)
 	}
@@ -315,7 +315,7 @@ func ListCanaryTokensForCanary(ctx context.Context, database *db.DB, canaryID st
 func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string) (bool, error) {
 	var n int
 	err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM canary_tokens WHERE canary_id = ? AND revoked_at IS NULL`,
+		`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = ? AND revoked_at IS NULL`,
 		canaryID).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("count active canary tokens: %w", err)
@@ -355,8 +355,8 @@ func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string)
 // had if it was somehow revoked a moment earlier.
 func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok CanaryToken, at time.Time) (int64, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, created_at FROM canary_tokens
-		 WHERE canary_id = ? AND id != ? AND revoked_at IS NULL`,
+		`SELECT id, created_at FROM agent_tokens
+		 WHERE agent_id = ? AND id != ? AND revoked_at IS NULL`,
 		tok.CanaryID, tok.ID)
 	if err != nil {
 		return 0, fmt.Errorf("list live canary tokens: %w", err)
@@ -388,7 +388,7 @@ func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok Ca
 	var revoked int64
 	for _, id := range older {
 		res, err := database.ExecContext(ctx,
-			`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?)
+			`UPDATE agent_tokens SET revoked_at = COALESCE(revoked_at, ?)
 			 WHERE id = ? AND revoked_at IS NULL`,
 			at.UTC().Format(receivedAtLayout), id)
 		if err != nil {
@@ -416,7 +416,7 @@ func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok Ca
 // internal/ingest/rotate.go uses for mint-plus-audit.
 func RevokeCanaryToken(ctx context.Context, database db.Conn, id string, at time.Time) error {
 	res, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
+		`UPDATE agent_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
 		at.UTC().Format(receivedAtLayout), id)
 	if err != nil {
 		return fmt.Errorf("revoke canary token: %w", err)
@@ -437,7 +437,7 @@ func RevokeCanaryToken(ctx context.Context, database db.Conn, id string, at time
 // id names no row.
 func RecordCanaryTokenUse(ctx context.Context, database *db.DB, id string, at time.Time) error {
 	res, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET last_used_at = ? WHERE id = ?`,
+		`UPDATE agent_tokens SET last_used_at = ? WHERE id = ?`,
 		at.UTC().Format(receivedAtLayout), id)
 	if err != nil {
 		return fmt.Errorf("record canary token use: %w", err)

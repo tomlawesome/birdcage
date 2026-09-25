@@ -111,7 +111,7 @@ func runCommandPollLoop(ctx context.Context, cli *client.Client, token string, o
 		cmd, err := cli.PollCommand(ctx, token)
 		if err != nil {
 			if client.IsUnauthorized(err) {
-				commandLog.Warn("poll: token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+				commandLog.Warn("poll: token unauthorized -- this agent has no channel to birdcage; recovery is re-enrolment (#47)")
 			} else {
 				commandLog.Warn(fmt.Sprintf("poll: failed, will retry next cycle: %s", safeErr(err)))
 			}

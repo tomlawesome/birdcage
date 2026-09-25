@@ -45,7 +45,7 @@ describe('rule 2 -- any silent canary (silent fixture)', () => {
   it('sub matches SILENT_SUB from gen.py', () => {
     const s = computeSentence(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, silent.trace.last_hit)
     expect(plainText(s.sub)).toBe(
-      'Its last heartbeat was 21:58:19, six minutes ago; it phones home every minute. A silent canary is not the ' +
+      'Its last heartbeat was 21:58:19, six minutes ago; it phones home every minute. A silent agent is not the ' +
         'quiet we want — the host may be down, or its firewall rule on the router may have moved. The other three are fine.',
     )
   })

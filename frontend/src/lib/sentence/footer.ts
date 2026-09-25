@@ -32,7 +32,7 @@ export function computeFooter(
   if (worst?.status === 'silent') {
     const silentCount = canaries.filter((c) => c.status === 'silent').length
     const silentPhrase =
-      silentCount === 1 ? 'one canary has stopped talking' : `${wordOrNumber(silentCount)} canaries have stopped talking`
+      silentCount === 1 ? 'one agent has stopped talking' : `${wordOrNumber(silentCount)} agents have stopped talking`
     return [
       { text: `${numberToWords(days)} quiet days · ` },
       { text: silentPhrase, bold: true },
@@ -49,7 +49,7 @@ export function computeFooter(
   if (worst) {
     const n = canaries.filter((c) => c.status !== 'ok').length
     const attention =
-      n === 1 ? `${worst.name} needs attention` : `${wordOrNumber(n)} canaries need attention`
+      n === 1 ? `${worst.name} needs attention` : `${wordOrNumber(n)} agents need attention`
     // ADR-0012 Part B (#130): credential_conflict is ranked with
     // token_conflict (same red severity, never auto-cleared), so it
     // earns the same act-now tail here.

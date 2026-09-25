@@ -67,7 +67,7 @@ describe('the four round-7 scenes', () => {
     const input = sceneInput('silent')
     input.history!.periods = input.history!.periods.filter((p) => p.ended_at === null)
     const sub = plainText(canarySentence(input).sub)
-    expect(sub).toContain('A silent canary is not the quiet we want')
+    expect(sub).toContain('A silent agent is not the quiet we want')
     expect(sub).not.toContain('is not a bad minute')
   })
 })
@@ -91,7 +91,7 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
     expect(hero).toBe("canary-iot's credential is live in two places at once.")
     expect(sub).toContain('credential in use from two addresses: 10.0.0.1 and 10.0.0.2.')
-    expect(sub).toContain('Revoke the node (birdcage canary revoke <canary-id>) and re-enrol it.')
+    expect(sub).toContain('Revoke the node (birdcage agent revoke <agent-id>) and re-enrol it.')
   })
 
   it('credential_conflict: names the two build versions when only they are sent', () => {

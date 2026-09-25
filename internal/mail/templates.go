@@ -18,7 +18,7 @@ import (
 // those places, and would also tell anyone watching the operator's
 // notifications which box to go and wipe. It says what happened and
 // nothing about where.
-const TokenConflictSubject = "birdcage: a canary presented a revoked credential"
+const TokenConflictSubject = "birdcage: an agent presented a revoked credential"
 
 // maxNameRunes bounds how long a canary's name may be before this
 // package stops trying to show it. A name is whoever named the canary's
@@ -82,14 +82,14 @@ type TokenConflictAlert struct {
 func TokenConflictBody(a TokenConflictAlert) string {
 	var b strings.Builder
 
-	b.WriteString("A canary presented a credential birdcage had already revoked.\n\n")
+	b.WriteString("An agent presented a credential birdcage had already revoked.\n\n")
 
 	b.WriteString("What happened\n")
 	if name, ok := displayName(a.CanaryName); ok {
-		fmt.Fprintf(&b, "  - Canary: %s (id %s)\n", name, displayID(a.CanaryID))
+		fmt.Fprintf(&b, "  - Agent: %s (id %s)\n", name, displayID(a.CanaryID))
 	} else {
-		fmt.Fprintf(&b, "  - Canary id: %s\n", displayID(a.CanaryID))
-		b.WriteString("  - The canary's name is withheld: it did not survive birdcage's own\n    check on the text before sending it.\n")
+		fmt.Fprintf(&b, "  - Agent id: %s\n", displayID(a.CanaryID))
+		b.WriteString("  - The agent's name is withheld: it did not survive birdcage's own\n    check on the text before sending it.\n")
 	}
 	fmt.Fprintf(&b, "  - When: %s\n", a.At.UTC().Format(time.RFC1123))
 	if a.SuppressedCount > 0 && !a.SuppressedSince.IsZero() {
@@ -98,12 +98,12 @@ func TokenConflictBody(a TokenConflictAlert) string {
 	}
 
 	b.WriteString("\nWhat it probably means\n")
-	b.WriteString("  - The token was stolen, and whoever took it rotated it before the\n    canary did. The real canary is now holding the older credential.\n")
-	b.WriteString("  - Or two machines are running as one canary: a clone, a restored\n    snapshot, or the same install deployed twice.\n")
+	b.WriteString("  - The token was stolen, and whoever took it rotated it before the\n    agent did. The real agent is now holding the older credential.\n")
+	b.WriteString("  - Or two machines are running as one agent: a clone, a restored\n    snapshot, or the same install deployed twice.\n")
 
 	b.WriteString("\nWhat to do\n")
 	b.WriteString("  - Look at that box now. This is the one state birdcage will wake you\n    up for.\n")
-	b.WriteString("  - Open birdcage the way you always do, and read the canary there.\n")
+	b.WriteString("  - Open birdcage the way you always do, and read the agent there.\n")
 
 	b.WriteString("\nThis message carries no link, no token and no detail of what was seen,\n")
 	b.WriteString("on purpose: the mailbox it arrived in is outside birdcage's trust\n")

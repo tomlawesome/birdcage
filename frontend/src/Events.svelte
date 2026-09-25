@@ -64,7 +64,7 @@
 {/if}
 
 <div class="legend" style:top="1057px">
-  <span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span>
+  <span><span class="ln"></span>a line is an agent's heartbeat, unbroken</span>
   <span><span class="gap"></span>a drop is silence</span>
   <span
     >a rise is a visitor, its words at the top, by kind: <i style:background="var(--sweep)"></i>sweep <i

@@ -59,10 +59,12 @@ advance:
   `created_at`. One row per automated action birdcage takes. Append-only by
   convention and by a database trigger -- the application layer must never
   issue `UPDATE`/`DELETE` against it.
-- **`canaries`**: the registry of enrolled OpenCanary instances (#34) --
-  `id` (the same value `alerts.instance_id` carries), `name`, `lane`,
-  `ports`, `heartbeat_interval_s`, `enrolled_at`, `last_heartbeat_at`.
-- **`heartbeats`**: `canary_id`, `at`. One row per phone-home
+- **`agents`**: the registry of enrolled nodes (#34; renamed from
+  `canaries` in #107 once ADR-0009 gave a node a kind -- a canary is one
+  kind, not the category) -- `id` (the same value `alerts.instance_id`
+  carries), `name`, `lane`, `kind`, `ports`, `heartbeat_interval_s`,
+  `enrolled_at`, `last_heartbeat_at`.
+- **`heartbeats`**: `agent_id`, `at`. One row per phone-home
   (`POST /api/heartbeat`), pruned to the last 24h on insert (#34).
 
 Accounts, sessions and tokens follow mikroview's shapes (ADR-0003); their

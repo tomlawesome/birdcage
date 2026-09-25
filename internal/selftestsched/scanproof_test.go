@@ -33,7 +33,7 @@ func openScanRunCount(t *testing.T, database *db.DB, canaryID string) int {
 	var n int
 	if err := database.QueryRow(`
 		SELECT COUNT(*) FROM self_test_runs
-		WHERE canary_id = ? AND completed_at IS NULL AND stage IS NOT NULL`, canaryID).Scan(&n); err != nil {
+		WHERE agent_id = ? AND completed_at IS NULL AND stage IS NOT NULL`, canaryID).Scan(&n); err != nil {
 		t.Fatalf("count open scan runs for %s: %v", canaryID, err)
 	}
 	return n
@@ -76,8 +76,8 @@ func TestRetryPendingMintsScanForPendingScanner(t *testing.T) {
 		}
 		var kind, stage string
 		if err := database.QueryRow(`
-			SELECT c.kind, r.stage FROM self_test_runs r JOIN canary_commands c ON c.id = r.command_id
-			WHERE r.canary_id = ?`, "scanner-a").Scan(&kind, &stage); err != nil {
+			SELECT c.kind, r.stage FROM self_test_runs r JOIN agent_commands c ON c.id = r.command_id
+			WHERE r.agent_id = ?`, "scanner-a").Scan(&kind, &stage); err != nil {
 			t.Fatalf("read minted run: %v", err)
 		}
 		if kind != string(store.CommandScan) || stage != string(store.StageOrdered) {
@@ -259,7 +259,7 @@ func TestScheduledTickNeverMintsForRegisteredScanner(t *testing.T) {
 func TestUnknownKindPendingCanaryStaysPendingAndIsLogged(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-		if _, err := database.Exec(`INSERT INTO canaries (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at)
+		if _, err := database.Exec(`INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at)
 			VALUES ('odd', 'odd', 'lan', 'bogus', '', 60, ?)`, now.Format(time.RFC3339Nano)); err != nil {
 			t.Fatalf("insert: %v", err)
 		}

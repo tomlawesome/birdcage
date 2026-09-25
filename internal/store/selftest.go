@@ -73,7 +73,7 @@ type SelfTestTarget struct {
 // hook so neither path can race the other into minting twice.
 func HasRecentSelfTestRun(ctx context.Context, database *db.DB, canaryID string, since time.Time) (bool, error) {
 	query := fmt.Sprintf(`
-		SELECT COUNT(*) FROM self_test_runs WHERE canary_id = ? AND %s`,
+		SELECT COUNT(*) FROM self_test_runs WHERE agent_id = ? AND %s`,
 		timeCompare(database.Engine, "issued_at", ">="))
 	var n int
 	if err := database.QueryRowContext(ctx, query, canaryID, since.UTC().Format(receivedAtLayout)).Scan(&n); err != nil {
@@ -139,7 +139,7 @@ func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestInde
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at)
+		INSERT INTO self_test_runs (command_id, agent_id, run_id, issued_at, deadline_at)
 		VALUES (?, ?, ?, ?, ?)`,
 		cmd.ID, canaryID, runID, cmd.CreatedAt.Format(receivedAtLayout), cmd.ExpiresAt.Format(receivedAtLayout)); err != nil {
 		return CanaryCommand{}, fmt.Errorf("insert self_test_runs: %w", err)
@@ -394,8 +394,8 @@ type SelfTestRun struct {
 // costs nothing worth avoiding.
 func LatestCompletedSelfTestRun(ctx context.Context, database *db.DB, canaryID string) (run SelfTestRun, ok bool, err error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT command_id, canary_id, run_id, issued_at, deadline_at, completed_at, passed
-		FROM self_test_runs WHERE canary_id = ? AND completed_at IS NOT NULL`, canaryID)
+		SELECT command_id, agent_id, run_id, issued_at, deadline_at, completed_at, passed
+		FROM self_test_runs WHERE agent_id = ? AND completed_at IS NOT NULL`, canaryID)
 	if err != nil {
 		return SelfTestRun{}, false, fmt.Errorf("query self_test_runs: %w", err)
 	}
@@ -583,8 +583,8 @@ func (idx *SelfTestIndex) ensureLoaded(ctx context.Context, database *db.DB) err
 	}
 	now := time.Now().UTC()
 	rows, err := database.QueryContext(ctx, `
-		SELECT canary_id, params, expires_at
-		FROM canary_commands
+		SELECT agent_id, params, expires_at
+		FROM agent_commands
 		WHERE kind = ?`, string(CommandSelfTest))
 	if err != nil {
 		return fmt.Errorf("query selftest commands: %w", err)

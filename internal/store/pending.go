@@ -28,7 +28,7 @@ import (
 // one.
 func SettlePending(ctx context.Context, database db.Conn, canaryID string, at time.Time) error {
 	if _, err := database.ExecContext(ctx, `
-		UPDATE canaries SET registered_at = ?
+		UPDATE agents SET registered_at = ?
 		WHERE id = ? AND registered_at IS NULL`,
 		at.UTC().Format(receivedAtLayout), canaryID); err != nil {
 		return fmt.Errorf("settle pending canary %s: %w", canaryID, err)
@@ -51,7 +51,7 @@ func SettlePending(ctx context.Context, database db.Conn, canaryID string, at ti
 // MatchSelfTest's own doc comment already takes on this path.
 func settlePendingForCommand(ctx context.Context, database db.Conn, commandID string, at time.Time) error {
 	var canaryID string
-	err := database.QueryRowContext(ctx, `SELECT canary_id FROM self_test_runs WHERE command_id = ?`, commandID).Scan(&canaryID)
+	err := database.QueryRowContext(ctx, `SELECT agent_id FROM self_test_runs WHERE command_id = ?`, commandID).Scan(&canaryID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

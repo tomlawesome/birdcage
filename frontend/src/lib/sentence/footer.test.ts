@@ -25,7 +25,7 @@ describe('the footer sentence per state (issue #38)', () => {
   it('silent fixture matches gen.py\'s .foot', () => {
     const f = computeFooter(silent.canaries.canaries, silent.visitors.visitors, '14d', silent.trace.now, silent.trace.last_hit)
     expect(plainText(f)).toBe(
-      'twenty-three quiet days · one canary has stopped talking — silence is only good news while the heartbeat keeps coming',
+      'twenty-three quiet days · one agent has stopped talking — silence is only good news while the heartbeat keeps coming',
     )
   })
 
@@ -46,9 +46,9 @@ describe('the footer under issue #45 health states', () => {
 
   it('alerts fixture: counts all four, sends the operator to the conflict first', () => {
     const f = computeFooter(alerts.canaries.canaries, alerts.visitors.visitors, '14d', now, lastHit)
-    expect(plainText(f)).toBe('thirty-five quiet days · four canaries need attention — look at canary-iot first')
+    expect(plainText(f)).toBe('thirty-five quiet days · four agents need attention — look at canary-iot first')
     expect(f.find((seg) => seg.text === 'look at canary-iot first')?.cls).toBe('r')
-    expect(f.find((seg) => seg.text === 'four canaries need attention')?.bold).toBe(true)
+    expect(f.find((seg) => seg.text === 'four agents need attention')?.bold).toBe(true)
   })
 
   it('one conflicted canary alone: the ratified next step, in the alarm colour', () => {
@@ -66,11 +66,11 @@ describe('the footer under issue #45 health states', () => {
 
   it('silent still owns its own footer when it is the worst state', () => {
     const f = computeFooter([canary('canary-iot', 'silent'), canary('canary-guest', 'rotation_stalled')], [], '14d', now, lastHit)
-    expect(plainText(f)).toContain('one canary has stopped talking')
+    expect(plainText(f)).toContain('one agent has stopped talking')
   })
 
   it('a conflict outranks silent and counts it', () => {
     const f = computeFooter([canary('canary-iot', 'silent'), canary('canary-srv', 'token_conflict')], [], '14d', now, lastHit)
-    expect(plainText(f)).toBe('thirty-five quiet days · two canaries need attention — look at canary-srv first')
+    expect(plainText(f)).toBe('thirty-five quiet days · two agents need attention — look at canary-srv first')
   })
 })

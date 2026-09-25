@@ -98,7 +98,7 @@ func (s *Sender) EnqueueTokenConflict(ctx context.Context, conn Conn, canaryID, 
 		return fmt.Errorf("look up the last %s mail for %s: %w", kind, canaryID, err)
 	}
 	if previous != nil && now.Sub(previous.CreatedAt) < perCanaryCooldown {
-		return s.suppress(ctx, conn, kind, previous, "per-canary cooldown")
+		return s.suppress(ctx, conn, kind, previous, "per-agent cooldown")
 	}
 
 	recent, err := store.CountMailSince(ctx, conn, s.db.Engine, now.Add(-fleetCapWindow))

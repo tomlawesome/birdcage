@@ -128,8 +128,8 @@ func stateSortRank(state string) int {
 // filled (see StatePeriod's doc comment).
 func OpenStatePeriods(ctx context.Context, database historyConn) ([]StatePeriod, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_id, state, started_at, flap_count
-		FROM canary_state_periods
+		SELECT id, agent_id, state, started_at, flap_count
+		FROM agent_state_periods
 		WHERE ended_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query open state periods: %w", err)
@@ -187,7 +187,7 @@ func OpenStatePeriod(ctx context.Context, database db.Conn, p StatePeriod) error
 		endReason = *p.EndReason
 	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO canary_state_periods (canary_id, state, started_at, ended_at, flap_count, end_reason)
+		INSERT INTO agent_state_periods (agent_id, state, started_at, ended_at, flap_count, end_reason)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		p.CanaryID, p.State, p.StartedAt.UTC().Format(receivedAtLayout), endedAt, flapCount, endReason)
 	if err != nil {
@@ -209,7 +209,7 @@ func CloseStatePeriod(ctx context.Context, database db.Conn, id int64, endedAt t
 		return fmt.Errorf("store: CloseStatePeriod: endedAt is zero; callers must set it")
 	}
 	_, err := database.ExecContext(ctx, `
-		UPDATE canary_state_periods
+		UPDATE agent_state_periods
 		SET ended_at = ?, end_reason = ?
 		WHERE id = ? AND ended_at IS NULL`,
 		endedAt.UTC().Format(receivedAtLayout), reason, id)
@@ -227,7 +227,7 @@ func CloseStatePeriod(ctx context.Context, database db.Conn, id int64, endedAt t
 // records that it was re-entered.
 func ReopenStatePeriod(ctx context.Context, database db.Conn, id int64) error {
 	_, err := database.ExecContext(ctx, `
-		UPDATE canary_state_periods
+		UPDATE agent_state_periods
 		SET ended_at = NULL, end_reason = NULL, flap_count = flap_count + 1
 		WHERE id = ?`, id)
 	if err != nil {
@@ -249,8 +249,8 @@ func ReopenStatePeriod(ctx context.Context, database db.Conn, id int64) error {
 func LatestClosedStatePeriod(ctx context.Context, database historyConn, engine db.Engine, canaryID, state string, notBefore time.Time) (*StatePeriod, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, started_at, ended_at, flap_count
-		FROM canary_state_periods
-		WHERE canary_id = ? AND state = ? AND ended_at IS NOT NULL AND `+timeCompare(engine, "ended_at", ">=")+`
+		FROM agent_state_periods
+		WHERE agent_id = ? AND state = ? AND ended_at IS NOT NULL AND `+timeCompare(engine, "ended_at", ">=")+`
 		`, canaryID, state, notBefore.UTC().Format(receivedAtLayout))
 	if err != nil {
 		return nil, fmt.Errorf("query closed state periods for %s/%s: %w", canaryID, state, err)
@@ -307,9 +307,9 @@ func LatestClosedStatePeriod(ctx context.Context, database historyConn, engine d
 // display (SECURITY.md, "Output escaping").
 func ListStatePeriods(ctx context.Context, database *db.DB, since, until time.Time, canaryID string) ([]StatePeriod, error) {
 	query := `
-		SELECT p.id, p.canary_id, COALESCE(c.name, ''), p.state, p.started_at, p.ended_at, p.flap_count, p.end_reason
-		FROM canary_state_periods p
-		LEFT JOIN canaries c ON c.id = p.canary_id
+		SELECT p.id, p.agent_id, COALESCE(c.name, ''), p.state, p.started_at, p.ended_at, p.flap_count, p.end_reason
+		FROM agent_state_periods p
+		LEFT JOIN agents c ON c.id = p.agent_id
 		WHERE ` + timeCompare(database.Engine, "p.started_at", "<=") +
 		` AND (p.ended_at IS NULL OR ` + timeCompare(database.Engine, "p.ended_at", ">=") + `)`
 	args := []any{
@@ -317,7 +317,7 @@ func ListStatePeriods(ctx context.Context, database *db.DB, since, until time.Ti
 		since.UTC().Format(receivedAtLayout),
 	}
 	if canaryID != "" {
-		query += ` AND p.canary_id = ?`
+		query += ` AND p.agent_id = ?`
 		args = append(args, canaryID)
 	}
 

@@ -113,7 +113,7 @@ func MintCanaryCommand(ctx context.Context, database db.Conn, canaryID string, k
 		storedParams = params
 	}
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO canary_commands (id, canary_id, kind, params, created_at, expires_at)
+		INSERT INTO agent_commands (id, agent_id, kind, params, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		id, canaryID, string(kind), storedParams,
 		createdAt.Format(receivedAtLayout), expiresAt.Format(receivedAtLayout))
@@ -165,9 +165,9 @@ func ClaimNextCanaryCommand(ctx context.Context, database *db.DB, canaryID strin
 // which is how a caller fails closed.
 func ClaimNextCanaryCommandOfKinds(ctx context.Context, database *db.DB, canaryID string, allowed map[CommandKind]bool, now time.Time) (CanaryCommand, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_id, kind, params, created_at, expires_at
-		FROM canary_commands
-		WHERE canary_id = ? AND delivered_at IS NULL`, canaryID)
+		SELECT id, agent_id, kind, params, created_at, expires_at
+		FROM agent_commands
+		WHERE agent_id = ? AND delivered_at IS NULL`, canaryID)
 	if err != nil {
 		return CanaryCommand{}, fmt.Errorf("list pending canary commands: %w", err)
 	}
@@ -204,7 +204,7 @@ func ClaimNextCanaryCommandOfKinds(ctx context.Context, database *db.DB, canaryI
 
 	for _, cmd := range live {
 		res, err := database.ExecContext(ctx, `
-			UPDATE canary_commands SET delivered_at = ?
+			UPDATE agent_commands SET delivered_at = ?
 			WHERE id = ? AND delivered_at IS NULL`,
 			now.Format(receivedAtLayout), cmd.ID)
 		if err != nil {
@@ -230,8 +230,8 @@ func ClaimNextCanaryCommandOfKinds(ctx context.Context, database *db.DB, canaryI
 // command after it was handed over.
 func LookupCanaryCommand(ctx context.Context, database db.Conn, id string) (CanaryCommand, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT id, canary_id, kind, params, created_at, expires_at, delivered_at
-		FROM canary_commands WHERE id = ?`, id)
+		SELECT id, agent_id, kind, params, created_at, expires_at, delivered_at
+		FROM agent_commands WHERE id = ?`, id)
 	var (
 		cmd         CanaryCommand
 		kind        string

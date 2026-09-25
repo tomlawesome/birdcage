@@ -118,7 +118,7 @@ func TestImplicitTLSSendPinsTheMessage(t *testing.T) {
 
 		header := "From: birdcage@example.invalid\r\n" +
 			"To: admin@example.invalid\r\n" +
-			"Subject: birdcage: a canary presented a revoked credential\r\n" +
+			"Subject: birdcage: an agent presented a revoked credential\r\n" +
 			"Date: Thu, 17 Sep 2026 09:00:00 +0000\r\n" +
 			"Message-ID: <pinned-for-the-test@example.invalid>\r\n" +
 			"MIME-Version: 1.0\r\n" +

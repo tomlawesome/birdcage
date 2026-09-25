@@ -254,7 +254,7 @@ case "$contrast" in
 esac
 
 step "nothing was stored by either refused cross-post"
-noscan="$("$E2E_STACK" query "select count(*) from scan_snapshots where canary_id = '$E2E_CANARY_ID'")" \
+noscan="$("$E2E_STACK" query "select count(*) from scan_snapshots where agent_id = '$E2E_CANARY_ID'")" \
   || fail "could not query scan_snapshots: $noscan"
 case "$noscan" in
   0) ok "no scan_snapshots row for the honeypot's canary id" ;;

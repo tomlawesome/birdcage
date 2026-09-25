@@ -30,7 +30,7 @@ func TestMintCanaryTokenReturnsRawOnceAndStoresOnlyHash(t *testing.T) {
 
 		// The raw value is never stored: only its hash resolves.
 		var storedRaw string
-		row := database.QueryRow(`SELECT token_hash FROM canary_tokens WHERE id = ?`, token.ID)
+		row := database.QueryRow(`SELECT token_hash FROM agent_tokens WHERE id = ?`, token.ID)
 		if err := row.Scan(&storedRaw); err != nil {
 			t.Fatalf("scan token_hash: %v", err)
 		}
@@ -159,7 +159,7 @@ func TestLookupByHashNeverReturnsRevokedRow(t *testing.T) {
 			t.Fatalf("MintCanaryToken (stays active): %v", err)
 		}
 
-		if _, err := database.Exec(`UPDATE canary_tokens SET revoked_at = ? WHERE id = ?`,
+		if _, err := database.Exec(`UPDATE agent_tokens SET revoked_at = ? WHERE id = ?`,
 			"2026-01-02T00:00:00Z", revokedTok.ID); err != nil {
 			t.Fatalf("mark revoked directly: %v", err)
 		}
@@ -229,7 +229,7 @@ func TestRevokeCanaryTokenTwiceKeepsFirstTimestamp(t *testing.T) {
 		}
 
 		var revokedAt string
-		if err := database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`,
+		if err := database.QueryRow(`SELECT revoked_at FROM agent_tokens WHERE id = ?`,
 			token.ID).Scan(&revokedAt); err != nil {
 			t.Fatalf("read revoked_at: %v", err)
 		}
@@ -355,7 +355,7 @@ func TestRevokeCanaryTokensSupersededByRevokesOlderOnly(t *testing.T) {
 		revokedAtOf := func(id string) *string {
 			t.Helper()
 			var got *string
-			if err := database.QueryRow(`SELECT revoked_at FROM canary_tokens WHERE id = ?`, id).Scan(&got); err != nil {
+			if err := database.QueryRow(`SELECT revoked_at FROM agent_tokens WHERE id = ?`, id).Scan(&got); err != nil {
 				t.Fatalf("scan revoked_at: %v", err)
 			}
 			return got

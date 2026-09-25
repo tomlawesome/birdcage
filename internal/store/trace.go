@@ -239,9 +239,9 @@ func beatsByCanary(ctx context.Context, database *db.DB, now time.Time, window t
 	since := now.Add(-window).Format(receivedAtLayout)
 	nowStr := now.Format(receivedAtLayout)
 	query := fmt.Sprintf(`
-		SELECT canary_id, at FROM heartbeats
+		SELECT agent_id, at FROM heartbeats
 		WHERE %s AND %s
-		ORDER BY canary_id, at DESC`,
+		ORDER BY agent_id, at DESC`,
 		timeCompare(database.Engine, "at", ">="), timeCompare(database.Engine, "at", "<="))
 
 	rows, err := database.QueryContext(ctx, query, since, nowStr)

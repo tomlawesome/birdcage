@@ -75,7 +75,7 @@ type ScanSnapshot struct {
 // scanSnapshotColumns is the one SELECT list ListScanSnapshots reads,
 // kept in one place the way approvalColumns already is for this
 // package's approvals table.
-const scanSnapshotColumns = `id, canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths, db_refreshed_at, db_refresh_error, self_test_run_id`
+const scanSnapshotColumns = `id, agent_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths, db_refreshed_at, db_refresh_error, self_test_run_id`
 
 // RecordScanSnapshot inserts one receipt of a Nightjar scan. It is the
 // sole writer of scan_snapshots -- POST /ingest/scans' handler is its
@@ -117,7 +117,7 @@ func RecordScanSnapshot(ctx context.Context, database db.Conn, s ScanSnapshot) e
 	}
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO scan_snapshots (canary_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths,
+		INSERT INTO scan_snapshots (agent_id, taken_at, received_at, engine_name, engine_version, db_built_at, status, reason, finding_count, masked_paths,
 			db_refreshed_at, db_refresh_error, self_test_run_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.CanaryID, s.TakenAt.UTC().Format(receivedAtLayout), s.ReceivedAt.UTC().Format(receivedAtLayout),

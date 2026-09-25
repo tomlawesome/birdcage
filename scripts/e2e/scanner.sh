@@ -318,11 +318,11 @@ set_db_refresh_failing_since() { # set_db_refresh_failing_since <canary_id>
   ts="$(helper 'date -u -d "@$(( $(date +%s) - 90000 ))" +%Y-%m-%dT%H:%M:%S.000000000Z')" \
     || fail "could not compute a 25-hour-old timestamp" "$E2E_BIRDCAGE"
   if [ "$E2E_BACKEND" = postgres ] || [ -n "${E2E_DATABASE_URL:-}" ]; then
-    "$E2E_STACK" query "update canaries set db_refresh_failing_since = '$ts' where id = '$canary_id'" >/dev/null \
+    "$E2E_STACK" query "update agents set db_refresh_failing_since = '$ts' where id = '$canary_id'" >/dev/null \
       || fail "backdating db_refresh_failing_since failed (postgres)" "$E2E_BIRDCAGE"
   else
     docker run --rm --volume "${E2E_PREFIX}-data:/data" "${E2E_PREFIX}-helper" \
-      sh -c "sqlite3 /data/birdcage.db \"update canaries set db_refresh_failing_since = '$ts' where id = '$canary_id'\"" >/dev/null \
+      sh -c "sqlite3 /data/birdcage.db \"update agents set db_refresh_failing_since = '$ts' where id = '$canary_id'\"" >/dev/null \
       || fail "backdating db_refresh_failing_since failed (sqlite)" "$E2E_BIRDCAGE"
   fi
 }

@@ -421,7 +421,7 @@ func TestProvisionRollsBackWhenTheCertificateCannotBeRecorded(t *testing.T) {
 		if _, _, err := Provision(context.Background(), database, HashToken(secret), mintedAt.Add(2*time.Minute), wrongCN); err == nil {
 			t.Fatal("Provision accepted a certificate naming another canary")
 		}
-		for _, table := range []string{"canaries", "canary_tokens", "client_certs"} {
+		for _, table := range []string{"agents", "agent_tokens", "client_certs"} {
 			var n int
 			if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
 				t.Fatalf("count %s: %v", table, err)

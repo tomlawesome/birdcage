@@ -133,7 +133,7 @@ func TestRenewCertIssuedAuditFailureReturns503(t *testing.T) {
 		}
 
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM client_certs WHERE canary_id = ?`, "node-a").Scan(&count); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM client_certs WHERE agent_id = ?`, "node-a").Scan(&count); err != nil {
 			t.Fatalf("count client_certs: %v", err)
 		}
 		if count != 1 {
@@ -321,7 +321,7 @@ func TestCommonHeartbeatPayloadCanaryIDMismatchIgnored(t *testing.T) {
 		}
 
 		var version string
-		if err := database.QueryRow(`SELECT agent_version FROM canaries WHERE id = ?`, "scanner-a").Scan(&version); err != nil {
+		if err := database.QueryRow(`SELECT agent_version FROM agents WHERE id = ?`, "scanner-a").Scan(&version); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}
 		if version != "1.0.0" {

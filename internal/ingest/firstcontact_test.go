@@ -135,7 +135,7 @@ func TestFirstContactRecordsLastSeenAddrBeforeAnyHeartbeat(t *testing.T) {
 		}
 
 		var addr *string
-		if err := database.QueryRow(`SELECT last_seen_addr FROM canaries WHERE id = ?`, "canary-a").Scan(&addr); err != nil {
+		if err := database.QueryRow(`SELECT last_seen_addr FROM agents WHERE id = ?`, "canary-a").Scan(&addr); err != nil {
 			t.Fatalf("query last_seen_addr: %v", err)
 		}
 		if addr == nil || *addr != "198.51.100.7" {

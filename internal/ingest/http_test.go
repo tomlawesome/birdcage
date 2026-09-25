@@ -67,7 +67,7 @@ func mintTokenForKind(t *testing.T, database *db.DB, canaryID string, kind agent
 func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
 	t.Helper()
 	var exists int
-	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	err := database.QueryRow(`SELECT 1 FROM agents WHERE id = ?`, canaryID).Scan(&exists)
 	if err == nil {
 		return // already registered -- including with a different kind, which the caller asked for by registering it itself first.
 	}
@@ -83,7 +83,7 @@ func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind
 
 func revokeAllTokens(t *testing.T, database *db.DB, canaryID string) {
 	t.Helper()
-	rows, err := database.Query(`SELECT id FROM canary_tokens WHERE canary_id = ?`, canaryID)
+	rows, err := database.Query(`SELECT id FROM agent_tokens WHERE agent_id = ?`, canaryID)
 	if err != nil {
 		t.Fatalf("query token ids: %v", err)
 	}

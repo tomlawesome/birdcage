@@ -87,10 +87,10 @@ esac
 step "birdcage canary mint's output is asserted"
 mint_output="$("$E2E_STACK" birdcage canary mint "$E2E_CANARY_ID")" || fail "birdcage canary mint did not run"
 case "$mint_output" in
-  *"minted token "*" for canary $E2E_CANARY_ID"*) ;;
+  *"minted token "*" for agent $E2E_CANARY_ID"*) ;;
   *) fail "mint did not confirm the expected canary: $mint_output" ;;
 esac
-mint_token_id="$(printf '%s\n' "$mint_output" | sed -n 's/^minted token \([^ ]*\) for canary .*$/\1/p')"
+mint_token_id="$(printf '%s\n' "$mint_output" | sed -n 's/^minted token \([^ ]*\) for agent .*$/\1/p')"
 case "$mint_output" in
   *"token (shown once, record it now): "*) ok "minted token $mint_token_id, raw token shown once" ;;
   *) fail "mint did not print the raw token exactly once: $mint_output" ;;
@@ -103,7 +103,7 @@ step "birdcage canary revoke's output is asserted"
 # be counted.
 revoke_output="$("$E2E_STACK" birdcage canary revoke "$E2E_CANARY_ID")" || fail "birdcage canary revoke did not run"
 case "$revoke_output" in
-  *"revoked canary $E2E_CANARY_ID: "*" token(s), "*" certificate(s)"*) ok "$revoke_output" ;;
+  *"revoked agent $E2E_CANARY_ID: "*" token(s), "*" certificate(s)"*) ok "$revoke_output" ;;
   *) fail "revoke did not confirm the expected canary/counts: $revoke_output" ;;
 esac
 

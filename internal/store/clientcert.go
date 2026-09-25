@@ -84,7 +84,7 @@ func RecordClientCert(ctx context.Context, database db.Conn, canaryID string, ce
 		NotAfter:    cert.NotAfter.UTC(),
 	}
 	if _, err := database.ExecContext(ctx, `
-		INSERT INTO client_certs (canary_id, serial, fingerprint_sha256, not_before, not_after)
+		INSERT INTO client_certs (agent_id, serial, fingerprint_sha256, not_before, not_after)
 		VALUES (?, ?, ?, ?, ?)`,
 		row.CanaryID, row.Serial, row.Fingerprint,
 		row.NotBefore.Format(receivedAtLayout), row.NotAfter.Format(receivedAtLayout)); err != nil {
@@ -95,7 +95,7 @@ func RecordClientCert(ctx context.Context, database db.Conn, canaryID string, ce
 	return LookupClientCertByFingerprint(ctx, database, row.Fingerprint)
 }
 
-const clientCertColumns = `id, canary_id, serial, fingerprint_sha256, not_before, not_after, first_used_at, revoked_at`
+const clientCertColumns = `id, agent_id, serial, fingerprint_sha256, not_before, not_after, first_used_at, revoked_at`
 
 func scanClientCert(row rowScanner) (ClientCert, error) {
 	var (
@@ -147,7 +147,7 @@ func LookupClientCertByFingerprint(ctx context.Context, database db.Conn, finger
 // order identically).
 func ListClientCertsForCanary(ctx context.Context, database certConn, canaryID string) ([]ClientCert, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT `+clientCertColumns+` FROM client_certs WHERE canary_id = ? ORDER BY id`, canaryID)
+		`SELECT `+clientCertColumns+` FROM client_certs WHERE agent_id = ? ORDER BY id`, canaryID)
 	if err != nil {
 		return nil, fmt.Errorf("list client certificates: %w", err)
 	}
@@ -192,7 +192,7 @@ func CurrentClientCert(ctx context.Context, database certConn, canaryID string) 
 func CanaryHasLiveClientCert(ctx context.Context, database *db.DB, canaryID string) (bool, error) {
 	var n int
 	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM client_certs WHERE canary_id = ? AND revoked_at IS NULL`, canaryID).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM client_certs WHERE agent_id = ? AND revoked_at IS NULL`, canaryID).Scan(&n); err != nil {
 		return false, fmt.Errorf("count live client certificates: %w", err)
 	}
 	return n > 0, nil
@@ -247,7 +247,7 @@ func RecordClientCertFirstUse(ctx context.Context, database *db.DB, cert ClientC
 		return false, 0, nil
 	}
 	res, err = tx.ExecContext(ctx,
-		`UPDATE client_certs SET revoked_at = ? WHERE canary_id = ? AND id < ? AND revoked_at IS NULL`,
+		`UPDATE client_certs SET revoked_at = ? WHERE agent_id = ? AND id < ? AND revoked_at IS NULL`,
 		stamp, cert.CanaryID, cert.ID)
 	if err != nil {
 		return false, 0, fmt.Errorf("revoke superseded certificates: %w", err)
@@ -289,7 +289,7 @@ func RecordClientCertFirstUse(ctx context.Context, database *db.DB, cert ClientC
 // Returns ErrCanaryNotFound when there is no row to lock: nothing is
 // serialised then, so the caller must not go on as if it were.
 func LockCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string) error {
-	res, err := tx.ExecContext(ctx, `UPDATE canaries SET kind = kind WHERE id = ?`, canaryID)
+	res, err := tx.ExecContext(ctx, `UPDATE agents SET kind = kind WHERE id = ?`, canaryID)
 	if err != nil {
 		return fmt.Errorf("lock canary credentials: %w", err)
 	}
@@ -359,7 +359,7 @@ func MintCanaryTokenForCert(ctx context.Context, database db.Conn, canaryID, cer
 		return "", CanaryToken{}, err
 	}
 	if _, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET cert_fingerprint = ? WHERE id = ?`, certFingerprint, tok.ID); err != nil {
+		`UPDATE agent_tokens SET cert_fingerprint = ? WHERE id = ?`, certFingerprint, tok.ID); err != nil {
 		return "", CanaryToken{}, fmt.Errorf("bind canary token to certificate: %w", err)
 	}
 	tok.CertFingerprint = certFingerprint
@@ -374,7 +374,7 @@ func MintCanaryTokenForCert(ctx context.Context, database db.Conn, canaryID, cer
 // leaving it on the outgoing certificate would strand it.
 func BindCanaryTokensToCert(ctx context.Context, database db.Conn, canaryID, certFingerprint string) (int64, error) {
 	res, err := database.ExecContext(ctx,
-		`UPDATE canary_tokens SET cert_fingerprint = ? WHERE canary_id = ? AND revoked_at IS NULL`,
+		`UPDATE agent_tokens SET cert_fingerprint = ? WHERE agent_id = ? AND revoked_at IS NULL`,
 		certFingerprint, canaryID)
 	if err != nil {
 		return 0, fmt.Errorf("rebind canary tokens: %w", err)
@@ -410,8 +410,8 @@ func BindCanaryTokensToCert(ctx context.Context, database db.Conn, canaryID, cer
 // statement sees one consistent state on both engines.
 func TokenBoundToCert(ctx context.Context, database db.Conn, tok CanaryToken, cert ClientCert) (bool, error) {
 	bound, err := scanClientCert(database.QueryRowContext(ctx, `
-		SELECT c.id, c.canary_id, c.serial, c.fingerprint_sha256, c.not_before, c.not_after, c.first_used_at, c.revoked_at
-		FROM canary_tokens t JOIN client_certs c ON c.fingerprint_sha256 = t.cert_fingerprint
+		SELECT c.id, c.agent_id, c.serial, c.fingerprint_sha256, c.not_before, c.not_after, c.first_used_at, c.revoked_at
+		FROM agent_tokens t JOIN client_certs c ON c.fingerprint_sha256 = t.cert_fingerprint
 		WHERE t.id = ?`, tok.ID))
 	if errors.Is(err, ErrClientCertNotFound) {
 		return false, nil
@@ -453,7 +453,7 @@ func RevokeCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string, at
 		return RevokedCredentials{}, fmt.Errorf("store: RevokeCanaryCredentials: at is zero; callers must set it")
 	}
 	var exists int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM agents WHERE id = ?`, canaryID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return RevokedCredentials{}, ErrCanaryNotFound
 		}
@@ -462,7 +462,7 @@ func RevokeCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string, at
 	stamp := at.UTC().Format(receivedAtLayout)
 	var out RevokedCredentials
 	res, err := tx.ExecContext(ctx,
-		`UPDATE canary_tokens SET revoked_at = ? WHERE canary_id = ? AND revoked_at IS NULL`, stamp, canaryID)
+		`UPDATE agent_tokens SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL`, stamp, canaryID)
 	if err != nil {
 		return RevokedCredentials{}, fmt.Errorf("revoke canary tokens: %w", err)
 	}
@@ -470,7 +470,7 @@ func RevokeCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string, at
 		return RevokedCredentials{}, fmt.Errorf("rows affected: %w", err)
 	}
 	res, err = tx.ExecContext(ctx,
-		`UPDATE client_certs SET revoked_at = ? WHERE canary_id = ? AND revoked_at IS NULL`, stamp, canaryID)
+		`UPDATE client_certs SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL`, stamp, canaryID)
 	if err != nil {
 		return RevokedCredentials{}, fmt.Errorf("revoke client certificates: %w", err)
 	}

@@ -68,7 +68,7 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 		row := database.QueryRow(
 			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id,
 				agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found
-			FROM canaries WHERE id = ?`,
+			FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent, &dropped, &rejected, &collisions, &positionFound); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)
@@ -137,7 +137,7 @@ func TestSendCommonHeartbeatStoresAgentVersion(t *testing.T) {
 		}
 
 		var version string
-		if err := database.QueryRow(`SELECT agent_version FROM canaries WHERE id = ?`, "canary-a").Scan(&version); err != nil {
+		if err := database.QueryRow(`SELECT agent_version FROM agents WHERE id = ?`, "canary-a").Scan(&version); err != nil {
 			t.Fatalf("scan agent_version: %v", err)
 		}
 		if version != "1.2.3" {

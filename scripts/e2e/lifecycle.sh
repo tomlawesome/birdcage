@@ -94,10 +94,10 @@ step "silent once the heartbeat interval elapses, and ok again once the agent is
 # birdcage's own open connection.
 set_heartbeat_interval() {
   if [ "$E2E_BACKEND" = postgres ] || [ -n "${E2E_DATABASE_URL:-}" ]; then
-    "$E2E_STACK" query "update canaries set heartbeat_interval_s = $1 where id = '$E2E_CANARY_ID'" >/dev/null
+    "$E2E_STACK" query "update agents set heartbeat_interval_s = $1 where id = '$E2E_CANARY_ID'" >/dev/null
   else
     docker run --rm --volume "$E2E_PREFIX-data:/data" "$E2E_PREFIX-helper" \
-      sh -c "sqlite3 /data/birdcage.db \"update canaries set heartbeat_interval_s = $1 where id = '$E2E_CANARY_ID'\"" >/dev/null
+      sh -c "sqlite3 /data/birdcage.db \"update agents set heartbeat_interval_s = $1 where id = '$E2E_CANARY_ID'\"" >/dev/null
   fi
 }
 set_heartbeat_interval 1 || fail "could not shorten the canary's heartbeat interval"
@@ -253,7 +253,7 @@ ok "throwaway canary $revoke_canary_id holds its own token and certificate"
 revoke_output="$("$E2E_STACK" birdcage canary revoke "$revoke_canary_id")" \
   || fail "birdcage canary revoke $revoke_canary_id did not run"
 case "$revoke_output" in
-  *"revoked canary $revoke_canary_id: 1 token(s), 1 certificate(s)"*) ;;
+  *"revoked agent $revoke_canary_id: 1 token(s), 1 certificate(s)"*) ;;
   *) fail "revoke did not confirm the expected canary/counts: $revoke_output" ;;
 esac
 

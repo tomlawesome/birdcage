@@ -64,7 +64,7 @@ func logStartupError(err error) {
 var errServeFailed = errors.New("birdcage: a service failed")
 
 // runSubcommand dispatches birdcage's non-server subcommands -- version,
-// canary, settings and approval -- each of which exits immediately
+// agent (alias canary), settings and approval -- each of which exits immediately
 // rather than starting the HTTP/ingest services. handled reports
 // whether args named one of them at all: false means main should
 // continue into the server-start path. When handled is true, exitCode
@@ -81,18 +81,21 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
-	canaryLog := logging.New("canary")
+	agentLog := logging.New("agent")
 	settingsLog := logging.New("settings")
 
-	// `birdcage canary ...` (cmd/birdcage/canary.go) are standalone CLI
+	// `birdcage agent ...` (cmd/birdcage/canary.go) are standalone CLI
 	// subcommands -- `add` a dev/testing convenience predating enrollment
 	// (#34's "Not in this slice"), `mint`/`list`/`revoke` issue #32 item
-	// 9's canary token management, `enrol` issue #47 slice 1b's deploy-
+	// 9's agent token management, `enrol` issue #47 slice 1b's deploy-
 	// token mint -- that exit immediately rather than starting the
-	// HTTP/ingest services below.
-	if len(args) > 1 && args[1] == "canary" {
+	// HTTP/ingest services below. ADR-0009 gave nodes a kind (honeypot,
+	// scanner), so `agent` is the noun for the command, not `canary` --
+	// which is kept working as an alias (issue #107) since scripts and
+	// muscle memory already use it.
+	if len(args) > 1 && (args[1] == "agent" || args[1] == "canary") {
 		if len(args) < 3 {
-			canaryLog.Error("usage: birdcage canary <add|mint|list|revoke|enrol> ...")
+			agentLog.Error("usage: birdcage agent <add|mint|list|revoke|enrol> ... (canary is an accepted alias for agent)")
 			return true, 1
 		}
 		var err error
@@ -108,11 +111,11 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		case "enrol":
 			err = runCanaryEnrol(args[3:])
 		default:
-			canaryLog.Error(fmt.Sprintf("unknown canary subcommand %q (want add, mint, list, revoke or enrol)", args[2]))
+			agentLog.Error(fmt.Sprintf("unknown agent subcommand %q (want add, mint, list, revoke or enrol)", args[2]))
 			return true, 1
 		}
 		if err != nil {
-			canaryLog.Error(err.Error())
+			agentLog.Error(err.Error())
 			return true, 1
 		}
 		return true, 0
@@ -154,7 +157,7 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 	// hand: a real signed approval cannot be a committed test fixture,
 	// so the only honest way to find out whether an operator's mail
 	// provider satisfies the rules is to run one through the same
-	// verifier the agents use. Like `canary` and `settings` above, it
+	// verifier the agents use. Like `agent` and `settings` above, it
 	// exits immediately rather than starting the services below.
 	if len(args) > 1 && args[1] == "approval" {
 		approvalLog := logging.New("approval")

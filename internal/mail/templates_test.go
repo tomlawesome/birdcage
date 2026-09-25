@@ -17,22 +17,22 @@ func TestTokenConflictBodyIsPinned(t *testing.T) {
 		CanaryName: "canary-iot",
 		At:         time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC),
 	})
-	want := `A canary presented a credential birdcage had already revoked.
+	want := `An agent presented a credential birdcage had already revoked.
 
 What happened
-  - Canary: canary-iot (id canary-iot)
+  - Agent: canary-iot (id canary-iot)
   - When: Thu, 17 Sep 2026 09:00:00 UTC
 
 What it probably means
   - The token was stolen, and whoever took it rotated it before the
-    canary did. The real canary is now holding the older credential.
-  - Or two machines are running as one canary: a clone, a restored
+    agent did. The real agent is now holding the older credential.
+  - Or two machines are running as one agent: a clone, a restored
     snapshot, or the same install deployed twice.
 
 What to do
   - Look at that box now. This is the one state birdcage will wake you
     up for.
-  - Open birdcage the way you always do, and read the canary there.
+  - Open birdcage the way you always do, and read the agent there.
 
 This message carries no link, no token and no detail of what was seen,
 on purpose: the mailbox it arrived in is outside birdcage's trust
@@ -84,7 +84,7 @@ func TestTokenConflictBodyWithholdsAnUnusableName(t *testing.T) {
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
 			got := TokenConflictBody(TokenConflictAlert{CanaryID: "canary-iot", CanaryName: raw, At: at})
-			if !strings.Contains(got, "  - Canary id: canary-iot\n") {
+			if !strings.Contains(got, "  - Agent id: canary-iot\n") {
 				t.Errorf("the id is not shown in place of the name:\n%s", got)
 			}
 			if !strings.Contains(got, "name is withheld") {
@@ -104,7 +104,7 @@ func TestTokenConflictBodyStripsControlCharactersFromANameItShows(t *testing.T) 
 		CanaryName: "canary\r\nBcc: attacker@example.invalid",
 		At:         at,
 	})
-	if !strings.Contains(got, "  - Canary: canaryBcc: attacker@example.invalid (id canary-iot)\n") {
+	if !strings.Contains(got, "  - Agent: canaryBcc: attacker@example.invalid (id canary-iot)\n") {
 		t.Errorf("the name was not stripped as expected:\n%s", got)
 	}
 	if strings.Contains(got, "\r") {
@@ -120,14 +120,14 @@ func TestTokenConflictBodyWithholdsAnUnusableID(t *testing.T) {
 		CanaryName: "",
 		At:         time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC),
 	})
-	if !strings.Contains(got, "  - Canary id: (withheld)\n") {
+	if !strings.Contains(got, "  - Agent id: (withheld)\n") {
 		t.Errorf("an unusable id was not withheld:\n%s", got)
 	}
 }
 
 // The subject is fixed and says nothing about which canary or where.
 func TestSubjectCarriesNoCanaryText(t *testing.T) {
-	if TokenConflictSubject != "birdcage: a canary presented a revoked credential" {
+	if TokenConflictSubject != "birdcage: an agent presented a revoked credential" {
 		t.Errorf("subject = %q", TokenConflictSubject)
 	}
 	if !headerSafe(TokenConflictSubject) {
