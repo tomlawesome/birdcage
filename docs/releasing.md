@@ -244,7 +244,7 @@ protected branches and tags — `preview`, `main`, `v*`):
 
 | variable | masked? | value |
 | --- | --- | --- |
-| `GHCR_TOKEN` | masked | a GitHub fine-grained PAT, **`write:packages` only**, scoped to `tomlawesome/birdcage` alone. No `repo`, no `delete:packages`. |
+| `GHCR_TOKEN` | masked | a GitHub **classic** PAT, **`write:packages` only** (it adds `read:packages` itself). No `repo`, no `delete:packages`. Classic, because GitHub Packages accepts no fine-grained token ([GitHub Docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)); a classic token cannot be scoped to one repository, which is why it gets nothing but `write:packages`. |
 | `GHCR_USER` | not masked | the literal login `tomlawesome`. Masking it only makes the logs unreadable; it is not a secret. |
 
 The countersigning workflow, on GitHub, needs nothing new: it reads and
