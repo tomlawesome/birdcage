@@ -6,7 +6,9 @@ import (
 )
 
 // TestRunSubcommandCanaryDispatch drives every case of runSubcommand's
-// `canary` switch -- TestRunSubcommand (startup_test.go) only proves the
+// `agent` switch, under both its `agent` name and its `canary` alias
+// (issue #107: ADR-0009 gave nodes a kind, so `canary` is one kind, not
+// the fleet noun) -- TestRunSubcommand (startup_test.go) only proves the
 // "no subcommand" branch, leaving add/mint/list/revoke/enrol/unknown
 // themselves undispatched. Each case here uses args that return quickly
 // (a usage error, where the underlying function needs none) so this
@@ -20,12 +22,18 @@ func TestRunSubcommandCanaryDispatch(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"add", []string{"birdcage", "canary", "add"}},
-		{"mint", []string{"birdcage", "canary", "mint"}},
-		{"list", []string{"birdcage", "canary", "list", "unexpected-arg"}},
-		{"revoke", []string{"birdcage", "canary", "revoke"}},
-		{"enrol", []string{"birdcage", "canary", "enrol"}},
-		{"unknown", []string{"birdcage", "canary", "bogus"}},
+		{"add", []string{"birdcage", "agent", "add"}},
+		{"mint", []string{"birdcage", "agent", "mint"}},
+		{"list", []string{"birdcage", "agent", "list", "unexpected-arg"}},
+		{"revoke", []string{"birdcage", "agent", "revoke"}},
+		{"enrol", []string{"birdcage", "agent", "enrol"}},
+		{"unknown", []string{"birdcage", "agent", "bogus"}},
+		{"alias add", []string{"birdcage", "canary", "add"}},
+		{"alias mint", []string{"birdcage", "canary", "mint"}},
+		{"alias list", []string{"birdcage", "canary", "list", "unexpected-arg"}},
+		{"alias revoke", []string{"birdcage", "canary", "revoke"}},
+		{"alias enrol", []string{"birdcage", "canary", "enrol"}},
+		{"alias unknown", []string{"birdcage", "canary", "bogus"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

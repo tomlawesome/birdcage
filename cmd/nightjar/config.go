@@ -28,7 +28,7 @@ const (
 	// configurable, the same way MOCKINGBIRD_STATE_DIR is.
 	envStateDir = "NIGHTJAR_STATE_DIR"
 	// envCAPin and envDeployToken are the enrolment pin and one-time
-	// token `birdcage canary enrol --kind scanner` prints -- read only at
+	// token `birdcage agent enrol --kind scanner` prints -- read only at
 	// boot, only when the state directory holds none of enrolStateFiles
 	// yet.
 	envCAPin       = "NIGHTJAR_CA_PIN"

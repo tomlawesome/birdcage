@@ -91,9 +91,9 @@ func extractMintedTokenID(t *testing.T, mintOutput string) string {
 	if !strings.HasPrefix(mintOutput, prefix) {
 		t.Fatalf("mint output %q missing %q prefix", mintOutput, prefix)
 	}
-	id, _, found := strings.Cut(strings.TrimPrefix(mintOutput, prefix), " for canary ")
+	id, _, found := strings.Cut(strings.TrimPrefix(mintOutput, prefix), " for agent ")
 	if !found {
-		t.Fatalf("mint output %q missing ' for canary ' marker", mintOutput)
+		t.Fatalf("mint output %q missing ' for agent ' marker", mintOutput)
 	}
 	return id
 }
@@ -264,7 +264,7 @@ func TestCanaryMintFailsWithFailedAuditWrite(t *testing.T) {
 	}
 	defer closeCanaryDB(database)
 	var n int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM canary_tokens WHERE canary_id = ?`, "canary-mint-fail-test").Scan(&n); err != nil {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = ?`, "canary-mint-fail-test").Scan(&n); err != nil {
 		t.Fatalf("count canary_tokens: %v", err)
 	}
 	if n != 0 {

@@ -88,7 +88,7 @@ func sendHeartbeat(ctx context.Context, c *client.Client, token, version string,
 		return
 	}
 	if client.IsUnauthorized(err) {
-		heartbeatLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+		heartbeatLog.Warn("token unauthorized -- this agent has no channel to birdcage; recovery is re-enrolment (#47)")
 		return
 	}
 	heartbeatLog.Warn(fmt.Sprintf("send failed, will retry next cycle: %s", safeErr(err)))

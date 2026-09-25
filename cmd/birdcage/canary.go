@@ -74,7 +74,7 @@ func rollbackCanaryTx(tx *db.Tx, committed *bool) {
 // display formatting, e.g. "22,80,445".
 func runCanaryAdd(args []string) error {
 	if len(args) < 4 || len(args) > 5 {
-		return fmt.Errorf("usage: birdcage canary add <id> <name> <lane> <ports> [interval_s]")
+		return fmt.Errorf("usage: birdcage agent add <id> <name> <lane> <ports> [interval_s]")
 	}
 	interval := store.DefaultHeartbeatIntervalS
 	if len(args) == 5 {
@@ -124,7 +124,7 @@ func runCanaryAdd(args []string) error {
 // particular) ever sees it.
 func runCanaryMint(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: birdcage canary mint <canary_id>")
+		return fmt.Errorf("usage: birdcage agent mint <agent_id>")
 	}
 	canaryID := args[0]
 
@@ -145,7 +145,7 @@ func runCanaryMint(args []string) error {
 	now := time.Now().UTC()
 	raw, tok, err := store.MintCanaryToken(ctx, tx, canaryID, now)
 	if err != nil {
-		return fmt.Errorf("mint canary token: %w", err)
+		return fmt.Errorf("mint agent token: %w", err)
 	}
 
 	if _, err := audit.Append(ctx, tx, audit.Entry{
@@ -167,7 +167,7 @@ func runCanaryMint(args []string) error {
 	// (random hex), never attacker-influenced, but canaryID is whatever
 	// the caller passed and is echoed back verbatim below -- escape it
 	// at this print, not before it went into the audit entry above.
-	fmt.Printf("minted token %s for canary %s\n", tok.ID, term.Escape(canaryID))
+	fmt.Printf("minted token %s for agent %s\n", tok.ID, term.Escape(canaryID))
 	fmt.Printf("token (shown once, record it now): %s\n", raw)
 	return nil
 }
@@ -179,7 +179,7 @@ func runCanaryMint(args []string) error {
 // mistake.
 func runCanaryList(args []string) error {
 	if len(args) != 0 {
-		return fmt.Errorf("usage: birdcage canary list")
+		return fmt.Errorf("usage: birdcage agent list")
 	}
 
 	database, err := openCanaryDB()
@@ -190,10 +190,10 @@ func runCanaryList(args []string) error {
 
 	tokens, err := store.ListCanaryTokens(context.Background(), database)
 	if err != nil {
-		return fmt.Errorf("list canary tokens: %w", err)
+		return fmt.Errorf("list agent tokens: %w", err)
 	}
 	if len(tokens) == 0 {
-		fmt.Println("no canary tokens")
+		fmt.Println("no agent tokens")
 		return nil
 	}
 	for _, tok := range tokens {
@@ -234,7 +234,7 @@ func runCanaryList(args []string) error {
 // must die together, not one at a time.
 func runCanaryRevoke(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: birdcage canary revoke <canary_id>")
+		return fmt.Errorf("usage: birdcage agent revoke <agent_id>")
 	}
 	canaryID := args[0]
 
@@ -255,7 +255,7 @@ func runCanaryRevoke(args []string) error {
 	now := time.Now().UTC()
 	revoked, err := store.RevokeCanaryCredentials(ctx, tx, canaryID, now)
 	if err != nil {
-		return fmt.Errorf("revoke canary credentials: %w", err)
+		return fmt.Errorf("revoke agent credentials: %w", err)
 	}
 
 	if _, err := audit.Append(ctx, tx, audit.Entry{
@@ -275,7 +275,7 @@ func runCanaryRevoke(args []string) error {
 
 	// canaryID is the caller-supplied argument, echoed back verbatim;
 	// escaped here, at the point it reaches this terminal, not before.
-	fmt.Printf("revoked canary %s: %d token(s), %d certificate(s)\n",
+	fmt.Printf("revoked agent %s: %d token(s), %d certificate(s)\n",
 		term.Escape(canaryID), revoked.Tokens, revoked.Certificates)
 	return nil
 }
@@ -316,12 +316,12 @@ func runCanaryEnrol(args []string) error {
 		return runCanaryEnrolStatus()
 	}
 
-	const usage = "usage: birdcage canary enrol --name <name> --lane <lane> " +
+	const usage = "usage: birdcage agent enrol --name <name> --lane <lane> " +
 		"[--kind <kind>] [--lure smb=off] [--smb-workgroup <name>] [--smb-shares <a,b,c>] " +
 		"[--bait-names <a,b>] [--segment-profile <windows|linux|off>] (or --status)"
-	fs := flag.NewFlagSet("canary enrol", flag.ContinueOnError)
-	name := fs.String("name", "", "canary name (required)")
-	lane := fs.String("lane", "", "canary lane (required)")
+	fs := flag.NewFlagSet("agent enrol", flag.ContinueOnError)
+	name := fs.String("name", "", "agent name (required)")
+	lane := fs.String("lane", "", "agent lane (required)")
 	kindFlag := fs.String("kind", string(agentkind.Honeypot), "agent kind (issue #105)")
 	// The lure flags (issue #87 slice C). They change what this command
 	// prints -- see canary_lure.go, lureState, for what that does and does
