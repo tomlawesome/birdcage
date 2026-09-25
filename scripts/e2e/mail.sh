@@ -25,13 +25,19 @@
 # how each of these turns up in real life, and the client has to cope
 # with it as configured.
 #
-# Named gap: DKIM. The approval reply this journey puts in the mailbox is
-# unsigned, so it proves the IMAP read path -- TLS, SEARCH, the size check
-# before download, BODY.PEEK[], \Seen only after the verdict is written --
-# and that the verdict is a refusal. A signed reply verified end to end
-# needs a resolver birdcage asks for the key (approval.Verify is handed
-# net.LookupTXT, the system resolver), and this stack has no DNS server
-# of its own to publish a test key in -- the next slice of #80.
+# DKIM. The first approval reply is unsigned: it proves the IMAP read
+# path -- TLS, SEARCH, the size check before download, BODY.PEEK[], \Seen
+# only after the verdict is written -- and that the verdict is a refusal.
+# Case (f) is the signed leg. mail-stack.sh made a DKIM key for this run
+# and published it in a real DNS server (build/e2e-dns, unbound) that
+# birdcage is started with as its resolver, so approval.Verify's
+# net.LookupTXT asks that server for the key. One reply signed with it
+# must be accepted; each mutation #80 names -- body changed, a signed
+# header dropped, an l= tag, a second Subject prepended -- must be
+# refused, and so must a reply signed under a selector that was never
+# published and one signed by a key that is not the published one. The
+# provider is simulated (cmd/e2e-dkim-sign); the resolver, the mail
+# server and the verifier are real.
 set -eu
 
 . "$(dirname "$0")/journey.sh"
@@ -134,6 +140,29 @@ step "two approval replies are delivered to the approval mailbox through the rea
 # (internal/mailbox.MaxMessageSize), for the size check that has to
 # happen before any of it is downloaded.
 # Written with bare LF line ends; curl --crlf makes them CRLF on the wire.
+#
+# The signed replies for case (f) go in the same delivery, so the same
+# poll reads them. Each is written as an administrator's client would,
+# then signed by the simulated provider (mail-stack.sh dkim-sign), which
+# emits CRLF itself -- so these are sent without --crlf, byte for byte
+# as signed. Each entry is name:selector:variant.
+now="$(date -R)"
+for reply in good:$DKIM_SELECTOR:good body:$DKIM_SELECTOR:body \
+  drop-header:$DKIM_SELECTOR:drop-header length:$DKIM_SELECTOR:length \
+  second-subject:$DKIM_SELECTOR:second-subject wrong-key:$DKIM_SELECTOR:wrong-key \
+  unpublished:e2e-unpublished:good; do
+  name="${reply%%:*}"; selector="${reply#*:}"; variant="${selector#*:}"; selector="${selector%%:*}"
+  printf 'From: %s\nTo: %s\nSubject: [birdcage e2e-dkim-%s] Re: approve\nDate: %s\nMessage-ID: <e2e-dkim-%s@e2e.invalid>\n\napproved\n' \
+    "$MAIL_ADDRESS" "$MAIL_ADDRESS" "$name" "$now" "$name" \
+    | "$MAIL_STACK" dkim-sign "$selector" "$variant" | "$E2E_STACK" write-work "dkim-$name.eml"
+  helper "grep -q '^DKIM-Signature: ' /work/dkim-$name.eml" \
+    || fail "the provider did not sign the $name reply"
+done
+helper "set -eu
+for f in /work/dkim-*.eml; do
+  curl -sS --ssl-reqd --cacert /work/mail-ca.pem --netrc-file /work/mail-netrc \
+    'smtp://$MAIL_SERVER:587' --mail-from '$MAIL_ADDRESS' --mail-rcpt '$MAIL_ADDRESS' --upload-file \$f
+done" || fail "the signed approval replies could not be delivered" "$MAIL_SERVER"
 helper "set -eu
 now=\$(date -R)
 printf 'From: $MAIL_ADDRESS\nTo: $MAIL_ADDRESS\nSubject: [birdcage e2e-ref-1] Re: approve\nDate: %s\nMessage-ID: <e2e-approval-small@e2e.invalid>\n\napproved\n' \"\$now\" > /tmp/small.eml
@@ -225,6 +254,65 @@ big_rows="$("$E2E_STACK" query "select count(*) from approvals where message_id 
 "$E2E_STACK" logs 2>&1 | grep -q 'over the 1048576-byte limit; marking it read and skipping it' \
   || fail "birdcage did not log skipping the oversize reply"
 ok "the oversize reply is marked \\Seen, unrecorded, and birdcage logged skipping it"
+
+# =====================================================================
+step "(f) a DKIM-signed reply is verified against the key in the test DNS server; every mutation is refused"
+# The same poll that judged the unsigned reply read these, but it works
+# through the mailbox one message at a time, so each row is waited for.
+dkim_row=""
+dkim_recorded() {
+  dkim_row="$("$E2E_STACK" query "select coalesce(verified_at, 'unverified'), coalesce(reject_reason, '') from approvals where message_id = '<e2e-dkim-$1@e2e.invalid>'" 2>/dev/null)" || return 1
+  [ -n "$dkim_row" ]
+}
+poll 90 dkim_recorded good \
+  || fail "no approvals row for the signed reply within 90s -- birdcage never read it" "$E2E_BIRDCAGE" "$MAIL_SERVER"
+case "$dkim_row" in
+  unverified\|*) fail "the correctly signed reply was refused: $dkim_row" "$E2E_BIRDCAGE" "$DNS_SERVER" ;;
+  *\|) ok "the correctly signed reply is recorded as verified at ${dkim_row%|}" ;;
+  *) fail "the signed reply's row is neither verified nor refused: $dkim_row" ;;
+esac
+[ -n "$(search_nums 'SEARCH SEEN HEADER Message-ID e2e-dkim-good')" ] \
+  || fail "the verified reply is still unread -- birdcage recorded it but did not mark it seen" "$E2E_BIRDCAGE"
+ok "the verified reply is marked \\Seen on the server"
+"$E2E_STACK" logs 2>&1 | grep -q "approval received for e2e-dkim-good from $MAIL_ADDRESS: verified" \
+  || fail "birdcage did not log the approval as verified"
+ok "birdcage logged it: approval received for e2e-dkim-good from $MAIL_ADDRESS: verified"
+
+# Each refusal is matched on the rule that caught it, not just on being
+# refused: a mutation refused for the wrong reason (say, the key never
+# found at all) would pass a looser check while proving nothing about
+# the rule it is meant to exercise.
+expect_refused() { # <name> <what it is> <text the reason must contain>
+  poll 90 dkim_recorded "$1" \
+    || fail "no approvals row for the $1 reply within 90s" "$E2E_BIRDCAGE" "$MAIL_SERVER"
+  case "$dkim_row" in
+    unverified\|*"$3"*) ok "$2: refused -- ${dkim_row#unverified|}" ;;
+    unverified\|*) fail "$2: refused, but not by the rule expected ($3): $dkim_row" "$E2E_BIRDCAGE" ;;
+    *) fail "$2: ACCEPTED -- this must be refused: $dkim_row" "$E2E_BIRDCAGE" "$DNS_SERVER" ;;
+  esac
+  [ -n "$(search_nums "SEARCH SEEN HEADER Message-ID e2e-dkim-$1")" ] \
+    || fail "the $1 reply is still unread" "$E2E_BIRDCAGE"
+}
+expect_refused body "the body altered after signing" "body hash did not verify"
+expect_refused drop-header "a signed header (To) dropped after signing" "signature did not verify"
+expect_refused length "signed with l=" "(l=)"
+expect_refused second-subject "a second Subject prepended" "2 Subject headers"
+expect_refused unpublished "signed under a selector the DNS server does not publish" "no key for signature"
+expect_refused wrong-key "signed by a key that is not the published one" "signature did not verify"
+
+# The lookups really went to the test server, from birdcage: unbound
+# logs every question with the address that asked it, and Docker's
+# resolver forwards from inside the asking container's own network.
+birdcage_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$E2E_NET\").IPAddress}}" "$E2E_BIRDCAGE")" \
+  || fail "could not read birdcage's address"
+dns_log="$(docker logs "$DNS_SERVER" 2>&1)"
+for name in "$DKIM_SELECTOR" e2e-unpublished; do
+  case "$dns_log" in
+    *"$birdcage_ip $name._domainkey.$DKIM_DOMAIN. TXT IN"*) ;;
+    *) fail "$DNS_SERVER never logged birdcage ($birdcage_ip) asking for $name._domainkey.$DKIM_DOMAIN" "$DNS_SERVER" ;;
+  esac
+done
+ok "$DNS_SERVER's own log shows birdcage ($birdcage_ip) asking it for both selectors' keys"
 
 # =====================================================================
 step "(b) against a server that does not offer STARTTLS, birdcage refuses to send"

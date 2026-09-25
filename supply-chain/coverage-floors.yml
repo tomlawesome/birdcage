@@ -160,6 +160,11 @@ floors:
                              # checkStartupFiles' remaining branch) that need
                              # a filesystem failure this pass did not find a
                              # deterministic way to induce.
+  cmd/e2e-dkim-sign: 82      # 83.3% measured, 2026-09-25 (#80). Test-only:
+                             # the simulated mail provider that signs the
+                             # live mail journey's approval replies. Never
+                             # shipped; the rest is error paths for bad
+                             # flags and unreadable files.
   cmd/nightjar: 83           # 83.3% measured with -race, 2026-09-24 (#130):
                              # runRenewalTick's success, unauthorized and
                              # server-error branches (renewal_test.go,

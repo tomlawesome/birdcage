@@ -2,13 +2,20 @@
 # mail-stack.sh -- the infrastructure scripts/e2e/mail.sh needs (#80): a
 # real Postfix and Dovecot (build/e2e-mail) on the stack's network, and
 # birdcage restarted with its outbound mail (internal/mail) and its
-# approval mailbox (internal/mailbox) both pointed at them.
+# approval mailbox (internal/mailbox) both pointed at them -- and the
+# administrator's side of DKIM (build/e2e-dns): a DNS server publishing a
+# signing key made for this run, which birdcage is started with as its
+# resolver, and the signer that holds the private half.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/mail-stack.sh up)"
 #   scripts/e2e/mail.sh
 #   scripts/e2e/mail-stack.sh down
 #   scripts/e2e/stack.sh down
+#
+# `dkim-sign <selector> <variant>` signs the message on stdin as the
+# administrator's provider would and writes it to stdout -- see
+# cmd/e2e-dkim-sign for the variants. The key never leaves its volume.
 #
 # `mode <m>` restarts the mail server as a different kind of server --
 # see build/e2e-mail/entrypoint.sh for the four -- without touching
@@ -40,6 +47,18 @@ SPOOL_VOL="${E2E_PREFIX}-mail-spool"
 # to find it with nothing but E2E_PREFIX set (see down below).
 BIRDCAGE_CONTAINER="${E2E_BIRDCAGE:-${E2E_PREFIX}-birdcage}"
 
+# The DKIM side. Two volumes so the DNS server never sees the private
+# key: the signer mounts both, unbound only the published record.
+DNS="${E2E_PREFIX}-dns"
+DNS_IMAGE="${E2E_PREFIX}-dns-image"
+DKIM_KEY_VOL="${E2E_PREFIX}-dkim-key"
+DKIM_DNS_VOL="${E2E_PREFIX}-dkim-dns"
+# The signing domain must be the pinned admin_approval_address's own
+# domain (stack.sh sets e2e-admin@e2e.invalid): birdcage passes no
+# separate signing domain, so approval.Verify wants d= to equal it.
+DKIM_DOMAIN=e2e.invalid
+DKIM_SELECTOR=e2e
+
 # The one account. Clearly fake placeholders: e2e.invalid can never be a
 # real domain, and the password opens a mailbox that exists only inside
 # this job. It is still handled like a real one -- written to a file, and
@@ -64,6 +83,57 @@ build_mail_image() {
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
     --file "$REPO_ROOT/build/e2e-mail/Dockerfile" --tag "$MAIL_IMAGE" "$REPO_ROOT" >/dev/null \
     || die "building $MAIL_IMAGE failed"
+}
+
+build_dns_image() {
+  if docker image inspect "$DNS_IMAGE" >/dev/null 2>&1; then
+    log "using existing image $DNS_IMAGE"
+    return 0
+  fi
+  log "building $DNS_IMAGE from build/e2e-dns/Dockerfile"
+  # The same two pins as above: CI's dependency-proxy images when set
+  # (refs #128), the Dockerfile's own defaults on a workstation.
+  docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
+    --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27}" \
+    --file "$REPO_ROOT/build/e2e-dns/Dockerfile" --tag "$DNS_IMAGE" "$REPO_ROOT" >/dev/null \
+    || die "building $DNS_IMAGE failed"
+}
+
+# signer runs cmd/e2e-dkim-sign with the key volume mounted, stdin
+# attached. Nothing else ever mounts $DKIM_KEY_VOL.
+signer() {
+  docker run --rm --interactive --network none --entrypoint e2e-dkim-sign \
+    --volume "$DKIM_KEY_VOL:/dkim" --volume "$DKIM_DNS_VOL:/dns" \
+    "$DNS_IMAGE" "$@"
+}
+
+# start_dns makes this run's DKIM key, publishes its public half and
+# starts unbound, then asks it for the record from another container on
+# the stack's network -- a real DNS question, not a port check.
+start_dns() {
+  docker volume create "$DKIM_KEY_VOL" >/dev/null || die "creating volume $DKIM_KEY_VOL failed"
+  docker volume create "$DKIM_DNS_VOL" >/dev/null || die "creating volume $DKIM_DNS_VOL failed"
+  signer keygen -key /dkim/key.pem -record /dns/dkim.conf \
+    -domain "$DKIM_DOMAIN" -selector "$DKIM_SELECTOR" \
+    || die "making the run's DKIM key failed"
+  docker run --detach --name "$DNS" --network "$E2E_NET" \
+    --pids-limit 64 --memory 64m \
+    --volume "$DKIM_DNS_VOL:/dns:ro" \
+    "$DNS_IMAGE" >/dev/null || die "starting $DNS failed"
+  DNS_IP="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$E2E_NET\").IPAddress}}" "$DNS")" \
+    || die "could not read $DNS's address"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if docker run --rm --network "$E2E_NET" "${ALPINE_IMAGE:-alpine:3.24}" \
+      nslookup -type=TXT "$DKIM_SELECTOR._domainkey.$DKIM_DOMAIN" "$DNS_IP" 2>/dev/null | grep -q 'v=DKIM1'; then
+      log "$DNS ($DNS_IP) serves the DKIM key for $DKIM_SELECTOR._domainkey.$DKIM_DOMAIN (attempt $attempt)"
+      return 0
+    fi
+    sleep 1
+  done
+  log "$DNS never served the key; its log follows"
+  docker logs "$DNS" >&2 || true
+  die "the test DNS server did not become ready"
 }
 
 # create_volumes makes the three volumes and writes the password into the
@@ -164,6 +234,14 @@ export_client_files() {
 # with both mail subsystems configured the way docs/configuration.md tells
 # an operator to: password from a file, STARTTLS on 587, IMAP on 993.
 #
+# --dns points birdcage, and only birdcage, at the test DNS server. On a
+# user-defined network Docker keeps its own resolver (127.0.0.11) in the
+# container's resolv.conf and uses --dns only as the upstream for names
+# it does not know itself, so container names -- $MAIL, Postgres --
+# still resolve as before, and only everything else goes to unbound.
+# unbound refuses every name outside e2e.invalid, which birdcage has no
+# reason to look up in this stack.
+#
 # SSL_CERT_FILE is Go's own, standard way to say which roots to trust
 # (crypto/x509 reads it on Linux); birdcage has no setting of its own for
 # this and must not grow one -- internal/mail's tlsConfig comment says
@@ -172,6 +250,7 @@ export_client_files() {
 # that CA and against the host name in BIRDCAGE_MAIL_HOST.
 restart_birdcage_with_mail() {
   "$E2E_STACK" restart-birdcage \
+    --dns "$DNS_IP" \
     --volume "$CLIENT_VOL:/mail:ro" \
     --env SSL_CERT_FILE=/mail/ca.pem \
     --env "BIRDCAGE_MAIL_HOST=$MAIL:587" \
@@ -204,6 +283,8 @@ up() {
   down_mail >/dev/null 2>&1 || true
 
   build_mail_image
+  build_dns_image
+  start_dns
   create_volumes
   run_mail normal
   postfix_started
@@ -216,6 +297,9 @@ export MAIL_SERVER=$MAIL
 export MAIL_USER=$MAIL_USER
 export MAIL_ADDRESS=$MAIL_ADDRESS
 export MAIL_FROM=$MAIL_FROM
+export DNS_SERVER=$DNS
+export DKIM_DOMAIN=$DKIM_DOMAIN
+export DKIM_SELECTOR=$DKIM_SELECTOR
 export MAIL_STACK=$(cd "$(dirname "$0")" && pwd)/mail-stack.sh
 EOF
 }
@@ -228,10 +312,17 @@ down_mail() {
   for vol in "$TLS_VOL" "$SPOOL_VOL" "$CLIENT_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true
   done
-  # Only an image this file built, and only one carrying the prefix.
-  case "$MAIL_IMAGE" in
-    "$E2E_PREFIX"*) docker image rm --force "$MAIL_IMAGE" >/dev/null 2>&1 || true ;;
-  esac
+  docker rm --force "$DNS" >/dev/null 2>&1 || true
+  for vol in "$DKIM_KEY_VOL" "$DKIM_DNS_VOL"; do
+    docker volume rm --force "$vol" >/dev/null 2>&1 || true
+  done
+  # Only images this file built, and only ones carrying the prefix.
+  local image
+  for image in "$MAIL_IMAGE" "$DNS_IMAGE"; do
+    case "$image" in
+      "$E2E_PREFIX"*) docker image rm --force "$image" >/dev/null 2>&1 || true ;;
+    esac
+  done
 }
 
 # down also removes the birdcage container, which stack.sh owns and would
@@ -249,7 +340,10 @@ case "${1:-}" in
   up) up ;;
   down) down ;;
   mode) shift; mode "$@" ;;
+  dkim-sign)
+    [ $# -eq 3 ] || die "usage: $0 dkim-sign <selector> <variant> < message > signed"
+    signer sign -key /dkim/key.pem -domain "$DKIM_DOMAIN" -selector "$2" -variant "$3" ;;
   *)
-    echo "usage: $0 {up|down|mode <normal|no-starttls|reject-auth|size-cap>}" >&2
+    echo "usage: $0 {up|down|mode <normal|no-starttls|reject-auth|size-cap>|dkim-sign <selector> <variant>}" >&2
     exit 2 ;;
 esac
