@@ -366,7 +366,7 @@ func TestRotateAuditFailureReturns503LeavesPresentedTokenWorkingAndNoUsableNewTo
 		// back with the failed audit write, not merely been abandoned
 		// unrevoked.
 		var n int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM canary_tokens WHERE canary_id = ?`, "canary-a").Scan(&n); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM agent_tokens WHERE agent_id = ?`, "canary-a").Scan(&n); err != nil {
 			t.Fatalf("count canary_tokens: %v", err)
 		}
 		if n != 1 {

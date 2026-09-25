@@ -355,8 +355,8 @@ func TestTickPropagatesDatabaseErrors(t *testing.T) {
 		r := New(database)
 		tick(t, r, t0)
 
-		if _, err := database.Exec(`DROP TABLE canary_state_periods`); err != nil {
-			t.Fatalf("drop canary_state_periods: %v", err)
+		if _, err := database.Exec(`DROP TABLE agent_state_periods`); err != nil {
+			t.Fatalf("drop agent_state_periods: %v", err)
 		}
 		if err := r.Tick(context.Background(), t0.Add(time.Minute)); err == nil {
 			t.Fatal("Tick with the table dropped = nil error, want the failure propagated")

@@ -211,7 +211,7 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE enrolment_sessions SET canary_id = ?, state = ?, enrolment_secret_hash = NULL WHERE id = ?`,
+		UPDATE enrolment_sessions SET agent_id = ?, state = ?, enrolment_secret_hash = NULL WHERE id = ?`,
 		canaryID, string(EnrolmentStateProvisioned), found.ID); err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mark enrolment session provisioned: %w", err)
 	}

@@ -194,7 +194,7 @@ func TestRecordHeartbeatPrunesOlderThan24h(t *testing.T) {
 		}
 
 		var n int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM heartbeats WHERE canary_id = ?`, "canary-d").Scan(&n); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM heartbeats WHERE agent_id = ?`, "canary-d").Scan(&n); err != nil {
 			t.Fatalf("count heartbeats: %v", err)
 		}
 		if n != 1 {
@@ -275,7 +275,7 @@ func TestRecordCanaryAgentHeartbeatStoresReport(t *testing.T) {
 			lastEvent  string
 		)
 		row := database.QueryRow(
-			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)
@@ -311,7 +311,7 @@ func TestRecordCanaryAgentHeartbeatStoresPoisonerNames(t *testing.T) {
 			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
 		}
 		var stored *string
-		row := database.QueryRow(`SELECT poisoner_names FROM canaries WHERE id = ?`, "canary-a")
+		row := database.QueryRow(`SELECT poisoner_names FROM agents WHERE id = ?`, "canary-a")
 		if err := row.Scan(&stored); err != nil {
 			t.Fatalf("scan poisoner_names: %v", err)
 		}
@@ -383,7 +383,7 @@ func TestRecordCanaryCommonHeartbeatStoresVersionAndLastSeen(t *testing.T) {
 		}
 
 		var version string
-		if err := database.QueryRow(`SELECT agent_version FROM canaries WHERE id = ?`, "canary-scanner").Scan(&version); err != nil {
+		if err := database.QueryRow(`SELECT agent_version FROM agents WHERE id = ?`, "canary-scanner").Scan(&version); err != nil {
 			t.Fatalf("scan agent_version: %v", err)
 		}
 		if version != "1.2.3" {
@@ -430,7 +430,7 @@ func TestRecordCanaryCommonHeartbeatLeavesLogTailerColumnsAlone(t *testing.T) {
 			lastEvent  string
 		)
 		row := database.QueryRow(
-			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)

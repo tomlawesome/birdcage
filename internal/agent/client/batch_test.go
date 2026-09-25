@@ -60,7 +60,7 @@ func mintToken(t *testing.T, database *db.DB, canaryID string) string {
 func ensureCanary(t *testing.T, database *db.DB, canaryID string, kind agentkind.Kind) {
 	t.Helper()
 	var exists int
-	err := database.QueryRow(`SELECT 1 FROM canaries WHERE id = ?`, canaryID).Scan(&exists)
+	err := database.QueryRow(`SELECT 1 FROM agents WHERE id = ?`, canaryID).Scan(&exists)
 	if err == nil {
 		return
 	}

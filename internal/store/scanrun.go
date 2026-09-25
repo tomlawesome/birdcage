@@ -151,7 +151,7 @@ func MintScanCommand(ctx context.Context, database *db.DB, canaryID string, trig
 	}()
 
 	var kind string
-	if err := tx.QueryRowContext(ctx, `SELECT kind FROM canaries WHERE id = ?`, canaryID).Scan(&kind); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM agents WHERE id = ?`, canaryID).Scan(&kind); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CanaryCommand{}, fmt.Errorf("%w: %s not found", ErrNotScanner, canaryID)
 		}
@@ -164,7 +164,7 @@ func MintScanCommand(ctx context.Context, database *db.DB, canaryID string, trig
 	var open int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM self_test_runs
-		WHERE canary_id = ? AND completed_at IS NULL AND stage IS NOT NULL`, canaryID).Scan(&open); err != nil {
+		WHERE agent_id = ? AND completed_at IS NULL AND stage IS NOT NULL`, canaryID).Scan(&open); err != nil {
 		return CanaryCommand{}, fmt.Errorf("count open scan runs: %w", err)
 	}
 	if open > 0 {
@@ -177,7 +177,7 @@ func MintScanCommand(ctx context.Context, database *db.DB, canaryID string, trig
 	}
 	createdAt := cmd.CreatedAt.Format(receivedAtLayout)
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at, "trigger", stage, stage_at)
+		INSERT INTO self_test_runs (command_id, agent_id, run_id, issued_at, deadline_at, "trigger", stage, stage_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		cmd.ID, canaryID, runID, createdAt, cmd.ExpiresAt.Format(receivedAtLayout),
 		string(trigger), string(StageOrdered), createdAt); err != nil {
@@ -217,7 +217,7 @@ func lookupScanRun(ctx context.Context, conn db.Conn, canaryID, runID string) (r
 	err = conn.QueryRowContext(ctx, `
 		SELECT command_id, issued_at, deadline_at, completed_at, "trigger", stage
 		FROM self_test_runs
-		WHERE run_id = ? AND canary_id = ? AND stage IS NOT NULL`, runID, canaryID).
+		WHERE run_id = ? AND agent_id = ? AND stage IS NOT NULL`, runID, canaryID).
 		Scan(&r.commandID, &issuedAt, &deadlineAt, &completedAt, &trigger, &stage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return scanRunRow{}, false, nil
@@ -440,12 +440,12 @@ func SetCanaryDBRefresh(ctx context.Context, conn db.Conn, canaryID string, fail
 	var err error
 	if failing {
 		_, err = conn.ExecContext(ctx, `
-			UPDATE canaries
+			UPDATE agents
 			SET db_refresh_failing_since = COALESCE(db_refresh_failing_since, ?), db_refresh_error = ?
 			WHERE id = ?`, now.UTC().Format(receivedAtLayout), truncateReason(lastError), canaryID)
 	} else {
 		_, err = conn.ExecContext(ctx, `
-			UPDATE canaries SET db_refresh_failing_since = NULL, db_refresh_error = NULL WHERE id = ?`, canaryID)
+			UPDATE agents SET db_refresh_failing_since = NULL, db_refresh_error = NULL WHERE id = ?`, canaryID)
 	}
 	if err != nil {
 		return fmt.Errorf("update db refresh state for %s: %w", canaryID, err)
@@ -521,7 +521,7 @@ func (r scanRunRecord) verdict() string {
 func listScanRuns(ctx context.Context, conn historyConn, canaryID string) ([]scanRunRecord, error) {
 	rows, err := conn.QueryContext(ctx, `
 		SELECT command_id, "trigger", issued_at, deadline_at, completed_at, passed, stage, stage_at, reason
-		FROM self_test_runs WHERE canary_id = ? AND stage IS NOT NULL`, canaryID)
+		FROM self_test_runs WHERE agent_id = ? AND stage IS NOT NULL`, canaryID)
 	if err != nil {
 		return nil, fmt.Errorf("query scan runs for %s: %w", canaryID, err)
 	}
@@ -631,7 +631,7 @@ func ListScannerRuns(ctx context.Context, database *db.DB, canaryID string, limi
 func snapshotsByRun(ctx context.Context, database *db.DB, canaryID string) (map[string]int64, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, self_test_run_id FROM scan_snapshots
-		WHERE canary_id = ? AND self_test_run_id IS NOT NULL`, canaryID)
+		WHERE agent_id = ? AND self_test_run_id IS NOT NULL`, canaryID)
 	if err != nil {
 		return nil, fmt.Errorf("query run snapshots for %s: %w", canaryID, err)
 	}
@@ -657,7 +657,7 @@ func snapshotsByRun(ctx context.Context, database *db.DB, canaryID string) (map[
 // snapshot was received, or nil if it has none. Compared in Go.
 func latestOKSnapshotReceivedAt(ctx context.Context, database *db.DB, canaryID string) (*time.Time, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT received_at FROM scan_snapshots WHERE canary_id = ? AND status = ?`, canaryID, ScanStatusOK)
+		SELECT received_at FROM scan_snapshots WHERE agent_id = ? AND status = ?`, canaryID, ScanStatusOK)
 	if err != nil {
 		return nil, fmt.Errorf("query ok snapshots for %s: %w", canaryID, err)
 	}

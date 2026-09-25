@@ -118,7 +118,7 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 	deadline := createdAt.Add(enrolmentFirstContactWindow)
 
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, kind, created_at, first_contact_deadline, state)
+		INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, state)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, HashToken(raw), name, lane, string(kind), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
 	if err != nil {
@@ -305,7 +305,7 @@ func FirstContact(ctx context.Context, database *db.DB, tokenHash string, now ti
 // by mistake.
 func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSession, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
 		FROM enrolment_sessions
 		ORDER BY created_at`)
 	if err != nil {
@@ -331,7 +331,7 @@ func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSes
 // row via conn, so FirstContact can run it inside its own transaction.
 func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
 		FROM enrolment_sessions
 		WHERE token_hash = ?`, tokenHash)
 	return scanEnrolmentSession(row)
@@ -349,7 +349,7 @@ func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash str
 // case wants.
 func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, canary_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
 		FROM enrolment_sessions
 		WHERE enrolment_secret_hash = ? AND state = ?`, secretHash, string(EnrolmentStateContacted))
 	return scanEnrolmentSession(row)

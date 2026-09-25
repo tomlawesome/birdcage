@@ -107,7 +107,7 @@ func TestHandleHeartbeatStoresSelfReportFields(t *testing.T) {
 			lastEvent  string
 		)
 		row := database.QueryRow(
-			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)
@@ -139,7 +139,7 @@ func TestHandleHeartbeatStoresExtendedSelfReportFields(t *testing.T) {
 
 		var dropped, rejected, collisions, positionFound *int64
 		row := database.QueryRow(
-			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM canaries WHERE id = ?`,
+			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound); err != nil {
 			t.Fatalf("scan extended self-report columns: %v", err)
@@ -181,7 +181,7 @@ func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
 
 		var dropped, rejected, collisions, positionFound *int64
 		row := database.QueryRow(
-			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM canaries WHERE id = ?`,
+			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound); err != nil {
 			t.Fatalf("scan extended self-report columns: %v", err)
@@ -220,7 +220,7 @@ func TestHandleHeartbeatInvalidBodyDoesNotAdvanceLastSeen(t *testing.T) {
 		}
 
 		var lastHeartbeat *string
-		row := database.QueryRow(`SELECT last_heartbeat_at FROM canaries WHERE id = ?`, "canary-a")
+		row := database.QueryRow(`SELECT last_heartbeat_at FROM agents WHERE id = ?`, "canary-a")
 		if err := row.Scan(&lastHeartbeat); err != nil {
 			t.Fatalf("scan last_heartbeat_at: %v", err)
 		}
@@ -268,7 +268,7 @@ func TestHandleHeartbeatScannerCommonShapeStored(t *testing.T) {
 			version         string
 			lastHeartbeatAt *string
 		)
-		row := database.QueryRow(`SELECT agent_version, last_heartbeat_at FROM canaries WHERE id = ?`, "canary-scanner")
+		row := database.QueryRow(`SELECT agent_version, last_heartbeat_at FROM agents WHERE id = ?`, "canary-scanner")
 		if err := row.Scan(&version, &lastHeartbeatAt); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}

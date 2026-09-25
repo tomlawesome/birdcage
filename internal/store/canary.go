@@ -316,7 +316,7 @@ func parsePorts(raw string) []int {
 // per-minute tick to filter down to the ones with a LastSeenAddr and at
 // least one port.
 func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr, registered_at FROM canaries WHERE kind = ?`, string(agentkind.Honeypot))
+	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr, registered_at FROM agents WHERE kind = ?`, string(agentkind.Honeypot))
 	if err != nil {
 		return nil, fmt.Errorf("query honeypot canaries: %w", err)
 	}
@@ -348,7 +348,7 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 // internal/selftestsched's pending retry re-mints each one's proof, by
 // kind, until it passes.
 func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM canaries WHERE registered_at IS NULL`)
+	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM agents WHERE registered_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query pending canaries: %w", err)
 	}
@@ -386,7 +386,7 @@ func SelfTestCanaryByID(ctx context.Context, database *db.DB, canaryID string) (
 		kind         string
 		registeredAt *string
 	)
-	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr, registered_at FROM canaries WHERE id = ?`, canaryID)
+	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr, registered_at FROM agents WHERE id = ?`, canaryID)
 	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &registeredAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SelfTestCanary{}, false, nil
@@ -440,7 +440,7 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 		registeredAt = &s
 	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO canaries (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at)
+		INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt)
 	if err != nil {
@@ -458,7 +458,7 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 	at = at.UTC()
 	atStr := at.Format(receivedAtLayout)
 
-	res, err := database.ExecContext(ctx, `UPDATE canaries SET last_heartbeat_at = ? WHERE id = ?`, atStr, canaryID)
+	res, err := database.ExecContext(ctx, `UPDATE agents SET last_heartbeat_at = ? WHERE id = ?`, atStr, canaryID)
 	if err != nil {
 		return fmt.Errorf("update last_heartbeat_at: %w", err)
 	}
@@ -471,12 +471,12 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 	}
 
 	if _, err := database.ExecContext(ctx,
-		`INSERT INTO heartbeats (canary_id, at) VALUES (?, ?)`, canaryID, atStr); err != nil {
+		`INSERT INTO heartbeats (agent_id, at) VALUES (?, ?)`, canaryID, atStr); err != nil {
 		return fmt.Errorf("insert heartbeat: %w", err)
 	}
 
 	cutoff := at.Add(-heartbeatRetention).Format(receivedAtLayout)
-	pruneQuery := fmt.Sprintf(`DELETE FROM heartbeats WHERE canary_id = ? AND %s`,
+	pruneQuery := fmt.Sprintf(`DELETE FROM heartbeats WHERE agent_id = ? AND %s`,
 		timeCompare(database.Engine, "at", "<"))
 	if _, err := database.ExecContext(ctx, pruneQuery, canaryID, cutoff); err != nil {
 		return fmt.Errorf("prune heartbeats: %w", err)
@@ -496,7 +496,7 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 // here, so this is its own narrow write rather than a parameter added to
 // three existing functions one of whose callers could never supply it.
 func SetCanaryLastSeenAddr(ctx context.Context, database *db.DB, canaryID, addr string) error {
-	res, err := database.ExecContext(ctx, `UPDATE canaries SET last_seen_addr = ? WHERE id = ?`, addr, canaryID)
+	res, err := database.ExecContext(ctx, `UPDATE agents SET last_seen_addr = ? WHERE id = ?`, addr, canaryID)
 	if err != nil {
 		return fmt.Errorf("update last_seen_addr: %w", err)
 	}
@@ -580,7 +580,7 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 		poisonerNames = &report.PoisonerNames
 	}
 	if _, err := database.ExecContext(ctx, `
-		UPDATE canaries
+		UPDATE agents
 		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?,
 			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?,
 			poisoner_names = ?
@@ -611,7 +611,7 @@ func RecordCanaryCommonHeartbeat(ctx context.Context, database *db.DB, canaryID 
 	if err := RecordHeartbeat(ctx, database, canaryID, at); err != nil {
 		return err
 	}
-	if _, err := database.ExecContext(ctx, `UPDATE canaries SET agent_version = ? WHERE id = ?`, agentVersion, canaryID); err != nil {
+	if _, err := database.ExecContext(ctx, `UPDATE agents SET agent_version = ? WHERE id = ?`, agentVersion, canaryID); err != nil {
 		return fmt.Errorf("update agent version: %w", err)
 	}
 	return nil
@@ -663,7 +663,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			credential_dual_use_addrs, credential_dual_use_addrs_at,
 			credential_dual_use_versions, credential_dual_use_versions_at,
 			db_refresh_failing_since, db_refresh_error
-		FROM canaries ORDER BY id`)
+		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
 	}

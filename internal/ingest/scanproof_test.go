@@ -81,7 +81,7 @@ func runStage(t *testing.T, database *db.DB, commandID string) (stage string, co
 func isRegistered(t *testing.T, database *db.DB, id string) bool {
 	t.Helper()
 	var at *string
-	if err := database.QueryRow(`SELECT registered_at FROM canaries WHERE id = ?`, id).Scan(&at); err != nil {
+	if err := database.QueryRow(`SELECT registered_at FROM agents WHERE id = ?`, id).Scan(&at); err != nil {
 		t.Fatalf("read registered_at: %v", err)
 	}
 	return at != nil
@@ -161,7 +161,7 @@ func TestCommandKindAllowList(t *testing.T) {
 			t.Errorf("honeypot poll with only a scan queued = %d %v, want 200 null", code, got)
 		}
 		var undelivered int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM canary_commands WHERE delivered_at IS NULL`).Scan(&undelivered); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM agent_commands WHERE delivered_at IS NULL`).Scan(&undelivered); err != nil {
 			t.Fatal(err)
 		}
 		if undelivered != 2 {
@@ -252,7 +252,7 @@ func TestHeartbeatRunAndDBRefreshValidation(t *testing.T) {
 			}
 		}
 		var beats int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM heartbeats WHERE canary_id = 'scan-a'`).Scan(&beats); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM heartbeats WHERE agent_id = 'scan-a'`).Scan(&beats); err != nil {
 			t.Fatal(err)
 		}
 		if beats != 0 {
@@ -273,7 +273,7 @@ func TestHeartbeatDBRefreshUsesBirdcagesClock(t *testing.T) {
 		}
 		read := func() (*string, *string) {
 			var since, msg *string
-			if err := database.QueryRow(`SELECT db_refresh_failing_since, db_refresh_error FROM canaries WHERE id = 'scan-a'`).Scan(&since, &msg); err != nil {
+			if err := database.QueryRow(`SELECT db_refresh_failing_since, db_refresh_error FROM agents WHERE id = 'scan-a'`).Scan(&since, &msg); err != nil {
 				t.Fatal(err)
 			}
 			return since, msg
@@ -461,7 +461,7 @@ func TestScanDBRefreshStateFromSnapshot(t *testing.T) {
 		}
 		f.post(t, "/ingest/scans", raw, proofScanBody("", proofT0, withError))
 		var since *string
-		if err := database.QueryRow(`SELECT db_refresh_failing_since FROM canaries WHERE id = 'scan-a'`).Scan(&since); err != nil {
+		if err := database.QueryRow(`SELECT db_refresh_failing_since FROM agents WHERE id = 'scan-a'`).Scan(&since); err != nil {
 			t.Fatal(err)
 		}
 		if since == nil || !mustParseTime(t, *since).Equal(f.now) {
@@ -472,7 +472,7 @@ func TestScanDBRefreshStateFromSnapshot(t *testing.T) {
 		}
 		f.now = proofT0.Add(time.Hour)
 		f.post(t, "/ingest/scans", raw, proofScanBody("", proofT0.Add(50*time.Minute), nil))
-		if err := database.QueryRow(`SELECT db_refresh_failing_since FROM canaries WHERE id = 'scan-a'`).Scan(&since); err != nil {
+		if err := database.QueryRow(`SELECT db_refresh_failing_since FROM agents WHERE id = 'scan-a'`).Scan(&since); err != nil {
 			t.Fatal(err)
 		}
 		if since != nil {

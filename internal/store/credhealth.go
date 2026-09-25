@@ -79,9 +79,9 @@ func RecordCredentialDualUse(ctx context.Context, database db.Conn, canaryID str
 	if err != nil {
 		return fmt.Errorf("encode dual-use pair: %w", err)
 	}
-	query := `UPDATE canaries SET credential_dual_use_addrs = ?, credential_dual_use_addrs_at = ? WHERE id = ?`
+	query := `UPDATE agents SET credential_dual_use_addrs = ?, credential_dual_use_addrs_at = ? WHERE id = ?`
 	if kind == DualUseVersions {
-		query = `UPDATE canaries SET credential_dual_use_versions = ?, credential_dual_use_versions_at = ? WHERE id = ?`
+		query = `UPDATE agents SET credential_dual_use_versions = ?, credential_dual_use_versions_at = ? WHERE id = ?`
 	}
 	res, err := database.ExecContext(ctx, query, string(pair), at.UTC().Format(receivedAtLayout), canaryID)
 	if err != nil {

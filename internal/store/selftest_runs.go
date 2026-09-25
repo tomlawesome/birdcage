@@ -37,8 +37,8 @@ type SelfTestRunDetail struct {
 // a day, kept for as long as the runs table is).
 func ListSelfTestRuns(ctx context.Context, database *db.DB, canaryID string, since, until time.Time) ([]SelfTestRunDetail, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT command_id, canary_id, run_id, issued_at, deadline_at, completed_at, passed
-		FROM self_test_runs WHERE canary_id = ?`, canaryID)
+		SELECT command_id, agent_id, run_id, issued_at, deadline_at, completed_at, passed
+		FROM self_test_runs WHERE agent_id = ?`, canaryID)
 	if err != nil {
 		return nil, fmt.Errorf("query self_test_runs for %s: %w", canaryID, err)
 	}

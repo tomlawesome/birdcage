@@ -21,7 +21,7 @@ func insertCertRow(t *testing.T, database *db.DB, canaryID, fp string, notBefore
 	if firstUsed != nil {
 		used = firstUsed.UTC().Format(receivedAtLayout)
 	}
-	if _, err := database.Exec(`INSERT INTO client_certs (canary_id, serial, fingerprint_sha256, not_before, not_after, first_used_at)
+	if _, err := database.Exec(`INSERT INTO client_certs (agent_id, serial, fingerprint_sha256, not_before, not_after, first_used_at)
 		VALUES (?, ?, ?, ?, ?, ?)`, canaryID, "01", fp,
 		notBefore.UTC().Format(receivedAtLayout), notAfter.UTC().Format(receivedAtLayout), used); err != nil {
 		t.Fatalf("insert client_certs row: %v", err)

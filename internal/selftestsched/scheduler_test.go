@@ -57,7 +57,7 @@ func insertHoneypotCanary(t *testing.T, database *db.DB, id, ports string, lastS
 func selfTestRunCount(t *testing.T, database *db.DB, canaryID string) int {
 	t.Helper()
 	var n int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM self_test_runs WHERE canary_id = ?`, canaryID).Scan(&n); err != nil {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM self_test_runs WHERE agent_id = ?`, canaryID).Scan(&n); err != nil {
 		t.Fatalf("count self_test_runs for %s: %v", canaryID, err)
 	}
 	return n
@@ -71,7 +71,7 @@ func selfTestRunCount(t *testing.T, database *db.DB, canaryID string) int {
 func mintedTargetServices(t *testing.T, database *db.DB, canaryID string) []string {
 	t.Helper()
 	var commandID string
-	if err := database.QueryRow(`SELECT command_id FROM self_test_runs WHERE canary_id = ? ORDER BY issued_at DESC LIMIT 1`, canaryID).Scan(&commandID); err != nil {
+	if err := database.QueryRow(`SELECT command_id FROM self_test_runs WHERE agent_id = ? ORDER BY issued_at DESC LIMIT 1`, canaryID).Scan(&commandID); err != nil {
 		t.Fatalf("find latest self_test_runs command_id for %s: %v", canaryID, err)
 	}
 	rows, err := database.Query(`SELECT service FROM self_test_targets WHERE command_id = ? ORDER BY service`, commandID)
@@ -489,9 +489,9 @@ func TestTickCanaryListErrorIsLoggedNotFatal(t *testing.T) {
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
 		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
 		mustSetSetting(t, database, store.SettingSelfTestSchedule, now.Format(scheduleTimeLayout))
-		if _, err := database.ExecContext(context.Background(), `DROP TABLE canaries CASCADE`); err != nil {
+		if _, err := database.ExecContext(context.Background(), `DROP TABLE agents CASCADE`); err != nil {
 			// SQLite has no CASCADE; the plain form is enough there.
-			if _, err := database.ExecContext(context.Background(), `DROP TABLE canaries`); err != nil {
+			if _, err := database.ExecContext(context.Background(), `DROP TABLE agents`); err != nil {
 				t.Fatalf("drop canaries: %v", err)
 			}
 		}
@@ -654,7 +654,7 @@ func TestRotationSucceededCanaryLookupErrorDoesNothing(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
 		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
-		dropTable(t, database, "canaries")
+		dropTable(t, database, "agents")
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.RotationSucceeded(context.Background(), "canary-a", now)
@@ -703,8 +703,8 @@ func TestFirstContactMintsScanForScanner(t *testing.T) {
 		}
 		var kind, deadline, stage string
 		if err := database.QueryRow(`
-			SELECT c.kind, r.deadline_at, r.stage FROM self_test_runs r JOIN canary_commands c ON c.id = r.command_id
-			WHERE r.canary_id = ?`, "scanner-a").Scan(&kind, &deadline, &stage); err != nil {
+			SELECT c.kind, r.deadline_at, r.stage FROM self_test_runs r JOIN agent_commands c ON c.id = r.command_id
+			WHERE r.agent_id = ?`, "scanner-a").Scan(&kind, &deadline, &stage); err != nil {
 			t.Fatalf("read run: %v", err)
 		}
 		if kind != string(store.CommandScan) || stage != string(store.StageOrdered) {
@@ -772,7 +772,7 @@ func TestFirstContactNeverMintsTwice(t *testing.T) {
 // canary it cannot see.
 func TestFirstContactCanaryLookupErrorDoesNothing(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		dropTable(t, database, "canaries")
+		dropTable(t, database, "agents")
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.FirstContact(context.Background(), "canary-a", now)

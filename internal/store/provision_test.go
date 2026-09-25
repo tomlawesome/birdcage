@@ -83,7 +83,7 @@ func TestProvisionHappyPath(t *testing.T) {
 			t.Fatal("agentkind.Lookup(Honeypot) ok = false")
 		}
 		var name, lane, kind, ports string
-		row := database.QueryRow(`SELECT name, lane, kind, ports FROM canaries WHERE id = ?`, result.CanaryID)
+		row := database.QueryRow(`SELECT name, lane, kind, ports FROM agents WHERE id = ?`, result.CanaryID)
 		if err := row.Scan(&name, &lane, &kind, &ports); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}
@@ -132,7 +132,7 @@ func TestProvisionHappyPath(t *testing.T) {
 		// The session is provisioned and its secret is shredded.
 		var state string
 		var canaryID, secretHash *string
-		row = database.QueryRow(`SELECT state, canary_id, enrolment_secret_hash FROM enrolment_sessions WHERE id = ?`, session.ID)
+		row = database.QueryRow(`SELECT state, agent_id, enrolment_secret_hash FROM enrolment_sessions WHERE id = ?`, session.ID)
 		if err := row.Scan(&state, &canaryID, &secretHash); err != nil {
 			t.Fatalf("scan enrolment_sessions row: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 			kind, ports  string
 			registeredAt *string
 		)
-		row := database.QueryRow(`SELECT kind, ports, registered_at FROM canaries WHERE id = ?`, result.CanaryID)
+		row := database.QueryRow(`SELECT kind, ports, registered_at FROM agents WHERE id = ?`, result.CanaryID)
 		if err := row.Scan(&kind, &ports, &registeredAt); err != nil {
 			t.Fatalf("scan canaries row: %v", err)
 		}
@@ -281,11 +281,11 @@ func TestProvisionAfterWindowExpires(t *testing.T) {
 		}
 
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM canaries`).Scan(&count); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&count); err != nil {
 			t.Fatalf("count canaries: %v", err)
 		}
 		if count != 0 {
-			t.Errorf("canaries has %d rows, want 0: a window-expired provision attempt must create no canary", count)
+			t.Errorf("agents has %d rows, want 0: a window-expired provision attempt must create no canary", count)
 		}
 	})
 }
@@ -306,7 +306,7 @@ func TestProvisionUnregisteredKindFailsLoudly(t *testing.T) {
 		secretRaw := "unregistered-kind-secret"
 
 		if _, err := database.ExecContext(ctx, `
-			INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, kind, created_at, first_contact_deadline, burned_at, enrolment_secret_hash, window_deadline, state)
+			INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, enrolment_secret_hash, window_deadline, state)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			"unregistered-kind-session", "irrelevant-token-hash", "canary-a", "lane-a", "seagull",
 			mintedAt.Format(receivedAtLayout), contactedAt.Format(receivedAtLayout), contactedAt.Format(receivedAtLayout),
@@ -323,11 +323,11 @@ func TestProvisionUnregisteredKindFailsLoudly(t *testing.T) {
 		}
 
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM canaries`).Scan(&count); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&count); err != nil {
 			t.Fatalf("count canaries: %v", err)
 		}
 		if count != 0 {
-			t.Errorf("canaries has %d rows, want 0: an unregistered kind must create no canary, not fall back to any registered one's profile", count)
+			t.Errorf("agents has %d rows, want 0: an unregistered kind must create no canary, not fall back to any registered one's profile", count)
 		}
 	})
 }
@@ -351,7 +351,7 @@ func TestProvisionIssueFailureRollsBackEverything(t *testing.T) {
 		}
 
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM canaries`).Scan(&count); err != nil {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&count); err != nil {
 			t.Fatalf("count canaries: %v", err)
 		}
 		if count != 0 {

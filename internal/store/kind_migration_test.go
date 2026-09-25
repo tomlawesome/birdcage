@@ -21,14 +21,14 @@ func TestOldBinaryInsertBackfillsHoneypotCanary(t *testing.T) {
 		ctx := context.Background()
 		enrolledAt := time.Now().UTC().Format(receivedAtLayout)
 		if _, err := database.ExecContext(ctx, `
-			INSERT INTO canaries (id, name, lane, ports, heartbeat_interval_s, enrolled_at)
+			INSERT INTO agents (id, name, lane, ports, heartbeat_interval_s, enrolled_at)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			"old-binary-canary", "old", "lan", "22", 60, enrolledAt); err != nil {
 			t.Fatalf("insert canary without kind column: %v", err)
 		}
 
 		var kind string
-		row := database.QueryRow(`SELECT kind FROM canaries WHERE id = ?`, "old-binary-canary")
+		row := database.QueryRow(`SELECT kind FROM agents WHERE id = ?`, "old-binary-canary")
 		if err := row.Scan(&kind); err != nil {
 			t.Fatalf("scan kind: %v", err)
 		}
@@ -47,7 +47,7 @@ func TestOldBinaryInsertBackfillsHoneypotEnrolmentSession(t *testing.T) {
 		createdAt := time.Now().UTC()
 		deadline := createdAt.Add(5 * time.Minute)
 		if _, err := database.ExecContext(ctx, `
-			INSERT INTO enrolment_sessions (id, token_hash, canary_name, lane, created_at, first_contact_deadline, state)
+			INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, created_at, first_contact_deadline, state)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			"old-binary-session", "deadbeef", "old", "lan",
 			createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted)); err != nil {

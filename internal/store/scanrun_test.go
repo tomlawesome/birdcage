@@ -101,7 +101,7 @@ func readRun(t *testing.T, database *db.DB, commandID string) runRow {
 func registered(t *testing.T, database *db.DB, id string) bool {
 	t.Helper()
 	var at *string
-	if err := database.QueryRow(`SELECT registered_at FROM canaries WHERE id = ?`, id).Scan(&at); err != nil {
+	if err := database.QueryRow(`SELECT registered_at FROM agents WHERE id = ?`, id).Scan(&at); err != nil {
 		t.Fatalf("read registered_at: %v", err)
 	}
 	return at != nil
@@ -161,14 +161,14 @@ func TestOneOpenScanRunIsEnforcedByTheDatabase(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertScanner(t, database, "scan-a", true)
 		mintScan(t, database, "scan-a", TriggerProof, scanT0)
-		_, err := database.Exec(`INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at, stage)
+		_, err := database.Exec(`INSERT INTO self_test_runs (command_id, agent_id, run_id, issued_at, deadline_at, stage)
 			VALUES ('c2', 'scan-a', 'r2', ?, ?, 'ordered')`, scanT0.Format(time.RFC3339Nano), scanT0.Add(time.Hour).Format(time.RFC3339Nano))
 		if err == nil {
 			t.Fatal("second open scan run inserted; want the unique index to refuse it")
 		}
 		// Honeypot runs (stage NULL) are not limited.
 		for _, id := range []string{"h1", "h2"} {
-			if _, err := database.Exec(`INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at)
+			if _, err := database.Exec(`INSERT INTO self_test_runs (command_id, agent_id, run_id, issued_at, deadline_at)
 				VALUES (?, 'hp', ?, ?, ?)`, id, id, scanT0.Format(time.RFC3339Nano), scanT0.Add(time.Hour).Format(time.RFC3339Nano)); err != nil {
 				t.Fatalf("honeypot run %s: %v", id, err)
 			}
@@ -342,7 +342,7 @@ func TestMatchScanRunIgnoresHoneypotRuns(t *testing.T) {
 		insertScanner(t, database, "scan-a", true)
 		// A honeypot-style run (stage NULL) recorded against the scanner
 		// is not a scan run and cannot be answered with a snapshot.
-		if _, err := database.Exec(`INSERT INTO self_test_runs (command_id, canary_id, run_id, issued_at, deadline_at)
+		if _, err := database.Exec(`INSERT INTO self_test_runs (command_id, agent_id, run_id, issued_at, deadline_at)
 			VALUES ('c', 'scan-a', 'hp-run', ?, ?)`, scanT0.Format(time.RFC3339Nano), scanT0.Add(time.Hour).Format(time.RFC3339Nano)); err != nil {
 			t.Fatalf("insert: %v", err)
 		}

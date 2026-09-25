@@ -31,7 +31,7 @@ func TestSendHeartbeatStoresReport(t *testing.T) {
 			lastEventID string
 		)
 		row := database.QueryRow(
-			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM canaries WHERE id = ?`,
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
 			"canary-a")
 		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEventID); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)

@@ -140,7 +140,7 @@ func TestHandleProvisionSuccess(t *testing.T) {
 			t.Fatal("agentkind.Lookup(Honeypot) ok = false")
 		}
 		var kind, ports string
-		row := database.QueryRow(`SELECT kind, ports FROM canaries WHERE id = ?`, resp.CanaryID)
+		row := database.QueryRow(`SELECT kind, ports FROM agents WHERE id = ?`, resp.CanaryID)
 		if err := row.Scan(&kind, &ports); err != nil {
 			t.Fatalf("scan canaries.kind/ports: %v", err)
 		}

@@ -90,7 +90,7 @@ func snapshotIDForRun(t *testing.T, database *db.DB, canaryID, commandID string)
 	t.Helper()
 	var id int64
 	if err := database.QueryRow(`
-		SELECT id FROM scan_snapshots WHERE canary_id = ? AND self_test_run_id = ?`, canaryID, commandID).Scan(&id); err != nil {
+		SELECT id FROM scan_snapshots WHERE agent_id = ? AND self_test_run_id = ?`, canaryID, commandID).Scan(&id); err != nil {
 		t.Fatalf("look up snapshot for run %s: %v", commandID, err)
 	}
 	return id
@@ -239,7 +239,7 @@ func TestCanaryRunsNeverExposeRunID(t *testing.T) {
 		}, t0.Add(time.Minute))
 
 		var storedRunID string
-		if err := database.QueryRow(`SELECT run_id FROM self_test_runs WHERE canary_id = ?`, "scanner-a").Scan(&storedRunID); err != nil {
+		if err := database.QueryRow(`SELECT run_id FROM self_test_runs WHERE agent_id = ?`, "scanner-a").Scan(&storedRunID); err != nil {
 			t.Fatalf("read run_id: %v", err)
 		}
 		if storedRunID != runID {
