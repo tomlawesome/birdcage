@@ -30,7 +30,7 @@ assert_refused() { # assert_refused <name> <args...>
   fi
 }
 
-gitlab="registry.gitlab.tomlawson.io/ai/birdcage/birdcage"
+gitlab="registry.tomlawson.io/ai/birdcage/birdcage"
 ghcr="ghcr.io/tomlawesome/birdcage"
 sha40="$(printf 'a%.0s' $(seq 40))"
 hex64="$(printf 'b%.0s' $(seq 64))"

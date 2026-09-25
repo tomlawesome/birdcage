@@ -42,7 +42,7 @@
 #
 # Inputs (environment):
 #   BIRDCAGE_IMAGE          Image repository without tag or digest, e.g.
-#                           registry.gitlab.tomlawson.io/ai/birdcage/birdcage.
+#                           registry.tomlawson.io/ai/birdcage/birdcage.
 #   BIRDCAGE_DIGEST         The digest about to be given a name,
 #                           "sha256:<64 hex>".
 #   BIRDCAGE_COMMIT         The commit the publisher is acting for (40 hex).

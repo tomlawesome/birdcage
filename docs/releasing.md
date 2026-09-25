@@ -2,7 +2,7 @@
 
 Issue #90, note 22233; extended to four images by #125. Four images are
 published and promoted in this project's own GitLab container registry —
-`registry.gitlab.tomlawson.io/ai/birdcage/birdcage`, the server;
+`registry.tomlawson.io/ai/birdcage/birdcage`, the server;
 `.../mockingbird`, the canary; `.../nightjar`, the scanner; and
 `.../smb-lure`. The validation evidence is bound to the digest there, and
 that is where

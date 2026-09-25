@@ -9,7 +9,7 @@
 #   preview, latest    channel names; move
 #   sha-<40 hex>       per-commit anchor, lowercase hex
 #   ci-<...>           build:images transport tags; only on the GitLab
-#                      registry (registry.gitlab.tomlawson.io), never GHCR
+#                      registry (registry.tomlawson.io), never GHCR
 #   sha256-<64 hex>.att
 #                      cosign's attestation object, named by cosign, not
 #                      us; only when the caller passes --cosign-attestation
@@ -21,7 +21,9 @@
 #     returns 1. Never exits, so the caller keeps its own exit codes.
 # Usage, run directly: the same arguments; exit 0 allowed, 1 refused.
 
-IMAGE_TAG_POLICY_GITLAB_REGISTRY="registry.gitlab.tomlawson.io"
+# GitLab sets $CI_REGISTRY in every job; outside CI, the project's own
+# registry. Never typed as registry.gitlab.<host>: that name does not exist.
+IMAGE_TAG_POLICY_GITLAB_REGISTRY="${CI_REGISTRY:-registry.tomlawson.io}"
 
 image_tag_check() {
   local repo="${1:-}" tag="${2:-}" allow_att="${3:-}"

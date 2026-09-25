@@ -24,7 +24,7 @@
 #   scripts/mirror-image.sh <source-repository> <tag> <dest-repository>
 #
 #   <source-repository>  no tag, no digest, e.g.
-#                        registry.gitlab.tomlawson.io/ai/birdcage/birdcage --
+#                        registry.tomlawson.io/ai/birdcage/birdcage --
 #                        the already-published GitLab repository.
 #   <tag>                 the channel or version tag already published on
 #                        <source-repository>, e.g. preview or v0.1.0.

@@ -42,7 +42,7 @@ digest, commit, ref, pipeline_id, policy_version, recorded_at = sys.argv[1:7]
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
     "predicateType": "https://tomlawson.io/attestations/birdcage-validation/v1",
-    "subject": [{"name": "registry.gitlab.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
+    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
         "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
@@ -62,7 +62,7 @@ digest, commit, ref, pipeline_id, policy_version, recorded_at = sys.argv[1:7]
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
     "predicateType": "https://tomlawson.io/attestations/some-other-check/v1",
-    "subject": [{"name": "registry.gitlab.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
+    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
         "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
@@ -87,7 +87,7 @@ subject_digest, predicate_digest, commit, ref, pipeline_id, policy_version, reco
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
     "predicateType": "https://tomlawson.io/attestations/birdcage-validation/v1",
-    "subject": [{"name": "registry.gitlab.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": subject_digest.split(":", 1)[1]}}],
+    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": subject_digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
         "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
@@ -223,7 +223,7 @@ expect 13 "evidence dated in the future is refused" "$f"
 fetch_verified_attestations() { return 1; }
 : > "$work/unused.pub"
 got=0
-out="$(BIRDCAGE_IMAGE=registry.gitlab.tomlawson.io/ai/birdcage/birdcage BIRDCAGE_DIGEST="$digest" \
+out="$(BIRDCAGE_IMAGE=registry.tomlawson.io/ai/birdcage/birdcage BIRDCAGE_DIGEST="$digest" \
   BIRDCAGE_COMMIT="$commit" BIRDCAGE_POLICY_VERSION="$policy" \
   COSIGN_PUBLIC_KEY="$work/unused.pub" BIRDCAGE_COSIGN=/bin/true \
   main 2>&1)" || got=$?
