@@ -26,7 +26,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="registry.gitlab.tomlawson.io/ai/birdcage/birdcage"
+repo="registry.tomlawson.io/ai/birdcage/birdcage"
 commit="$(printf 'b%.0s' $(seq 40))"
 digest_ok="sha256:$(printf 'a%.0s' $(seq 64))"
 other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
@@ -197,6 +197,23 @@ assert_exit 1 "a repository carrying a digest is a usage error" "${repo}@${diges
 assert_exit 1 "a commit that is too short is a usage error" "$repo" "abc123"
 assert_exit 1 "a commit with uppercase hex is a usage error" "$repo" "$(printf 'B%.0s' $(seq 40))"
 assert_exit 1 "a commit with non-hex characters is a usage error" "$repo" "$(printf 'z%.0s' $(seq 40))"
+
+# --- tag allow-list (scripts/image-tag-policy.sh) ---------------------------
+# release-version.sh already refuses a bad VERSION; this proves promotion
+# consults the shared allow-list itself, before any registry call, by
+# handing main() a tag through the read_release_tag seam.
+for refused in v0.1.0-beta v1.2 V1.2.3 0.1.0 sha-abc123 preview2 latest-foo ""; do
+  reset
+  rm -f "$work/resolve_called"
+  read_release_tag() { printf '%s\n' "$refused"; }
+  resolve_tag_digest() { : > "$work/resolve_called"; return 1; }
+  assert_exit 1 "tag '$refused' is refused" "$repo" "$commit"
+  assert_not_called "$work/resolve_called" "tag '$refused' is refused before the registry is asked anything"
+  assert_not_called "$work/create_args" "tag '$refused' is never created"
+done
+reset
+read_release_tag() { "$here/release-version.sh" --tag; }
+assert_exit 0 "the real tag from VERSION ($tag) passes the allow-list and promotes" "$repo" "$commit"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

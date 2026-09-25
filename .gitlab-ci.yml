@@ -1449,8 +1449,12 @@ e2e:smb-lure:postgres:
 # rather than the in-process fakes their unit tests use: an alert sent
 # through STARTTLS and AUTH and read back over IMAPS, a server without
 # STARTTLS refused, a rejected credential kept out of the record, a
-# message over the server's size limit refused and recorded, and an
-# approval reply read, judged and marked read. scripts/e2e/mail-stack.sh
+# message over the server's size limit refused and recorded, an
+# approval reply read, judged and marked read, and a DKIM-signed reply
+# verified against a key published in a real DNS server (build/e2e-dns,
+# unbound, test-only) with each of #80's mutations refused -- the
+# signing key is made inside the job and never leaves it.
+# scripts/e2e/mail-stack.sh
 # restarts birdcage with mail configured, which is why this is its own
 # stack run rather than a line added to another job.
 e2e:mail:
@@ -1463,8 +1467,9 @@ e2e:mail:
   needs:
     - job: build:images
       artifacts: true
-  # Builds one extra image (the Alpine mail server) and runs it beside the
-  # base stack's containers.
+  # Builds two extra images (the Alpine mail server, and the test DNS
+  # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
+  # runs them beside the base stack's containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -1506,8 +1511,9 @@ e2e:mail:postgres:
   needs:
     - job: build:images
       artifacts: true
-  # Builds one extra image (the Alpine mail server) and runs it beside the
-  # base stack's containers.
+  # Builds two extra images (the Alpine mail server, and the test DNS
+  # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
+  # runs them beside the base stack's containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -2353,9 +2359,9 @@ release:promote:
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
       smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
-      # `latest` moves on every release, pre-release or not. Whether a
-      # beta is the right thing to run is the decision of whoever pulls it,
-      # not this pipeline's.
+      # `latest` moves on every release. Whether a 0.x release is the
+      # right thing to run is the decision of whoever pulls it, not this
+      # pipeline's.
       #
       # What this pipeline is responsible for is narrower, and is met:
       # `latest` cannot point at an unapproved build. It is moved through

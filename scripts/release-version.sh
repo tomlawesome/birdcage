@@ -13,14 +13,14 @@
 # republishing.
 #
 # THE STAMP. Images are stamped `<version>+<short-commit>`, e.g.
-# `0.1.0-beta+1a2b3c4d`. The `+<short-commit>` half is semver build
+# `0.1.0+1a2b3c4d`. The `+<short-commit>` half is semver build
 # metadata: it does not change which release this is, and it means every
 # build says exactly which commit it came from, so two preview builds of
 # one version are still told apart by what the binary itself reports.
 # Nothing else may compute this string -- callers ask for it here.
 #
 # Usage:
-#   scripts/release-version.sh                 print the version, e.g. 0.1.0-beta
+#   scripts/release-version.sh                 print the version, e.g. 0.1.0
 #   scripts/release-version.sh --stamp <sha>   print <version>+<first 8 of sha>
 #   scripts/release-version.sh --tag           print v<version>, the tag name
 #
@@ -28,7 +28,8 @@
 #   --file PATH   read the version from PATH instead of the tracked VERSION
 #
 # Exit codes: 0 printed; 1 the file is missing, empty, unreadable, holds
-# more than one version, or holds something that is not a version.
+# more than one version, or holds something that is not a plain
+# MAJOR.MINOR.PATCH version (a pre-release suffix is refused).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -76,10 +77,17 @@ version="${lines[0]}"
 version="${version#"${version%%[![:space:]]*}"}"
 version="${version%"${version##*[![:space:]]}"}"
 
-# MAJOR.MINOR.PATCH with an optional pre-release suffix (0.1.0-beta). No
-# build metadata here: that half is this script's to add, from the commit.
-if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
-  fail "not a version: '$version' (expected MAJOR.MINOR.PATCH with an optional -prerelease)"
+# Plain MAJOR.MINOR.PATCH, digits only (owner, 2026-09-25, #90). No
+# pre-release suffix: the pre-release stage is the `preview` branch and its
+# `preview` image tag, not a version name. No leading `v` either: the file
+# holds 0.1.0 and --tag adds the v. No build metadata: that half is this
+# script's to add, from the commit.
+case "$version" in
+  [0-9]*.[0-9]*.[0-9]*-*)
+    fail "pre-release versions are not used: '$version' (write plain MAJOR.MINOR.PATCH; the pre-release stage is the preview branch and its preview image tag)" ;;
+esac
+if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  fail "not a version: '$version' (expected plain MAJOR.MINOR.PATCH, digits only, e.g. 0.1.0)"
 fi
 
 case "$mode" in

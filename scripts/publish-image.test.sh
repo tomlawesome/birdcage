@@ -19,7 +19,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="registry.gitlab.tomlawson.io/ai/birdcage/birdcage"
+repo="registry.tomlawson.io/ai/birdcage/birdcage"
 ref="${repo}:sha-$(printf 'b%.0s' $(seq 40))"
 tested_id="sha256:$(printf 'a%.0s' $(seq 64))"
 good_digest="sha256:$(printf 'c%.0s' $(seq 64))"
@@ -142,7 +142,7 @@ else
 fi
 
 reset_fixtures
-RESOLVED_REPO_DIGEST="registry.gitlab.tomlawson.io/ai/someone-else/other@${good_digest}"
+RESOLVED_REPO_DIGEST="registry.tomlawson.io/ai/someone-else/other@${good_digest}"
 split "$(run "$ref" "$tested_id")"
 if [ "$GOT" = 2 ] && [[ "$OUT" == *"no RepoDigests entry for ${repo}"* ]]; then
   ok "a resolved digest belonging only to a different repository is refused (exit 2), naming the cause"
@@ -185,6 +185,48 @@ if [ "$GOT" = 2 ] && [[ "$OUT" == *"different image than was tested"* ]]; then
 else
   bad "a pulled-back config ID differing from the tested image ID is refused (exit 2), naming the substitution" "exit $GOT: $OUT"
 fi
+
+# --- tag allow-list (scripts/image-tag-policy.sh) ---------------------------
+# The two shapes the pipeline pushes through here -- sha-<commit> anchors
+# and build:images' ci-<pipeline> transport tags -- pass; refused names
+# stop before docker push is ever called.
+PUSH_CALLED_MARKER="$(mktemp)"; rm -f "$PUSH_CALLED_MARKER"
+trap 'rm -f "$PUSH_CALLED_MARKER"' EXIT
+run_docker_push() { : > "$PUSH_CALLED_MARKER"; [ "$PUSH_SHOULD_FAIL" = 1 ] && return 1; return 0; }
+
+build_repo="registry.tomlawson.io/ai/birdcage/birdcage-build"
+reset_fixtures
+split "$(run_stdout_only "$ref" "$tested_id")"
+[ "$GOT" = 0 ] && ok "an allowed sha-<commit> anchor is pushed" \
+  || bad "an allowed sha-<commit> anchor is pushed" "exit $GOT: $OUT"
+reset_fixtures
+RESOLVED_REPO_DIGEST="${build_repo}@${good_digest}"
+split "$(run_stdout_only "${build_repo}:ci-1234" "$tested_id")"
+[ "$GOT" = 0 ] && ok "an allowed ci-<pipeline> transport tag is pushed to the GitLab registry" \
+  || bad "an allowed ci-<pipeline> transport tag is pushed to the GitLab registry" "exit $GOT: $OUT"
+for allowed in v0.1.0 preview latest; do
+  reset_fixtures
+  split "$(run_stdout_only "${repo}:${allowed}" "$tested_id")"
+  [ "$GOT" = 0 ] && ok "allowed tag '$allowed' is pushed" \
+    || bad "allowed tag '$allowed' is pushed" "exit $GOT: $OUT"
+done
+
+refuse_ref() { # refuse_ref <name> <reference>
+  reset_fixtures
+  rm -f "$PUSH_CALLED_MARKER"
+  split "$(run "$2" "$tested_id")"
+  if [ "$GOT" = 1 ] && [ ! -f "$PUSH_CALLED_MARKER" ]; then
+    ok "$1"
+  else
+    bad "$1" "exit $GOT (want 1, no push): $OUT"
+  fi
+}
+for refused in v0.1.0-beta v1.2 V1.2.3 0.1.0 sha-abc123 "sha-$(printf 'B%.0s' $(seq 40))" \
+               preview2 latest-foo "sha256-$(printf 'd%.0s' $(seq 64)).att"; do
+  refuse_ref "tag '$refused' is refused before anything is pushed" "${repo}:${refused}"
+done
+refuse_ref "an empty tag is refused before anything is pushed" "${repo}:"
+refuse_ref "a ci- tag is refused on GHCR" "ghcr.io/tomlawesome/birdcage:ci-x"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -24,7 +24,7 @@
 # Usage:
 #   scripts/publish-image.sh <image-reference-with-tag> <tested-image-id>
 #
-#   <image-reference-with-tag>  e.g. registry.gitlab.tomlawson.io/ai/birdcage/birdcage:sha-<40hex>
+#   <image-reference-with-tag>  e.g. registry.tomlawson.io/ai/birdcage/birdcage:sha-<40hex>
 #   <tested-image-id>           the local image config ID the test jobs
 #                                exercised, "sha256:<64 hex>" (what
 #                                `docker image inspect --format '{{.Id}}'`
@@ -48,11 +48,16 @@
 # daemon or a registry.
 set -euo pipefail
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=scripts/image-tag-policy.sh
+. "$here/image-tag-policy.sh"
+
 fail() { printf 'publish-image: %s\n' "$1" >&2; exit 1; }
 refuse() { printf 'publish-image: %s\n' "$1" >&2; exit 2; }
 
 # validate_reference <image-reference> -- refuses anything that is not a
-# plain "<repo>:<tag>" registry reference. A reference already pinned to a
+# plain "<repo>:<tag>" registry reference, or whose tag is not in
+# scripts/image-tag-policy.sh's allow-list. A reference already pinned to a
 # digest (@sha256:...) is refused: this script assigns a digest identity to
 # a tag, it does not consume one that already exists.
 validate_reference() {
@@ -62,6 +67,8 @@ validate_reference() {
     fail "image reference must not already carry a digest (this script assigns an identity to a tag, it does not consume one): ${image_reference}"
   [[ "$image_reference" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)+:[A-Za-z0-9._-]+$ ]] ||
     fail "image reference is not a plain registry reference carrying a tag (<repo>:<tag>): ${image_reference}"
+  image_tag_check "${image_reference%:*}" "${image_reference##*:}" ||
+    fail "refusing to push ${image_reference}: the tag is not in scripts/image-tag-policy.sh's allow-list"
 }
 
 # validate_tested_image_id <tested-image-id> -- the ID must already be an
