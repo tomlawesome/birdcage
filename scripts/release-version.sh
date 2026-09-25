@@ -28,7 +28,8 @@
 #   --file PATH   read the version from PATH instead of the tracked VERSION
 #
 # Exit codes: 0 printed; 1 the file is missing, empty, unreadable, holds
-# more than one version, or holds something that is not a version.
+# more than one version, or holds something that is not a plain
+# MAJOR.MINOR.PATCH version (a pre-release suffix is refused).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -76,10 +77,17 @@ version="${lines[0]}"
 version="${version#"${version%%[![:space:]]*}"}"
 version="${version%"${version##*[![:space:]]}"}"
 
-# MAJOR.MINOR.PATCH with an optional pre-release suffix (0.1.0-beta). No
-# build metadata here: that half is this script's to add, from the commit.
-if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
-  fail "not a version: '$version' (expected MAJOR.MINOR.PATCH with an optional -prerelease)"
+# Plain MAJOR.MINOR.PATCH, digits only (owner, 2026-09-25, #90). No
+# pre-release suffix: the pre-release stage is the `preview` branch and its
+# `preview` image tag, not a version name. No leading `v` either: the file
+# holds 0.1.0 and --tag adds the v. No build metadata: that half is this
+# script's to add, from the commit.
+case "$version" in
+  [0-9]*.[0-9]*.[0-9]*-*)
+    fail "pre-release versions are not used: '$version' (write plain MAJOR.MINOR.PATCH; the pre-release stage is the preview branch and its preview image tag)" ;;
+esac
+if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  fail "not a version: '$version' (expected plain MAJOR.MINOR.PATCH, digits only, e.g. 0.1.0)"
 fi
 
 case "$mode" in

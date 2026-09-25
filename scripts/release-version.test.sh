@@ -55,8 +55,6 @@ sha="$(printf 'd%.0s' $(seq 40))"
 f="$(fixture plain '1.2.3')"
 assert_output '1.2.3' "a plain MAJOR.MINOR.PATCH version prints as-is" --file "$f"
 
-f="$(fixture prerelease '1.2.3-beta.4')"
-assert_output '1.2.3-beta.4' "a version with a pre-release suffix prints as-is" --file "$f"
 
 f="$(fixture trailing-newline $'1.2.3\n')"
 assert_output '1.2.3' "a trailing newline in the file is not part of the version" --file "$f"
@@ -89,6 +87,25 @@ assert_fails "a file holding something that is not a version fails" --file "$f"
 
 f="$(fixture incomplete-version '1.2')"
 assert_fails "a file holding an incomplete version (missing PATCH) fails" --file "$f"
+
+# --- pre-release suffixes and a leading v are refused (owner, 2026-09-25) --
+f="$(fixture prerelease '1.2.3-beta.4')"
+assert_fails "a version with a -beta pre-release suffix fails" --file "$f"
+run --file "$f"
+case "$out" in
+  *"preview"*) ok "the pre-release refusal says preview is the pre-release stage" ;;
+  *) bad "the pre-release refusal says preview is the pre-release stage" "output=[$out]" ;;
+esac
+
+f="$(fixture rc '1.2.3-rc.1')"
+assert_fails "a version with an -rc.1 pre-release suffix fails" --file "$f"
+assert_fails "--tag on a pre-release version fails rather than printing a tag" --file "$f" --tag
+
+f="$(fixture leading-v 'v1.2.3')"
+assert_fails "a leading v in the file fails (the file holds 1.2.3; --tag adds the v)" --file "$f"
+
+f="$(fixture build-metadata '1.2.3+abc')"
+assert_fails "build metadata in the file fails (--stamp adds it)" --file "$f"
 
 # --- --stamp with a malformed sha fails, even over a valid version file ---
 f="$(fixture valid-for-bad-stamp '1.2.3')"

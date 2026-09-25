@@ -57,6 +57,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=scripts/image-tag-policy.sh
+. "$here/image-tag-policy.sh"
 
 fail() { printf 'promote-release: %s\n' "$1" >&2; exit 1; } # usage/validation only
 refuse() { # $1 exit code, $2 message
@@ -89,6 +91,12 @@ run_verifier() {
   fi
   env "${env_args[@]}" "$here/verify-validation-evidence.sh"
 }
+
+# read_release_version / read_release_tag -- the version and the tag name,
+# from scripts/release-version.sh and nowhere else. Functions only so the
+# tests can hand main() a tag the allow-list must refuse.
+read_release_version() { "$here/release-version.sh"; }
+read_release_tag() { "$here/release-version.sh" --tag; }
 
 # image_reported_version <repo> <digest> -- asks the image itself what
 # version it thinks it is, by running its `version` command. Only used
@@ -132,8 +140,13 @@ main() {
 
   # 2. The version comes from nowhere else. See the header for why.
   local version tag
-  version="$("$here/release-version.sh")"
-  tag="$("$here/release-version.sh" --tag)"
+  version="$(read_release_version)"
+  tag="$(read_release_tag)"
+  # release-version.sh already refuses anything but MAJOR.MINOR.PATCH; the
+  # shared allow-list is checked here too, before any registry call, so the
+  # one list governs every tag this script could create.
+  image_tag_check "$repo" "$tag" ||
+    fail "refusing to promote to ${repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
 
   # 3. The anchor tag is written by the build that ran the tests: if it does
   # not resolve, this commit was never published through the validated path

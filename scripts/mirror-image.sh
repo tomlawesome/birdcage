@@ -29,7 +29,9 @@
 #   <tag>                 the channel or version tag already published on
 #                        <source-repository>, e.g. preview or v0.1.0.
 #                        Mirrored under the identical name on
-#                        <dest-repository>.
+#                        <dest-repository>. Must be in
+#                        scripts/image-tag-policy.sh's allow-list for both
+#                        repositories, or nothing is touched.
 #   <dest-repository>     no tag, no digest, e.g. ghcr.io/tomlawesome/birdcage.
 #
 # Exit codes:
@@ -45,6 +47,10 @@
 # can replace all three and drive argument validation and the round-trip
 # comparison for real, without a daemon or a registry.
 set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=scripts/image-tag-policy.sh
+. "$here/image-tag-policy.sh"
 
 fail() { printf 'mirror-image: %s\n' "$1" >&2; exit 1; }
 refuse() { printf 'mirror-image: %s\n' "$1" >&2; exit 2; }
@@ -101,6 +107,14 @@ main() {
   validate_repo "source repository" "$source_repo"
   validate_tag "$tag"
   validate_repo "destination repository" "$dest_repo"
+  # The one allow-list, for both ends: the name must be allowed where it is
+  # read and where it lands (so a ci- transport tag never reaches GHCR).
+  # --cosign-attestation because this script also copies cosign's
+  # sha256-<hex>.att object beside the image; nothing else here may.
+  image_tag_check "$source_repo" "$tag" --cosign-attestation ||
+    fail "refusing to mirror ${source_repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
+  image_tag_check "$dest_repo" "$tag" --cosign-attestation ||
+    fail "refusing to mirror to ${dest_repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
 
   local source_digest
   source_digest="$(resolve_source_digest "$source_repo" "$tag")" || source_digest=""

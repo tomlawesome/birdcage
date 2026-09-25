@@ -200,5 +200,34 @@ else
   bad "a tag that fails to resolve at all afterwards exits 2" "exit $result_got: $result_out"
 fi
 
+# --- tag allow-list (scripts/image-tag-policy.sh) ---------------------------
+# Every allowed shape reaches the verifier; every refused one stops before
+# the verifier or the registry is touched.
+sha40="$(printf 'c%.0s' $(seq 40))"
+for allowed in v0.1.0 preview latest "sha-${sha40}" ci-1234; do
+  reset_stubs
+  result "$(run "$repo" "$digest" "$allowed")"
+  if [ "$result_got" = 0 ] && [ -f "$work/create_channel_tag.called" ]; then
+    ok "allowed tag '$allowed' is published"
+  else
+    bad "allowed tag '$allowed' is published" "exit $result_got: $result_out"
+  fi
+done
+
+refuse_tag() { # refuse_tag <name> <repo> <tag>
+  reset_stubs
+  result "$(run "$2" "$digest" "$3")"
+  if [ "$result_got" = 1 ] && [ ! -f "$work/run_verifier.called" ] && [ ! -f "$work/create_channel_tag.called" ]; then
+    ok "$1"
+  else
+    bad "$1" "exit $result_got (want 1, nothing touched): $result_out"
+  fi
+}
+for refused in v0.1.0-beta v1.2 V1.2.3 0.1.0 sha-abc123 "sha-$(printf 'C%.0s' $(seq 40))" \
+               preview2 latest-foo "sha256-$(printf 'd%.0s' $(seq 64)).att" ""; do
+  refuse_tag "tag '$refused' is refused before anything is touched" "$repo" "$refused"
+done
+refuse_tag "a ci- tag is refused on GHCR" "ghcr.io/tomlawesome/birdcage" ci-x
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

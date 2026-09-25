@@ -27,7 +27,8 @@
 #                        not derived from a resolved reference.
 #   <digest>             "sha256:<64 hex>", the digest being published.
 #   <channel-tag>        e.g. preview. Validated against Docker's tag
-#                         grammar: [A-Za-z0-9_][A-Za-z0-9._-]{0,127}.
+#                         grammar, then against scripts/image-tag-policy.sh's
+#                         allow-list; refused before the verifier runs.
 #
 # Inputs (environment):
 #   BIRDCAGE_COMMIT   Required, 40 hex: the commit the publisher is acting
@@ -52,6 +53,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=scripts/image-tag-policy.sh
+. "$here/image-tag-policy.sh"
 
 fail() { printf 'publish-channel: %s\n' "$1" >&2; exit 1; }
 fail_publish() { printf 'publish-channel: %s\n' "$1" >&2; exit 2; }
@@ -103,6 +106,8 @@ main() {
 
   [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] ||
     fail "not a valid Docker channel tag: ${tag}"
+  image_tag_check "$repo" "$tag" ||
+    fail "refusing to publish ${repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
 
   : "${BIRDCAGE_COMMIT:?BIRDCAGE_COMMIT is required: the commit the publisher is acting for}"
   [[ "$BIRDCAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||

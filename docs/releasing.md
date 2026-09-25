@@ -82,6 +82,24 @@ that already happened — `release:push`, `release:attest` and
 `release:preview`/`release:promote` keep whatever result they already
 reached regardless of what a mirror job does afterwards.
 
+## Allowed tags
+
+Owner, 2026-09-25 (#90). The release path puts these names on a digest,
+and no others:
+
+- `vX.Y.Z`, digits only -- the version tag; never moves.
+- `preview`, `latest` -- channel names; they move.
+- `sha-<40 lowercase hex>` -- the per-commit anchor.
+- `ci-...` -- `build:images` transport tags; GitLab registry only, never
+  mirrored to GHCR.
+- `sha256-<hex>.att` -- cosign's own attestation object, named by cosign;
+  only `scripts/mirror-image.sh` may copy it.
+
+Anything else is refused, exit non-zero, before a registry is touched.
+The list lives in `scripts/image-tag-policy.sh`; `publish-image.sh`,
+`publish-channel.sh`, `promote-release.sh` and `mirror-image.sh` each call
+it.
+
 ## The version
 
 `VERSION` at the repository root holds it — one line, e.g. `0.1.0` —
@@ -111,7 +129,8 @@ release that has closed.
 Owner, 2026-09-25: versions are plain `MAJOR.MINOR.PATCH` -- no `-beta`,
 no `-rc`. The pre-release stage is the `preview` branch and its `preview`
 image tag; a version name does not repeat that claim. `0.x` already says
-the interfaces may still move.
+the interfaces may still move. `scripts/release-version.sh` refuses a
+suffix, or a leading `v`, in `VERSION`.
 
 A version whose cut failed after anything carried its name is burnt. Take
 the next patch version rather than reusing it -- `promote-release.sh`

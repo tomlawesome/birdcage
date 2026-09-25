@@ -181,5 +181,36 @@ else
   bad "a destination tag resolving to a different digest than mirrored is refused" "exit $result_got: $result_out"
 fi
 
+# --- tag allow-list (scripts/image-tag-policy.sh) ---------------------------
+# Every tag the release jobs mirror passes, including cosign's .att object;
+# every refused one stops before any registry call.
+sha40="$(printf 'c%.0s' $(seq 40))"
+att="sha256-$(printf 'd%.0s' $(seq 64)).att"
+for allowed in v0.1.0 preview latest "sha-${sha40}" "$att"; do
+  reset_stubs
+  result "$(run "$source_repo" "$allowed" "$dest_repo")"
+  if [ "$result_got" = 0 ] && [ -f "$work/run_mirror.called" ]; then
+    ok "allowed tag '$allowed' is mirrored"
+  else
+    bad "allowed tag '$allowed' is mirrored" "exit $result_got: $result_out"
+  fi
+done
+
+refuse_tag() { # refuse_tag <name> <tag> [dest-repo]
+  reset_stubs
+  result "$(run "$source_repo" "$2" "${3:-$dest_repo}")"
+  if [ "$result_got" = 1 ] && [ ! -f "$work/resolve_source_digest.called" ] && [ ! -f "$work/run_mirror.called" ]; then
+    ok "$1"
+  else
+    bad "$1" "exit $result_got (want 1, nothing touched): $result_out"
+  fi
+}
+for refused in v0.1.0-beta v1.2 V1.2.3 0.1.0 sha-abc123 "sha-$(printf 'C%.0s' $(seq 40))" \
+               preview2 latest-foo "sha256-$(printf 'd%.0s' $(seq 64)).sig" ""; do
+  refuse_tag "tag '$refused' is refused before anything is touched" "$refused"
+done
+refuse_tag "a ci- transport tag is refused as a GHCR mirror destination" ci-x
+refuse_tag "a ci- pipeline tag is refused as a GHCR mirror destination" ci-1234
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
