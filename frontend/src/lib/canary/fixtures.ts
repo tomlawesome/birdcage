@@ -4,6 +4,7 @@
 // the app imports this, and a production build never reaches it.
 import canaryFailed from '../../dev/fixtures/canary-failed.json'
 import canaryNight from '../../dev/fixtures/canary-night.json'
+import canaryPending from '../../dev/fixtures/canary-pending.json'
 import canaryQuiet from '../../dev/fixtures/canary-quiet.json'
 import canarySilent from '../../dev/fixtures/canary-silent.json'
 import type { CanaryPageInput } from './model'
@@ -13,6 +14,7 @@ const SCENES = {
   failed: canaryFailed,
   silent: canarySilent,
   night: canaryNight,
+  pending: canaryPending,
 } as unknown as Record<string, {
   trace: CanaryPageInput['trace']
   visitors: { visitors: CanaryPageInput['visitors'] }
@@ -20,7 +22,7 @@ const SCENES = {
   canary: Record<string, CanaryPageInput['page']>
 }>
 
-export type SceneName = 'quiet' | 'failed' | 'silent' | 'night'
+export type SceneName = 'quiet' | 'failed' | 'silent' | 'night' | 'pending'
 
 /** One scene's page input, for the canary the scene is about. */
 export function sceneInput(scene: SceneName, canaryId = 'canary-iot'): CanaryPageInput {
