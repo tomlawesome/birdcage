@@ -13,7 +13,7 @@
 # version and the tag name, and never parses VERSION itself.
 #
 # WHY A VERSION TAG IS NEVER OVERWRITTEN. A version tag is a promise:
-# `v0.1.0-beta` means one specific digest, forever. If that tag already
+# `v0.1.0` means one specific digest, forever. If that tag already
 # resolves to anything, promotion refuses outright (exit 3) rather than
 # repointing it -- a forgotten version bump must fail closed, not silently
 # republish a different digest under a name someone has already trusted.

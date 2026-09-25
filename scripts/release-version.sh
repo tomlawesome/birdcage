@@ -13,14 +13,14 @@
 # republishing.
 #
 # THE STAMP. Images are stamped `<version>+<short-commit>`, e.g.
-# `0.1.0-beta+1a2b3c4d`. The `+<short-commit>` half is semver build
+# `0.1.0+1a2b3c4d`. The `+<short-commit>` half is semver build
 # metadata: it does not change which release this is, and it means every
 # build says exactly which commit it came from, so two preview builds of
 # one version are still told apart by what the binary itself reports.
 # Nothing else may compute this string -- callers ask for it here.
 #
 # Usage:
-#   scripts/release-version.sh                 print the version, e.g. 0.1.0-beta
+#   scripts/release-version.sh                 print the version, e.g. 0.1.0
 #   scripts/release-version.sh --stamp <sha>   print <version>+<first 8 of sha>
 #   scripts/release-version.sh --tag           print v<version>, the tag name
 #

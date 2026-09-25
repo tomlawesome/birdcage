@@ -84,7 +84,7 @@ reached regardless of what a mirror job does afterwards.
 
 ## The version
 
-`VERSION` at the repository root holds it — one line, e.g. `0.1.0-beta` —
+`VERSION` at the repository root holds it — one line, e.g. `0.1.0` —
 and `scripts/release-version.sh` is the only thing that reads it or builds
 a stamp from it. Images are stamped `<version>+<first 8 of commit>`, so
 every build says which commit it came from and two preview builds of one
@@ -106,26 +106,21 @@ refuses, before publishing anything, if the registry already carries
 with a version that has already shipped is claiming candidacy for a
 release that has closed.
 
-### Pre-release suffixes
+### No pre-release suffixes
 
-`-beta` and its successors are editorial. No automation adds, advances or
-removes one, because nothing in the pipeline knows whether a claim about
-maturity is true.
+Owner, 2026-09-25: versions are plain `MAJOR.MINOR.PATCH` -- no `-beta`,
+no `-rc`. The pre-release stage is the `preview` branch and its `preview`
+image tag; a version name does not repeat that claim. `0.x` already says
+the interfaces may still move.
 
-- Successors are dot-separated, so semver orders them correctly: `-beta`,
-  then `-beta.2`, then `-rc.1` if wanted, then the bare version. Never
-  `-beta2`.
-- A version whose cut failed after anything carried its name is burnt.
-  Take the next suffix rather than reusing it — `promote-release.sh`
-  refuses to repoint an existing version tag anyway, so reuse fails
-  closed; this is just saying do not fight it.
-- `0.1.0-beta` is a double hedge, deliberately: `0.x` says the interfaces
-  may move, `-beta` says this particular cut is a trial. The commit that
-  drops the suffix is the statement that the second is no longer meant.
+A version whose cut failed after anything carried its name is burnt. Take
+the next patch version rather than reusing it -- `promote-release.sh`
+refuses to repoint an existing version tag anyway, so reuse fails closed;
+this is just saying do not fight it.
 
 ## The `latest` tag
 
-Published, and moved on every release — pre-release or not. Whether a beta
+Published, and moved on every release. Whether a `0.x` release
 is the right thing to run is the decision of whoever pulls it, not this
 project's.
 

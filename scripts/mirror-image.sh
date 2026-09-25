@@ -27,7 +27,7 @@
 #                        registry.gitlab.tomlawson.io/ai/birdcage/birdcage --
 #                        the already-published GitLab repository.
 #   <tag>                 the channel or version tag already published on
-#                        <source-repository>, e.g. preview or v0.1.0-beta.
+#                        <source-repository>, e.g. preview or v0.1.0.
 #                        Mirrored under the identical name on
 #                        <dest-repository>.
 #   <dest-repository>     no tag, no digest, e.g. ghcr.io/tomlawesome/birdcage.

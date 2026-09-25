@@ -2359,9 +2359,9 @@ release:promote:
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
       smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
-      # `latest` moves on every release, pre-release or not. Whether a
-      # beta is the right thing to run is the decision of whoever pulls it,
-      # not this pipeline's.
+      # `latest` moves on every release. Whether a 0.x release is the
+      # right thing to run is the decision of whoever pulls it, not this
+      # pipeline's.
       #
       # What this pipeline is responsible for is narrower, and is met:
       # `latest` cannot point at an unapproved build. It is moved through
