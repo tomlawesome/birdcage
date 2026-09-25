@@ -348,7 +348,7 @@ function ordinalTimeThisWeek(total: number): string {
 function silentVerdict(total: number, all: Silence[], now: string): string {
   if (total < 3) {
     return (
-      'A silent canary is not the quiet we want — the host may be down, or its firewall rule on the router may ' +
+      'A silent agent is not the quiet we want — the host may be down, or its firewall rule on the router may ' +
       'have moved.'
     )
   }
@@ -432,7 +432,7 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
         hero: [{ text: canary.name, cls: 'c' }, { text: "'s credential is live in two places at once.", bold: true }],
         sub: [
           ...credentialConflictDetail(canary),
-          { text: 'Revoke the node (birdcage canary revoke <canary-id>) and re-enrol it.', bold: true },
+          { text: 'Revoke the node (birdcage agent revoke <agent-id>) and re-enrol it.', bold: true },
         ],
       }
     case 'not_delivering':

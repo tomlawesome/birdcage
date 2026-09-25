@@ -62,7 +62,7 @@ describe('the hash decides which page fills main', () => {
     location.hash = '#/canaries/canary-nope'
     stubFetch(404)
     const { container } = render(App)
-    await waitFor(() => expect(container.querySelector('.state-line')?.textContent).toContain('no canary called'))
+    await waitFor(() => expect(container.querySelector('.state-line')?.textContent).toContain('no agent called'))
     expect(container.querySelector('.state-line a')?.getAttribute('href')).toBe('#/')
   })
 

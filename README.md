@@ -15,8 +15,9 @@ keys ([ADR-0003](docs/adr/0003-mikroview-sidecar.md),
 [ADR-0008](docs/adr/0008-container-only-distribution-and-two-images.md)).
 
 Birdcage is in early implementation — the components landed so far are the
-HTTPS canary ingest listener (per-canary bearer tokens, TLS 1.3) and the
-dashboard HTTP API (`cmd/birdcage`). See:
+HTTPS agent ingest listener (per-agent bearer tokens, TLS 1.3 -- a canary
+is one kind of agent, a scanner another, per ADR-0009) and the dashboard
+HTTP API (`cmd/birdcage`). See:
 
 - [docs/v1-scope.md](docs/v1-scope.md) — what's in v1 vs. explicitly
   deferred, and the tracking epics.

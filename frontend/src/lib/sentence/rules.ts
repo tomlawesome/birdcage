@@ -99,7 +99,7 @@ function rule2(silent: Canary, canaries: Canary[], now: string, lastHit: LastHit
       { text: formatClock(silent.last_heartbeat_at ?? now), bold: true },
       {
         text:
-          `, ${agoWords(silent.silent_for_s ?? 0)}; it phones home every minute. A silent canary is not the quiet ` +
+          `, ${agoWords(silent.silent_for_s ?? 0)}; it phones home every minute. A silent agent is not the quiet ` +
           `we want — the host may be down, or its firewall rule on the router may have moved. The other ` +
           `${wordOrNumber(otherCount)} are fine.`,
       },

@@ -104,7 +104,7 @@
       >{/if}{heading.tail}{#if heading.note}{' · '}<b>{heading.note}</b>{/if}
   </h3>
   {#if cards.length === 0}
-    <div class="none">No self-test has completed for this canary yet — nothing to grade, which is not a fault.</div>
+    <div class="none">No self-test has completed for this agent yet — nothing to grade, which is not a fault.</div>
   {:else}
     <div class="strip">
       {#each cards as card (card.service)}
@@ -123,7 +123,7 @@
 
 <!-- The history as a thread (ADR-0004 rule 4). -->
 <div class="col thread-col" style:top="{THREAD_TOP}px">
-  <h3>history &middot; every state this canary has been in &middot; newest first</h3>
+  <h3>history &middot; every state this agent has been in &middot; newest first</h3>
   <div class="thread">
     {#each rows as row (row.key)}
       <div class="ev {row.dot}">
@@ -139,7 +139,7 @@
 
 <!-- The facts, and the actions the state earns (ADR-0004 rule 5). -->
 <div class="col facts-col" style:top="{LOWER}px">
-  <h3>this canary</h3>
+  <h3>this agent</h3>
   <div class="facts">
     {#each facts as row (row.label)}
       <span>{row.label}</span><span class={row.accent ? 'c' : ''}>{row.value}</span>
@@ -173,7 +173,7 @@
 
     <h3 class="runs-h">runs</h3>
     {#if runList.length === 0}
-      <div class="none">No scan has been ordered for this canary yet.</div>
+      <div class="none">No scan has been ordered for this agent yet.</div>
     {:else}
       <div class="runs" role="table" aria-label="Runs">
         {#each runList as row (row.key)}
@@ -192,10 +192,10 @@
 {/if}
 
 <div class="legend" style:top="912px">
-  <span><span class="ln"></span>the line is this canary's heartbeat, unbroken</span>
+  <span><span class="ln"></span>the line is this agent's heartbeat, unbroken</span>
   <span><span class="gap"></span>a drop is silence</span>
   <span
-      ><span class="tick"></span>a hollow tick under the line is birdcage testing its own canary{#if page.facts
+      ><span class="tick"></span>a hollow tick under the line is birdcage testing its own agent{#if page.facts
         .self_test_enabled}, {page.facts.self_test_schedule} daily{/if}</span
     >
   <span

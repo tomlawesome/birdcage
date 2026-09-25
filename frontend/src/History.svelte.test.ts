@@ -61,7 +61,7 @@ describe('History.svelte: which state renders', () => {
     }
     const { container } = render(History, { history, failed: false, range: '24h' })
     expect(screen.getByText('2')).toBeTruthy()
-    expect(screen.getByText(/canaries/)).toBeTruthy()
+    expect(screen.getByText(/agents/)).toBeTruthy()
     expect(screen.queryByText(/Nothing recorded/)).toBeNull()
     expect(container.querySelectorAll('.row:not(.axis-row)')).toHaveLength(2)
   })

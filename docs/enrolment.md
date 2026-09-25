@@ -9,9 +9,13 @@ certificate -- via `POST /enrol/provision` (slice 3). Both steps happen
 automatically inside the canary's agent; there is nothing else to run by
 hand.
 
+The commands below are `birdcage agent ...`: ADR-0009 gave a node a kind
+(honeypot, scanner), so `agent` is the noun for the CLI, not `canary` --
+which still works as an alias for every one of these subcommands (#107).
+
 ## Before the first canary
 
-Two things need to be set once, before `birdcage canary enrol` will do
+Two things need to be set once, before `birdcage agent enrol` will do
 anything:
 
 **1. The two enrolment addresses (issue #54).** `POST /enrol/hello`
@@ -26,7 +30,7 @@ birdcage settings set admin_approval_address "<your address>"
 birdcage settings set release_address "<your address>"
 ```
 
-`birdcage canary enrol` refuses to mint a token until both are set, and
+`birdcage agent enrol` refuses to mint a token until both are set, and
 tells you so.
 
 **2. `BIRDCAGE_ADVERTISE_HOST`.** The hostname or IP the canary reaches
@@ -40,7 +44,7 @@ On the machine running birdcage, name the canary and the lane it belongs
 to -- both are required:
 
 ```
-birdcage canary enrol --name office-nas --lane front-door
+birdcage agent enrol --name office-nas --lane front-door
 ```
 
 This prints a `docker run` command and one line underneath it saying how
@@ -276,7 +280,7 @@ then revoke if the second holder isn't yours.**
 ## Revoking a canary's credentials
 
 ```
-birdcage canary revoke <canary-id>
+birdcage agent revoke <agent-id>
 ```
 
 Ends every token and every certificate that canary has, in one action:
@@ -285,7 +289,7 @@ a copy of its credentials -- is refused, and the honest agent's own log
 says so. There is no way to revoke just one credential; a copied key
 means the token and certificate must die together.
 
-Recovery is re-enrolling: the same `birdcage canary enrol` command and
+Recovery is re-enrolling: the same `birdcage agent enrol` command and
 printed `docker run` line as a first enrolment. The canary keeps its
 name and its history, but gets a new id and a new credential -- a
 second enrolment under an existing name never takes over the live
@@ -293,7 +297,7 @@ node's credential, it starts a new one.
 
 **Every node enrolled before this landed needs re-enrolling once.**
 Nothing about its certificate or token changes on upgrade by itself;
-the fix is the same `birdcage canary enrol` command described above.
+the fix is the same `birdcage agent enrol` command described above.
 
 ### The certificate carries the agent's kind
 
@@ -312,7 +316,7 @@ certificate carries no kind at all, and is refused at every ingest
 route the moment this ships -- there is no grace period and no
 grandfather clause (the reasoning is in ADR-0011: nothing renews a
 client certificate today, so "trust it until it renews" would mean
-trusting it forever). The fix is the same `birdcage canary enrol`
+trusting it forever). The fix is the same `birdcage agent enrol`
 command and printed `docker run` line described above; there is nothing
 else to do.
 
@@ -359,7 +363,7 @@ as small as possible:
 
 - **Five minutes.** If the `docker run` command isn't pasted and run
   within five minutes of printing, the token stops working and
-  `birdcage canary enrol` has to be run again for a fresh one.
+  `birdcage agent enrol` has to be run again for a fresh one.
 - **Single use.** The moment the canary presents the token, it is burned
   -- pasting the same command a second time (on the same box, or by
   mistake on a different one) is refused, and birdcage logs it as a
@@ -384,7 +388,7 @@ connected.
 ## Checking on enrolment sessions
 
 ```
-birdcage canary enrol --status
+birdcage agent enrol --status
 ```
 
 Lists every enrolment session -- id, name, lane, state, when it was
@@ -395,11 +399,11 @@ after being forgotten.
 ## Enrolling a scanner (Nightjar)
 
 Issue #108, slice 1. The scanner agent -- Nightjar (ADR-0010) -- is a
-second agent kind: same `birdcage canary enrol` command, `--kind
+second agent kind: same `birdcage agent enrol` command, `--kind
 scanner`:
 
 ```
-birdcage canary enrol --name office-nas --lane front-door --kind scanner
+birdcage agent enrol --name office-nas --lane front-door --kind scanner
 ```
 
 The printed command looks like this (values differ every time):
@@ -637,12 +641,12 @@ into the trap the attacker set.
 
 ### Setting the names when you enrol
 
-`birdcage canary enrol` takes two optional flags, `--bait-names` and
+`birdcage agent enrol` takes two optional flags, `--bait-names` and
 `--segment-profile`, which put the matching `-e` lines into the
 `docker run` command it prints for you:
 
 ```
-birdcage canary enrol --name fs-lon-04 --lane prod \
+birdcage agent enrol --name fs-lon-04 --lane prod \
   --bait-names old-fs-01,printer-7 --segment-profile linux
 ```
 

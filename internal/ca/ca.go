@@ -452,7 +452,7 @@ func (c *CA) SignClient(csr *x509.CertificateRequest, canaryID string, kind agen
 		return nil, nil, err
 	}
 	if canaryID == "" {
-		return nil, nil, fmt.Errorf("ca: SignClient: empty canary id")
+		return nil, nil, fmt.Errorf("ca: SignClient: empty agent id")
 	}
 	if kind == "" {
 		return nil, nil, fmt.Errorf("ca: SignClient: empty kind")

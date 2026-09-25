@@ -31,14 +31,14 @@
 <div class="history" style:top="{TOP}px" aria-label="State history">
   <div class="grp">
     state history · {historyRangeLabel(windowRange)} ·
-    {#if failed}<b>unavailable</b>{:else if rows.length === 0}<b>none</b>{:else}<b>{rows.length}</b> canaries{/if}
+    {#if failed}<b>unavailable</b>{:else if rows.length === 0}<b>none</b>{:else}<b>{rows.length}</b> agents{/if}
   </div>
 
   {#if failed}
     <div class="line">The cage's history is not answering &mdash; the rest of this page is still current.</div>
   {:else if rows.length === 0}
     <div class="line">
-      Nothing recorded yet. An empty history is the cage working: no canary has left a healthy state in this window.
+      Nothing recorded yet. An empty history is the cage working: no agent has left a healthy state in this window.
     </div>
   {:else}
     {#each rows as row (row.canaryId)}
