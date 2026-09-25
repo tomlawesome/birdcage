@@ -72,6 +72,12 @@ type SceneName =
   | 'canary-failed'
   | 'canary-silent'
   | 'canary-night'
+  // Issue #45's own gap: a scanner mid-proof, its ordered run open at
+  // db_refreshed -- no fixture scene covered 'pending' before this. Not
+  // wired into scripts/canary-compare.mjs's pixel gate: that would need
+  // a captured baseline (docs/design/concepts/round-7/shots), which
+  // nothing has judged by eye yet.
+  | 'canary-pending'
   // Issue #86 slice D's own scene: one poisoner answered a bait query.
   // Its own scene rather than a poisoner added to an existing one, so no
   // reference image that has already been reviewed moves.
@@ -87,6 +93,7 @@ const SCENES: SceneName[] = [
   'canary-failed',
   'canary-silent',
   'canary-night',
+  'canary-pending',
   'poisoner',
 ]
 
@@ -115,6 +122,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/canary-silent.json')) as unknown as Fixture
     case 'canary-night':
       return (await import('../dev/fixtures/canary-night.json')) as unknown as Fixture
+    case 'canary-pending':
+      return (await import('../dev/fixtures/canary-pending.json')) as unknown as Fixture
   }
 }
 

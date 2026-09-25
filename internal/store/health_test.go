@@ -11,6 +11,8 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
+func int64Ptr(n int64) *int64 { return &n }
+
 func TestNotDeliveringNilNeverTriggers(t *testing.T) {
 	// No self-report has ever arrived: must read as "nothing to say yet",
 	// never as a failing log read.
@@ -314,6 +316,59 @@ func TestApplyHealthStateKeepsDetailForNonWinningStates(t *testing.T) {
 	}
 }
 
+// TestApplyHitsMergedHealth: nil never triggers (no heartbeat field has
+// ever arrived), 0 never triggers (the agent reported a clean count), and
+// a positive count does -- the same nil/zero convention notDelivering
+// documents for AgentLogReadOK.
+func TestApplyHitsMergedHealth(t *testing.T) {
+	cases := []struct {
+		name  string
+		count *int64
+		want  bool
+	}{
+		{"nil never triggers", nil, false},
+		{"zero never triggers", int64Ptr(0), false},
+		{"nonzero triggers", int64Ptr(3), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentEventIDCollisions: tc.count}
+			applyHitsMergedHealth(&c)
+			if got := hasActive(c, StateHitsMerged); got != tc.want {
+				t.Errorf("hits_merged active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed: issue #45's
+// ratified slot for hits_merged -- immediately after not_delivering, and
+// ahead of self_test_failed -- checked both on the rank table directly and
+// through addActiveStates the way TestDBStaleRanksBetweenTestFailedAndThrottled
+// does for db_stale.
+func TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed(t *testing.T) {
+	if healthStateRank[StateNotDelivering] >= healthStateRank[StateHitsMerged] {
+		t.Fatalf("ranks: not_delivering %d, hits_merged %d, want not_delivering first", healthStateRank[StateNotDelivering], healthStateRank[StateHitsMerged])
+	}
+	if healthStateRank[StateHitsMerged] >= healthStateRank[StateTestFailed] {
+		t.Fatalf("ranks: hits_merged %d, self_test_failed %d, want hits_merged first", healthStateRank[StateHitsMerged], healthStateRank[StateTestFailed])
+	}
+
+	// not_delivering wins over hits_merged.
+	c := Canary{ActiveStates: []string{string(StateNotDelivering)}, Status: string(StateNotDelivering)}
+	addActiveStates(&c, StateHitsMerged)
+	if c.Status != string(StateNotDelivering) {
+		t.Errorf("status %s, want not_delivering to keep winning over hits_merged (states %v)", c.Status, c.ActiveStates)
+	}
+
+	// hits_merged wins over self_test_failed.
+	c2 := Canary{ActiveStates: []string{string(StateTestFailed)}, Status: string(StateTestFailed)}
+	addActiveStates(&c2, StateHitsMerged)
+	if c2.Status != string(StateHitsMerged) {
+		t.Errorf("status %s, want hits_merged to win over self_test_failed (states %v)", c2.Status, c2.ActiveStates)
+	}
+}
+
 // TestListCanariesSurfacesThrottledAndTokenConflict is an end-to-end
 // check through ListCanaries itself (not just the derivation helpers),
 // on both engines: a rate-limit crossing and a token-conflict entry
@@ -382,6 +437,48 @@ func TestListCanariesSurfacesNotDelivering(t *testing.T) {
 		}
 		if !c.NotDelivering {
 			t.Error("NotDelivering = false, want true")
+		}
+	})
+}
+
+// TestListCanariesSurfacesHitsMerged checks the event-id-collision
+// self-report path end-to-end through RecordCanaryAgentHeartbeat and
+// ListCanaries, including that it clears once a later heartbeat reports
+// the count back at 0.
+func TestListCanariesSurfacesHitsMerged(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		collisions := int64(3)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abc", EventIDCollisions: &collisions,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != string(StateHitsMerged) {
+			t.Errorf("Status = %q, want %q", c.Status, StateHitsMerged)
+		}
+		if c.AgentEventIDCollisions == nil || *c.AgentEventIDCollisions != 3 {
+			t.Errorf("AgentEventIDCollisions = %v, want 3", c.AgentEventIDCollisions)
+		}
+
+		// A later heartbeat reporting the count back at 0 clears it.
+		zero := int64(0)
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abd", EventIDCollisions: &zero,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status == string(StateHitsMerged) {
+			t.Errorf("Status = %q after count returned to 0, want cleared", c.Status)
 		}
 	})
 }

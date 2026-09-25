@@ -216,6 +216,29 @@ function rule2NotDelivering(c: Canary, canaries: Canary[], now: string, lastHit:
   }
 }
 
+/** Hits merged (#45, owner-ratified 2026-09-25): the honeypot agent's own
+ * heartbeat reports a nonzero cumulative event-id collision count -- two
+ * log lines birdcage received under the same event id, folded into one
+ * hit. OpenCanary cannot do this on a running clock by itself, so the
+ * claim is narrower than "something is wrong": something on the box
+ * changed underneath it. */
+function rule2HitsMerged(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const n = c.event_id_collisions ?? 0
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name} merged ${wordOrNumber(n)} hit${n === 1 ? '' : 's'}.`, bold: true }],
+    sub: [
+      {
+        text:
+          'Two log lines carried the same event id, so one hit was folded into another. OpenCanary cannot do ' +
+          'this on a running clock, so something on the box changed: ',
+      },
+      { text: 'check its clock, that only one OpenCanary runs, and that the log rotates by rename.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** Self-test failed (#45 state, issue #46): birdcage's own daily probe
  * of the canary's services -- the agent knocks, OpenCanary must catch
  * it -- came back short. This is the state proving #45's founding worry
@@ -398,16 +421,19 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   credential_conflict: 0,
   silent: 1,
   not_delivering: 2,
-  self_test_failed: 3,
+  // Issue #45, owner-ratified 2026-09-25: ranked straight after
+  // not_delivering, ahead of self_test_failed.
+  hits_merged: 3,
+  self_test_failed: 4,
   // ADR-0012 decision 10 (#116): ranked between self_test_failed and
   // throttled, exactly where the ADR puts it.
-  db_stale: 4,
-  throttled: 5,
-  rotation_stalled: 6,
+  db_stale: 5,
+  throttled: 6,
+  rotation_stalled: 7,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
-  renewal_stalled: 6,
-  pending: 7,
-  ok: 8,
+  renewal_stalled: 7,
+  pending: 8,
+  ok: 9,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -483,6 +509,8 @@ export function computeSentence(
         return rule2(worst, canaries, now, lastHit)
       case 'not_delivering':
         return rule2NotDelivering(worst, canaries, now, lastHit)
+      case 'hits_merged':
+        return rule2HitsMerged(worst, canaries, now, lastHit)
       case 'self_test_failed':
         return rule2SelfTestFailed(worst, canaries, now, lastHit)
       case 'db_stale':

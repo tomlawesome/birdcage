@@ -29,12 +29,18 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * refresh has been failing for over 24 hours, birdcage's own clock
  * deciding, never the agent's. Coloured like the nearest existing
  * warning state (rotation_stalled/renewal_stalled's tier), even though
- * it ranks with the critical states above it. */
+ * it ranks with the critical states above it.
+ *
+ * 'hits_merged' (issue #45, owner-ratified 2026-09-25) is a honeypot
+ * agent whose heartbeat reports a nonzero cumulative event-id collision
+ * count -- two log lines folded into one hit. Ranked straight after
+ * 'not_delivering', ahead of 'self_test_failed'. */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
+  | 'hits_merged'
   | 'self_test_failed'
   | 'db_stale'
   | 'throttled'
@@ -113,6 +119,11 @@ export interface Canary {
    * `status` reports -- "one state on the tile, the worst; the rest in
    * its detail." */
   not_delivering?: boolean
+  /** issue #45, owner-ratified 2026-09-25: the honeypot agent's own
+   * cumulative event-id collision count (store.AgentEventIDCollisions).
+   * Present only when the agent's most recent heartbeat carried it;
+   * nonzero is what drives `status` to 'hits_merged'. */
+  event_id_collisions?: number
   throttled_for_s?: number
   rotation_stalled?: boolean
   rotation_stalled_for_s?: number
@@ -258,6 +269,7 @@ export type HistoryState =
   | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
+  | 'hits_merged'
   | 'self_test_failed'
   | 'db_stale'
   | 'throttled'

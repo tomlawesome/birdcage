@@ -215,6 +215,24 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
   })
 
+  // Issue #45, owner-ratified 2026-09-25: hits_merged gets rule 2's own
+  // copy, naming the collision count and the check-the-box next step.
+  it('hits merged: hero and sub', () => {
+    const bad = canary('canary-iot', 'hits_merged', { event_id_collisions: 2 })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-iot merged two hits.')
+    expect(plainText(s.sub)).toBe(
+      'Two log lines carried the same event id, so one hit was folded into another. OpenCanary cannot do this ' +
+        'on a running clock, so something on the box changed: check its clock, that only one OpenCanary runs, ' +
+        'and that the log rotates by rename. The other three are fine.',
+    )
+    expect(
+      s.sub.find((seg) => seg.text === 'check its clock, that only one OpenCanary runs, and that the log rotates by rename.')
+        ?.bold,
+    ).toBe(true)
+  })
+
   // ADR-0012 Part B (#130): certificate_expired says why not_delivering
   // is on when the agent's own log-read report did not.
   it('not delivering: certificate expired names that cause instead of the log read', () => {
@@ -531,5 +549,65 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       lastHit,
     )
     expect(plainText(s.hero)).toContain("canary-srv's token rotation has stalled")
+  })
+
+  // Gap closed for #45: "all quiet" (rule 4) must never render while any
+  // agent is in one of status.ts's alarm tiers -- kind 'silent' and kind
+  // 'critical' (token_conflict, credential_conflict, not_delivering,
+  // hits_merged, self_test_failed, db_stale, throttled). status.ts's kind 'degraded'
+  // (rotation_stalled, renewal_stalled) is a separate, softer tier and
+  // is already covered above ("still outranks pending" etc.), not here.
+  // Table-driven so a future alarm-tier state added to status.ts without
+  // a matching row here is a visible gap, not a silent one.
+  describe('"all quiet" never renders while an agent is in an alarm-tier state', () => {
+    const alarmStates: [string, Canary['status'], Partial<Canary>][] = [
+      ['silent', 'silent', { silent_for_s: 372 }],
+      ['token_conflict', 'token_conflict', { token_conflict_for_s: 300 }],
+      [
+        'credential_conflict',
+        'credential_conflict',
+        { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } },
+      ],
+      ['not_delivering', 'not_delivering', { not_delivering: true }],
+      [
+        'not_delivering (certificate_expired)',
+        'not_delivering',
+        { not_delivering: true, certificate_expired: true },
+      ],
+      ['hits_merged', 'hits_merged', { event_id_collisions: 2 }],
+      ['self_test_failed', 'self_test_failed', { self_test_failed_services: ['vnc'] }],
+      [
+        'db_stale',
+        'db_stale',
+        { db_refresh: { failing_since: '2026-09-04T22:04:31Z', last_error: 'dial tcp: i/o timeout' } },
+      ],
+      ['throttled', 'throttled', { throttled_for_s: 120 }],
+    ]
+
+    it.each(alarmStates)(
+      '%s with no recent hits: hero is not rule 4 (all quiet)',
+      (_label, status, extra) => {
+        const bad = canary('canary-iot', status, extra)
+        const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+        expect(s.rule).not.toBe(4)
+      },
+    )
+
+    it('several agents, only one alarm-tier: still not rule 4', () => {
+      const s = computeSentence(
+        [
+          canary('canary-lan', 'ok'),
+          canary('canary-srv', 'ok'),
+          canary('canary-iot', 'self_test_failed', { self_test_failed_services: ['vnc'] }),
+          canary('canary-guest', 'ok'),
+          canary('canary-extra', 'ok'),
+        ],
+        [],
+        '14d',
+        now,
+        lastHit,
+      )
+      expect(s.rule).not.toBe(4)
+    })
   })
 })
