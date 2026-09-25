@@ -537,3 +537,49 @@ func TestTickRecordsCredentialStates(t *testing.T) {
 		}
 	})
 }
+
+// TestTickRecordsHitsMerged: hits_merged (issue #45, owner-ratified
+// 2026-09-25) is in store.ActiveStates like every other state here, so it
+// needs no hook of its own for the history recorder to open, and later
+// close, a canary_state_periods span for it.
+func TestTickRecordsHitsMerged(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "canary-1", "one", t0)
+		collisions := int64(2)
+		if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, "canary-1", t0, store.AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abc", EventIDCollisions: &collisions,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		r := New(database)
+		tick(t, r, t0)
+
+		got := periods(t, database, "canary-1")
+		if len(got) != 1 || got[0].State != string(store.StateHitsMerged) {
+			t.Fatalf("periods = %+v, want one open hits_merged span", got)
+		}
+		if got[0].EndedAt != nil {
+			t.Errorf("span = %+v, want it still open", got[0])
+		}
+
+		// A later heartbeat reporting the count back at 0 clears the span.
+		zero := int64(0)
+		t1 := t0.Add(time.Minute)
+		if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, "canary-1", t1, store.AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abd", EventIDCollisions: &zero,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		tick(t, r, t1)
+
+		got = periods(t, database, "canary-1")
+		if len(got) != 1 || got[0].EndedAt == nil || !got[0].EndedAt.Equal(t1) {
+			t.Fatalf("periods after clearing = %+v, want the span closed at %v", got, t1)
+		}
+		if got[0].EndReason == nil || *got[0].EndReason != store.EndReasonCleared {
+			t.Errorf("EndReason = %v, want %q", got[0].EndReason, store.EndReasonCleared)
+		}
+	})
+}

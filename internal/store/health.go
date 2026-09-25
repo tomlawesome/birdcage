@@ -44,6 +44,18 @@ const (
 	StateCredentialConflict HealthState = "credential_conflict"
 	StateSilent             HealthState = "silent"
 	StateNotDelivering      HealthState = "not_delivering"
+	// StateHitsMerged (issue #45, owner-ratified 2026-09-25) is a
+	// honeypot agent whose heartbeat reports a nonzero cumulative
+	// event-id collision count (AgentEventIDCollisions) -- two log lines
+	// birdcage received under the same event id, folded into one hit.
+	// OpenCanary cannot do this on a running clock on its own, so it
+	// means something on the box changed underneath it: the clock
+	// jumped, two OpenCanary processes are both writing, or the log
+	// rotates by truncation instead of rename. Ranked immediately after
+	// not-delivering, per the design Fable produced and the owner
+	// ratified for #45. See applyHitsMergedHealth for the nil/zero rule
+	// -- same convention as notDelivering's AgentLogReadOK above.
+	StateHitsMerged HealthState = "hits_merged"
 	// StateTestFailed (issue #46) is a canary whose most recently
 	// *completed* scheduled self-test run has passed=false -- see
 	// applySelfTestState in selftest.go. Ranked between not-delivering
@@ -91,18 +103,24 @@ const (
 // straight after token-conflict (both are "two holders of one
 // credential"), renewal-stalled straight after rotation-stalled (the
 // same failure for the certificate instead of the token).
+//
+// hits_merged (owner-ratified 2026-09-25) is inserted straight after
+// not-delivering, per that design -- it slots between the built states
+// rather than into the still-reserved agent-out-of-date gap noted above,
+// which remains between rotation-stalled and pending.
 var healthStateRank = map[HealthState]int{
 	StateTokenConflict:      0,
 	StateCredentialConflict: 1,
 	StateSilent:             2,
 	StateNotDelivering:      3,
-	StateTestFailed:         4,
-	StateDBStale:            5,
-	StateThrottled:          6,
-	StateRotationStalled:    7,
-	StateRenewalStalled:     8,
-	StatePending:            9,
-	StateOK:                 10,
+	StateHitsMerged:         4,
+	StateTestFailed:         5,
+	StateDBStale:            6,
+	StateThrottled:          7,
+	StateRotationStalled:    8,
+	StateRenewalStalled:     9,
+	StatePending:            10,
+	StateOK:                 11,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -166,6 +184,22 @@ func applyDBRefreshHealth(c *Canary, now time.Time) {
 		return
 	}
 	addActiveStates(c, StateDBStale)
+}
+
+// applyHitsMergedHealth adds StateHitsMerged when c's agent has reported a
+// nonzero cumulative event-id collision count. AgentEventIDCollisions is
+// nil until the agent's first heartbeat carrying the field -- same
+// convention as AgentLogReadOK/notDelivering above -- and nil must never
+// trigger the state, only an explicit positive count does. The owner has
+// not yet ruled on how this clears; for now, kept in this one small
+// function so that rule is easy to change later, it clears the moment a
+// later heartbeat reports the count back at 0 -- nothing here remembers
+// a past collision once the agent stops reporting one.
+func applyHitsMergedHealth(c *Canary) {
+	if c.AgentEventIDCollisions == nil || *c.AgentEventIDCollisions <= 0 {
+		return
+	}
+	addActiveStates(c, StateHitsMerged)
 }
 
 // addActiveStates merges states into c.ActiveStates, re-sorts by

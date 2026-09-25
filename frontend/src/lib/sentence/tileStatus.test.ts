@@ -40,6 +40,22 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(text).toBe('⚠ not delivering · its certificate expired')
   })
 
+  // Issue #45, owner-ratified 2026-09-25: hits_merged names the
+  // collision count and says to check the box's clock and log rotation,
+  // with the singular wording at n == 1.
+  it('hits_merged: names the collision count and says to check the clock and log rotation', () => {
+    const result = computeTileStatus({ ...base, status: 'hits_merged', event_id_collisions: 3 }, '2026-01-01T00:00:00Z')
+    const text = plainText(result.lines[0])
+    expect(text).toBe("⚠ 3 hits merged · one hit folded into another — check the box's clock and log rotation")
+    expect(result.lines[0][0].cls).toBe('al')
+  })
+
+  it('hits_merged: singular wording at a count of 1', () => {
+    const result = computeTileStatus({ ...base, status: 'hits_merged', event_id_collisions: 1 }, '2026-01-01T00:00:00Z')
+    const text = plainText(result.lines[0])
+    expect(text).toBe("⚠ 1 hit merged · one hit folded into another — check the box's clock and log rotation")
+  })
+
   it('throttled: shows the duration and the operator hint', () => {
     const result = computeTileStatus({ ...base, status: 'throttled', throttled_for_s: 90 }, '2026-01-01T00:01:30Z')
     const text = plainText(result.lines[0])

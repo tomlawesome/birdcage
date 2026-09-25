@@ -215,6 +215,24 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
   })
 
+  // Issue #45, owner-ratified 2026-09-25: hits_merged gets rule 2's own
+  // copy, naming the collision count and the check-the-box next step.
+  it('hits merged: hero and sub', () => {
+    const bad = canary('canary-iot', 'hits_merged', { event_id_collisions: 2 })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-iot merged two hits.')
+    expect(plainText(s.sub)).toBe(
+      'Two log lines carried the same event id, so one hit was folded into another. OpenCanary cannot do this ' +
+        'on a running clock, so something on the box changed: check its clock, that only one OpenCanary runs, ' +
+        'and that the log rotates by rename. The other three are fine.',
+    )
+    expect(
+      s.sub.find((seg) => seg.text === 'check its clock, that only one OpenCanary runs, and that the log rotates by rename.')
+        ?.bold,
+    ).toBe(true)
+  })
+
   // ADR-0012 Part B (#130): certificate_expired says why not_delivering
   // is on when the agent's own log-read report did not.
   it('not delivering: certificate expired names that cause instead of the log read', () => {
@@ -536,7 +554,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
   // Gap closed for #45: "all quiet" (rule 4) must never render while any
   // agent is in one of status.ts's alarm tiers -- kind 'silent' and kind
   // 'critical' (token_conflict, credential_conflict, not_delivering,
-  // self_test_failed, db_stale, throttled). status.ts's kind 'degraded'
+  // hits_merged, self_test_failed, db_stale, throttled). status.ts's kind 'degraded'
   // (rotation_stalled, renewal_stalled) is a separate, softer tier and
   // is already covered above ("still outranks pending" etc.), not here.
   // Table-driven so a future alarm-tier state added to status.ts without
@@ -556,6 +574,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
         'not_delivering',
         { not_delivering: true, certificate_expired: true },
       ],
+      ['hits_merged', 'hits_merged', { event_id_collisions: 2 }],
       ['self_test_failed', 'self_test_failed', { self_test_failed_services: ['vnc'] }],
       [
         'db_stale',

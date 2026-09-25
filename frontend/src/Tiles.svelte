@@ -32,6 +32,7 @@
         ports: c.ports,
         hits: hitsById.get(c.id) ?? [],
         not_delivering: c.not_delivering,
+        event_id_collisions: c.event_id_collisions,
         throttled_for_s: c.throttled_for_s,
         rotation_stalled: c.rotation_stalled,
         rotation_stalled_for_s: c.rotation_stalled_for_s,
@@ -55,6 +56,7 @@
       class:critical={c.status === 'token_conflict' ||
         c.status === 'credential_conflict' ||
         c.status === 'not_delivering' ||
+        c.status === 'hits_merged' ||
         c.status === 'self_test_failed' ||
         c.status === 'throttled'}
       class:conflict={c.status === 'token_conflict' || c.status === 'credential_conflict'}

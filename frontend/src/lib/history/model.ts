@@ -43,6 +43,7 @@ const TIER: Record<HistoryState, HistoryTier> = {
   credential_conflict: 'crit',
   silent: 'crit',
   not_delivering: 'crit',
+  hits_merged: 'crit',
   self_test_failed: 'crit',
   // ADR-0012 decision 10 (#116): coloured like the nearest existing
   // warning state, even though it ranks with the critical states above.
@@ -70,6 +71,7 @@ const STATE_ORDER: HistoryState[] = [
   'credential_conflict',
   'silent',
   'not_delivering',
+  'hits_merged',
   'self_test_failed',
   'db_stale',
   'throttled',
@@ -88,6 +90,7 @@ const STATE_LABEL: Record<HistoryState, string> = {
   credential_conflict: 'credential conflict',
   silent: 'silent',
   not_delivering: 'not delivering',
+  hits_merged: 'hits merged',
   self_test_failed: 'self-test failed',
   db_stale: 'vulnerability database stale',
   throttled: 'throttled',

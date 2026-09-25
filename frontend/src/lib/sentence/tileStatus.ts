@@ -35,6 +35,10 @@ export interface TileCanaryInput {
   // (see health.go's applyHealthState: "one state on the tile, the
   // worst; the rest in its detail").
   not_delivering?: boolean
+  // Issue #45, owner-ratified 2026-09-25: the honeypot agent's own
+  // cumulative event-id collision count, carried independently of
+  // `status` the same way the rest of this list is.
+  event_id_collisions?: number
   throttled_for_s?: number
   rotation_stalled?: boolean
   rotation_stalled_for_s?: number
@@ -167,6 +171,20 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
           cls: 'al',
         },
       ]
+    case 'hits_merged': {
+      // Issue #45, owner-ratified 2026-09-25: two log lines carried the
+      // same event id, so one hit was folded into another. OpenCanary
+      // cannot do this on a running clock by itself, so something on the
+      // box changed -- the clock, a second OpenCanary process, or a log
+      // rotation that truncates instead of renaming.
+      const n = canary.event_id_collisions ?? 0
+      return [
+        {
+          text: `⚠ ${n} hit${n === 1 ? '' : 's'} merged · one hit folded into another — check the box's clock and log rotation`,
+          cls: 'al',
+        },
+      ]
+    }
     case 'self_test_failed':
       // ADR-0012 (issue #116): a scanner's failed run names the `scan`
       // target and the last stage reached, from `last_run` -- there is

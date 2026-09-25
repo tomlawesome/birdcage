@@ -92,7 +92,7 @@ type Canary struct {
 	// or false. Same convention as AgentLogReadOK above.
 	AgentDropped           *int64 `json:"-"`
 	AgentRejected          *int64 `json:"-"`
-	AgentEventIDCollisions *int64 `json:"-"`
+	AgentEventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
 	AgentPositionFound     *bool  `json:"-"`
 
 	// LastSeenAddr (issue #46 item 1) is the peer host of this canary's
@@ -787,6 +787,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		pending := canaries[i].RegisteredAt == nil
 
 		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
+		applyHitsMergedHealth(&canaries[i])
 
 		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {
