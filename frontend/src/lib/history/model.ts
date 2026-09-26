@@ -43,6 +43,8 @@ const TIER: Record<HistoryState, HistoryTier> = {
   credential_conflict: 'crit',
   silent: 'crit',
   not_delivering: 'crit',
+  // Issue #132: same tier as not_delivering, which it sits beside.
+  opencanary_down: 'crit',
   hits_merged: 'crit',
   self_test_failed: 'crit',
   // ADR-0012 decision 10 (#116): coloured like the nearest existing
@@ -71,6 +73,7 @@ const STATE_ORDER: HistoryState[] = [
   'credential_conflict',
   'silent',
   'not_delivering',
+  'opencanary_down',
   'hits_merged',
   'self_test_failed',
   'db_stale',
@@ -90,6 +93,7 @@ const STATE_LABEL: Record<HistoryState, string> = {
   credential_conflict: 'credential conflict',
   silent: 'silent',
   not_delivering: 'not delivering',
+  opencanary_down: 'OpenCanary not answering',
   hits_merged: 'hits merged',
   self_test_failed: 'self-test failed',
   db_stale: 'vulnerability database stale',

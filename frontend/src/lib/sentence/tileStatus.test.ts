@@ -40,6 +40,14 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(text).toBe('⚠ not delivering · its certificate expired')
   })
 
+  // Issue #132: opencanary_down names the port probe's own finding.
+  it('opencanary_down: names the port probe failure', () => {
+    const result = computeTileStatus({ ...base, status: 'opencanary_down' }, '2026-01-01T00:00:00Z')
+    const text = plainText(result.lines[0])
+    expect(text).toBe("⚠ OpenCanary not answering · the agent's own port probe found it down")
+    expect(result.lines[0][0].cls).toBe('al')
+  })
+
   // Issue #45, owner-ratified 2026-09-25: hits_merged names the
   // collision count and says to check the box's clock and log rotation,
   // with the singular wording at n == 1.
