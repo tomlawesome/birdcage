@@ -1,6 +1,14 @@
 # ADR-0008: Birdcage ships only as container images, and Mockingbird is its own image
 
-**Status:** Accepted
+**Status:** Accepted; amended once. [ADR-0013](0013-opencanary-own-container.md)
+(2026-09-26): OpenCanary is no longer part of the Mockingbird image or
+container -- it moved into its own image (`build/opencanary`) and
+container, with no access to the agent's own state. Decision 2's "Two
+images, not one" becomes three deployable images for a honeypot canary
+(Mockingbird, OpenCanary, and the pre-existing address holder), though
+Mockingbird and birdcage remain the two images ADR-0009's kind-based
+distinction and this ADR's own decision 4 (the dependency fence) are
+about.
 **Date:** 2026-09-18
 **Relates to:** #48 (the agent as a deliverable), #47 (enrolment),
 #54 (upgrades), #62 (key material), #61 (credential hygiene), ADR-0001,
@@ -32,11 +40,14 @@ the whole product was never written down. This ADR states it.
    dashboard, store, ingest listener, CA and key material. It stands
    on its own and is not a sidecar to anything. **Mockingbird** is the
    agent container -- OpenCanary plus the Mockingbird agent, and
-   nothing else. The owner: "The canary is an attack surface. It
-   should be an isolated build with no birdcage code within it." The
-   precise boundary: the Mockingbird container does run Mockingbird,
-   which is birdcage code. What is excluded is the *server* --
-   dashboard, database, ingest listener, CA and key handling.
+   nothing else *[amended by ADR-0013, 2026-09-26: OpenCanary is no
+   longer inside this container -- it is its own image and container,
+   with no access to Mockingbird's own state]*. The owner: "The canary
+   is an attack surface. It should be an isolated build with no
+   birdcage code within it." The precise boundary: the Mockingbird
+   container does run Mockingbird, which is birdcage code. What is
+   excluded is the *server* -- dashboard, database, ingest listener, CA
+   and key handling.
 3. **The deployment unit is one Mockingbird container per network
    segment**, on a VM already present in that segment, attached by
    macvlan. Not one per VM: real machines carry legitimate traffic and
@@ -73,7 +84,10 @@ the whole product was never written down. This ADR states it.
 - #62 (only the CA key touches disk) becomes a statement about the
   server image alone.
 - The Mockingbird image carries OpenCanary's Python runtime; the
-  birdcage image does not and should not gain it.
+  birdcage image does not and should not gain it. *[Superseded by
+  ADR-0013, 2026-09-26: OpenCanary's Python runtime moved to its own
+  image, `build/opencanary`, and Mockingbird carries neither it nor
+  OpenCanary's code any more.]*
 - The two images are not built from wholly disjoint source.
   `internal/selftest` compiles into both binaries -- it is the shared
   wire contract (`Params{RunID, Address, Targets[]}`), a small

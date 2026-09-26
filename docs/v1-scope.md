@@ -78,6 +78,8 @@ Svelte), and
 [ADR-0008](adr/0008-container-only-distribution-and-two-images.md)
 (container-only distribution, two images), as amended by
 [ADR-0009](adr/0009-agents-have-a-kind.md) (birdcage is a fleet control
-plane; an agent has a kind; one image per kind) and
+plane; an agent has a kind; one image per kind),
 [ADR-0010](adr/0010-exposure-first-vulnerability-reporting.md)
-(exposure-first vulnerability reporting -- not in v1).
+(exposure-first vulnerability reporting -- not in v1), and
+[ADR-0013](adr/0013-opencanary-own-container.md) (OpenCanary is its own
+image and container, not the agent's).
