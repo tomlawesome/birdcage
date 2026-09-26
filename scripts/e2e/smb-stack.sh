@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # smb-stack.sh -- the extra infrastructure scripts/e2e/smb.sh (issue #78
 # journey 3) needs and no other journey does: a real Samba server, and a
-# second Mockingbird canary configured to watch its audit log.
+# second Mockingbird canary, with its own OpenCanary container (#132)
+# configured to watch the Samba server's audit log.
 #
 # This is deliberately its own file rather than an addition to
 # scripts/e2e/stack.sh's `up`. stack.sh's header says journey logic does
@@ -10,6 +11,15 @@
 # and building a Samba image and standing up a second canary on every
 # run would slow both of them down for a feature only one journey
 # exercises. This file is only ever invoked by scripts/e2e/smb.sh.
+#
+# Since #132, OpenCanary is its own container, joining its own address
+# holder exactly as the product ships it (cmd/birdcage/canary_lure.go;
+# stack.sh's own start_holder and run_opencanary_command are the model),
+# and the smb module -- and so the overriding opencanary.conf and the
+# Samba server's audit-log mount -- moved with it: the agent never ran
+# any OpenCanary module and has no business mounting either any more
+# (build/opencanary/README.md, "Why it has no access to the agent's own
+# state").
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/smb-stack.sh up)"
@@ -40,6 +50,14 @@ SMB_CANARY_STATE_VOL="${E2E_PREFIX}-smb-canary-state"
 SMB_CANARY_LOG_VOL="${E2E_PREFIX}-smb-canary-log"
 SMB_CANARY_NAME="${E2E_SMB_CANARY_NAME:-e2e-smb-canary}"
 SMB_CANARY_LANE="${E2E_SMB_CANARY_LANE:-e2e-smb}"
+# The address holder and OpenCanary's own container this canary joins
+# (#132), same shape as stack.sh's own HOLDER/OPENCANARY.
+SMB_HOLDER="${E2E_PREFIX}-smb-holder"
+SMB_OPENCANARY="${E2E_PREFIX}-smb-opencanary"
+# Filled in by `up`, read off the already-running base holder
+# (E2E_HOLDER) the same way MOCKINGBIRD_IMAGE below is read off the base
+# canary.
+HOLDER_IMAGE=""
 
 log() { echo "smb-stack: $*" >&2; }
 die() { echo "smb-stack: $*" >&2; exit 1; }
@@ -113,13 +131,14 @@ start_samba() {
 # the whole birdcage instance). MOCKINGBIRD_IMAGE is discovered from the
 # already-running primary canary rather than guessed, so this always
 # starts the same image stack.sh built, whatever tag or override name it
-# was given.
+# was given. OPENCANARY_IMAGE is E2E_OPENCANARY_IMAGE_REF, stack.sh's own
+# `up` export of the exact tag it built or was handed (#132).
 enrol_smb_canary() {
   local image output
   image="$(docker inspect --format '{{.Config.Image}}' "$E2E_CANARY")" \
     || die "could not read the image $E2E_CANARY is running"
 
-  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" "$E2E_BIRDCAGE" \
+  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" --env "OPENCANARY_IMAGE=$E2E_OPENCANARY_IMAGE_REF" "$E2E_BIRDCAGE" \
     /birdcage canary enrol --name "$SMB_CANARY_NAME" --lane "$SMB_CANARY_LANE")" \
     || die "birdcage canary enrol (smb canary) failed"
 
@@ -127,13 +146,33 @@ enrol_smb_canary() {
     || die "could not store the smb canary's enrolment output"
 }
 
+# start_holder brings up this canary's own address holder (#126, #132),
+# the same shape stack.sh's own start_holder uses. --network-alias names
+# the canary itself: since #132 the canary joins this holder's namespace
+# rather than owning one, so it gets no Docker embedded-DNS entry of its
+# own (stack.sh's own comment on this has the reproduction).
+start_holder() {
+  docker run --detach --name "$SMB_HOLDER" \
+    --network "$E2E_NET" \
+    --network-alias "$SMB_CANARY" \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 16 \
+    --memory 32m \
+    "$HOLDER_IMAGE" >/dev/null || die "starting $SMB_HOLDER failed"
+}
+
 # run_smb_canary takes the printed `docker run` command and edits it:
-# stack.sh's three substitutions (name, both volumes, network) plus two
-# more mounts of our own -- the overriding opencanary.conf (a single
-# file out of $SMB_CONF_VOL, via volume-subpath, so nothing else
-# /etc/opencanaryd ships is disturbed) and the audit-log volume the
-# Samba container writes into, read-only: this canary only ever reads
-# it.
+# stack.sh's own substitutions (name, both volumes, joining this canary's
+# own holder rather than the literal name `holder`). Since #132 this
+# canary mounts nothing of its own beyond that: the overriding
+# opencanary.conf and the Samba server's audit-log volume are OpenCanary's
+# own mounts now (run_smb_opencanary below) -- this agent never ran any
+# OpenCanary module and has no access to that configuration or that log
+# (build/opencanary/README.md, "Why it has no access to the agent's own
+# state" makes the same point the other way round, about the agent's own
+# state volume).
 run_smb_canary() {
   local command
   # The canary's own `docker run` block only, matched by its
@@ -145,14 +184,12 @@ run_smb_canary() {
     || die "could not read the smb canary's printed docker run command"
 
   command="$(printf '%s\n' "$command" | sed \
-    -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
-    -e "/--network container:holder/d" \
-    -e "/-v smb-audit:/d" \
-    -e "/MOCKINGBIRD_SMB_AUDIT_PATH/d" \
     -e "s|--name mockingbird |--name $SMB_CANARY |" \
     -e "s|-v mockingbird-state:|-v $SMB_CANARY_STATE_VOL:|" \
     -e "s|-v mockingbird-log:|-v $SMB_CANARY_LOG_VOL:|" \
-    -e "s|-v $SMB_CANARY_LOG_VOL:/var/log/opencanary \\\\|-v $SMB_CANARY_LOG_VOL:/var/log/opencanary -v $SMB_LOG_VOL:/samba-audit:ro --mount type=volume,source=$SMB_CONF_VOL,target=/etc/opencanaryd/opencanary.conf,volume-subpath=opencanary.conf \\\\|")"
+    -e "s|--network container:holder|--network container:$SMB_HOLDER|" \
+    -e "/-v smb-audit:/d" \
+    -e "/MOCKINGBIRD_SMB_AUDIT_PATH/d")"
 
   case "$command" in
     docker\ run\ *"$SMB_CANARY"*) ;;
@@ -174,6 +211,54 @@ run_smb_canary() {
 
   log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the smb canary's docker run command failed to start"
+}
+
+# run_smb_opencanary is run_smb_canary's own twin for OpenCanary's
+# printed block (#132): this canary's own OpenCanary container, joining
+# this canary's own holder rather than the literal name `holder`, and
+# carrying two mounts of our own on top of stack.sh's own substitution
+# (the shared log volume, read-write here since this is the writer) --
+# the overriding opencanary.conf (a single file out of $SMB_CONF_VOL, via
+# volume-subpath, so nothing else /etc/opencanaryd ships is disturbed)
+# and the Samba container's audit-log volume, read-only: this is the
+# container that watches it now. Run after run_smb_canary, so the
+# agent's webhook receiver is already listening before OpenCanary's first
+# attempt to reach it (stack.sh's own run_opencanary_command has the
+# reproduction of what happens the other way round).
+run_smb_opencanary() {
+  local command
+  command="$(helper "sed -n '/^docker run -d --name opencanary /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/smb-enrol-output.txt")" \
+    || die "could not read the smb canary's printed OpenCanary command"
+
+  command="$(printf '%s\n' "$command" | sed \
+    -e "s|--name opencanary |--name $SMB_OPENCANARY |" \
+    -e "s|--network container:holder|--network container:$SMB_HOLDER|" \
+    -e "s|-v mockingbird-log:/var/log/opencanary \\\\|-v $SMB_CANARY_LOG_VOL:/var/log/opencanary -v $SMB_LOG_VOL:/samba-audit:ro --mount type=volume,source=$SMB_CONF_VOL,target=/etc/opencanaryd/opencanary.conf,volume-subpath=opencanary.conf \\\\|")"
+
+  case "$command" in
+    docker\ run\ *"$SMB_OPENCANARY"*"$E2E_OPENCANARY_IMAGE_REF"*) ;;
+    *) die "the smb canary's printed OpenCanary command did not look the way this harness expects; got: $command" ;;
+  esac
+  case "$command" in
+    *"$SMB_LOG_VOL:/samba-audit:ro"*) ;;
+    *) die "the smb canary's OpenCanary command is missing the samba-audit mount after editing -- got: $command" ;;
+  esac
+  case "$command" in
+    *"volume-subpath=opencanary.conf"*) ;;
+    *) die "the smb canary's OpenCanary command is missing the overriding opencanary.conf mount after editing -- got: $command" ;;
+  esac
+
+  # Second use of the opencanary build tag in this job, the same #112
+  # concurrent-prune risk this file's own mockingbird check names --
+  # stack.sh's own `up` already used this tag once, to start the base
+  # stack's own OpenCanary container.
+  if [ -n "${OPENCANARY_BUILD_IMAGE:-}" ] && [ -n "${OPENCANARY_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST" >&2 \
+      || die "could not ensure $OPENCANARY_BUILD_IMAGE is present before starting the smb canary's OpenCanary container"
+  fi
+
+  log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ')"
+  eval "$command" >/dev/null || die "the smb canary's OpenCanary docker run command failed to start"
 }
 
 wait_for_smb_canary() {
@@ -208,40 +293,51 @@ wait_for_smb_canary() {
 # the moment it starts watching, so any smbd_audit line already written
 # before that seek is silently skipped forever, not queued. Enrolment
 # finishing (wait_for_smb_canary above) only proves the agent has
-# talked to birdcage -- OpenCanary is a separate child process the
-# agent supervises, and its own module startup (loading every service,
-# including the smb watcher) takes a further couple of seconds. Without
-# this, scripts/e2e/smb.sh's real SMB write could land before the
-# watcher ever attached, and every alert would silently be lost -- which
-# is exactly what happened the first time this journey was run
-# back-to-back rather than by hand with pauses between commands.
+# talked to birdcage -- since #132 OpenCanary is a separate container the
+# agent no longer supervises, and its own module startup (loading every
+# service, including the smb watcher) takes a further couple of seconds
+# after it starts. Checked against $SMB_OPENCANARY's own log, not the
+# agent's: OpenCanary prints this line to its own stdout, which the
+# agent's container never sees (before #132 the two were the same
+# container, and this line appeared in the agent's log because OpenCanary
+# was its child process). Without this, scripts/e2e/smb.sh's real SMB
+# write could land before the watcher ever attached, and every alert
+# would silently be lost -- which is exactly what happened the first time
+# this journey was run back-to-back rather than by hand with pauses
+# between commands.
 wait_for_smb_module_ready() {
   local attempt
   for attempt in $(seq 1 30); do
-    if docker logs "$SMB_CANARY" 2>&1 | grep -q "Ran startYourEngines on class CanarySamba"; then
+    if docker logs "$SMB_OPENCANARY" 2>&1 | grep -q "Ran startYourEngines on class CanarySamba"; then
       log "OpenCanary's smb module attached to the audit file on attempt $attempt"
       return 0
     fi
     sleep 1
   done
-  log "OpenCanary's smb module never reported ready; the smb canary's log follows"
-  docker logs "$SMB_CANARY" >&2 || true
-  die "the smb module in $SMB_CANARY never started watching its audit file"
+  log "OpenCanary's smb module never reported ready; $SMB_OPENCANARY's log follows"
+  docker logs "$SMB_OPENCANARY" >&2 || true
+  die "the smb module in $SMB_OPENCANARY never started watching its audit file"
 }
 
 up() {
   command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
   [ -n "${E2E_STACK:-}" ] && [ -n "${E2E_NET:-}" ] && [ -n "${E2E_BIRDCAGE:-}" ] && [ -n "${E2E_CANARY:-}" ] \
-    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
+    && [ -n "${E2E_HOLDER:-}" ] && [ -n "${E2E_OPENCANARY_IMAGE_REF:-}" ] \
+    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY/E2E_HOLDER/E2E_OPENCANARY_IMAGE_REF unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
   down >/dev/null 2>&1 || true
+
+  HOLDER_IMAGE="$(docker inspect --format '{{.Config.Image}}' "$E2E_HOLDER")" \
+    || die "could not read the image $E2E_HOLDER is running"
 
   build_samba_image
   docker volume create "$SMB_LOG_VOL" >/dev/null || die "creating volume $SMB_LOG_VOL failed"
   docker volume create "$SMB_CONF_VOL" >/dev/null || die "creating volume $SMB_CONF_VOL failed"
   write_smb_conf
   start_samba
+  start_holder
   enrol_smb_canary
   run_smb_canary
+  run_smb_opencanary
   wait_for_smb_canary
   wait_for_smb_module_ready
 
@@ -251,11 +347,15 @@ export SMB_SAMBA_IMAGE=$SAMBA_IMAGE
 export SMB_CANARY=$SMB_CANARY
 export SMB_CANARY_ID=$SMB_CANARY_ID
 export SMB_CANARY_NAME=$SMB_CANARY_NAME
+export SMB_HOLDER=$SMB_HOLDER
+export SMB_OPENCANARY=$SMB_OPENCANARY
 EOF
 }
 
 down() {
   docker rm --force "$SMB_CANARY" >/dev/null 2>&1 || true
+  docker rm --force "$SMB_OPENCANARY" >/dev/null 2>&1 || true
+  docker rm --force "$SMB_HOLDER" >/dev/null 2>&1 || true
   docker rm --force "$SAMBA" >/dev/null 2>&1 || true
   local vol
   for vol in "$SMB_LOG_VOL" "$SMB_CONF_VOL" "$SMB_CANARY_STATE_VOL" "$SMB_CANARY_LOG_VOL"; do
