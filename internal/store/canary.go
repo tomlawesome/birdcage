@@ -95,6 +95,18 @@ type Canary struct {
 	AgentEventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
 	AgentPositionFound     *bool  `json:"-"`
 
+	// AgentOpenCanaryUp is the agent's own last self-reported port-probe
+	// result for OpenCanary (issue #132, canaries.agent_opencanary_up):
+	// OpenCanary now runs in its own container, so the agent no longer
+	// learns it died by watching a child process exit (#69, superseded)
+	// -- it dials OpenCanary's own configured ports on the shared network
+	// namespace once per heartbeat instead (internal/agent/readiness) and
+	// reports whether every one of them answered. nil means no heartbeat
+	// has ever carried this field -- a pre-#132 agent, or a canary that
+	// has never reported -- which must never be confused with an
+	// explicit false. Same convention as AgentLogReadOK above.
+	AgentOpenCanaryUp *bool `json:"-"`
+
 	// LastSeenAddr (issue #46 item 1) is the peer host of this canary's
 	// most recent accepted ingest heartbeat, set by
 	// store.SetCanaryLastSeenAddr from internal/ingest/heartbeat.go's
@@ -539,6 +551,13 @@ type AgentHeartbeat struct {
 	// is stored as NULL, so "reports no bait names" stays distinct from a
 	// stored empty list the facts column would then have to render.
 	PoisonerNames string
+
+	// OpenCanaryUp is issue #132's own addition: the agent's own
+	// per-heartbeat port probe of OpenCanary, now a separate container.
+	// nil means an agent built before this change, which never sends the
+	// field at all -- see Canary.AgentOpenCanaryUp's doc comment for why
+	// that must stay distinct from an explicit false.
+	OpenCanaryUp *bool
 }
 
 // RecordCanaryAgentHeartbeat records that canaryID's agent phoned home at
@@ -579,15 +598,26 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 	if report.PoisonerNames != "" {
 		poisonerNames = &report.PoisonerNames
 	}
+	// OpenCanaryUp (#132) follows PositionFound's own nil-vs-value
+	// conversion exactly: nil (an agent built before this change) binds
+	// to SQL NULL, a non-nil pointer binds to 0 or 1.
+	var openCanaryUp *int64
+	if report.OpenCanaryUp != nil {
+		v := int64(0)
+		if *report.OpenCanaryUp {
+			v = 1
+		}
+		openCanaryUp = &v
+	}
 	if _, err := database.ExecContext(ctx, `
 		UPDATE agents
 		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?,
 			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?,
-			poisoner_names = ?
+			poisoner_names = ?, agent_opencanary_up = ?
 		WHERE id = ?`,
 		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID,
 		report.Dropped, report.Rejected, report.EventIDCollisions, positionFound,
-		poisonerNames, canaryID); err != nil {
+		poisonerNames, openCanaryUp, canaryID); err != nil {
 		return fmt.Errorf("update agent self-report: %w", err)
 	}
 	return nil
@@ -662,7 +692,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agent_version, poisoner_names,
 			credential_dual_use_addrs, credential_dual_use_addrs_at,
 			credential_dual_use_versions, credential_dual_use_versions_at,
-			db_refresh_failing_since, db_refresh_error
+			db_refresh_failing_since, db_refresh_error, agent_opencanary_up
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -685,12 +715,13 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			poisonerNames      *string
 			dbFailingSince     *string
 			dbRefreshError     *string
+			agentOpenCanaryUp  *int64
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
 			&agentVersion, &poisonerNames,
 			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt,
-			&dbFailingSince, &dbRefreshError); err != nil {
+			&dbFailingSince, &dbRefreshError, &agentOpenCanaryUp); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
 		}
 		if c.dbRefreshFailingSince, err = parseNullableTime(dbFailingSince, "db_refresh_failing_since"); err != nil {
@@ -725,6 +756,10 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		if agentPositionFound != nil {
 			found := *agentPositionFound != 0
 			c.AgentPositionFound = &found
+		}
+		if agentOpenCanaryUp != nil {
+			up := *agentOpenCanaryUp != 0
+			c.AgentOpenCanaryUp = &up
 		}
 		if registeredAt != nil {
 			t, err := time.Parse(receivedAtLayout, *registeredAt)
@@ -788,6 +823,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 
 		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
 		applyHitsMergedHealth(&canaries[i])
+		applyOpenCanaryHealth(&canaries[i])
 
 		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {

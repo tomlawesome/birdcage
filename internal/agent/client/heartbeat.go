@@ -41,6 +41,17 @@ type SelfReport struct {
 	// omitempty rather than a zero value birdcage would store.
 	PoisonerNames string
 
+	// OpenCanaryUp is issue #132's own addition: the result of this
+	// agent's own per-heartbeat port probe of OpenCanary
+	// (internal/agent/readiness), now that OpenCanary runs in its own
+	// container and the agent no longer supervises it as a child process
+	// that would tell it when it died (#69, superseded). Unlike the
+	// fields above, this genuinely can have "no opinion yet": *bool, nil
+	// when the probe could not even be attempted -- OpenCanary's own
+	// configuration could not be read, or it names no port at all -- and
+	// non-nil otherwise, true only when every configured module answered.
+	OpenCanaryUp *bool
+
 	// SettingsHash is issue #124's own addition: SettingsHash's own
 	// digest of this agent's currently-effective per-canary settings
 	// (cmd/mockingbird's own record of what it last validated and
@@ -77,6 +88,7 @@ type wireHeartbeat struct {
 	PositionFound     *bool  `json:"position_found,omitempty"`
 	PoisonerNames     string `json:"poisoner_names,omitempty"`
 	SettingsHash      string `json:"settings_hash,omitempty"`
+	OpenCanaryUp      *bool  `json:"opencanary_up,omitempty"`
 }
 
 // heartbeatResponse is POST /ingest/heartbeat's response body (issue
@@ -122,6 +134,7 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 		PositionFound:     &report.PositionFound,
 		PoisonerNames:     report.PoisonerNames,
 		SettingsHash:      report.SettingsHash,
+		OpenCanaryUp:      report.OpenCanaryUp,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("client: encode heartbeat: %w", err)

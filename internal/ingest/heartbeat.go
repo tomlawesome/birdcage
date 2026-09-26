@@ -54,6 +54,16 @@ type ingestHeartbeat struct {
 	// list.
 	PoisonerNames string `json:"poisoner_names,omitempty"`
 
+	// OpenCanaryUp is issue #132's own addition: whether this agent's own
+	// per-heartbeat port probe of OpenCanary -- now a separate container,
+	// no longer a child process the agent supervises (#69 superseded) --
+	// found every one of its configured ports answering. A pointer, not
+	// a plain bool, for the same reason Dropped/Rejected/
+	// EventIDCollisions/PositionFound above are: an agent built before
+	// this change never sends the field at all, and that silence must
+	// never be read as an explicit false.
+	OpenCanaryUp *bool `json:"opencanary_up,omitempty"`
+
 	// SettingsHash is issue #124's own addition: the sha256 hex of this
 	// agent's currently-effective per-canary settings
 	// (client.SettingsHash, computed identically on both sides -- see
@@ -200,6 +210,7 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 		EventIDCollisions: body.EventIDCollisions,
 		PositionFound:     body.PositionFound,
 		PoisonerNames:     body.PoisonerNames,
+		OpenCanaryUp:      body.OpenCanaryUp,
 	}
 	if err := store.RecordCanaryAgentHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), report); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {
