@@ -234,6 +234,13 @@ two. The audit file's own lines also survive a longer gap than one
 restart -- the holder keeps the volume mounted even while both the
 canary and the lure are stopped, so nothing unread is wiped.
 
+A host reboot, or stopping the holder, is the one thing that does wipe
+it: the volume lives in memory. Only lines the agent had not yet sent
+are lost, and those pile up only while birdcage is unreachable -- a gap
+birdcage already shows as the canary going quiet. This is deliberate
+(issue #131): keeping the volume in memory is what caps its size in a
+way a compromised Samba cannot get around.
+
 #### Turning it off, and naming the shares
 
 | Flag | Default | What it does |

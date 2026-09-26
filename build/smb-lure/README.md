@@ -56,7 +56,10 @@ offering all four *is* a small NAS. It publishes no port of its own.
 Create the audit volume and start the holder first. `holder` (cmd/holder)
 is a do-nothing container whose only job is to own that network address
 and keep the tmpfs volume mounted, so restarting the canary or the lure
-never takes the other one down (see "Restarting" below).
+never takes the other one down (see "Restarting" below). A host reboot, or stopping
+the holder, still wipes the volume and any lines the agent had not yet
+sent -- deliberately, so the size cap stays enforced by the host's kernel
+(issue #131; `docs/enrolment.md` has the detail).
 
 ```
 docker volume create --driver local \
