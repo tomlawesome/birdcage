@@ -54,6 +54,13 @@ LURE_CANARY_LOG_VOL="${E2E_PREFIX}-lure-canary-log"
 LURE_CANARY_NAME="${E2E_SMB_LURE_CANARY_NAME:-e2e-lure-canary}"
 LURE_CANARY_LANE="${E2E_SMB_LURE_CANARY_LANE:-e2e-lure}"
 
+# OpenCanary's own container for this second canary (issue #132): since
+# #132 every honeypot canary, including this one, has OpenCanary as a
+# separate container joining the same holder -- reusing the base stack's
+# own opencanary image (E2E_OPENCANARY_IMAGE_REF, from
+# scripts/e2e/stack.sh's own `up`) rather than building a second copy.
+LURE_OPENCANARY="${E2E_PREFIX}-lure-opencanary"
+
 # The share and the bait files this journey uses, as the image lays them
 # out (build/smb-lure/bait). Exported so the journey asserts on the same
 # names the harness set up rather than a second copy of them.
@@ -144,7 +151,7 @@ enrol_lure_canary() {
   image="$(docker inspect --format '{{.Config.Image}}' "$E2E_CANARY")" \
     || die "could not read the image $E2E_CANARY is running"
 
-  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" "$E2E_BIRDCAGE" \
+  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" --env "OPENCANARY_IMAGE=$E2E_OPENCANARY_IMAGE_REF" "$E2E_BIRDCAGE" \
     /birdcage canary enrol --name "$LURE_CANARY_NAME" --lane "$LURE_CANARY_LANE")" \
     || die "birdcage canary enrol (lure canary) failed"
 
@@ -217,6 +224,31 @@ run_lure_canary() {
 
   log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the lure canary's docker run command failed to start"
+}
+
+# run_lure_opencanary is run_lure_canary's own twin for OpenCanary's
+# printed block (issue #132): this second canary gets its own OpenCanary
+# container too, joining this journey's own holder rather than the
+# literal name `holder`, and sharing this canary's own log volume
+# read-write (the agent mounts the same volume read-only on its side,
+# already substituted above).
+run_lure_opencanary() {
+  local command
+  command="$("$E2E_STACK" helper "sed -n '/^docker run -d --name opencanary /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/lure-enrol-output.txt")" \
+    || die "could not read the lure canary's printed OpenCanary command"
+
+  command="$(printf '%s\n' "$command" | sed \
+    -e "s|--name opencanary |--name $LURE_OPENCANARY |" \
+    -e "s|-v mockingbird-log:|-v $LURE_CANARY_LOG_VOL:|" \
+    -e "s|--network container:holder|--network container:$HOLDER|")"
+
+  case "$command" in
+    docker\ run\ *"$LURE_OPENCANARY"*"$E2E_OPENCANARY_IMAGE_REF"*) ;;
+    *) die "the lure canary's printed OpenCanary command did not look the way this harness expects; got: $command" ;;
+  esac
+
+  log "running: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ')"
+  eval "$command" >/dev/null || die "the lure canary's OpenCanary command failed to start"
 }
 
 # start_lure runs the lure in the holder's network namespace (issue #126,
@@ -355,6 +387,21 @@ restart_lure() {
   wait_for_smb_road
 }
 
+# restart_opencanary restarts this journey's own OpenCanary container
+# ALONE (issue #132), the same "does not regress" shape restart_lure's
+# own comment gives: OpenCanary was always a joiner of the holder's
+# namespace, never its owner, so restarting it must not touch the
+# canary's own network namespace, the lure's listening socket, or the
+# agent's own reporting. wait_for_lure and wait_for_smb_road prove the
+# lure and the agent's smb road are both still there; the caller (the
+# journey script) is what counts alerts before and after to prove the
+# canary's own reporting pipeline kept working throughout.
+restart_opencanary() {
+  docker restart --time 10 "$LURE_OPENCANARY" >/dev/null || die "restarting $LURE_OPENCANARY failed"
+  wait_for_lure
+  wait_for_smb_road
+}
+
 # audit_survives_extended_outage stops BOTH the canary and the lure --
 # the exact scenario issue #126 names: "the smb-audit tmpfs volume is
 # also wiped when no container holds it." Before the holder, nothing else
@@ -386,8 +433,8 @@ audit_survives_extended_outage() {
 
 up() {
   command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
-  [ -n "${E2E_STACK:-}" ] && [ -n "${E2E_NET:-}" ] && [ -n "${E2E_BIRDCAGE:-}" ] && [ -n "${E2E_CANARY:-}" ] \
-    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
+  [ -n "${E2E_STACK:-}" ] && [ -n "${E2E_NET:-}" ] && [ -n "${E2E_BIRDCAGE:-}" ] && [ -n "${E2E_CANARY:-}" ] && [ -n "${E2E_OPENCANARY_IMAGE_REF:-}" ] \
+    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY/E2E_OPENCANARY_IMAGE_REF unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
   down >/dev/null 2>&1 || true
 
   build_lure_image
@@ -397,6 +444,7 @@ up() {
   start_holder
   enrol_lure_canary
   run_lure_canary
+  run_lure_opencanary
   wait_for_lure_canary
   start_lure
   wait_for_lure
@@ -411,6 +459,7 @@ export SMB_LURE_CLIENT_IMAGE=$CLIENT_IMAGE
 export SMB_LURE_CANARY=$LURE_CANARY
 export SMB_LURE_CANARY_ID=$LURE_CANARY_ID
 export SMB_LURE_CANARY_NAME=$LURE_CANARY_NAME
+export SMB_LURE_OPENCANARY=$LURE_OPENCANARY
 export SMB_LURE_AUDIT_VOL=$AUDIT_VOL
 export SMB_LURE_SHARE=$LURE_SHARE
 export SMB_LURE_BAIT_ONE=$LURE_BAIT_ONE
@@ -422,6 +471,7 @@ EOF
 down() {
   docker rm --force "$LURE" >/dev/null 2>&1 || true
   docker rm --force "$LURE_CANARY" >/dev/null 2>&1 || true
+  docker rm --force "$LURE_OPENCANARY" >/dev/null 2>&1 || true
   docker rm --force "$HOLDER" >/dev/null 2>&1 || true
   local vol
   for vol in "$AUDIT_VOL" "$LURE_CANARY_STATE_VOL" "$LURE_CANARY_LOG_VOL"; do
@@ -442,9 +492,10 @@ case "${1:-}" in
   down) down ;;
   restart-canary) restart_canary ;;
   restart-lure) restart_lure ;;
+  restart-opencanary) restart_opencanary ;;
   audit-survives-outage) shift; audit_survives_extended_outage "$@" ;;
   audit-log) audit_log ;;
   *)
-    echo "usage: $0 {up|down|restart-canary|restart-lure|audit-survives-outage [seconds]|audit-log}" >&2
+    echo "usage: $0 {up|down|restart-canary|restart-lure|restart-opencanary|audit-survives-outage [seconds]|audit-log}" >&2
     exit 2 ;;
 esac

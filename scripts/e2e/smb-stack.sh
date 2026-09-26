@@ -60,7 +60,7 @@ build_samba_image() {
 }
 
 # write_smb_conf writes the overriding opencanary.conf this journey's
-# canary needs -- the shipped conf (build/mockingbird/opencanary.conf)
+# canary needs -- the shipped conf (build/opencanary/opencanary.conf)
 # with only smb.enabled and smb.auditfile changed -- into a fresh named
 # volume. Piped through stdin into a throwaway container, not written to
 # a host path and bind-mounted: the docker daemon this script talks to
@@ -71,7 +71,7 @@ write_smb_conf() {
   sed \
     -e 's|"smb.enabled": false|"smb.enabled": true|' \
     -e 's|"smb.auditfile": "/var/log/samba-audit.log"|"smb.auditfile": "/samba-audit/samba-audit.log"|' \
-    "$REPO_ROOT/build/mockingbird/opencanary.conf" \
+    "$REPO_ROOT/build/opencanary/opencanary.conf" \
     | docker run --rm --interactive --volume "$SMB_CONF_VOL:/out" "${ALPINE_IMAGE:-alpine:3.24}" sh -c 'cat > /out/opencanary.conf' \
     || die "writing the overriding opencanary.conf failed"
   # Fails loudly rather than silently shipping the stock conf (smb
