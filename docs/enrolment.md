@@ -723,17 +723,29 @@ one alert per packet.
 
 ### If you also use `--security-opt no-new-privileges`
 
-You cannot have both. `no-new-privileges` tells the kernel to ignore
-file capabilities, and the file capability on the agent binary is
-exactly how a process running as an ordinary user gets `NET_RAW` without
-the container ever being root. Docker does not hand the capability to a
-non-root process any other way. Pick one:
+Since issue #132 you can have both, as long as you do not also add
+`--init` to the agent's container.
 
-- **Keep `--cap-add NET_RAW`, drop `no-new-privileges`** -- the default,
-  and what the printed command does. The container still drops every
-  other capability, still runs as uid 65532, and still has no shell.
-- **Keep `no-new-privileges`, drop `--cap-add NET_RAW`** -- port-scan
-  detection is off, and the agent logs one line saying so at startup.
+The agent binary carries `NET_RAW` as a file capability: that is how a
+process running as an ordinary user gets the capability without the
+container ever being root. `no-new-privileges` stops a program from
+gaining capabilities its parent did not already have. When the agent is
+the container's first process, its parent is Docker's own container
+runtime, which already holds `NET_RAW` because of `--cap-add NET_RAW`, so
+the agent keeps it. When `--init` puts a small init process in front of
+the agent, that init runs as uid 65532 with no capabilities at all, and
+the agent started from it gets none either.
+
+- **`--cap-add NET_RAW` with `no-new-privileges`, no `--init`** --
+  port-scan detection is on. The agent still holds `NET_RAW` and nothing
+  else, still runs as uid 65532, and still has no shell.
+- **`--cap-add NET_RAW` with `no-new-privileges` and `--init`** --
+  port-scan detection is off, and the agent logs one line saying so at
+  startup.
+
+The printed command does not add `no-new-privileges` to the agent's
+container. Before #132 it could not: the agent then ran under `--init` to
+supervise OpenCanary, and the two did not mix.
 
 ## Catching a poisoner on your segment
 

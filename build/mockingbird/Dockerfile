@@ -25,13 +25,15 @@
 #       -e MOCKINGBIRD_BIRDCAGE_URL=https://birdcage.example:8443 mockingbird
 #
 # This container's own hardening flags are unchanged by this split (no
-# --security-opt no-new-privileges here -- see the trap comment in
-# test:image:mockingbird and scripts/e2e/stack.sh's run_printed_command:
-# the kernel would ignore the agent's file capability and turn port-scan
-# detection off). What did change: no more --sysctl and no more --init.
-# This container binds no privileged port any more (OpenCanary does, in
-# its own container, which carries the sysctl instead) and spawns no
-# child process to reap or forward signals to (OpenCanary is no longer
+# --security-opt no-new-privileges in the printed command; see
+# docs/enrolment.md, "If you also use --security-opt no-new-privileges",
+# for why the two now mix as long as --init is absent). What did change:
+# no more --sysctl and no more --init. The sysctl moved to OpenCanary's
+# own line; the agent's own privileged ports (137, 161, 5353, 5355) still
+# bind because Docker already sets net.ipv4.ip_unprivileged_port_start=0
+# in the holder's namespace, which this container joins. --init went
+# because the agent spawns no child process to reap or forward signals
+# to any more (OpenCanary is no longer
 # this agent's child -- #69, superseded; see cmd/mockingbird/main.go's
 # package doc comment for what replaces its liveness signal). The log
 # volume is now read-only here: OpenCanary writes it from its own

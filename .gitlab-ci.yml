@@ -899,9 +899,12 @@ test:image:mockingbird:
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
     # --cap-add NET_RAW is the capability the port-scan detector needs
-    # (#65). It has no effect alongside --security-opt no-new-privileges,
-    # which makes the kernel ignore the binary's file capability, so this
-    # job's container reports port-scan detection off. That is deliberate:
+    # (#65). It has no effect here because --init and --security-opt
+    # no-new-privileges are both set: the agent is started by an init
+    # holding no capabilities, and no-new-privileges stops it gaining the
+    # binary's file capability (docs/enrolment.md has the detail; without
+    # --init, as the printed command runs it, the capability survives).
+    # So this job's container reports port-scan detection off. That is deliberate:
     # this job exists to prove nothing in the image runs as root, and
     # relaxing its hardening to exercise a different feature would cost
     # more than it proves. The capability itself is proved by the image
@@ -969,6 +972,7 @@ test:image:opencanary:
     DOCKER_HOST: unix:///var/run/docker.sock
     APP: opencanary-test-$CI_JOB_ID
     APP_HOLDER: opencanary-test-holder-$CI_JOB_ID
+    APP_SINK: opencanary-test-sink-$CI_JOB_ID
   before_script:
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
@@ -994,6 +998,45 @@ test:image:opencanary:
       --read-only --cap-drop ALL --security-opt no-new-privileges
       --pids-limit 16 --memory 32m
       "$HOLDER_BUILD_IMAGE"
+    # A stand-in for the agent's event receiver on 127.0.0.1:9919 in the
+    # holder's namespace, started before OpenCanary. OpenCanary's webhook
+    # logger treats a refused connection there as fatal to loading the
+    # whole application (ADR-0013, consequence 4; pipeline 1702 failed
+    # exactly this way), so in production the agent starts first. This
+    # job tests the image, not the agent, so a plain stdlib HTTP server
+    # that answers 202 (the status opencanary.conf expects) to every POST
+    # stands in for it. It runs from the image under test -- the only
+    # Python this job has -- under the same hardening as OpenCanary, as
+    # uid 65532.
+    - |
+      docker run --detach --name "$APP_SINK" \
+        --network "container:$APP_HOLDER" \
+        --read-only --cap-drop ALL --security-opt no-new-privileges \
+        --pids-limit 8 --memory 32m \
+        --entrypoint /usr/bin/python3 "$APP" -c '
+      import http.server as h
+      class R(h.BaseHTTPRequestHandler):
+          def do_POST(self):
+              self.rfile.read(int(self.headers.get("Content-Length") or 0))
+              self.send_response(202)
+              self.send_header("Content-Length", "0")
+              self.end_headers()
+          def log_message(self, *a):
+              pass
+      h.HTTPServer(("127.0.0.1", 9919), R).serve_forever()
+      '
+      for attempt in $(seq 1 15); do
+        if docker run --rm --network "container:$APP_HOLDER" "$ALPINE_IMAGE" nc -z 127.0.0.1 9919; then
+          echo "event sink listening on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 15 ]; then
+          echo "event sink never listened on 127.0.0.1:9919; its log follows"
+          docker logs "$APP_SINK"
+          exit 1
+        fi
+      done
     - >-
       docker run --detach --name "$APP" --init
       --network "container:$APP_HOLDER"
@@ -1040,6 +1083,7 @@ test:image:opencanary:
     - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
   after_script:
     - docker rm --force "$APP" >/dev/null 2>&1 || true
+    - docker rm --force "$APP_SINK" >/dev/null 2>&1 || true
     - docker rm --force "$APP_HOLDER" >/dev/null 2>&1 || true
     - docker image rm "$APP" >/dev/null 2>&1 || true
 
