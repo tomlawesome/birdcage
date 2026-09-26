@@ -62,7 +62,7 @@ func main() {
 		return
 	}
 
-	fmt.Fprintf(os.Stdout, "holder %s: waiting for SIGTERM or SIGINT\n", version)
+	_, _ = fmt.Fprintf(os.Stdout, "holder %s: waiting for SIGTERM or SIGINT\n", version)
 	waitForShutdown(context.Background(), os.Stdout)
 }
 
@@ -78,5 +78,5 @@ func waitForShutdown(ctx context.Context, out io.Writer) {
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	<-sigCtx.Done()
-	fmt.Fprintln(out, "holder: stopping")
+	_, _ = fmt.Fprintln(out, "holder: stopping")
 }
