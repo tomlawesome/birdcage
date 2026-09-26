@@ -81,7 +81,7 @@ func TestSMBLureRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 // weakening of the one container neither of them is allowed to notice.
 func TestHolderRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 	var out strings.Builder
-	if err := printHolderRunCommand(&out, defaultHolderImage); err != nil {
+	if err := printHolderRunCommand(&out, defaultHolderImage, true); err != nil {
 		t.Fatalf("printHolderRunCommand: %v", err)
 	}
 	got := out.String()
@@ -115,13 +115,129 @@ func TestHolderRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 	}
 }
 
+// TestHolderRunCommandWithoutLureOmitsTheAuditVolume is issue #132's own
+// addition: the holder is now printed for every honeypot canary, not
+// only when the SMB lure is deployed, but a lure-less canary still has
+// no use for the smb-audit volume -- printing it unused would be exactly
+// the drift docs/enrolment.md's "smb lure off by request" line exists to
+// avoid.
+func TestHolderRunCommandWithoutLureOmitsTheAuditVolume(t *testing.T) {
+	var out strings.Builder
+	if err := printHolderRunCommand(&out, defaultHolderImage, false); err != nil {
+		t.Fatalf("printHolderRunCommand: %v", err)
+	}
+	got := out.String()
+
+	for _, absent := range []string{"smb-audit", "docker volume create", "/audit"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("the holder command still mentions %q with the lure off\ngot:\n%s", absent, got)
+		}
+	}
+	// The holder container itself is still printed -- OpenCanary always
+	// joins it.
+	if !strings.Contains(got, "--name holder") || !strings.Contains(got, "holder:latest") {
+		t.Errorf("the holder container itself was dropped with the lure off\ngot:\n%s", got)
+	}
+}
+
+// TestOpenCanaryRunCommandCarriesEveryHardeningFlag pins OpenCanary's own
+// `docker run` block the same way the lure's and the holder's are
+// pinned: this is the other container the design expects to be attacked
+// (build/opencanary/README.md has the capability evidence), so a flag
+// silently dropped from here is OpenCanary running without it.
+func TestOpenCanaryRunCommandCarriesEveryHardeningFlag(t *testing.T) {
+	var out strings.Builder
+	if err := printOpenCanaryRunCommand(&out, defaultOpenCanaryImage); err != nil {
+		t.Fatalf("printOpenCanaryRunCommand: %v", err)
+	}
+	got := out.String()
+
+	required := []struct {
+		flag string
+		why  string
+	}{
+		{"--name opencanary", "the name this container runs under"},
+		{"--restart unless-stopped", "a dead OpenCanary must come back on its own"},
+		{"--init", "OpenCanary is this container's own PID 1 now, not the agent's child -- Docker's init handles orphan reaping and default signal disposition for it"},
+		{"--network container:holder", "issue #126/#132: joins the same namespace as the agent and the lure, so a restart of any one of them leaves the others alone"},
+		{"--sysctl net.ipv4.ip_unprivileged_port_start=0", "lets this non-root container bind 21, 22, 23, 80 and the rest"},
+		{"--read-only", "nothing an attacker writes to the image's filesystem can even be attempted"},
+		{"--cap-drop ALL", "tested with nothing added back and every module still started (build/opencanary/README.md)"},
+		{"--security-opt no-new-privileges", "closes the class outright, even though nothing here is setuid"},
+		{"--pids-limit 32", "OpenCanary itself never forks; a compromised module cannot exhaust the host"},
+		{"--memory 128m", "the same for memory"},
+		{"--tmpfs /var/tmp:size=8m", "the SSH module writes a fresh host key here on every start; --read-only alone made that a hard failure (build/opencanary/README.md)"},
+		{"-v mockingbird-log:/var/log/opencanary", "the volume the agent tails read-only on its own side"},
+		{"opencanary:latest", "the default image name"},
+	}
+	for _, r := range required {
+		if !strings.Contains(got, r.flag) {
+			t.Errorf("printed command is missing %q -- %s\ngot:\n%s", r.flag, r.why, got)
+		}
+	}
+
+	// No --cap-add anywhere, and no access whatsoever to the agent's own
+	// state volume -- the whole point of the split.
+	for _, forbidden := range []string{"--cap-add", "mockingbird-state", "--privileged"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("printed command carries %q, which OpenCanary must never have\ngot:\n%s", forbidden, got)
+		}
+	}
+}
+
+// TestOpenCanaryRunCommandMatchesTheDocs is TestSMBLureRunCommandMatchesTheDocs's
+// own check, applied to OpenCanary: what the command prints has to be
+// the same text docs/enrolment.md tells an operator to paste and the
+// same text build/opencanary/README.md documents.
+func TestOpenCanaryRunCommandMatchesTheDocs(t *testing.T) {
+	var out strings.Builder
+	if err := printOpenCanaryRunCommand(&out, defaultOpenCanaryImage); err != nil {
+		t.Fatalf("printOpenCanaryRunCommand: %v", err)
+	}
+
+	root := filepath.Join("..", "..")
+	for _, doc := range []string{
+		filepath.Join(root, "docs", "enrolment.md"),
+		filepath.Join(root, "build", "opencanary", "README.md"),
+	} {
+		body, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("read %s: %v", doc, err)
+		}
+		text := string(body)
+		for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !strings.Contains(text, line) {
+				t.Errorf("%s does not contain this line of the printed command:\n\t%s\n"+
+					"the two must be identical -- copy the command's own output into the doc", doc, line)
+			}
+		}
+	}
+}
+
+// TestOpenCanaryImageComesFromTheEnvironment mirrors
+// TestHolderImageComesFromTheEnvironment for OpenCanary's own image
+// override.
+func TestOpenCanaryImageComesFromTheEnvironment(t *testing.T) {
+	t.Setenv(envOpenCanaryImage, "")
+	if got := openCanaryImage(); got != defaultOpenCanaryImage {
+		t.Errorf("openCanaryImage() = %q with nothing set, want %q", got, defaultOpenCanaryImage)
+	}
+	t.Setenv(envOpenCanaryImage, "registry.example.invalid/opencanary@sha256:abc")
+	if got := openCanaryImage(); got != "registry.example.invalid/opencanary@sha256:abc" {
+		t.Errorf("openCanaryImage() = %q, want the environment's value", got)
+	}
+}
+
 // TestHolderRunCommandMatchesTheDocs is TestSMBLureRunCommandMatchesTheDocs's
 // own check, applied to the holder: what the command prints has to be the
 // same text docs/enrolment.md tells an operator to paste and the same
 // text build/smb-lure/README.md documents.
 func TestHolderRunCommandMatchesTheDocs(t *testing.T) {
 	var out strings.Builder
-	if err := printHolderRunCommand(&out, defaultHolderImage); err != nil {
+	if err := printHolderRunCommand(&out, defaultHolderImage, true); err != nil {
 		t.Fatalf("printHolderRunCommand: %v", err)
 	}
 
@@ -307,7 +423,10 @@ func TestLureFlag(t *testing.T) {
 
 // TestEnrolRunCommandWithoutTheLure: `--lure smb=off` has to leave the
 // canary with no audit mount and no MOCKINGBIRD_SMB_AUDIT_PATH, because
-// the variable being set is the whole of what starts the agent's smb road.
+// the variable being set is the whole of what starts the agent's smb
+// road. Since issue #132, `container:holder` is no longer part of what
+// the lure switches on -- OpenCanary always joins the holder too, so the
+// canary does now, whether or not the lure does.
 func TestEnrolRunCommandWithoutTheLure(t *testing.T) {
 	var out strings.Builder
 	if err := printEnrolRunCommand(&out, "203.0.113.10", "8444", "deadbeef", "cafebabe", "mockingbird:latest", false, "", ""); err != nil {
@@ -315,10 +434,15 @@ func TestEnrolRunCommandWithoutTheLure(t *testing.T) {
 	}
 	got := out.String()
 
-	for _, absent := range []string{"smb-audit", "MOCKINGBIRD_SMB_AUDIT_PATH", "/audit", "container:holder"} {
+	for _, absent := range []string{"smb-audit", "MOCKINGBIRD_SMB_AUDIT_PATH", "/audit"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("the command still mentions %q with the lure off\ngot:\n%s", absent, got)
 		}
+	}
+	// Unconditional since #132: OpenCanary always joins the same holder
+	// namespace, so the canary always does too.
+	if !strings.Contains(got, "container:holder") {
+		t.Errorf("the command dropped the holder join with the lure off\ngot:\n%s", got)
 	}
 	// And everything else is untouched.
 	if !strings.Contains(got, "-v mockingbird-state:/var/lib/mockingbird") {

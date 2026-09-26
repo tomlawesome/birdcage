@@ -61,9 +61,12 @@ const (
 // neither of them owns it -- and anything added later joins the same
 // way.
 //
-// It is only printed when the SMB lure is being deployed: with no lure,
-// nothing else ever joins the canary's own namespace, so there is
-// nothing for a holder to protect.
+// Issue #132 made it unconditional: OpenCanary now always joins it too
+// (printOpenCanaryRunCommand below), so there is always something else
+// for it to protect, whether or not the SMB lure is also deployed.
+// Before #132 it was printed only when the lure was being deployed,
+// since a lure-less canary otherwise had nothing else ever joining its
+// own namespace.
 const (
 	// holderContainerName is the name `birdcage canary enrol` gives the
 	// holder container, and so the name the canary's and the lure's own
@@ -76,6 +79,28 @@ const (
 
 	// defaultHolderImage is what it prints otherwise.
 	defaultHolderImage = "holder:latest"
+)
+
+// OpenCanary's own enrolment inputs (issue #132).
+//
+// OpenCanary used to run inside the same container as the agent, as its
+// child process (#69); the owner's decision on #132 (recorded in the
+// ADR-0008 amendment, docs/adr/0013-opencanary-own-container.md) split
+// it into its own image and container, with no access whatsoever to the
+// agent's own state volume. It joins the address holder exactly the way
+// the agent and the SMB lure do, and always -- there is no flag to turn
+// it off, because a honeypot canary with no honeypot is not a honeypot.
+const (
+	// openCanaryContainerName is the name `birdcage agent enrol` gives
+	// this container.
+	openCanaryContainerName = "opencanary"
+
+	// envOpenCanaryImage overrides the image name this command prints,
+	// the same way HOLDER_IMAGE overrides the holder's.
+	envOpenCanaryImage = "OPENCANARY_IMAGE"
+
+	// defaultOpenCanaryImage is what it prints otherwise.
+	defaultOpenCanaryImage = "opencanary:latest"
 )
 
 // Defaults for the lure's identity, matching build/smb-lure/entrypoint.sh
@@ -213,34 +238,109 @@ func holderImage() string {
 	return defaultHolderImage
 }
 
-// printHolderRunCommand writes the two commands an operator runs before
-// either the canary or the lure: the audit volume, then the holder
-// container that owns it and the network address both the canary and
-// the lure will join.
+// printHolderRunCommand writes the commands an operator runs before the
+// canary, OpenCanary or the lure: the audit volume (only when the lure is
+// being deployed), then the holder container that owns the network
+// address every one of them joins.
 //
 // The volume is created here, not by printSMBLureRunCommand, because the
-// holder now mounts it too (issue #126: a tmpfs volume's backing memory
-// is freed the moment nothing has it mounted, so the holder has to reach
-// it before either of the containers that might restart do) and because
-// it has to exist before the first container that touches it starts,
-// same reasoning smbAuditVolume's own doc comment gives.
+// holder mounts it too (issue #126: a tmpfs volume's backing memory is
+// freed the moment nothing has it mounted, so the holder has to reach it
+// before either of the containers that might restart do) and because it
+// has to exist before the first container that touches it starts, same
+// reasoning smbAuditVolume's own doc comment gives.
+//
+// smbLure gates only the audit volume and its mount, not the holder
+// itself (issue #132 made the holder unconditional: OpenCanary always
+// joins it, whether or not the lure does). Printing an unused tmpfs
+// volume and mount on every lure-less canary would be exactly the kind
+// of drift docs/enrolment.md's own "smb lure off by request" line exists
+// to avoid.
 //
 // Every line of this output also appears verbatim in docs/enrolment.md
 // and build/smb-lure/README.md, and TestSMBLureRunCommandMatchesTheDocs
 // is what keeps the copies from drifting.
-func printHolderRunCommand(w io.Writer, image string) error {
-	lines := []string{
-		"docker volume create --driver local \\",
-		fmt.Sprintf("  --opt type=tmpfs --opt device=tmpfs --opt o=size=%s,mode=0755 \\", smbAuditSize),
-		fmt.Sprintf("  %s", smbAuditVolume),
-		"",
+func printHolderRunCommand(w io.Writer, image string, smbLure bool) error {
+	var lines []string
+	if smbLure {
+		lines = append(lines,
+			"docker volume create --driver local \\",
+			fmt.Sprintf("  --opt type=tmpfs --opt device=tmpfs --opt o=size=%s,mode=0755 \\", smbAuditSize),
+			fmt.Sprintf("  %s", smbAuditVolume),
+			"",
+		)
+	}
+	lines = append(lines,
 		fmt.Sprintf("docker run -d --name %s --restart unless-stopped \\", holderContainerName),
 		"  --read-only \\",
 		"  --cap-drop ALL \\",
 		"  --security-opt no-new-privileges \\",
 		"  --pids-limit 16 \\",
 		"  --memory 32m \\",
-		fmt.Sprintf("  -v %s:/audit:ro \\", smbAuditVolume),
+	)
+	if smbLure {
+		lines = append(lines, fmt.Sprintf("  -v %s:/audit:ro \\", smbAuditVolume))
+	}
+	lines = append(lines, fmt.Sprintf("  %s", term.Escape(image)))
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// openCanaryImage is the image name to print for OpenCanary.
+func openCanaryImage() string {
+	if image := os.Getenv(envOpenCanaryImage); image != "" {
+		return image
+	}
+	return defaultOpenCanaryImage
+}
+
+// printOpenCanaryRunCommand writes the `docker run` command for
+// OpenCanary's own container (issue #132): joined to the holder's
+// network namespace exactly like the agent, hardened like the SMB lure
+// (build/opencanary/README.md has the per-flag evidence), and mounting
+// only the log volume the agent also mounts -- read-write here, since
+// this is the writer -- and never the agent's own state volume.
+//
+// --sysctl, not --cap-add: OpenCanary binds several ports under 1024
+// (21, 22, 23, 80 among them) as the same non-root user distroless
+// ships, and a namespace-wide floor is what lets it, not a capability --
+// see build/opencanary/Dockerfile's own comment. It can only be set once
+// per network namespace, and this is the container that needs it; the
+// agent's own command (printEnrolRunCommand) carries none.
+//
+// --tmpfs /var/tmp: OpenCanary's SSH module generates its host key pair
+// there on every start (ssh.py's hard-coded SSH_PATH) and --read-only
+// alone made that a hard failure, reproduced directly against this image
+// (2026-09-26): "OSError: [Errno 30] Read-only file system:
+// '/var/tmp/id_rsa.pub'", the whole application failing to load with it
+// -- not a dropped event, every module refusing to start. The key never
+// needs to survive a restart (a fresh one each start is exactly as
+// convincing a target), so a small tmpfs is the fix, the same "every
+// path that needs writing gets its own tmpfs" shape the SMB lure's own
+// four --tmpfs flags already use.
+//
+// Every line of this output also appears verbatim in docs/enrolment.md
+// and build/opencanary/README.md, and TestOpenCanaryRunCommandMatchesTheDocs
+// is what keeps the copies from drifting -- the same discipline
+// printHolderRunCommand and printSMBLureRunCommand already have, for the
+// same reason: a hardening flag silently dropped from one copy is
+// OpenCanary running without it.
+func printOpenCanaryRunCommand(w io.Writer, image string) error {
+	lines := []string{
+		fmt.Sprintf("docker run -d --name %s --restart unless-stopped --init \\", openCanaryContainerName),
+		fmt.Sprintf("  --network container:%s \\", holderContainerName),
+		"  --sysctl net.ipv4.ip_unprivileged_port_start=0 \\",
+		"  --read-only \\",
+		"  --cap-drop ALL \\",
+		"  --security-opt no-new-privileges \\",
+		"  --pids-limit 32 \\",
+		"  --memory 128m \\",
+		"  --tmpfs /var/tmp:size=8m \\",
+		"  -v mockingbird-log:/var/log/opencanary \\",
 		fmt.Sprintf("  %s", term.Escape(image)),
 	}
 	for _, line := range lines {
