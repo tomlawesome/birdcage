@@ -64,8 +64,10 @@ advance:
   kind, not the category) -- `id` (the same value `alerts.instance_id`
   carries), `name`, `lane`, `kind`, `ports`, `heartbeat_interval_s`,
   `enrolled_at`, `last_heartbeat_at`.
-- **`heartbeats`**: `agent_id`, `at`. One row per phone-home
-  (`POST /api/heartbeat`), pruned to the last 24h on insert (#34).
+- **`heartbeats`**: `agent_id`, `at`. One row per phone-home over the
+  ingest listener's authenticated `POST /ingest/heartbeat` (#32, #106;
+  the dashboard's own unauthenticated `POST /api/heartbeat` was removed
+  in #135), pruned to the last 24h on insert (#34).
 
 Accounts, sessions and tokens follow mikroview's shapes (ADR-0003); their
 storage is designed with #8.

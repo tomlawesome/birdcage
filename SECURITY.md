@@ -341,7 +341,6 @@ only at the point that text is displayed, per surface:
   | `/api/canaries`  | GET    | requireAuth seam, pending #8  |
   | `/api/visitors`  | GET    | requireAuth seam, pending #8  |
   | `/api/trace`     | GET    | requireAuth seam, pending #8  |
-  | `/api/heartbeat` | POST   | requireAuth seam, pending #8  |
   | `/api/stream`    | GET    | requireAuth seam, pending #8  |
 
   `/api/stream` (issue #44) is a server-sent-events connection birdcage

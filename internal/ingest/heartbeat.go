@@ -156,11 +156,10 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 // unchanged in shape: Honeypot's own log-tailer self-report. Issue #106
 // item 6 (owner, 2026-09-14): heartbeat moves off the dashboard's
 // human-auth seam onto this submux, authenticated by the canary token,
-// identity from the token. The dashboard's POST /api/heartbeat
-// (internal/api/handlers.go) is left exactly as it is -- see this file's
-// package doc and the commit message for what still depends on it --
-// this is a second, independent write path onto the same
-// canaries/heartbeats registry.
+// identity from the token. The dashboard's own POST /api/heartbeat
+// (internal/api/handlers.go), which had no credential requirement at
+// all, was removed by issue #135 -- this submux is now the only write
+// path onto the canaries/heartbeats registry.
 //
 // Fail-closed (issue #32): an invalid body is a 4xx and the canary's
 // last-seen does NOT advance -- a broken agent must look broken, never
