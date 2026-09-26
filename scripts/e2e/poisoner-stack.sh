@@ -100,16 +100,20 @@ enrol() { # enrol <name> <lane> <work-file>
 # pacing, inserted after the --sysctl flag the printed command already
 # carries, so nothing else about it -- the capability, the CA pin, the
 # deploy token, the bait names the enrol flag put there, the image -- is
-# touched. Only the first `docker run` block is taken: enrolment now
-# prints the SMB lure's block after the canary's (#87), and evalling both
-# would start the lure with this harness's --network on top of its own.
-# And, as stack.sh does, the lure's audit mount and its variable are
-# deleted: this stack deploys no lure, and left in they create an
-# unprefixed `smb-audit` volume that no `down` removes.
+# touched. Only the canary's own `docker run` block is taken, matched by
+# its `--name mockingbird` line rather than any `docker run`: enrolment
+# now prints the address holder's block first, then the canary's, then the
+# SMB lure's (#126, amending #87's own two-block shape), and matching the
+# first `docker run` line unconditionally would capture the holder's block
+# instead. And, as stack.sh does, the lure's audit mount, its variable and
+# the canary's own `--network container:holder` are deleted: this stack
+# deploys no lure and no holder, and left in, the audit mount creates an
+# unprefixed `smb-audit` volume that no `down` removes, and the holder
+# network flag would fail this container's start outright.
 run() { # run <work-file> <container> <state-vol> <log-vol>
   local work_file="$1" container="$2" state_vol="$3" log_vol="$4"
   local command pacing
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
+  command="$(helper "sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
     || die "could not read the printed docker run command for $container"
 
   pacing="--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\\\n  -e MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR \\\\\\n  -e MOCKINGBIRD_POISONER_CEILING=$POISONER_CEILING \\\\\\n  -e MOCKINGBIRD_POISONER_HOURS=$POISONER_HOURS \\\\"
@@ -119,6 +123,7 @@ run() { # run <work-file> <container> <state-vol> <log-vol>
     -e "s|--name mockingbird |--name $container |" \
     -e "s|-v mockingbird-state:|-v $state_vol:|" \
     -e "s|-v mockingbird-log:|-v $log_vol:|" \
+    -e '/--network container:holder/d' \
     -e '/-v smb-audit:/d' \
     -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d' \
     -e "s|--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\|$pacing|")"

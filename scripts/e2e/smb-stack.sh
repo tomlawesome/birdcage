@@ -136,13 +136,17 @@ enrol_smb_canary() {
 # it.
 run_smb_canary() {
   local command
-  # First `docker run` block only, and quit: the enrolment output has
-  # carried two since #87 (see stack.sh run_printed_command).
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/smb-enrol-output.txt")" \
+  # The canary's own `docker run` block only, matched by its
+  # `--name mockingbird` line rather than any `docker run`: the enrolment
+  # output has carried three blocks since #126 (holder, canary, lure --
+  # see stack.sh run_printed_command), and matching the first `docker run`
+  # line unconditionally would capture the holder's block instead.
+  command="$(helper "sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/smb-enrol-output.txt")" \
     || die "could not read the smb canary's printed docker run command"
 
   command="$(printf '%s\n' "$command" | sed \
     -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
+    -e "/--network container:holder/d" \
     -e "/-v smb-audit:/d" \
     -e "/MOCKINGBIRD_SMB_AUDIT_PATH/d" \
     -e "s|--name mockingbird |--name $SMB_CANARY |" \

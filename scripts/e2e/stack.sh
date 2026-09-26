@@ -485,28 +485,38 @@ enrol_canary() {
 # ignore the agent's file capability and turn port-scan detection off
 # (docs/enrolment.md, and the trap comment in test:image:mockingbird).
 # ---------------------------------------------------------------------
-# Two of these edits are deletions, not substitutions: this stack deploys
-# no SMB lure, so its canary must not carry the lure's audit mount or
-# MOCKINGBIRD_SMB_AUDIT_PATH. Left in, `-v smb-audit:` has Docker create a
-# volume of that literal name -- unprefixed, shared by every stack on the
-# host, and removed by nobody's `down`. Found by finding one sitting there
-# after a run, which is also why this harness names everything else from
-# E2E_PREFIX.
+# Three of these edits are deletions, not substitutions: this stack
+# deploys no SMB lure and no address holder (#126), so its canary must not
+# carry the lure's audit mount, MOCKINGBIRD_SMB_AUDIT_PATH, or a
+# `--network container:holder` joining a holder that was never started.
+# Left in, `-v smb-audit:` has Docker create a volume of that literal name
+# -- unprefixed, shared by every stack on the host, and removed by
+# nobody's `down`. Found by finding one sitting there after a run, which
+# is also why this harness names everything else from E2E_PREFIX. Left
+# in, `--network container:holder` would fail this container's start
+# outright -- there is no container named `holder` on this daemon at all
+# -- rather than silently doing the wrong thing.
 #
-# The sed range takes only the FIRST `docker run` block and quits. Since
-# #87 the enrolment output carries two -- the canary's, then the SMB
-# lure's -- and a range that did not quit would print both and eval a
-# concatenation of two commands. Found by running this, not by reading it:
-# the first stack.sh run after the lure landed failed with docker's own
-# usage message and nothing pointing at why.
+# The sed range's start pattern names the canary's own line
+# (`--name mockingbird`) rather than matching any `docker run`, and takes
+# only that one block before quitting. Since #126 the enrolment output
+# carries three blocks -- the address holder's, then the canary's, then
+# the SMB lure's -- and matching the first `docker run` line unconditionally
+# would now capture the holder's block instead. Before #126 it was two
+# (the canary's, then the lure's); a range that did not quit even then
+# would print both and eval a concatenation of two commands. Found by
+# running this, not by reading it: the first stack.sh run after the lure
+# landed failed with docker's own usage message and nothing pointing at
+# why.
 run_printed_command() {
   local command
   command="$(helper "
-sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/enrol-output.txt \
+sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/enrol-output.txt \
   | sed -e 's|^docker run -d |docker run -d --network $NET |' \
         -e 's|--name mockingbird |--name $CANARY |' \
         -e 's|-v mockingbird-state:|-v $STATE_VOL:|' \
         -e 's|-v mockingbird-log:|-v $LOG_VOL:|' \
+        -e '/--network container:holder/d' \
         -e '/-v smb-audit:/d' \
         -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d'
 ")" || die "could not read the printed docker run command"
