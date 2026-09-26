@@ -338,6 +338,8 @@ floors:
   internal/logging: 91
   internal/mail: 90
   internal/mailbox: 86
+  internal/neverblock: 100    # 100.0% measured, 2026-09-26 (#33), against
+                              # both SQLite and a real Postgres.
   internal/opencanary: 100
   internal/scan: 100          # 100.0% measured, 2026-09-22 (#108, slice 1
                               # commit 2). The Grype subprocess wrapper and
