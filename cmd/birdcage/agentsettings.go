@@ -21,7 +21,7 @@ import (
 // waits on that login before it can offer the same write.
 func runAgentSettings(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: birdcage agent settings <show|set> ...")
+		return errors.New("usage: birdcage agent settings <show|set> <agent_id> [<key>=<value> ...]")
 	}
 	switch args[0] {
 	case "show":
