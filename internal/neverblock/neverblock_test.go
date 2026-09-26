@@ -18,7 +18,7 @@ func auditRows(t *testing.T, database *db.DB) []auditRow {
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []auditRow
 	for rows.Next() {
 		var r auditRow
