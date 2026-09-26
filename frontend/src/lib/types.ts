@@ -362,6 +362,25 @@ export interface CanaryFacts {
   poisoner_names?: string
   token_rotated_at?: string
   token_rotates_at?: string
+  /** Issue #124's per-canary settings: every canary_settings row for
+   * this canary, each with whether the agent's own last-reported
+   * heartbeat confirms it is actually running with that value. Absent
+   * for a canary nothing has ever been pushed to (no enrolment flag, no
+   * dashboard write yet). */
+  settings?: CanarySettingFact[]
+}
+
+/** One canary_settings row (issue #124), as the facts column draws it.
+ * `confirmed` is whole-canary, not per-key: the wire protocol carries one
+ * settings hash covering every row, not a per-key acknowledgement, so it
+ * reads true only when the agent's most recently reported hash matches
+ * every row shown here, this one included. */
+export interface CanarySettingFact {
+  key: string
+  value: string
+  version: number
+  updated_at: string
+  confirmed: boolean
 }
 
 /** One past self-test run, as the canary page's line draws it: a hollow
