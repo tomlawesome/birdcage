@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # smb-lure-stack.sh -- the infrastructure scripts/e2e/smb-lure.sh needs:
-# the SHIPPED SMB lure image (build/smb-lure), a canary enrolled with the
-# audit mount `birdcage canary enrol` itself prints, and an smbclient to
-# drive them with.
+# the SHIPPED SMB lure image (build/smb-lure), the SHIPPED address holder
+# image (build/holder, issue #126), a canary enrolled with the audit
+# mount and the holder join `birdcage canary enrol` itself prints, and an
+# smbclient to drive them with.
 #
 # This is not scripts/e2e/smb-stack.sh. That one stands up
 # build/e2e-samba -- a CI-only Debian Samba -- and a canary whose
@@ -36,8 +37,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LURE_IMAGE="${E2E_SMB_LURE_IMAGE:-${E2E_PREFIX}-lure-image}"
 LURE_IMAGE_BUILT=0
 
+# The address holder image under test (issue #126), the same story as
+# LURE_IMAGE above: E2E_HOLDER_IMAGE is build:images' own tag in CI, and a
+# local run with nothing set builds it here.
+HOLDER_IMAGE="${E2E_HOLDER_IMAGE:-${E2E_PREFIX}-holder-image}"
+HOLDER_IMAGE_BUILT=0
+
 CLIENT_IMAGE="${E2E_PREFIX}-smbclient-image"
 LURE="${E2E_PREFIX}-lure"
+HOLDER="${E2E_PREFIX}-holder"
 AUDIT_VOL="${E2E_PREFIX}-lure-audit"
 
 LURE_CANARY="${E2E_PREFIX}-lure-canary"
@@ -68,6 +76,20 @@ build_lure_image() {
   LURE_IMAGE_BUILT=1
 }
 
+# build_holder_image mirrors build_lure_image exactly, for the address
+# holder image (#126).
+build_holder_image() {
+  if docker image inspect "$HOLDER_IMAGE" >/dev/null 2>&1; then
+    log "using existing image $HOLDER_IMAGE"
+    return 0
+  fi
+  [ -z "${E2E_HOLDER_IMAGE:-}" ] || die "E2E_HOLDER_IMAGE=$HOLDER_IMAGE is not present; ci-ensure-image.sh should have recovered it"
+  log "building $HOLDER_IMAGE from build/holder/Dockerfile"
+  docker build --file "$REPO_ROOT/build/holder/Dockerfile" --tag "$HOLDER_IMAGE" "$REPO_ROOT" >/dev/null \
+    || die "building $HOLDER_IMAGE failed"
+  HOLDER_IMAGE_BUILT=1
+}
+
 build_client_image() {
   if docker image inspect "$CLIENT_IMAGE" >/dev/null 2>&1; then
     log "using existing image $CLIENT_IMAGE"
@@ -93,11 +115,30 @@ create_audit_volume() {
     "$AUDIT_VOL" >/dev/null || die "creating volume $AUDIT_VOL failed"
 }
 
+# start_holder runs the address holder (issue #126) with the hardening
+# flags docs/enrolment.md prints, attached to the harness's own test
+# network -- the one thing that differs from the printed command, which
+# has no --network at all because an operator's holder sits on whatever
+# network they choose. The canary and the lure both join this container's
+# namespace below, so it has to exist, and be attached to $E2E_NET, before
+# either of them starts.
+start_holder() {
+  docker run --detach --name "$HOLDER" \
+    --network "$E2E_NET" \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 16 \
+    --memory 32m \
+    --volume "$AUDIT_VOL:/audit:ro" \
+    "$HOLDER_IMAGE" >/dev/null || die "starting $HOLDER failed"
+}
+
 # enrol_lure_canary mints an enrolment session the way smb-stack.sh's own
 # enrol_smb_canary does. No extra flags: the SMB lure is on by default, so
-# the printed command already carries the read-only audit mount and
-# MOCKINGBIRD_SMB_AUDIT_PATH, and this journey exercises exactly what an
-# operator would paste.
+# the printed command already carries the read-only audit mount, the
+# holder join and MOCKINGBIRD_SMB_AUDIT_PATH, and this journey exercises
+# exactly what an operator would paste.
 enrol_lure_canary() {
   local image output
   image="$(docker inspect --format '{{.Config.Image}}' "$E2E_CANARY")" \
@@ -112,14 +153,24 @@ enrol_lure_canary() {
 }
 
 # run_lure_canary takes the printed `docker run` command and applies
-# stack.sh's three substitutions (name, both volumes, network) plus one of
-# its own: the audit volume's name. The `:ro` and the
-# MOCKINGBIRD_SMB_AUDIT_PATH line are NOT added here -- the enrol command
-# prints them itself, and this journey is worth much less if the harness
-# supplies them. The check below is what notices if it ever stops.
+# three of stack.sh's own substitutions (name, both volumes) plus one of
+# its own: the audit volume's name, and joining THIS harness's holder
+# rather than the literal name `holder` the printed command carries. The
+# `:ro` mount, the `--network container:holder` line and the
+# MOCKINGBIRD_SMB_AUDIT_PATH line are NOT added or removed here -- the
+# enrol command prints them itself, and this journey is worth much less if
+# the harness supplies them. The checks below are what notices if either
+# ever stops.
+#
+# The extraction below matches the canary's own line (`--name mockingbird`)
+# rather than any `docker run`, because since #126 the printed output
+# carries three blocks -- the holder's, then the canary's, then the
+# lure's -- and matching the first `docker run` line unconditionally would
+# capture the holder's block instead (see stack.sh's own
+# run_printed_command for the same fix, made first).
 run_lure_canary() {
   local command
-  command="$("$E2E_STACK" helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/lure-enrol-output.txt")" \
+  command="$("$E2E_STACK" helper "sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/lure-enrol-output.txt")" \
     || die "could not read the lure canary's printed docker run command"
 
   case "$command" in
@@ -130,18 +181,27 @@ run_lure_canary() {
     *"MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log"*) ;;
     *) die "the enrolment command printed no MOCKINGBIRD_SMB_AUDIT_PATH -- the agent's smb road would not run" ;;
   esac
+  case "$command" in
+    *"--network container:holder"*) ;;
+    *) die "the enrolment command printed no holder join (issue #126) -- did the design change back to joining the canary directly?" ;;
+  esac
 
   command="$(printf '%s\n' "$command" | sed \
-    -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
     -e "s|--name mockingbird |--name $LURE_CANARY |" \
     -e "s|-v mockingbird-state:|-v $LURE_CANARY_STATE_VOL:|" \
     -e "s|-v mockingbird-log:|-v $LURE_CANARY_LOG_VOL:|" \
-    -e "s|-v smb-audit:/audit:ro|-v $AUDIT_VOL:/audit:ro|")"
+    -e "s|-v smb-audit:/audit:ro|-v $AUDIT_VOL:/audit:ro|" \
+    -e "s|--network container:holder|--network container:$HOLDER|")"
 
-  case "$command" in
-    docker\ run\ *"$LURE_CANARY"*"$AUDIT_VOL"*) ;;
-    *) die "the lure canary's printed docker run command did not look the way this harness expects; got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
-  esac
+  # Three independent substring checks, not one glob requiring an order:
+  # --network comes before the audit mount in the printed command, and a
+  # glob assuming the opposite order would refuse a perfectly good command.
+  local looks_right=1
+  case "$command" in docker\ run\ *"$LURE_CANARY"*) ;; *) looks_right=0 ;; esac
+  case "$command" in *"$AUDIT_VOL"*) ;; *) looks_right=0 ;; esac
+  case "$command" in *"container:$HOLDER"*) ;; *) looks_right=0 ;; esac
+  [ "$looks_right" = 1 ] \
+    || die "the lure canary's printed docker run command did not look the way this harness expects; got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
 
   # Second use of the mockingbird build tag in this job -- stack.sh's own
   # enrol_canary already used it once, earlier, to start the base canary
@@ -159,17 +219,14 @@ run_lure_canary() {
   eval "$command" >/dev/null || die "the lure canary's docker run command failed to start"
 }
 
-# start_lure runs the lure in the canary container's network namespace,
-# with the hardening flags docs/enrolment.md prints -- the same flags, so
-# this journey also proves the documented command actually works, not just
-# that some looser version of it does.
-#
-# --network container: is the one thing that differs from the printed
-# command, and only in naming this harness's canary instead of
-# `mockingbird`.
+# start_lure runs the lure in the holder's network namespace (issue #126,
+# amending #87 decision 3's wording -- the lure joins the holder, not the
+# canary), with the hardening flags docs/enrolment.md prints. This is the
+# one thing that differs from the printed command, and only in naming
+# this harness's holder instead of the literal name `holder`.
 start_lure() {
   docker run --detach --name "$LURE" \
-    --network "container:$LURE_CANARY" \
+    --network "container:$HOLDER" \
     --read-only \
     --cap-drop ALL \
     --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
@@ -191,13 +248,21 @@ start_lure() {
 
 # wait_for_lure proves smbd is answering SMB, not merely that a port is
 # open -- the same reason smb-stack.sh uses smbclient -L rather than a
-# socket check. It asks over the canary's own name, because that is where
-# the share has to appear: the whole point of decision 3 is that 445 is on
-# the canary's address.
+# socket check. It asks over the HOLDER's Docker name, not the canary's
+# own: since #126 the canary and the lure both join the holder's network
+# namespace via `--network container:$HOLDER` rather than owning one, and
+# a container joined this way gets no network endpoint -- and so no
+# Docker embedded-DNS entry -- of its own (verified directly against this
+# Docker version: `getent hosts` on a joiner's own name fails, while the
+# owner's name resolves). The holder's address IS the canary's address
+# (decision 3, amended by #126) -- they are, literally, the same
+# interface -- so asking for the holder by name is asking for the
+# canary's address by the one name this harness can actually resolve it
+# under.
 wait_for_lure() {
   local attempt
   for attempt in $(seq 1 30); do
-    if smbclient -L "//$LURE_CANARY" -N 2>/dev/null | grep -q "$LURE_SHARE"; then
+    if smbclient -L "//$HOLDER" -N 2>/dev/null | grep -q "$LURE_SHARE"; then
       log "the lure answered SMB on the canary's address on attempt $attempt"
       return 0
     fi
@@ -264,28 +329,57 @@ wait_for_smb_road() {
   die "the agent's smb audit road never started in $LURE_CANARY"
 }
 
-# restart_canary restarts the canary and puts the lure back beside it.
-#
-# The lure has to be restarted too, and that is not this harness being
-# careless: the lure lives in the canary container's network namespace
-# (decision 3), so stopping the canary destroys the namespace the lure's
-# smbd is listening in and the lure goes down with it. That is a real
-# operational consequence of putting 445 on the canary's own address, and
-# docs/enrolment.md says so. Restarting the lure first is impossible for
-# the same reason -- there is no namespace to join until the canary is
-# back.
+# restart_canary restarts the canary ALONE -- issue #126's whole point.
+# Before the address holder, this had to restart the lure too, because the
+# lure joined the canary's own network namespace directly and a canary
+# restart destroyed it. Now both the canary and the lure join the
+# holder's namespace instead, so restarting the canary leaves that
+# namespace, and the lure's listening smbd, completely alone. This
+# function fails (wait_for_lure times out) if that stops being true.
 restart_canary() {
   docker restart --time 10 "$LURE_CANARY" >/dev/null || die "restarting $LURE_CANARY failed"
-  # And then the lure, which is not optional and is not this harness being
-  # careless. Restarting the canary destroys the network namespace the
-  # lure's smbd is listening in, and Docker does not re-attach a container
-  # to a namespace that has been replaced: the lure stays `running` with
-  # nothing answering on 445, which is the most misleading state it could
-  # be in. `docker restart` on the lure re-resolves the namespace and the
-  # share comes back -- verified by running it, after a first pass where
-  # `docker start` on an already-running container returned 0 and changed
-  # nothing.
+  wait_for_lure
+  wait_for_smb_road
+}
+
+# restart_lure restarts the lure ALONE and proves the canary's own
+# reporting pipeline never noticed: the lure is, and always was, a joiner
+# of a namespace it does not own, so restarting it must not touch the
+# canary's agent, its heartbeat, or anything already in flight. Unlike
+# restart_canary, this direction was never broken by the bug #126 fixes --
+# it is here so a future change that makes the lure the namespace owner
+# again would be caught the same way.
+restart_lure() {
   docker restart --time 10 "$LURE" >/dev/null || die "restarting $LURE failed"
+  wait_for_lure
+  wait_for_smb_road
+}
+
+# audit_survives_extended_outage stops BOTH the canary and the lure --
+# the exact scenario issue #126 names: "the smb-audit tmpfs volume is
+# also wiped when no container holds it." Before the holder, nothing else
+# ever mounted that volume, so a moment with both containers down freed
+# its backing memory and lost whatever had not been read yet. The holder
+# keeps it mounted throughout, so this reads the file through a
+# throwaway container (never through the canary or the lure, which are
+# down for the whole of this check) and expects the first bait file's
+# line to still be there after well over a minute -- comfortably past
+# both the log's own tmpfs GC and any read-off-by-a-few-seconds race.
+audit_survives_extended_outage() {
+  local outage_seconds="${1:-65}"
+  docker stop --time 5 "$LURE" >/dev/null || die "stopping $LURE failed"
+  docker stop --time 5 "$LURE_CANARY" >/dev/null || die "stopping $LURE_CANARY failed"
+  log "both the canary and the lure are stopped; waiting ${outage_seconds}s"
+  sleep "$outage_seconds"
+  local content
+  content="$(docker run --rm --volume "$AUDIT_VOL:/audit:ro" "${ALPINE_IMAGE:-alpine:3.24}" cat /audit/smb.log 2>/dev/null)" \
+    || die "could not read the audit file while both containers were down"
+  case "$content" in
+    *"$LURE_BAIT_ONE"*) log "the audit file still names $LURE_BAIT_ONE after a ${outage_seconds}s outage" ;;
+    *) die "the audit file lost its earlier line naming $LURE_BAIT_ONE during a ${outage_seconds}s outage -- the holder did not keep the volume mounted" ;;
+  esac
+  docker start "$LURE_CANARY" >/dev/null || die "starting $LURE_CANARY failed"
+  docker start "$LURE" >/dev/null || die "starting $LURE failed"
   wait_for_lure
   wait_for_smb_road
 }
@@ -297,8 +391,10 @@ up() {
   down >/dev/null 2>&1 || true
 
   build_lure_image
+  build_holder_image
   build_client_image
   create_audit_volume
+  start_holder
   enrol_lure_canary
   run_lure_canary
   wait_for_lure_canary
@@ -309,6 +405,8 @@ up() {
   cat <<EOF
 export SMB_LURE=$LURE
 export SMB_LURE_IMAGE_REF=$LURE_IMAGE
+export SMB_LURE_HOLDER=$HOLDER
+export SMB_LURE_HOLDER_IMAGE_REF=$HOLDER_IMAGE
 export SMB_LURE_CLIENT_IMAGE=$CLIENT_IMAGE
 export SMB_LURE_CANARY=$LURE_CANARY
 export SMB_LURE_CANARY_ID=$LURE_CANARY_ID
@@ -324,6 +422,7 @@ EOF
 down() {
   docker rm --force "$LURE" >/dev/null 2>&1 || true
   docker rm --force "$LURE_CANARY" >/dev/null 2>&1 || true
+  docker rm --force "$HOLDER" >/dev/null 2>&1 || true
   local vol
   for vol in "$AUDIT_VOL" "$LURE_CANARY_STATE_VOL" "$LURE_CANARY_LOG_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true
@@ -331,7 +430,7 @@ down() {
   # Only images this file built, and only ones carrying the prefix: never
   # the shipped tag CI passed in, which the pipeline's other jobs need.
   local image
-  for image in "$LURE_IMAGE" "$CLIENT_IMAGE"; do
+  for image in "$LURE_IMAGE" "$HOLDER_IMAGE" "$CLIENT_IMAGE"; do
     case "$image" in
       "$E2E_PREFIX"*) docker image rm --force "$image" >/dev/null 2>&1 || true ;;
     esac
@@ -342,8 +441,10 @@ case "${1:-}" in
   up) up ;;
   down) down ;;
   restart-canary) restart_canary ;;
+  restart-lure) restart_lure ;;
+  audit-survives-outage) shift; audit_survives_extended_outage "$@" ;;
   audit-log) audit_log ;;
   *)
-    echo "usage: $0 {up|down|restart-canary|audit-log}" >&2
+    echo "usage: $0 {up|down|restart-canary|restart-lure|audit-survives-outage [seconds]|audit-log}" >&2
     exit 2 ;;
 esac
