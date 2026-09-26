@@ -29,7 +29,7 @@ func TestSMBLureRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 		flag string
 		why  string
 	}{
-		{"--network container:mockingbird", "decision 3: 445 sits on the canary's own address, and the lure publishes no port of its own"},
+		{"--network container:holder", "issue #126: the lure joins the holder's namespace, not the canary's own, so a restart of either one leaves it alone"},
 		{"--read-only", "nothing an attacker writes to the image's filesystem can even be attempted"},
 		{"--cap-drop ALL", "the four-out-of-forty starting point; everything added back is added back by name"},
 		{"--cap-add SETUID", "proven necessary: without it every connection dies on the per-connection uid switch"},
@@ -45,8 +45,6 @@ func TestSMBLureRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 		{"--tmpfs /var/log:size=8m", "the same"},
 		{"-v smb-audit:/audit", "the lure writes the audit file; the canary mounts the same volume read-only"},
 		{"--restart unless-stopped", "a lure that stops serving is a canary that has quietly lost a service"},
-		{"docker volume create", "the volume has to be created with tmpfs options before either container reaches it, or Docker makes a plain on-disk one"},
-		{"--opt o=size=16m,mode=0755", "size-capped: filling it crashes the lure, never the host"},
 	}
 	for _, r := range required {
 		if !strings.Contains(got, r.flag) {
@@ -73,6 +71,93 @@ func TestSMBLureRunCommandCarriesEveryHardeningFlag(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("printed command is missing %q\ngot:\n%s", want, got)
 		}
+	}
+}
+
+// TestHolderRunCommandCarriesEveryHardeningFlag pins the holder's
+// `docker run` block the same way the lure's and the canary's own are
+// pinned: it holds the network address and the audit volume both the
+// canary and the lure depend on, so a flag silently dropped from it is a
+// weakening of the one container neither of them is allowed to notice.
+func TestHolderRunCommandCarriesEveryHardeningFlag(t *testing.T) {
+	var out strings.Builder
+	if err := printHolderRunCommand(&out, defaultHolderImage); err != nil {
+		t.Fatalf("printHolderRunCommand: %v", err)
+	}
+	got := out.String()
+
+	required := []struct {
+		flag string
+		why  string
+	}{
+		{"docker volume create", "the volume has to be created with tmpfs options before either container reaches it, or Docker makes a plain on-disk one"},
+		{"--opt o=size=16m,mode=0755", "size-capped: filling it crashes the lure, never the host"},
+		{"--name holder", "the name the canary's and the lure's own --network container: flags join"},
+		{"--restart unless-stopped", "the holder comes back after a host reboot the same as the canary and the lure do"},
+		{"--read-only", "this container does nothing that needs a writable filesystem"},
+		{"--cap-drop ALL", "it opens no socket and forks nothing, so it needs none of the forty"},
+		{"--security-opt no-new-privileges", "the same discipline as the canary and the lure"},
+		{"--pids-limit 16", "one process, never more"},
+		{"--memory 32m", "a do-nothing binary needs nothing to grow into"},
+		{"-v smb-audit:/audit:ro", "issue #126: the holder keeps the tmpfs volume mounted so it is never wiped when both the canary and the lure are briefly down at once"},
+		{"holder:latest", "the default image name"},
+	}
+	for _, r := range required {
+		if !strings.Contains(got, r.flag) {
+			t.Errorf("printed command is missing %q -- %s\ngot:\n%s", r.flag, r.why, got)
+		}
+	}
+
+	for _, forbidden := range []string{"--cap-add", "--sysctl", "--network container:mockingbird", "--privileged"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("printed command carries %q, which the holder needs none of\ngot:\n%s", forbidden, got)
+		}
+	}
+}
+
+// TestHolderRunCommandMatchesTheDocs is TestSMBLureRunCommandMatchesTheDocs's
+// own check, applied to the holder: what the command prints has to be the
+// same text docs/enrolment.md tells an operator to paste and the same
+// text build/smb-lure/README.md documents.
+func TestHolderRunCommandMatchesTheDocs(t *testing.T) {
+	var out strings.Builder
+	if err := printHolderRunCommand(&out, defaultHolderImage); err != nil {
+		t.Fatalf("printHolderRunCommand: %v", err)
+	}
+
+	root := filepath.Join("..", "..")
+	for _, doc := range []string{
+		filepath.Join(root, "docs", "enrolment.md"),
+		filepath.Join(root, "build", "smb-lure", "README.md"),
+	} {
+		body, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("read %s: %v", doc, err)
+		}
+		text := string(body)
+		for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !strings.Contains(text, line) {
+				t.Errorf("%s does not contain this line of the printed command:\n\t%s\n"+
+					"the two must be identical -- copy the command's own output into the doc", doc, line)
+			}
+		}
+	}
+}
+
+// TestHolderImageComesFromTheEnvironment mirrors
+// TestSMBLureImageComesFromTheEnvironment for the holder's own image
+// override.
+func TestHolderImageComesFromTheEnvironment(t *testing.T) {
+	t.Setenv(envHolderImage, "")
+	if got := holderImage(); got != defaultHolderImage {
+		t.Errorf("holderImage() = %q with nothing set, want %q", got, defaultHolderImage)
+	}
+	t.Setenv(envHolderImage, "registry.example.invalid/holder@sha256:abc")
+	if got := holderImage(); got != "registry.example.invalid/holder@sha256:abc" {
+		t.Errorf("holderImage() = %q, want the environment's value", got)
 	}
 }
 
@@ -230,7 +315,7 @@ func TestEnrolRunCommandWithoutTheLure(t *testing.T) {
 	}
 	got := out.String()
 
-	for _, absent := range []string{"smb-audit", "MOCKINGBIRD_SMB_AUDIT_PATH", "/audit"} {
+	for _, absent := range []string{"smb-audit", "MOCKINGBIRD_SMB_AUDIT_PATH", "/audit", "container:holder"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("the command still mentions %q with the lure off\ngot:\n%s", absent, got)
 		}

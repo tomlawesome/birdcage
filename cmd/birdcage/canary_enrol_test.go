@@ -41,6 +41,7 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 		{"--restart unless-stopped", "a canary that stops reporting is a security event (SECURITY.md)"},
 		{"-v smb-audit:/audit:ro", "issue #87 decision 6: the lure's audit volume is shared one-way, so this container may only read it"},
 		{"-e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log", "issue #87: without it the agent's smb road does not run at all"},
+		{"--network container:holder", "issue #126: this container's own network namespace is the address holder's, so restarting it never takes the lure's listening socket down with it"},
 	}
 	for _, r := range required {
 		if !strings.Contains(got, r.flag) {
