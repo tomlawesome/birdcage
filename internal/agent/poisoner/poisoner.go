@@ -62,10 +62,21 @@ type Detector struct {
 	submit   Submit
 	nodeID   string
 	now      func() time.Time
-	profile  Profile
-	shape    Shape
-	names    Names
-	pace     PaceSettings
+	hostname string
+
+	// liveMu guards profile, shape, names and pace below: issue #124's
+	// live settings push (SetLiveSettings) writes them from the
+	// heartbeat goroutine while ask, burst, waitForWorkingHours, observe
+	// and BaitNames read them from Run's own goroutines. Every other
+	// field on this struct is either write-once at New()/Open() (before
+	// Run's goroutines exist) or already its own concurrency-safe type
+	// (the atomic counters, randMu).
+	liveMu  sync.RWMutex
+	profile Profile
+	shape   Shape
+	names   Names
+	pace    PaceSettings
+
 	schedule *Schedule
 	counter  *paceCounter
 	arpPath  string
@@ -154,6 +165,7 @@ func New(cfg Config, submit Submit, log *slog.Logger) (*Detector, []string) {
 		submit:   submit,
 		nodeID:   nodeID,
 		now:      now,
+		hostname: hostname,
 		profile:  profile,
 		shape:    profile.Shape(),
 		names:    names,
@@ -166,12 +178,69 @@ func New(cfg Config, submit Submit, log *slog.Logger) (*Detector, []string) {
 }
 
 // Profile is the profile this detector settled on.
-func (d *Detector) Profile() Profile { return d.profile }
+func (d *Detector) Profile() Profile {
+	d.liveMu.RLock()
+	defer d.liveMu.RUnlock()
+	return d.profile
+}
+
+// getShapeNamesPace is the one place Run's own goroutines (ask, burst,
+// waitForWorkingHours) read the three live-updatable values together,
+// under a single lock acquisition rather than three.
+func (d *Detector) getShapeNamesPace() (Shape, Names, PaceSettings) {
+	d.liveMu.RLock()
+	defer d.liveMu.RUnlock()
+	return d.shape, d.names, d.pace
+}
+
+// getNames is BaitNames' and observe's own single-value read.
+func (d *Detector) getNames() Names {
+	d.liveMu.RLock()
+	defer d.liveMu.RUnlock()
+	return d.names
+}
+
+// getPace is ask's, waitForWorkingHours' and Pace's own single-value
+// read.
+func (d *Detector) getPace() PaceSettings {
+	d.liveMu.RLock()
+	defer d.liveMu.RUnlock()
+	return d.pace
+}
+
+// SetLiveSettings applies a validated push from birdcage (issue #124) to
+// a running detector, with no restart: profile (and so which protocols
+// burst asks on), the operator's own bait names (re-derived exactly as
+// New() derives them, from this same detector's hostname and schedule
+// seed, so a live push and a fresh enrolment can never disagree about
+// what an empty operatorNames produces) and the pace settings all take
+// effect on the very next burst or working-hours check. Every argument
+// must already be validated by the caller (cmd/mockingbird's own
+// applySettings, using the identical ParseProfile/ParseNames/
+// ParseWorkingHours this package's env-var path uses) -- this method
+// does not itself refuse a bad value; it commits whatever it is given.
+//
+// It does not touch Open's own send/count capability (CanSend,
+// Listening): a detector opened with a segment found keeps that
+// capability regardless of the profile in force (see Open's own
+// comment), so a live profile change between "windows"/"linux" and
+// "off" and back takes effect purely through the shape swap here -- only
+// a detector that found no segment at all, or whose Open never
+// succeeded, has nothing for this to turn on.
+func (d *Detector) SetLiveSettings(profile Profile, operatorNames Names, pace PaceSettings) {
+	names, _ := DeriveNames(d.hostname, operatorNames, d.schedule.Seed())
+	d.liveMu.Lock()
+	d.profile = profile
+	d.shape = profile.Shape()
+	d.names = names
+	d.pace = pace.normalise()
+	d.liveMu.Unlock()
+}
 
 // NameCount is how many names are in the rotation. The count, never the
 // names: see this package's comment on why a bait name never reaches a log
 // line.
-func (d *Detector) NameCount() int { return len(d.names) }
+func (d *Detector) NameCount() int { return len(d.getNames()) }
 
 // BaitNames is the rotation itself, for the heartbeat to report to
 // birdcage so the canary page's facts column can show an operator what
@@ -190,7 +259,7 @@ func (d *Detector) BaitNames() Names {
 	if d == nil {
 		return nil
 	}
-	return d.names.clone()
+	return d.getNames().clone()
 }
 
 // Bursts, Lookups and Answers are this detector's own counters, read for
@@ -354,7 +423,7 @@ func (d *Detector) observe(l listener, b []byte, src *net.UDPAddr) {
 	}
 
 	r, err := parseReplyFor(l.proto, b)
-	if err != nil || r.Answers == 0 || !d.names.contains(r.Name) {
+	if err != nil || r.Answers == 0 || !d.getNames().contains(r.Name) {
 		return
 	}
 	local, localPort := localAddr(l.conn)
@@ -378,14 +447,15 @@ func (d *Detector) ask(ctx context.Context) {
 	// canary that stayed silent until nine would be the one host on the
 	// segment whose first question always arrives at the start of the
 	// working day.
-	if !sleepCtx(ctx, d.schedule.StartupDelay(d.pace)) {
+	if !sleepCtx(ctx, d.schedule.StartupDelay(d.getPace())) {
 		return
 	}
 	d.burst(ctx)
 
 	for {
+		pace := d.getPace()
 		queries, hosts := d.counter.Median(d.now())
-		gap := d.schedule.Jitter(matchedGap(queries, hosts, d.pace), d.pace)
+		gap := d.schedule.Jitter(matchedGap(queries, hosts, pace), pace)
 		if !sleepCtx(ctx, gap) {
 			return
 		}
@@ -397,14 +467,19 @@ func (d *Detector) ask(ctx context.Context) {
 }
 
 // waitForWorkingHours sleeps until the working window opens, in as few
-// wakeups as possible. Returns false if ctx was cancelled first.
+// wakeups as possible. Returns false if ctx was cancelled first. pace is
+// re-read from the live setting on every wakeup, so a working-hours
+// change pushed while this loop is asleep takes effect on its very next
+// check rather than waiting for the sleep it computed against the old
+// window to finish.
 func (d *Detector) waitForWorkingHours(ctx context.Context) bool {
 	for {
 		now := d.now()
-		if d.pace.Hours.Contains(now) {
+		hours := d.getPace().Hours
+		if hours.Contains(now) {
 			return true
 		}
-		wait := d.pace.Hours.NextStart(now).Sub(now)
+		wait := hours.NextStart(now).Sub(now)
 		if wait <= 0 {
 			// NextStart found nothing inside its search: treat it as a
 			// long sleep and re-check, rather than spinning.
@@ -417,8 +492,12 @@ func (d *Detector) waitForWorkingHours(ctx context.Context) bool {
 }
 
 // burst makes one burst of lookups: two to five of them, on every protocol
-// the profile asks, spread unevenly across a minute.
+// the profile asks, spread unevenly across a minute. shape and names are
+// read once, at the top, rather than once per lookup: a live settings
+// push mid-burst must not change which protocols or names the burst
+// already in flight uses, only the next one.
 func (d *Detector) burst(ctx context.Context) {
+	shape, names, _ := d.getShapeNamesPace()
 	size := d.schedule.BurstSize()
 	gaps := d.schedule.BurstGaps(size)
 	d.bursts.Add(1)
@@ -427,16 +506,16 @@ func (d *Detector) burst(ctx context.Context) {
 		if i > 0 && !sleepCtx(ctx, gaps[i-1]) {
 			return
 		}
-		name := d.schedule.NextName(d.names)
+		name := d.schedule.NextName(names)
 		if name == "" {
 			return
 		}
-		for _, proto := range d.shape.Protocols {
+		for _, proto := range shape.Protocols {
 			if ctx.Err() != nil {
 				return
 			}
 			d.lookups.Add(1)
-			answers, err := d.lookupLocked(ctx, proto, name)
+			answers, err := d.lookupLocked(ctx, proto, name, shape)
 			if err != nil {
 				// A lookup that could not go out is a running condition,
 				// not an alert. It is logged at debug because on a
@@ -457,11 +536,11 @@ func (d *Detector) burst(ctx context.Context) {
 // lock for the draw only. math/rand/v2's generators are not safe for
 // concurrent use, and the counting goroutines never draw, but a future
 // second sender would.
-func (d *Detector) lookupLocked(ctx context.Context, proto Protocol, name string) ([]Answer, error) {
+func (d *Detector) lookupLocked(ctx context.Context, proto Protocol, name string, shape Shape) ([]Answer, error) {
 	d.randMu.Lock()
 	r := d.rand
 	d.randMu.Unlock()
-	return lookup(ctx, proto, name, d.segment, d.shape, r, d.arpPath)
+	return lookup(ctx, proto, name, d.segment, shape, r, d.arpPath)
 }
 
 // emit encodes one answer and hands it to the submit callback.
@@ -515,7 +594,7 @@ func (d *Detector) Pace() PaceReport {
 	return PaceReport{
 		MedianQueries: queries,
 		Hosts:         hosts,
-		Gap:           matchedGap(queries, hosts, d.pace),
+		Gap:           matchedGap(queries, hosts, d.getPace()),
 		Matched:       hosts >= minTalkingHosts && queries > 0,
 		Overflowed:    d.counter.Overflowed(),
 	}
@@ -569,19 +648,21 @@ func (d *Detector) LookupOnce(ctx context.Context, proto Protocol, name string) 
 	if d == nil || !d.canSend {
 		return nil, ErrNotSending
 	}
-	protocols := d.shape.Protocols
+	shape, names, _ := d.getShapeNamesPace()
+	protocols := shape.Protocols
 	if len(protocols) == 0 {
 		return nil, ErrNotSending
 	}
 
+	profile := d.Profile()
 	if proto == "" {
 		proto = protocols[0]
-	} else if !d.profile.Asks(proto) {
-		return nil, fmt.Errorf("poisoner: the %s profile does not ask on %s", d.profile, proto)
+	} else if !profile.Asks(proto) {
+		return nil, fmt.Errorf("poisoner: the %s profile does not ask on %s", profile, proto)
 	}
 
 	if name == "" {
-		name = d.schedule.NextName(d.names)
+		name = d.schedule.NextName(names)
 	} else {
 		normalised, err := normaliseName(name)
 		if err != nil {
@@ -594,7 +675,7 @@ func (d *Detector) LookupOnce(ctx context.Context, proto Protocol, name string) 
 	}
 
 	d.lookups.Add(1)
-	answers, err := d.lookupLocked(ctx, proto, name)
+	answers, err := d.lookupLocked(ctx, proto, name, shape)
 	if err != nil {
 		return nil, err
 	}

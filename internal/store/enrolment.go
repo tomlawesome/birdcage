@@ -70,6 +70,14 @@ type EnrolmentSession struct {
 	WindowDeadline       *time.Time
 	State                EnrolmentState
 	CanaryID             *string
+
+	// BaitNames and SegmentProfile are issue #124's own addition:
+	// `birdcage agent enrol --bait-names/--segment-profile`'s values,
+	// carried on the session until store.Provision reads them to seed
+	// canary_settings (SeedCanarySettingsFromEnrolment). Empty means the
+	// operator passed neither flag.
+	BaitNames      string
+	SegmentProfile string
 }
 
 // ErrEnrolmentSessionNotFound is returned when a token hash or session
@@ -95,7 +103,13 @@ var ErrEnrolmentSessionNotFound = errors.New("store: enrolment session not found
 // unrecognised kind is refused rather than stored, since kind is an
 // authorisation input (#106) and this is the one place a session's kind
 // is ever chosen.
-func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, kind agentkind.Kind, now time.Time) (raw string, session EnrolmentSession, err error) {
+// baitNames and segmentProfile are issue #124's own addition: the
+// caller's already-validated --bait-names/--segment-profile values (the
+// same poisoner.ParseNames/ParseProfile validation
+// cmd/birdcage/canary.go's runCanaryEnrol already runs before minting),
+// carried on the session for a later Provision call to seed
+// canary_settings with. Empty means the operator passed neither flag.
+func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, kind agentkind.Kind, baitNames, segmentProfile string, now time.Time) (raw string, session EnrolmentSession, err error) {
 	if now.IsZero() {
 		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: now is zero; callers must set it")
 	}
@@ -117,10 +131,18 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 	createdAt := now.UTC()
 	deadline := createdAt.Add(enrolmentFirstContactWindow)
 
+	var storedBaitNames, storedSegmentProfile any
+	if baitNames != "" {
+		storedBaitNames = baitNames
+	}
+	if segmentProfile != "" {
+		storedSegmentProfile = segmentProfile
+	}
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, HashToken(raw), name, lane, string(kind), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted))
+		INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, state, bait_names, segment_profile)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, HashToken(raw), name, lane, string(kind), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted),
+		storedBaitNames, storedSegmentProfile)
 	if err != nil {
 		return "", EnrolmentSession{}, fmt.Errorf("insert enrolment session: %w", err)
 	}
@@ -132,6 +154,8 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 		CreatedAt:            createdAt,
 		FirstContactDeadline: deadline,
 		State:                EnrolmentStateMinted,
+		BaitNames:            baitNames,
+		SegmentProfile:       segmentProfile,
 	}, nil
 }
 
@@ -305,7 +329,7 @@ func FirstContact(ctx context.Context, database *db.DB, tokenHash string, now ti
 // by mistake.
 func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSession, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
 		FROM enrolment_sessions
 		ORDER BY created_at`)
 	if err != nil {
@@ -331,7 +355,7 @@ func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSes
 // row via conn, so FirstContact can run it inside its own transaction.
 func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
 		FROM enrolment_sessions
 		WHERE token_hash = ?`, tokenHash)
 	return scanEnrolmentSession(row)
@@ -349,7 +373,7 @@ func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash str
 // case wants.
 func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
 		FROM enrolment_sessions
 		WHERE enrolment_secret_hash = ? AND state = ?`, secretHash, string(EnrolmentStateContacted))
 	return scanEnrolmentSession(row)
@@ -368,8 +392,10 @@ func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 		firstContactDeadline  string
 		burnedAt, windowDeadl *string
 		canaryID              *string
+		baitNames             *string
+		segmentProfile        *string
 	)
-	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &kind, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID); err != nil {
+	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &kind, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID, &baitNames, &segmentProfile); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return EnrolmentSession{}, ErrEnrolmentSessionNotFound
 		}
@@ -383,6 +409,12 @@ func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 	s.Kind = agentkind.Kind(kind)
 	s.State = EnrolmentState(state)
 	s.CanaryID = canaryID
+	if baitNames != nil {
+		s.BaitNames = *baitNames
+	}
+	if segmentProfile != nil {
+		s.SegmentProfile = *segmentProfile
+	}
 
 	var err error
 	if s.CreatedAt, err = time.Parse(receivedAtLayout, createdAt); err != nil {

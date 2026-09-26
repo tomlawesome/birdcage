@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
 	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
@@ -42,18 +43,18 @@ type selfReportFunc func() client.SelfReport
 // next tick rather than stopping -- the agent never invents a path back
 // to a token mint (recovery is re-enrolment, #47), and a persistent 401
 // here is exactly the signal #45's token-conflict state reads.
-func runHeartbeatLoop(ctx context.Context, c *client.Client, ts *TokenStore, rm *renewal.Manager, report selfReportFunc) {
+func runHeartbeatLoop(ctx context.Context, c *client.Client, ts *TokenStore, rm *renewal.Manager, report selfReportFunc, settings *agentSettings, detector *poisoner.Detector) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
-	sendHeartbeat(ctx, c, ts, report)
+	sendHeartbeat(ctx, c, ts, report, settings, detector)
 	runRenewalTick(ctx, rm, c, ts)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sendHeartbeat(ctx, c, ts, report)
+			sendHeartbeat(ctx, c, ts, report, settings, detector)
 			runRenewalTick(ctx, rm, c, ts)
 		}
 	}
@@ -64,18 +65,37 @@ func runHeartbeatLoop(ctx context.Context, c *client.Client, ts *TokenStore, rm 
 // transport error) is logged and left for the next tick, matching #32's
 // own transport semantics: a heartbeat birdcage never saw simply means
 // its last-seen doesn't advance until the next one lands.
-func sendHeartbeat(ctx context.Context, c *client.Client, ts *TokenStore, report selfReportFunc) {
+//
+// Issue #124: report.SettingsHash is set from settings' own record
+// before sending, and whatever birdcage pushes back is validated and
+// applied to detector immediately, live -- within this same heartbeat,
+// not the next one. detector may be nil (the poisoner road off, or its
+// Open never succeeded); settings.Apply below only ever calls it when it
+// is not, since a nil *poisoner.Detector boxed into the liveSettable
+// interface would not compare equal to a nil interface.
+func sendHeartbeat(ctx context.Context, c *client.Client, ts *TokenStore, report selfReportFunc, settings *agentSettings, detector *poisoner.Detector) {
 	sr := report()
+	if settings != nil {
+		sr.SettingsHash = settings.Hash()
+	}
 
-	err := authedRetry(ts, func(token string) error {
+	pushed, err := authedRetryValue(ts, func(token string) (map[string]string, error) {
 		return c.SendHeartbeat(ctx, token, sr)
 	})
-	if err == nil {
+	if err != nil {
+		if client.IsUnauthorized(err) {
+			heartbeatLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+			return
+		}
+		heartbeatLog.Warn(fmt.Sprintf("send failed, will retry next cycle: %s", safeErr(err)))
 		return
 	}
-	if client.IsUnauthorized(err) {
-		heartbeatLog.Warn("token unauthorized -- this canary has no channel to birdcage; recovery is re-enrolment (#47)")
+	if len(pushed) == 0 || settings == nil {
 		return
 	}
-	heartbeatLog.Warn(fmt.Sprintf("send failed, will retry next cycle: %s", safeErr(err)))
+	if detector == nil {
+		heartbeatLog.Warn("birdcage pushed settings for a canary with no poisoner detector running; nothing to apply them to")
+		return
+	}
+	settings.Apply(pushed, detector, heartbeatLog)
 }

@@ -725,3 +725,49 @@ func TestBaitNamesReturnsACopy(t *testing.T) {
 		t.Errorf("a nil detector reported %v, want nil", names)
 	}
 }
+
+// TestSetLiveSettingsChangesProfileNamesAndPaceWithoutRestart is issue
+// #124's own "done when": a running detector's segment profile, bait
+// names and pace all take effect through SetLiveSettings, with no
+// restart -- construction (New) never runs again.
+func TestSetLiveSettingsChangesProfileNamesAndPaceWithoutRestart(t *testing.T) {
+	submit, _, _ := collect()
+	d, _ := New(Config{Profile: ProfileWindows, ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+
+	if d.Profile() != ProfileWindows {
+		t.Fatalf("Profile() = %q before any push, want %q", d.Profile(), ProfileWindows)
+	}
+	shape, _, _ := d.getShapeNamesPace()
+	if len(shape.Protocols) == 0 {
+		t.Fatal("the windows profile's shape has no protocols before any push")
+	}
+
+	newPace := PaceSettings{FloorGap: time.Hour, CeilingGap: time.Minute, Hours: AllHours()}
+	d.SetLiveSettings(ProfileOff, Names{"custom-fs-01"}, newPace)
+
+	if got := d.Profile(); got != ProfileOff {
+		t.Errorf("Profile() after SetLiveSettings = %q, want %q", got, ProfileOff)
+	}
+	shape, names, pace := d.getShapeNamesPace()
+	if len(shape.Protocols) != 0 {
+		t.Errorf("shape after switching to the off profile has protocols: %+v", shape)
+	}
+	if !names.contains("custom-fs-01") || !names.contains(WPADName) {
+		t.Errorf("names after SetLiveSettings = %v, want the pushed operator name plus wpad", names)
+	}
+	if pace.FloorGap != time.Hour || pace.CeilingGap != time.Minute {
+		t.Errorf("pace after SetLiveSettings = %+v, want floor=1h ceiling=1m", pace)
+	}
+
+	// Switching back to a sending profile takes effect too -- the shape
+	// swap alone is what makes on -> off -> on live, with no goroutine
+	// ever restarted.
+	d.SetLiveSettings(ProfileLinux, nil, newPace)
+	if got := d.Profile(); got != ProfileLinux {
+		t.Errorf("Profile() after switching back = %q, want %q", got, ProfileLinux)
+	}
+	shape, _, _ = d.getShapeNamesPace()
+	if len(shape.Protocols) == 0 {
+		t.Error("shape after switching back to linux has no protocols")
+	}
+}

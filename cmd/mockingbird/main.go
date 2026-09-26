@@ -227,8 +227,14 @@ func main() {
 	// detector means the road is off or nothing bound, and
 	// runPoisonerRoad is then a no-op.
 	poisonerLog := logging.New("poisoner")
-	poisonerDetector, poisonerInv := newPoisonerRoad(in, poisonerLog)
+	poisonerDetector, poisonerInv, poisonerCfg := newPoisonerRoad(in, poisonerLog)
 	poisonerLog.Info(poisonerInv.line())
+
+	// agentSettings (issue #124) is this canary's record of what
+	// birdcage has pushed and this agent has applied, seeded from the
+	// same Config the detector above was built from so both start in
+	// agreement.
+	agentSettingsState := newAgentSettings(poisonerCfg)
 
 	wg.Add(9)
 	go func() {
@@ -239,7 +245,7 @@ func main() {
 		defer wg.Done()
 		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
 			return currentSelfReport(version, in, poisonerDetector)
-		})
+		}, agentSettingsState, poisonerDetector)
 	}()
 	go func() {
 		defer wg.Done()

@@ -54,6 +54,28 @@ type canaryFacts struct {
 	// <duration>" row.
 	TokenRotatedAt *time.Time `json:"token_rotated_at,omitempty"`
 	TokenRotatesAt *time.Time `json:"token_rotates_at,omitempty"`
+
+	// Settings is issue #124's own addition: every canary_settings row
+	// for this canary, each with whether the agent's own last-reported
+	// hash confirms it is actually running. Empty for a canary nothing
+	// has ever been pushed to (no enrolment flag, no dashboard write) --
+	// the ordinary state, and the same "a fact birdcage does not know is
+	// left out" rule this whole struct already follows.
+	Settings []canarySettingFact `json:"settings,omitempty"`
+}
+
+// canarySettingFact is one canary_settings row as the facts column draws
+// it: its value and whether the agent has confirmed applying it.
+// Confirmed is computed fresh on every read (store.SettingsHash of the
+// current rows, compared against agents.settings_hash) rather than
+// stored -- an admin write immediately makes every row's Confirmed false
+// again, with no second write needed to say so.
+type canarySettingFact struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	Version   int       `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Confirmed bool      `json:"confirmed"`
 }
 
 // selfTestRunSummary is one past self-test run as the page's line draws
@@ -209,6 +231,37 @@ func (h *handler) canaryFacts(r *http.Request, c store.Canary, now time.Time) (c
 		if facts.TokenRotatedAt == nil || tok.CreatedAt.After(*facts.TokenRotatedAt) {
 			created := tok.CreatedAt
 			facts.TokenRotatedAt = &created
+		}
+	}
+
+	settings, err := store.ListCanarySettings(r.Context(), h.db, c.ID)
+	if err != nil {
+		return canaryFacts{}, err
+	}
+	if len(settings) > 0 {
+		reportedHash, _, err := store.GetCanarySettingsHash(r.Context(), h.db, c.ID)
+		if err != nil {
+			return canaryFacts{}, err
+		}
+		currentHash := store.SettingsHash(settings)
+		confirmed := reportedHash != "" && reportedHash == currentHash
+		facts.Settings = make([]canarySettingFact, len(settings))
+		for i, s := range settings {
+			facts.Settings[i] = canarySettingFact{
+				Key:       string(s.Key),
+				Value:     s.Value,
+				Version:   s.Version,
+				UpdatedAt: s.UpdatedAt,
+				// Confirmed is whole-canary, not per-key: issue #124's
+				// wire protocol carries a single hash over every
+				// setting, not a per-key acknowledgement, so "has the
+				// agent confirmed" can only be answered for the settings
+				// block as a whole -- true here means the agent's most
+				// recent heartbeat reported effective settings that hash
+				// identically to every row shown here, this one
+				// included.
+				Confirmed: confirmed,
+			}
 		}
 	}
 	return facts, nil
