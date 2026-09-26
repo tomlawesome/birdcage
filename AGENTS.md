@@ -58,6 +58,9 @@ issue that records the decision:
 - `github.com/emersion/go-msgauth` (dkim) — agent-side signature check;
   #54, 2026-09-19. Brings `emersion/go-message`, `emersion/go-sasl`,
   `emersion/go-milter` (module only, never linked) as the same author.
+- `golang.org/x/crypto/argon2` (package of an already-present module),
+  `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2` -- login through the
+  shared `gauntlet` module; #8, 2026-09-26. `go-webauthn` is not yet approved.
 - `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
   for the owner's review on #73.
 

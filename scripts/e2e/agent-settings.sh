@@ -37,13 +37,40 @@ set -eu
   exit 2
 }
 
+# POISONER_CANARY_ADDR is this canary's own address on the shared
+# network -- read from the container, the same way poisoner.sh reads the
+# fixture's own address from docker inspect rather than assuming one.
+POISONER_CANARY_ADDR="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POISONER_CANARY")"
+[ -n "$POISONER_CANARY_ADDR" ] || fail "could not read $POISONER_CANARY's address" "$POISONER_CANARY"
+
 # poisoned_answer_count reads the fixture's own log for how many times it
-# has answered a bait lookup -- the attacker's own side of the wire, the
-# same reasoning poisoner.sh's fixture_poisoned uses, so "the canary
-# stopped asking" is proved from the one place that could disagree with
-# birdcage's own code.
+# has answered THIS canary's bait lookups -- the attacker's own side of
+# the wire, the same reasoning poisoner.sh's fixture_poisoned uses, so
+# "the canary stopped asking" is proved from the one place that could
+# disagree with birdcage's own code.
+#
+# Scoped to POISONER_CANARY_ADDR, not every line the fixture ever logs:
+# the same shared network also carries scripts/e2e/stack.sh's own base
+# canary, which runs the poisoner road on its own "windows" default and
+# asks once for its own derived neighbour names within (up to) three
+# minutes of ITS start (internal/agent/poisoner's own StartupDelay bound)
+# -- a burst this journey never touched and has no way to time against.
+# CI job 24213 counted that unrelated canary's own startup burst as "the
+# pushed profile did not stop the loop": the fixture answered
+# 172.20.0.3's derived names (not this canary's e2e-oldfs-01/02/wpad)
+# while this canary's own log showed no further hits at all past its
+# self-test's own "nothing to send" a few seconds earlier. The trailing
+# space after the address matches Responder's LLMNR/NBT-NS lines (one space)
+# and its MDNS lines (several, for column alignment) alike, and stops a
+# /24 neighbour's address (172.20.0.50) from matching as a prefix.
+#
+# POISONER_CANARY_ADDR is read once, below, rather than inside this
+# function: fail's own exit only ends the subshell a command
+# substitution like count="$(poisoned_answer_count)" runs it in, not
+# this script, so a failed docker inspect in here would silently read as
+# zero instead of stopping the journey.
 poisoned_answer_count() {
-  docker logs "$POISONER_FIXTURE" 2>&1 | grep -c "Poisoned answer sent to" || true
+  docker logs "$POISONER_FIXTURE" 2>&1 | grep -c "Poisoned answer sent to $POISONER_CANARY_ADDR " || true
 }
 
 # setting_field reads one field of key's row out of GET /api/canary's

@@ -217,12 +217,15 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 	}
 }
 
-// TestDashboardRoutesReadOnlyExceptHeartbeat is the owner's 2026-09-26
-// rule enforced in code: the dashboard API stays read-only until login
-// exists (#8), because requireAuth is still a no-op and any mutating
-// route here would let anyone who can reach the dashboard change
-// birdcage's state. Issue #124 briefly registered POST
-// /api/canary/settings and was told to take it back out; this test reads
+// TestDashboardRoutesAllReadOnly is the owner's 2026-09-26 rule enforced
+// in code: the dashboard API stays read-only until login exists (#8),
+// because requireAuth is still a no-op and any mutating route here would
+// let anyone who can reach the dashboard change birdcage's state. Issue
+// #124 briefly registered POST /api/canary/settings and was told to take
+// it back out; issue #135 removed the one mutating route that did exist,
+// POST /api/heartbeat, because it required no credential at all -- a
+// real agent's heartbeat now travels over the ingest listener's own
+// POST /ingest/heartbeat (mTLS + token) instead. This test reads
 // dashboardRouteSpecs directly -- the same list dashboardRoutes registers
 // from, not a second copy -- so a mutating route added there fails this
 // test too, not just a memory of this rule.
@@ -230,16 +233,11 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 // h is a zero-value *handler: dashboardRouteSpecs only takes method
 // values off it (closures, never called here), so a nil db and friends
 // are never dereferenced.
-func TestDashboardRoutesReadOnlyExceptHeartbeat(t *testing.T) {
+func TestDashboardRoutesAllReadOnly(t *testing.T) {
 	h := &handler{}
 	for _, spec := range dashboardRouteSpecs(h) {
-		switch {
-		case spec.method == http.MethodGet:
-			// Always fine.
-		case spec.method == http.MethodPost && spec.path == "/api/heartbeat":
-			// The one documented exception (issue #34).
-		default:
-			t.Errorf("dashboardRoutes registers %s %s -- only GET routes and POST /api/heartbeat may be registered here until #8 lands", spec.method, spec.path)
+		if spec.method != http.MethodGet {
+			t.Errorf("dashboardRoutes registers %s %s -- only GET routes may be registered here until #8 lands", spec.method, spec.path)
 		}
 	}
 }

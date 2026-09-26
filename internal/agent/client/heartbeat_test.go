@@ -265,3 +265,74 @@ func TestDBRefreshReportNullsWhenLastOKAtZero(t *testing.T) {
 		t.Errorf("db_refresh.last_ok_at = %v (present=%v), want explicit null", v, present)
 	}
 }
+
+// TestSendHeartbeatReturnsPushedSettings is issue #124's own client-side
+// round trip: once birdcage holds a canary_settings row that the agent's
+// reported hash doesn't match, POST /ingest/heartbeat's real response
+// (internal/ingest's handler, not a fake) carries a `settings` object,
+// and SendHeartbeat hands it back to the caller untouched.
+func TestSendHeartbeatReturnsPushedSettings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
+		token := mintToken(t, database, "canary-a")
+
+		if err := store.SetCanarySettings(ctx(), database, "canary-a", agentkind.Honeypot,
+			map[store.CanarySettingKey]string{store.CanarySettingSegmentProfile: "off"},
+			time.Now().UTC(), "test"); err != nil {
+			t.Fatalf("SetCanarySettings: %v", err)
+		}
+
+		settings, err := c.SendHeartbeat(ctx(), token, SelfReport{AgentVersion: "1.0.0"})
+		if err != nil {
+			t.Fatalf("SendHeartbeat: %v", err)
+		}
+		if got := settings["segment_profile"]; got != "off" {
+			t.Fatalf("SendHeartbeat returned settings %v, want segment_profile=off", settings)
+		}
+	})
+}
+
+// TestSendHeartbeatNoSettingsPushReturnsNil is the ordinary case: no
+// canary_settings row exists, so the response is a plain {"ok":true} and
+// SendHeartbeat returns a nil map, not an empty one -- callers
+// (cmd/mockingbird's sendHeartbeat) treat len(pushed)==0 as "nothing to
+// apply" either way, but nil is the honest value for "birdcage sent
+// none" as opposed to "birdcage sent an empty object".
+func TestSendHeartbeatNoSettingsPushReturnsNil(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		c, _ := newIngestServer(t, database, agentkind.Honeypot)
+		token := mintToken(t, database, "canary-a")
+
+		settings, err := c.SendHeartbeat(ctx(), token, SelfReport{AgentVersion: "1.0.0"})
+		if err != nil {
+			t.Fatalf("SendHeartbeat: %v", err)
+		}
+		if settings != nil {
+			t.Fatalf("SendHeartbeat settings = %v, want nil", settings)
+		}
+	})
+}
+
+// TestSendHeartbeatMalformedResponseBodyReturnsNilNotError proves a 200
+// response whose body doesn't decode is treated as "no settings pushed"
+// rather than a failure: the heartbeat itself was accepted (status 200),
+// and the next heartbeat's hash mismatch will ask again -- there is
+// nothing this call should retry or error on.
+func TestSendHeartbeatMalformedResponseBodyReturnsNilNotError(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	settings, err := c.SendHeartbeat(ctx(), "tok", SelfReport{AgentVersion: "1.0.0"})
+	if err != nil {
+		t.Fatalf("SendHeartbeat: %v", err)
+	}
+	if settings != nil {
+		t.Fatalf("SendHeartbeat settings = %v, want nil for a malformed response body", settings)
+	}
+}

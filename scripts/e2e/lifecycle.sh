@@ -56,6 +56,25 @@ esac
 # heartbeat_interval_s, so a stale beat would already have read silent.
 ok "canary $E2E_CANARY_ID: $canary_json (status ok with a real, non-null last_heartbeat_at)"
 
+step "POST /api/heartbeat no longer exists on the dashboard listener (issue #135)"
+# That route used to let anyone who could reach the dashboard mark any
+# known canary alive with no credential at all (internal/api/api.go's
+# package doc). It is gone now -- a real agent's heartbeat travels only
+# over the ingest listener's own POST /ingest/heartbeat (mTLS + token),
+# which is exactly what the step above already proved is landing for
+# $E2E_CANARY_ID.
+removed="$(helper "curl -sS -o /dev/null -w 'http=%{http_code}' --cacert /tls/dashboard-ca.pem -X POST '$BIRDCAGE_URL/api/heartbeat' -d '{\"canary\":\"$E2E_CANARY_ID\"}'")" \
+  || fail "POST /api/heartbeat did not run" "$E2E_BIRDCAGE"
+case "$removed" in
+  http=404|http=405) ;;
+  *) fail "POST /api/heartbeat = $removed, want http=404 or http=405 (the route must not exist)" "$E2E_BIRDCAGE" ;;
+esac
+still_recent="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -r --arg id '$E2E_CANARY_ID' '(.canaries[] | select(.id == \$id) | .last_heartbeat_at) as \$hb | if \$hb == null then \"absent\" elif (\$hb | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\")) then \"present\" else \"malformed\" end'")" \
+  || fail "could not read last_heartbeat_at" "$E2E_BIRDCAGE"
+[ "$still_recent" = "present" ] \
+  || fail "last_heartbeat_at is $still_recent after the dashboard route was probed -- the real agent's heartbeat must keep landing over /ingest/heartbeat" "$E2E_BIRDCAGE"
+ok "POST /api/heartbeat: $removed (route removed), and $E2E_CANARY_ID's last_heartbeat_at is still present via the ingest listener"
+
 # Baseline, captured before anything below restarts either container, so
 # the next steps can prove nothing new was created and nothing on-disk
 # changed by comparing against these.
