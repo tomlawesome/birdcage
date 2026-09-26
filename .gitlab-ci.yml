@@ -27,17 +27,19 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
-  # Where the five images are published (#90, #125, #126). Deliberately NOT
-  # named BIRDCAGE_IMAGE: that is the environment variable
-  # scripts/verify-validation-evidence.sh reads to know which repository it
-  # is judging, and a pipeline-wide value of that name would be inherited by
-  # every verifier call -- including the one checking the *other* image,
-  # which would then verify the wrong repository and still pass.
+  # Where the six images are published (#90, #125, #126, #132).
+  # Deliberately NOT named BIRDCAGE_IMAGE: that is the environment
+  # variable scripts/verify-validation-evidence.sh reads to know which
+  # repository it is judging, and a pipeline-wide value of that name
+  # would be inherited by every verifier call -- including the one
+  # checking the *other* image, which would then verify the wrong
+  # repository and still pass.
   BIRDCAGE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/birdcage
   MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
   NIGHTJAR_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/nightjar
   SMB_LURE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/smb-lure
   HOLDER_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/holder
+  OPENCANARY_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/opencanary
   # Where the same digests are mirrored, read-only, for the public (#90,
   # note 22233): GitLab is where a release is published and promoted --
   # the evidence is bound to the digest here -- and GHCR is only ever a
@@ -48,6 +50,7 @@ variables:
   NIGHTJAR_MIRROR_REPO: ghcr.io/tomlawesome/nightjar
   SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
   HOLDER_MIRROR_REPO: ghcr.io/tomlawesome/holder
+  OPENCANARY_MIRROR_REPO: ghcr.io/tomlawesome/opencanary
   # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
   # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
   # was failing e2e and test:go before they ever ran. Same bytes, cached on
@@ -701,7 +704,7 @@ build:images:
       set -eu
       max_age_seconds=$((6 * 3600))
       now_epoch="$(date -u +%s)"
-      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build holder-build; do
+      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build holder-build opencanary-build; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
           | grep -v ":${CI_PIPELINE_ID}$" \
           | while IFS= read -r tag; do
@@ -723,7 +726,7 @@ build:images:
       : > release.env
       # One list entry per image -- the build, the local tag, the registry
       # push and the dotenv lines below all read from $name.
-      for name in birdcage mockingbird nightjar smb-lure holder; do
+      for name in birdcage mockingbird nightjar smb-lure holder opencanary; do
         local_tag="${name}-build:${CI_PIPELINE_ID}"
         # --provenance=false --sbom=false: with the containerd image store
         # (Docker 29's default on the runner) a build otherwise produces an
@@ -1122,6 +1125,8 @@ e2e:enrol-and-hit:
     E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1133,6 +1138,8 @@ e2e:enrol-and-hit:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     # Issue #78 journey C: the birdcage image alone, refusing to start on
     # a handful of bad configurations -- before stack.sh up, since it
     # needs no stack (or the stack's own well-configured containers)
@@ -1169,6 +1176,8 @@ e2e:enrol-and-hit:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1182,6 +1191,8 @@ e2e:enrol-and-hit:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     # Issue #78 journey C: the birdcage image alone, refusing to start on
     # a handful of bad configurations -- before stack.sh up, since it
     # needs no stack (or the stack's own well-configured containers)
@@ -1221,6 +1232,8 @@ e2e:agent-credentials:
     E2E_PREFIX: birdcage-e2e-cred-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     # Four minutes: long enough that the primary canary's own heartbeat
     # (60s ticks) reaches half-life and renews well inside it, short
     # enough that agent-expiry.sh's full wait for expiry stays a matter
@@ -1232,6 +1245,8 @@ e2e:agent-credentials:
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/agent-provisioning.sh
     - scripts/e2e/agent-renewal.sh
@@ -1261,6 +1276,8 @@ e2e:agent-credentials:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_CLIENT_CERT_TTL: 4m
   before_script:
     - apk add --no-cache bash openssl >/dev/null
@@ -1268,6 +1285,8 @@ e2e:agent-credentials:postgres:
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/agent-provisioning.sh
     - scripts/e2e/agent-renewal.sh
@@ -1304,6 +1323,8 @@ e2e:smb:
     E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1315,6 +1336,8 @@ e2e:smb:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
     - scripts/e2e/smb.sh
@@ -1354,6 +1377,7 @@ e2e:smb-lure:
     E2E_PREFIX: birdcage-e2e-smb-lure-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
@@ -1369,9 +1393,10 @@ e2e:smb-lure:
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
-    # Neither the lure nor the holder has a test:image job of its own;
-    # their version stamps, which release:promote relies on (#125, #126),
-    # are checked here.
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    # Neither the lure, the holder nor OpenCanary has a test:image job of
+    # its own; their version stamps, which release:promote relies on
+    # (#125, #126, #132), are checked here.
     - |
       got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
       if [ "$got" != "$BIRDCAGE_STAMP" ]; then
@@ -1386,6 +1411,13 @@ e2e:smb-lure:
         exit 1
       fi
       echo "holder version stamped: $got"
+    - |
+      got="$(docker run --rm "$OPENCANARY_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "opencanary reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "opencanary version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -1425,6 +1457,7 @@ e2e:smb-lure:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
@@ -1442,9 +1475,10 @@ e2e:smb-lure:postgres:
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
-    # Neither the lure nor the holder has a test:image job of its own;
-    # their version stamps, which release:promote relies on (#125, #126),
-    # are checked here.
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    # Neither the lure, the holder nor OpenCanary has a test:image job of
+    # its own; their version stamps, which release:promote relies on
+    # (#125, #126, #132), are checked here.
     - |
       got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
       if [ "$got" != "$BIRDCAGE_STAMP" ]; then
@@ -1459,6 +1493,13 @@ e2e:smb-lure:postgres:
         exit 1
       fi
       echo "holder version stamped: $got"
+    - |
+      got="$(docker run --rm "$OPENCANARY_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "opencanary reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "opencanary version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -1500,6 +1541,8 @@ e2e:mail:
     E2E_PREFIX: birdcage-e2e-mail-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1511,6 +1554,8 @@ e2e:mail:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/mail-stack.sh up)"
     - scripts/e2e/mail.sh
@@ -1545,6 +1590,8 @@ e2e:mail:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1558,6 +1605,8 @@ e2e:mail:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/mail-stack.sh up)"
     - scripts/e2e/mail.sh
@@ -1593,6 +1642,8 @@ e2e:dashboard-own-ca:
     E2E_DASHBOARD_MODE: own-ca
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1604,6 +1655,8 @@ e2e:dashboard-own-ca:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
@@ -1635,6 +1688,8 @@ e2e:snmp:
     E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1646,6 +1701,8 @@ e2e:snmp:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
   after_script:
@@ -1685,6 +1742,8 @@ e2e:portscan:
     E2E_PREFIX: birdcage-e2e-portscan-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1696,6 +1755,8 @@ e2e:portscan:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/portscan-stack.sh up)"
     - scripts/e2e/portscan.sh
@@ -1740,6 +1801,8 @@ e2e:poisoner:
     E2E_PREFIX: birdcage-e2e-poisoner-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     # The poisoner fixture. Attack tooling is never built in this
     # repository (its mirror is public): the private fixtures project
     # builds, scans and publishes it, and this pin is the whole of what
@@ -1762,6 +1825,8 @@ e2e:poisoner:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     # The poisoner fixture is pulled by digest from the fixtures project
     # and tagged for the harness -- the same recovery pull the two build
@@ -1836,6 +1901,8 @@ e2e:scanner:
     E2E_PREFIX: birdcage-e2e-scanner-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
@@ -1848,6 +1915,8 @@ e2e:scanner:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/scanner-stack.sh up)"
@@ -1886,6 +1955,8 @@ e2e:smb:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1899,6 +1970,8 @@ e2e:smb:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-stack.sh up)"
     - scripts/e2e/smb.sh
@@ -1931,6 +2004,8 @@ e2e:snmp:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1944,6 +2019,8 @@ e2e:snmp:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/snmp.sh
   after_script:
@@ -1971,6 +2048,8 @@ e2e:dashboard-own-ca:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1984,6 +2063,8 @@ e2e:dashboard-own-ca:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/dashboard-own-ca.sh
   after_script:
@@ -2015,6 +2096,8 @@ e2e:scanner:postgres:
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
@@ -2029,6 +2112,8 @@ e2e:scanner:postgres:
     # it from the registry if so, and does nothing if it is still there.
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/scanner-stack.sh up)"
@@ -2159,6 +2244,7 @@ release:push:
       scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
       # Only the anchor is pushed here. It is immutable by construction (a
       # commit sha names one build) and it is never what a user pulls: the
       # channel name is release:preview's to create, after the evidence has
@@ -2170,6 +2256,7 @@ release:push:
       docker tag "$NIGHTJAR_BUILD_IMAGE" "${NIGHTJAR_RELEASE_REPO}:${anchor}"
       docker tag "$SMB_LURE_BUILD_IMAGE" "${SMB_LURE_RELEASE_REPO}:${anchor}"
       docker tag "$HOLDER_BUILD_IMAGE" "${HOLDER_RELEASE_REPO}:${anchor}"
+      docker tag "$OPENCANARY_BUILD_IMAGE" "${OPENCANARY_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
       # which is also what would happen if a second runner host ever meant
@@ -2179,6 +2266,7 @@ release:push:
       nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
       smb_lure_digest="$(scripts/publish-image.sh "${SMB_LURE_RELEASE_REPO}:${anchor}" "$SMB_LURE_BUILD_ID")"
       holder_digest="$(scripts/publish-image.sh "${HOLDER_RELEASE_REPO}:${anchor}" "$HOLDER_BUILD_ID")"
+      opencanary_digest="$(scripts/publish-image.sh "${OPENCANARY_RELEASE_REPO}:${anchor}" "$OPENCANARY_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
       # docker:29-cli has no python and no jq, and a digest read wrongly is
       # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
@@ -2191,6 +2279,7 @@ release:push:
         echo "RELEASE_NIGHTJAR_DIGEST=$nightjar_digest"
         echo "RELEASE_SMB_LURE_DIGEST=$smb_lure_digest"
         echo "RELEASE_HOLDER_DIGEST=$holder_digest"
+        echo "RELEASE_OPENCANARY_DIGEST=$opencanary_digest"
       } > digests.env
       cat digests.env
       # The durable record of what this pipeline published, kept for 90
@@ -2207,7 +2296,8 @@ release:push:
         "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }," \
         "    \"nightjar\": { \"repository\": \"${NIGHTJAR_RELEASE_REPO}\", \"digest\": \"${nightjar_digest}\" }," \
         "    \"smb-lure\": { \"repository\": \"${SMB_LURE_RELEASE_REPO}\", \"digest\": \"${smb_lure_digest}\" }," \
-        "    \"holder\": { \"repository\": \"${HOLDER_RELEASE_REPO}\", \"digest\": \"${holder_digest}\" }" \
+        "    \"holder\": { \"repository\": \"${HOLDER_RELEASE_REPO}\", \"digest\": \"${holder_digest}\" }," \
+        "    \"opencanary\": { \"repository\": \"${OPENCANARY_RELEASE_REPO}\", \"digest\": \"${opencanary_digest}\" }" \
         '  }' \
         '}' > .birdcage-release/tested-images.json
       cat .birdcage-release/tested-images.json
@@ -2240,7 +2330,7 @@ release:attest:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}" "${OPENCANARY_RELEASE_REPO}|${RELEASE_OPENCANARY_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         echo "attesting $repo@$digest"
@@ -2264,7 +2354,7 @@ release:preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}" "${OPENCANARY_RELEASE_REPO}|${RELEASE_OPENCANARY_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
@@ -2309,7 +2399,7 @@ release:mirror-preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
@@ -2389,12 +2479,14 @@ release:promote:
       commit="$(cat .release-commit)"
       # --expect-stamp (#97): each image has a `version` command to ask,
       # so promotion proves the released bytes carry the released version
-      # for all five (smb-lure's since #125, holder's since #126).
+      # for all six (smb-lure's since #125, holder's since #126,
+      # opencanary's since #132).
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
       smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
       holder_digest="$(scripts/promote-release.sh --expect-stamp "$HOLDER_RELEASE_REPO" "$commit")"
+      opencanary_digest="$(scripts/promote-release.sh --expect-stamp "$OPENCANARY_RELEASE_REPO" "$commit")"
       # `latest` moves on every release. Whether a 0.x release is the
       # right thing to run is the decision of whoever pulls it, not this
       # pipeline's.
@@ -2405,7 +2497,7 @@ release:promote:
       # -- which re-verifies the validation evidence before it moves any
       # name at all. Nobody moves it by hand. A tag that moves is not a
       # weaker promise when the moving is gated.
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}" "${HOLDER_RELEASE_REPO}|${holder_digest}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}" "${HOLDER_RELEASE_REPO}|${holder_digest}" "${OPENCANARY_RELEASE_REPO}|${opencanary_digest}"; do
         BIRDCAGE_COMMIT="$commit" \
           scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
       done
@@ -2442,7 +2534,7 @@ release:mirror-release:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
@@ -2488,6 +2580,7 @@ release:gitlab:
       - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
       - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
       - `$HOLDER_RELEASE_REPO:$RELEASE_TAG`
+      - `$OPENCANARY_RELEASE_REPO:$RELEASE_TAG`
 
       Verify before you run either of them -- docs/releasing.md has the
       commands. Both carry a key-based validation attestation; the keyless
