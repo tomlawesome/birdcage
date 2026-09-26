@@ -424,7 +424,7 @@ func runCanaryEnrol(args []string) error {
 	defer rollbackCanaryTx(tx, &committed)
 
 	now := time.Now().UTC()
-	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, now)
+	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, bait, string(segment), now)
 	if err != nil {
 		return fmt.Errorf("mint enrolment session: %w", err)
 	}

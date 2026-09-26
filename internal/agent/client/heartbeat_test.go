@@ -44,7 +44,7 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
-		err := c.SendHeartbeat(ctx(), token, SelfReport{
+		_, err := c.SendHeartbeat(ctx(), token, SelfReport{
 			QueueDepth:        7,
 			LogReadOK:         true,
 			LastEventID:       validID1,
@@ -98,7 +98,7 @@ func TestSendHeartbeatUnauthorized(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 
-		err := c.SendHeartbeat(ctx(), "not-a-real-token", SelfReport{AgentVersion: "1.0.0"})
+		_, err := c.SendHeartbeat(ctx(), "not-a-real-token", SelfReport{AgentVersion: "1.0.0"})
 		if !IsUnauthorized(err) {
 			t.Fatalf("err = %v, want ErrUnauthorized", err)
 		}
@@ -116,7 +116,7 @@ func TestSendHeartbeatRetryableOn429(t *testing.T) {
 	defer ts.Close()
 	c := newTestClient(t, ts)
 
-	err := c.SendHeartbeat(ctx(), "tok", SelfReport{AgentVersion: "1.0.0"})
+	_, err := c.SendHeartbeat(ctx(), "tok", SelfReport{AgentVersion: "1.0.0"})
 	if !IsRetryable(err) {
 		t.Fatalf("err = %v, want a *RetryableError", err)
 	}

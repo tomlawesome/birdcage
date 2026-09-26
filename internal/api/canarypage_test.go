@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
@@ -209,6 +210,84 @@ func TestHandleCanaryFactsFollowSettingsAndLiveTokens(t *testing.T) {
 	}
 	if resp.Facts.TokenRotatedAt == nil || !resp.Facts.TokenRotatedAt.Equal(liveAt) {
 		t.Errorf("facts.token_rotated_at = %v, want the live token's %v, not the revoked one's", resp.Facts.TokenRotatedAt, liveAt)
+	}
+}
+
+// TestHandleCanaryFactsSettingsConfirmedFollowsTheAgentsOwnHash is issue
+// #124's own "the facts column shows each setting's value and whether
+// the agent has confirmed it": a row with nothing reported yet is
+// unconfirmed, and one whose agent-reported hash matches the store's own
+// current hash is confirmed -- flipping back to unconfirmed the moment a
+// further write changes the row, with no second agent round trip needed
+// to say so.
+func TestHandleCanaryFactsSettingsConfirmedFollowsTheAgentsOwnHash(t *testing.T) {
+	database := openTempDB(t)
+	ctx := context.Background()
+	enrolledAt := time.Date(2026, 9, 1, 9, 41, 0, 0, time.UTC)
+	insertCanary(t, database, store.Canary{
+		ID: "canary-iot", Name: "canary-iot", Lane: "iot",
+		Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+	})
+
+	writeAt := enrolledAt.Add(time.Hour)
+	if err := store.SetCanarySettings(ctx, database, "canary-iot", agentkind.Honeypot, map[store.CanarySettingKey]string{
+		store.CanarySettingSegmentProfile: "off",
+	}, writeAt); err != nil {
+		t.Fatalf("SetCanarySettings: %v", err)
+	}
+
+	h := newHandler(database, fixedNow(writeAt), nil)
+	get := func() canaryPageResponse {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/canary?id=canary-iot&range=14d", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var resp canaryPageResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+		}
+		return resp
+	}
+
+	resp := get()
+	if len(resp.Facts.Settings) != 1 {
+		t.Fatalf("facts.settings = %+v, want exactly one row", resp.Facts.Settings)
+	}
+	if resp.Facts.Settings[0].Key != "segment_profile" || resp.Facts.Settings[0].Value != "off" {
+		t.Fatalf("facts.settings[0] = %+v, want segment_profile=off", resp.Facts.Settings[0])
+	}
+	if resp.Facts.Settings[0].Confirmed {
+		t.Error("a setting no agent has ever reported reads as confirmed")
+	}
+
+	settings, err := store.ListCanarySettings(ctx, database, "canary-iot")
+	if err != nil {
+		t.Fatalf("ListCanarySettings: %v", err)
+	}
+	currentHash := store.SettingsHash(settings)
+	if err := store.RecordCanarySettingsHash(ctx, database, "canary-iot", currentHash, writeAt.Add(time.Minute)); err != nil {
+		t.Fatalf("RecordCanarySettingsHash: %v", err)
+	}
+
+	resp = get()
+	if !resp.Facts.Settings[0].Confirmed {
+		t.Error("a setting whose reported hash matches the current one reads as unconfirmed")
+	}
+
+	// A further write changes the row's own hash, so the old confirmation
+	// no longer applies -- computed fresh, not stored.
+	if err := store.SetCanarySettings(ctx, database, "canary-iot", agentkind.Honeypot, map[store.CanarySettingKey]string{
+		store.CanarySettingSegmentProfile: "windows",
+	}, writeAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("SetCanarySettings (second write): %v", err)
+	}
+	resp = get()
+	if resp.Facts.Settings[0].Confirmed {
+		t.Error("a setting changed after the agent's last report still reads as confirmed")
+	}
+	if resp.Facts.Settings[0].Version != 2 {
+		t.Errorf("facts.settings[0].version = %d, want 2", resp.Facts.Settings[0].Version)
 	}
 }
 

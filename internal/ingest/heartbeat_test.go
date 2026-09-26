@@ -429,3 +429,86 @@ func TestHandleCommonHeartbeatRecordsLastSeenAddr(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleHeartbeatNoSettingsRowsNeverPushes is issue #124's own
+// fallback: a canary with no canary_settings rows gets a plain
+// {"ok":true} regardless of what settings_hash it sends (including
+// none, an agent built before this issue) -- environment variables stay
+// its only source of truth until an operator or an enrolment flag
+// writes a first row.
+func TestHandleHeartbeatNoSettingsRowsNeverPushes(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"settings_hash":"whatever-an-old-or-fresh-agent-sends"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if body := rec.Body.String(); body != `{"ok":true}`+"\n" {
+			t.Fatalf("body = %q, want a plain ok with no settings block", body)
+		}
+	})
+}
+
+// TestHandleHeartbeatPushesOnHashMismatch proves the core of issue
+// #124's mechanism: once an admin write (store.SetCanarySettings here,
+// standing in for the dashboard write path) has stored a setting, a
+// heartbeat reporting any other hash -- including none -- gets the full
+// settings block back, and the reported hash is recorded for later
+// confirmation.
+func TestHandleHeartbeatPushesOnHashMismatch(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		if err := store.SetCanarySettings(context.Background(), database, "canary-a", agentkind.Honeypot,
+			map[store.CanarySettingKey]string{store.CanarySettingSegmentProfile: "off"}, time.Now().UTC()); err != nil {
+			t.Fatalf("SetCanarySettings: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if body := rec.Body.String(); body != `{"ok":true,"settings":{"segment_profile":"off"}}`+"\n" {
+			t.Fatalf("body = %q, want the full settings block", body)
+		}
+
+		hash, at, err := store.GetCanarySettingsHash(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("GetCanarySettingsHash: %v", err)
+		}
+		if hash != "" || at != nil {
+			t.Fatalf("GetCanarySettingsHash = (%q, %v), want (\"\", nil): an empty settings_hash must record nothing", hash, at)
+		}
+
+		// Reporting the now-current hash gets a plain ok, and the facts
+		// column would read this canary's segment_profile as confirmed.
+		settings, err := store.ListCanarySettings(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("ListCanarySettings: %v", err)
+		}
+		currentHash := store.SettingsHash(settings)
+
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, `{"settings_hash":"`+currentHash+`"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if body := rec.Body.String(); body != `{"ok":true}`+"\n" {
+			t.Fatalf("body = %q, want a plain ok once the agent's hash matches", body)
+		}
+		hash, at, err = store.GetCanarySettingsHash(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("GetCanarySettingsHash: %v", err)
+		}
+		if hash != currentHash || at == nil {
+			t.Fatalf("GetCanarySettingsHash = (%q, %v), want (%q, non-nil)", hash, at, currentHash)
+		}
+	})
+}

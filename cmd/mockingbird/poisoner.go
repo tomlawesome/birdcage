@@ -199,9 +199,14 @@ func plural(n int, one, many string) string {
 // It never returns an error, the same contract newPortscanRoad and
 // newSNMPRoad state: detection being unavailable is a running condition to
 // report, not a reason to refuse to be a honeypot.
-func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisonerInventory) {
+// cfg is also returned (issue #124): main.go seeds this canary's
+// agentSettings record from the exact Config the detector was built
+// with, so a live push from birdcage and this process' own
+// environment-variable defaults can never disagree about the starting
+// point.
+func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisonerInventory, poisoner.Config) {
 	if !poisonerEnabled() {
-		return nil, poisonerInventory{Active: false}
+		return nil, poisonerInventory{Active: false}, poisoner.Config{}
 	}
 
 	cfg, warnings := poisonerSettings()
@@ -224,7 +229,7 @@ func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisoner
 				"net.ipv4.ip_unprivileged_port_start=0, which is what makes binding them work without "+
 				"root. Without it, a poisoner on this segment is not caught.",
 			safeErr(err)))
-		return nil, poisonerInventory{Active: false}
+		return nil, poisonerInventory{Active: false}, cfg
 	}
 
 	return detector, poisonerInventory{
@@ -232,7 +237,7 @@ func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisoner
 		Profile:  detector.Profile(),
 		Sending:  detector.CanSend(),
 		Counting: detector.Listening(),
-	}
+	}, cfg
 }
 
 // runPoisonerRoad asks and listens until ctx is done. A nil detector --

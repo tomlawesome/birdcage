@@ -286,7 +286,7 @@ func TestSubmitPoisonerEventQueuesWithAnID(t *testing.T) {
 func TestNewPoisonerRoadOffReturnsNoDetector(t *testing.T) {
 	t.Setenv(envPoisoner, "0")
 	in, _ := newTestIntake(t, queue.Config{})
-	detector, inv := newPoisonerRoad(in, discardLogger())
+	detector, inv, _ := newPoisonerRoad(in, discardLogger())
 	if detector != nil {
 		t.Error("a detector was built with the road switched off")
 	}
@@ -314,7 +314,7 @@ func TestNewPoisonerRoadBuildsTheDetector(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
 	log, buf := captureLogger()
 
-	detector, inv := newPoisonerRoad(in, log)
+	detector, inv, _ := newPoisonerRoad(in, log)
 	if detector == nil {
 		// Only reachable on a host with no interface to ask on and no port
 		// that would bind, which is a real state (a container run with
