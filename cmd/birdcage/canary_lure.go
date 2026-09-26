@@ -48,6 +48,36 @@ const (
 	defaultSMBLureImage = "smb-lure:latest"
 )
 
+// The address holder's own enrolment inputs (issue #126).
+//
+// The canary's own network namespace used to be what the SMB lure
+// joined (`--network container:mockingbird`), which meant restarting the
+// canary destroyed the namespace the lure was listening in -- the lure
+// stayed `running` with nothing answering on 445, and only restarting it
+// too brought the share back. The owner's fix: a third, do-nothing
+// container (cmd/holder) owns the network address instead, and both the
+// canary and the lure join *it* with `--network container:holder`.
+// Restarting either one now leaves the shared namespace alone, because
+// neither of them owns it -- and anything added later joins the same
+// way.
+//
+// It is only printed when the SMB lure is being deployed: with no lure,
+// nothing else ever joins the canary's own namespace, so there is
+// nothing for a holder to protect.
+const (
+	// holderContainerName is the name `birdcage canary enrol` gives the
+	// holder container, and so the name the canary's and the lure's own
+	// `--network container:` flags join.
+	holderContainerName = "holder"
+
+	// envHolderImage overrides the holder image name this command
+	// prints, the same way SMB_LURE_IMAGE overrides the lure's.
+	envHolderImage = "HOLDER_IMAGE"
+
+	// defaultHolderImage is what it prints otherwise.
+	defaultHolderImage = "holder:latest"
+)
+
 // Defaults for the lure's identity, matching build/smb-lure/entrypoint.sh
 // exactly. The NetBIOS name and server string are deliberately not
 // settable here: the lure joins the canary's network namespace, which
@@ -175,8 +205,59 @@ func smbLureImage() string {
 	return defaultSMBLureImage
 }
 
-// printSMBLureRunCommand writes the two commands an operator runs to put
-// the lure beside the canary: the audit volume, then the container.
+// holderImage is the image name to print for the address holder.
+func holderImage() string {
+	if image := os.Getenv(envHolderImage); image != "" {
+		return image
+	}
+	return defaultHolderImage
+}
+
+// printHolderRunCommand writes the two commands an operator runs before
+// either the canary or the lure: the audit volume, then the holder
+// container that owns it and the network address both the canary and
+// the lure will join.
+//
+// The volume is created here, not by printSMBLureRunCommand, because the
+// holder now mounts it too (issue #126: a tmpfs volume's backing memory
+// is freed the moment nothing has it mounted, so the holder has to reach
+// it before either of the containers that might restart do) and because
+// it has to exist before the first container that touches it starts,
+// same reasoning smbAuditVolume's own doc comment gives.
+//
+// Every line of this output also appears verbatim in docs/enrolment.md
+// and build/smb-lure/README.md, and TestSMBLureRunCommandMatchesTheDocs
+// is what keeps the copies from drifting.
+func printHolderRunCommand(w io.Writer, image string) error {
+	lines := []string{
+		"docker volume create --driver local \\",
+		fmt.Sprintf("  --opt type=tmpfs --opt device=tmpfs --opt o=size=%s,mode=0755 \\", smbAuditSize),
+		fmt.Sprintf("  %s", smbAuditVolume),
+		"",
+		fmt.Sprintf("docker run -d --name %s --restart unless-stopped \\", holderContainerName),
+		"  --read-only \\",
+		"  --cap-drop ALL \\",
+		"  --security-opt no-new-privileges \\",
+		"  --pids-limit 16 \\",
+		"  --memory 32m \\",
+		fmt.Sprintf("  -v %s:/audit:ro \\", smbAuditVolume),
+		fmt.Sprintf("  %s", term.Escape(image)),
+	}
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printSMBLureRunCommand writes the `docker run` command an operator
+// runs to put the lure beside the canary, after both the holder
+// (printHolderRunCommand) and the canary itself already exist: the lure
+// joins the holder's network namespace, not the canary's own (issue
+// #126, amending #87 decision 3's wording -- the lure joins the holder,
+// not the canary), so a restart of either the canary or the lure leaves
+// that namespace alone.
 //
 // Every line of this output also appears verbatim in docs/enrolment.md
 // and build/smb-lure/README.md, and TestSMBLureRunCommandMatchesTheDocs
@@ -193,12 +274,8 @@ func printSMBLureRunCommand(w io.Writer, image string, settings smbSettings) err
 		return errors.New("printSMBLureRunCommand: settings were not validated by parseSMBSettings")
 	}
 	lines := []string{
-		"docker volume create --driver local \\",
-		fmt.Sprintf("  --opt type=tmpfs --opt device=tmpfs --opt o=size=%s,mode=0755 \\", smbAuditSize),
-		fmt.Sprintf("  %s", smbAuditVolume),
-		"",
 		"docker run -d --name smb-lure --restart unless-stopped \\",
-		"  --network container:mockingbird \\",
+		fmt.Sprintf("  --network container:%s \\", holderContainerName),
 		"  --read-only \\",
 		"  --cap-drop ALL \\",
 		"  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \\",

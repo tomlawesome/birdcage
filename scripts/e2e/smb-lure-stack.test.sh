@@ -25,15 +25,15 @@ check() { # check <actual> <expected> <label>
   fi
 }
 
-# leftovers, scoped to this harness's own names (E2E_PREFIX-lure* and
-# E2E_PREFIX-smbclient*) so it never reports stack.sh's own objects as
-# something this file failed to clean up.
+# leftovers, scoped to this harness's own names (E2E_PREFIX-lure*,
+# E2E_PREFIX-holder* and E2E_PREFIX-smbclient*) so it never reports
+# stack.sh's own objects as something this file failed to clean up.
 leftovers() {
   {
     docker ps -a --format '{{.Names}}'
     docker volume ls --format '{{.Name}}'
     docker images --format '{{.Repository}}'
-  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|smbclient)" | sort -u
+  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|holder|smbclient)" | sort -u
 }
 
 check_clean() { # check_clean <label>
@@ -94,16 +94,24 @@ esac
 eval "$lure_env"
 
 # The share has to answer on the CANARY's address, not the lure's own:
-# that is decision 3, and a harness that checked the lure container's name
-# would pass while the design was broken.
-docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_CANARY" -N 2>/dev/null | grep -q "$SMB_LURE_SHARE"
-check "$?" "0" "the lure answers a real smbclient -L on the canary's own address"
+# that is decision 3, amended by #126 so that address is now the
+# holder's. Addressed by the holder's Docker name, not the canary's or
+# the lure's: since #126 both of them join the holder's network namespace
+# rather than owning one, and a joiner gets no Docker embedded-DNS entry
+# of its own (verified directly against this Docker version). A harness
+# that checked the lure container's own name would pass while the design
+# was broken; checking the holder's is what proves the address is shared.
+docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_HOLDER" -N 2>/dev/null | grep -q "$SMB_LURE_SHARE"
+check "$?" "0" "the lure answers a real smbclient -L on the canary's own (the holder's) address"
 
-# The lure publishes no port of its own, so it has no network settings at
-# all -- it is using the canary's. A lure with its own IP would mean the
-# --network container: flag had silently stopped applying.
+# Neither the lure nor the canary publishes a port of its own any more --
+# both join the holder's namespace and have no network settings of their
+# own. Either one showing an address would mean its --network
+# container:$SMB_LURE_HOLDER flag had silently stopped applying.
 lure_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$SMB_LURE" 2>/dev/null)"
 check "$lure_ip" "" "the lure has no address of its own"
+canary_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$SMB_LURE_CANARY" 2>/dev/null)"
+check "$canary_ip" "" "the canary has no address of its own either -- it joins the holder"
 
 # The canary mounts the audit volume read-only. If that ever became
 # read-write, a compromised smbd could reach the canary's own filesystem.
@@ -113,11 +121,25 @@ check "$?" "0" "the canary's /audit mount is read-only"
 docker exec "$E2E_BIRDCAGE" /birdcage canary enrol --status 2>/dev/null | grep -q "canary=$SMB_LURE_CANARY_ID"
 check "$?" "0" "the canary is provisioned and known to birdcage"
 
-echo "== restart-canary brings both back =="
+echo "== restart-canary restarts the canary ALONE, and the lure is left alone (#126) =="
+# Before the address holder, restart-canary had to restart the lure too --
+# the lure joined the canary's own namespace directly, and a canary
+# restart destroyed it. It now restarts only the canary; a lure whose
+# socket that ever disturbs is exactly the regression this proves against.
+lure_start_before="$(docker inspect --format '{{.State.StartedAt}}' "$SMB_LURE")"
 "$LURE_STACK" restart-canary >/dev/null 2>&1
 check "$?" "0" "restart-canary exits 0"
-docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_CANARY" -N 2>/dev/null | grep -q "$SMB_LURE_SHARE"
-check "$?" "0" "the lure answers again after the canary restarted"
+lure_start_after="$(docker inspect --format '{{.State.StartedAt}}' "$SMB_LURE")"
+check "$lure_start_after" "$lure_start_before" "the lure was never restarted by restart-canary"
+docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_HOLDER" -N 2>/dev/null | grep -q "$SMB_LURE_SHARE"
+check "$?" "0" "the lure answers again after the canary restarted alone"
+
+echo "== restart-lure restarts the lure ALONE, and the canary is left alone =="
+canary_start_before="$(docker inspect --format '{{.State.StartedAt}}' "$SMB_LURE_CANARY")"
+"$LURE_STACK" restart-lure >/dev/null 2>&1
+check "$?" "0" "restart-lure exits 0"
+canary_start_after="$(docker inspect --format '{{.State.StartedAt}}' "$SMB_LURE_CANARY")"
+check "$canary_start_after" "$canary_start_before" "the canary was never restarted by restart-lure"
 
 "$LURE_STACK" down >/dev/null 2>&1
 check "$?" "0" "smb-lure-stack.sh down succeeds"

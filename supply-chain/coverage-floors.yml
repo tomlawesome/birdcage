@@ -96,6 +96,24 @@
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
+  cmd/holder: 50            # 50.0% measured with -race, 2026-09-26 (#126).
+                             # A two-file package (main.go, version.go)
+                             # whose whole job is "wait for SIGTERM/SIGINT,
+                             # then exit 0" -- waitForShutdown (the real
+                             # logic, driven by a controlled context and by
+                             # a real SIGINT sent to the test binary) and
+                             # runVersion are both 100% covered
+                             # (main_test.go, version_test.go). What
+                             # remains uncovered is main() itself, the same
+                             # gap cmd/birdcage's and cmd/mockingbird's own
+                             # floor comments name: not unit-testable
+                             # without a self-exec harness this codebase
+                             # does not use elsewhere. A two-function
+                             # package feels that gap far more than a large
+                             # one does -- one untested function is half of
+                             # two -- which is why this floor sits well
+                             # below the band rather than pointing at
+                             # missing tests.
   cmd/mockingbird: 71       # 71.5% measured with -race and Postgres,
                              # 2026-09-23 (#46 slice 3, was floored at 69):
                              # the claim window (claim.go, new file) and
@@ -234,26 +252,20 @@ floors:
                               # redactErr are covered.
   internal/agent/event: 85
   internal/agent/ledger: 95
-  internal/agent/poisoner: 77 # New package (#86): the bait-query detector
-                             # that catches Responder and anything else that
-                             # answers a name nobody should answer. 77.99%
-                             # measured with -race on this checkout, floored
-                             # to a whole percent as this file's rule says.
-                             # The
-                             # three encoders, the reply parser, the name
-                             # generator, the pace-matcher, the schedule,
-                             # the neighbour-table read and the event
-                             # encoding are covered by table tests; the
-                             # never-answer guarantee has its own tests
-                             # against real sockets. The gaps are the socket
-                             # paths a unit test must not exercise -- the
+  internal/agent/poisoner: 84 # Raised from 77 (#124): issue #124's live
+                             # settings push (SetLiveSettings, the
+                             # mutex-guarded shape/names/pace getters, and
+                             # the burst-level mid-burst-pickup fix and its
+                             # own repro test) moved measured coverage to
+                             # 84.8% with -race, more than RATCHET_SLACK
+                             # above the old floor. Floored to a whole
+                             # percent as this file's rule says. The socket
+                             # paths a unit test must not exercise --
                              # multicast query sockets and the port-137
                              # bind, which need the container's lowered
-                             # privileged-port floor and would put real bait
-                             # queries on the test host's own network. Those
-                             # are slice C's job (the e2e stage runs real
-                             # Responder in a sibling container), not a gap
-                             # to close with a mock of the kernel.
+                             # privileged-port floor -- are still the gap;
+                             # slice C's e2e journey covers those against a
+                             # real Responder, not a gap to close here.
   internal/agent/portscan: 71
   internal/agent/probe: 95
   internal/agent/queue: 88
@@ -338,6 +350,8 @@ floors:
   internal/logging: 91
   internal/mail: 90
   internal/mailbox: 86
+  internal/neverblock: 100    # 100.0% measured, 2026-09-26 (#33), against
+                              # both SQLite and a real Postgres.
   internal/opencanary: 100
   internal/scan: 100          # 100.0% measured, 2026-09-22 (#108, slice 1
                               # commit 2). The Grype subprocess wrapper and

@@ -107,13 +107,17 @@ run() { # run <work-file> <container> <state-vol> <log-vol> <extra-cap-flags> <m
   local work_file="$1" container="$2" state_vol="$3" log_vol="$4" cap_flags="$5"
   shift 5
   local command
-  # First `docker run` block only, and quit: the enrolment output has
-  # carried two since #87 (see stack.sh run_printed_command).
-  command="$(helper "sed -n '/^docker run /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
+  # The canary's own `docker run` block only, matched by its
+  # `--name mockingbird` line rather than any `docker run`: the enrolment
+  # output has carried three blocks since #126 (holder, canary, lure --
+  # see stack.sh run_printed_command), and matching the first `docker run`
+  # line unconditionally would capture the holder's block instead.
+  command="$(helper "sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
     || die "could not read the printed docker run command for $container"
 
   command="$(printf '%s\n' "$command" | sed \
     -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
+    -e "/--network container:holder/d" \
     -e "/-v smb-audit:/d" \
     -e "/MOCKINGBIRD_SMB_AUDIT_PATH/d" \
     -e "s|--name mockingbird |--name $container |" \

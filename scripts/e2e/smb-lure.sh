@@ -21,6 +21,7 @@ set -eu
 . "$(dirname "$0")/journey.sh"
 
 [ -n "${SMB_LURE:-}" ] && [ -n "${SMB_LURE_CANARY:-}" ] && [ -n "${SMB_LURE_CANARY_ID:-}" ] \
+  && [ -n "${SMB_LURE_HOLDER:-}" ] \
   && [ -n "${SMB_LURE_CLIENT_IMAGE:-}" ] && [ -n "${SMB_LURE_SHARE:-}" ] \
   && [ -n "${SMB_LURE_BAIT_ONE:-}" ] && [ -n "${SMB_LURE_BAIT_TWO:-}" ] \
   && [ -n "${SMB_LURE_STACK:-}" ] || {
@@ -52,12 +53,21 @@ SETTLE_SECONDS=10
 # smb_get opens one file on the share with a real client, over the
 # canary's own address -- which is the point of decision 3, so the journey
 # asserts it by using it rather than by reading a configuration file.
+#
+# It addresses the share by the HOLDER's Docker name, not the canary's:
+# since #126 the canary and the lure both join the holder's network
+# namespace rather than owning one, and a container joined that way gets
+# no Docker embedded-DNS entry of its own (smb-lure-stack.sh's
+# wait_for_lure has the verified detail). The holder's address IS the
+# canary's address -- literally the same interface -- so this is still
+# opening the file over the canary's own address, under the one name this
+# harness can resolve it by.
 smb_get() {
   local path="$1" dir base
   dir="$(dirname "$path")"
   base="$(basename "$path")"
   docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" \
-    "//$SMB_LURE_CANARY/$SMB_LURE_SHARE" -N \
+    "//$SMB_LURE_HOLDER/$SMB_LURE_SHARE" -N \
     -c "cd \"$dir\"; get \"$base\" /tmp/fetched" 2>&1
 }
 
@@ -131,10 +141,12 @@ case "$list" in
 esac
 
 step "the shipped lure offers its shares on the canary's own address"
-shares="$(docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_CANARY" -N 2>&1)" \
+# Addressed by the holder's Docker name -- see smb_get's own comment for
+# why that is still the canary's own address, not a different one.
+shares="$(docker run --rm --network "$E2E_NET" "$SMB_LURE_CLIENT_IMAGE" -L "//$SMB_LURE_HOLDER" -N 2>&1)" \
   || fail "smbclient -L against the canary's address failed: $shares" "$SMB_LURE" "$SMB_LURE_CANARY"
 case "$shares" in
-  *"$SMB_LURE_SHARE"*) ok "share $SMB_LURE_SHARE is offered on //$SMB_LURE_CANARY" ;;
+  *"$SMB_LURE_SHARE"*) ok "share $SMB_LURE_SHARE is offered on //$SMB_LURE_HOLDER" ;;
   *) fail "the share list does not name $SMB_LURE_SHARE: $shares" "$SMB_LURE" ;;
 esac
 # The lure must never look like what it is. A share list an intruder can
@@ -168,12 +180,17 @@ case "$alert" in
   *) fail "the alert's wording is not a file access: $alert" "$E2E_BIRDCAGE" ;;
 esac
 
-step "a restart of the canary loses nothing and duplicates nothing"
-# The lure goes down with the canary and comes back with it -- see
-# restart_canary in smb-lure-stack.sh for why that is the design and not
-# an accident of this harness.
-"$SMB_LURE_STACK" restart-canary || fail "restarting the canary and the lure failed" "$SMB_LURE_CANARY" "$SMB_LURE"
-ok "the canary and the lure are back"
+step "the canary restarts ALONE, and the share still answers (issue #126)"
+# Before the address holder, this had to restart the lure too: the lure
+# joined the canary's own network namespace directly, and a canary
+# restart destroyed it, leaving the lure `running` with nothing on 445.
+# smb-lure-stack.sh's restart_canary now restarts only the canary --
+# against the old layout this step would time out inside wait_for_lure's
+# 30-second poll, because the lure's socket would already be gone; against
+# this one, the lure was never touched, so the share is still there with
+# no manual step.
+"$SMB_LURE_STACK" restart-canary || fail "restarting the canary alone failed" "$SMB_LURE_CANARY" "$SMB_LURE"
+ok "the canary restarted alone, and the lure's share still answers"
 
 # Nothing new was accessed, so the first alert must still be exactly one:
 # the agent re-reads the audit file from its saved position on every start,
@@ -188,5 +205,37 @@ out="$(smb_get "$SMB_LURE_BAIT_TWO")" || fail "smbclient could not get $SMB_LURE
 expect_exactly_one "$SMB_LURE_BAIT_TWO"
 alert="$(alert_for "$SMB_LURE_BAIT_TWO")" || fail "could not re-read the second alert" "$E2E_BIRDCAGE"
 ok "after the restart: $alert"
+
+step "the lure restarts ALONE, and the canary's own reporting is undisturbed"
+# Unlike the canary's own restart above, this direction was never broken
+# by the bug #126 fixes: the lure was always a joiner of a namespace it
+# does not own (the canary's, before #126; the holder's, since), so
+# restarting it was never able to touch the canary's own namespace or its
+# agent. This is here so a future change that made the lure a namespace
+# owner again would be caught the same way -- a "does not regress" proof,
+# not a reproduction of the bug itself. Counted rather than reusing
+# expect_exactly_one, because $SMB_LURE_BAIT_TWO already carries one alert
+# from the step above.
+before="$(alerts_naming "$SMB_LURE_BAIT_TWO")" || fail "could not count the alerts naming $SMB_LURE_BAIT_TWO before restarting the lure" "$E2E_BIRDCAGE"
+"$SMB_LURE_STACK" restart-lure || fail "restarting the lure alone failed" "$SMB_LURE"
+ok "the lure restarted alone"
+out="$(smb_get "$SMB_LURE_BAIT_TWO")" || fail "smbclient could not get $SMB_LURE_BAIT_TWO after the lure restarted: $out" "$SMB_LURE"
+sleep "$SETTLE_SECONDS"
+after="$(alerts_naming "$SMB_LURE_BAIT_TWO")" || fail "could not recount the alerts naming $SMB_LURE_BAIT_TWO" "$E2E_BIRDCAGE"
+want=$((before + 1))
+[ "$after" = "$want" ] || fail "$after alerts name $SMB_LURE_BAIT_TWO after the lure restart, want $want -- the canary's own reporting was disturbed by a container it does not own" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+ok "the canary kept reporting through the lure's own restart ($before -> $after)"
+
+step "the canary and the lure are stopped for over a minute; the audit file keeps its earlier lines"
+# The exact scenario issue #126 names: "the smb-audit tmpfs volume is
+# also wiped when no container holds it." Before the address holder,
+# nothing else ever mounted this volume, so a moment with both the
+# canary and the lure down freed its backing memory and lost whatever
+# had not been read yet. Against the old layout this would need the same
+# outage staged by hand and the file would come back empty or missing the
+# line entirely; against this one, the holder keeps it mounted throughout.
+"$SMB_LURE_STACK" audit-survives-outage 65 \
+  || fail "the audit file did not survive a 65s outage of the canary and the lure" "$SMB_LURE_CANARY" "$SMB_LURE"
+ok "the audit file's earlier lines survived a 65s outage of both the canary and the lure"
 
 finish

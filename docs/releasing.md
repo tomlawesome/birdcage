@@ -1,20 +1,22 @@
 # Releasing birdcage
 
-Issue #90, note 22233; extended to four images by #125. Four images are
-published and promoted in this project's own GitLab container registry —
-`registry.tomlawson.io/ai/birdcage/birdcage`, the server;
-`.../mockingbird`, the canary; `.../nightjar`, the scanner; and
-`.../smb-lure`. The validation evidence is bound to the digest there, and
-that is where
+Issue #90, note 22233; extended to four images by #125, and to five by
+#126. Five images are published and promoted in this project's own
+GitLab container registry — `registry.tomlawson.io/ai/birdcage/birdcage`,
+the server; `.../mockingbird`, the canary; `.../nightjar`, the scanner;
+`.../smb-lure`; and `.../holder`, the do-nothing container that owns the
+network address the canary and the lure share. The validation evidence is
+bound to the digest there, and that is where
 `release:push`/`release:promote` publish and promote it. GHCR is a public
 mirror of the same digest, pushed after GitLab publication succeeds and
 verified byte-for-byte before it is trusted: `ghcr.io/tomlawesome/birdcage`,
-`.../mockingbird`, `.../nightjar` and `.../smb-lure` are where users are
-told to pull from, and where the GitHub countersignature (step 5 below) is
-added. Nothing in validation or promotion reads from GHCR; if the mirror
-push fails, the GitLab release stands and the mirror is retried on its own.
-All four images are published **by digest**: the digest is the identity,
-and a tag is only a readable label pointing at one.
+`.../mockingbird`, `.../nightjar`, `.../smb-lure` and `.../holder` are
+where users are told to pull from, and where the GitHub countersignature
+(step 5 below) is added. Nothing in validation or promotion reads from
+GHCR; if the mirror push fails, the GitLab release stands and the mirror
+is retried on its own. All five images are published **by digest**: the
+digest is the identity, and a tag is only a readable label pointing at
+one.
 
 The shape in one sentence: build the images once, judge those exact bytes,
 sign the digest on a runner that holds the key and does nothing else,
@@ -159,7 +161,7 @@ server that issued it, so it names a version rather than a moving tag.
 ## Cutting a release
 
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
-   runs the full gate, then the release jobs: the four published images are pushed under
+   runs the full gate, then the release jobs: the five published images are pushed under
    `sha-<commit>`, attested, given the `preview` tag on GitLab, and mirrored
    to the `preview` tag on GHCR.
 2. Do the production-like manual test on `preview`. That test is the point
@@ -178,7 +180,7 @@ server that issued it, so it names a version rather than a moving tag.
    The tag is an output, not an input — you do not type a version
    anywhere, and there is no local checkout to get wrong.
 5. **Countersign, on GitHub.** Run the "Countersign a released digest"
-   workflow once, giving all four digests and the commit. It verifies the
+   workflow once, giving all five digests and the commit. It verifies the
    key-based evidence for each image against the GHCR mirror and signs
    keyless only if that passes.
 
@@ -198,8 +200,8 @@ GHCR is the public mirror, and this is what a user actually pulls, so
 verification is against it — no credential needed, the same as any public
 GHCR package. The public half of the signing key is committed as
 `cosign.pub`. Anyone can check a release; the commands below use `birdcage`
-as the example, and are identical for `mockingbird`, `nightjar` and
-`smb-lure` with the repository name swapped:
+as the example, and are identical for `mockingbird`, `nightjar`,
+`smb-lure` and `holder` with the repository name swapped:
 
 ```sh
 scripts/ensure-cosign.sh ~/.local/bin
@@ -233,8 +235,9 @@ image checks — `build:images` builds every shipped image once and `test:image:
 tests those exact bytes — and, since #98, true of the live journeys too:
 the `e2e:*` jobs that call `scripts/e2e/stack.sh` point it at the same
 tags via `E2E_BIRDCAGE_IMAGE`/`E2E_MOCKINGBIRD_IMAGE`/`E2E_NIGHTJAR_IMAGE`/
-`E2E_SMB_LURE_IMAGE`, and `stack.sh` refuses rather than quietly building a
-substitute if an override names an image that is not there.
+`E2E_SMB_LURE_IMAGE`/`E2E_HOLDER_IMAGE`, and `stack.sh` (or, for the
+lure and the holder, `smb-lure-stack.sh`) refuses rather than quietly
+building a substitute if an override names an image that is not there.
 
 The one job this does not cover is `e2e:postgres-requires-tls`: it builds
 its own single image directly, without `stack.sh`, to watch a start-up
@@ -344,9 +347,9 @@ needs that write to store the signature beside the image.
 
 Prove it on a throwaway tag before the first real release: merge to
 `preview` once, check the package page for `ghcr.io/tomlawesome/birdcage`,
-`.../mockingbird`, `.../nightjar` and `.../smb-lure` each lists this
-repository, and run the countersigning workflow against the `preview`
-digests. There is no separate scratch push to do by hand —
+`.../mockingbird`, `.../nightjar`, `.../smb-lure` and `.../holder` each
+lists this repository, and run the countersigning workflow against the
+`preview` digests. There is no separate scratch push to do by hand —
 `release:mirror-preview` is that first push.
 
 ## What has not been run yet

@@ -725,3 +725,94 @@ func TestBaitNamesReturnsACopy(t *testing.T) {
 		t.Errorf("a nil detector reported %v, want nil", names)
 	}
 }
+
+// TestBurstPicksUpALiveSettingsChangeBetweenLookups reproduces the CI
+// failure in e2e:poisoner (job 24187): a burst already in flight when
+// segment_profile was pushed to "off" kept sending on the old profile
+// for the rest of that burst -- up to ~48s more (burstSpread/
+// maxBurstLookups * up to 4 remaining gaps) on top of however long the
+// push itself took to reach this agent, well past "within one
+// heartbeat". minBurstLookups is 2, so every burst has at least one
+// "between two lookup steps" moment; afterBurstStepHook fires there and
+// pushes the change mid-burst, deterministically, rather than racing
+// burst's own randomized inter-lookup gaps.
+//
+// Before the fix (shape/names read once at the top of burst), every
+// iteration keeps using the windows profile's 3 protocols regardless of
+// the mid-burst push, so Lookups() after one burst is size*3 (6 to 15).
+// After the fix (shape/names re-read before each lookup step), only the
+// iteration already running when the hook fires used the old profile;
+// every iteration from there on sees the pushed "off" profile's empty
+// protocol list, so Lookups() is exactly 3 -- the first iteration's
+// windows lookups, and nothing from any iteration after.
+func TestBurstPicksUpALiveSettingsChangeBetweenLookups(t *testing.T) {
+	submit, _, _ := collect()
+	d, _ := New(Config{Profile: ProfileWindows, ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+
+	pushed := false
+	d.afterBurstStepHook = func() {
+		if pushed {
+			return
+		}
+		pushed = true
+		d.SetLiveSettings(ProfileOff, nil, DefaultPaceSettings())
+	}
+
+	d.burst(context.Background())
+
+	if !pushed {
+		t.Fatal("afterBurstStepHook never fired -- this burst had no second iteration to test against")
+	}
+	if got := d.Profile(); got != ProfileOff {
+		t.Fatalf("Profile() after burst = %q, want %q (the mid-burst push)", got, ProfileOff)
+	}
+	if got := d.Lookups(); got != 3 {
+		t.Fatalf("Lookups() after one burst with a mid-burst push to off = %d, want exactly 3 (only the in-flight iteration's windows lookups; every iteration after the push must see 0 protocols, not the stale windows shape)", got)
+	}
+}
+
+// TestSetLiveSettingsChangesProfileNamesAndPaceWithoutRestart is issue
+// #124's own "done when": a running detector's segment profile, bait
+// names and pace all take effect through SetLiveSettings, with no
+// restart -- construction (New) never runs again.
+func TestSetLiveSettingsChangesProfileNamesAndPaceWithoutRestart(t *testing.T) {
+	submit, _, _ := collect()
+	d, _ := New(Config{Profile: ProfileWindows, ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05"}, submit, quietLogger())
+
+	if d.Profile() != ProfileWindows {
+		t.Fatalf("Profile() = %q before any push, want %q", d.Profile(), ProfileWindows)
+	}
+	shape, _, _ := d.getShapeNamesPace()
+	if len(shape.Protocols) == 0 {
+		t.Fatal("the windows profile's shape has no protocols before any push")
+	}
+
+	newPace := PaceSettings{FloorGap: time.Hour, CeilingGap: time.Minute, Hours: AllHours()}
+	d.SetLiveSettings(ProfileOff, Names{"custom-fs-01"}, newPace)
+
+	if got := d.Profile(); got != ProfileOff {
+		t.Errorf("Profile() after SetLiveSettings = %q, want %q", got, ProfileOff)
+	}
+	shape, names, pace := d.getShapeNamesPace()
+	if len(shape.Protocols) != 0 {
+		t.Errorf("shape after switching to the off profile has protocols: %+v", shape)
+	}
+	if !names.contains("custom-fs-01") || !names.contains(WPADName) {
+		t.Errorf("names after SetLiveSettings = %v, want the pushed operator name plus wpad", names)
+	}
+	if pace.FloorGap != time.Hour || pace.CeilingGap != time.Minute {
+		t.Errorf("pace after SetLiveSettings = %+v, want floor=1h ceiling=1m", pace)
+	}
+
+	// Switching back to a sending profile takes effect too -- the shape
+	// swap alone is what makes on -> off -> on live, with no goroutine
+	// ever restarted.
+	d.SetLiveSettings(ProfileLinux, nil, newPace)
+	if got := d.Profile(); got != ProfileLinux {
+		t.Errorf("Profile() after switching back = %q, want %q", got, ProfileLinux)
+	}
+	shape, _, _ = d.getShapeNamesPace()
+	if len(shape.Protocols) == 0 {
+		t.Error("shape after switching back to linux has no protocols")
+	}
+}

@@ -28,7 +28,7 @@ func fakeIssue(canaryID string, kind agentkind.Kind) ([]byte, *x509.Certificate,
 func contactedFixture(t *testing.T, database *db.DB, mintedAt time.Time) (secret string, session EnrolmentSession) {
 	t.Helper()
 	ctx := context.Background()
-	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", agentkind.Honeypot, mintedAt)
+	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", agentkind.Honeypot, "", "", mintedAt)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
 		ctx := context.Background()
-		raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-scanner", "front-door", agentkind.Scanner, mintedAt)
+		raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-scanner", "front-door", agentkind.Scanner, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -369,6 +369,80 @@ func TestProvisionIssueFailureRollsBackEverything(t *testing.T) {
 		}
 		if secretHash == nil {
 			t.Error("enrolment_secret_hash is NULL; issue failure must not shred it")
+		}
+	})
+}
+
+// TestProvisionSeedsCanarySettingsFromEnrolmentFlags is issue #124's own
+// "enrolment flags still work and seed the table": `birdcage agent enrol
+// --bait-names/--segment-profile`'s values, carried on the session by
+// MintEnrolmentSession, land as canary_settings rows the moment
+// Provision creates the canary -- in the same transaction, so a canary
+// is never live without its enrolled settings.
+func TestProvisionSeedsCanarySettingsFromEnrolmentFlags(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		raw, _, err := MintEnrolmentSession(ctx, database, "seeded-canary", "front-door", agentkind.Honeypot, "old-fs-01,old-fs-02", "linux", mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+		secret, _, outcome, err := FirstContact(ctx, database, HashToken(raw), mintedAt.Add(time.Minute))
+		if err != nil {
+			t.Fatalf("FirstContact: %v", err)
+		}
+		if outcome != Contacted {
+			t.Fatalf("FirstContact outcome = %v, want Contacted", outcome)
+		}
+
+		result, outcome2, err := Provision(ctx, database, HashToken(secret), mintedAt.Add(2*time.Minute), fakeIssue)
+		if err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		if outcome2 != Provisioned {
+			t.Fatalf("Provision outcome = %v, want Provisioned", outcome2)
+		}
+
+		settings, err := ListCanarySettings(ctx, database, result.CanaryID)
+		if err != nil {
+			t.Fatalf("ListCanarySettings: %v", err)
+		}
+		got := map[CanarySettingKey]string{}
+		for _, s := range settings {
+			got[s.Key] = s.Value
+			if s.Version != 1 {
+				t.Errorf("seeded setting %q has version %d, want 1", s.Key, s.Version)
+			}
+		}
+		want := map[CanarySettingKey]string{
+			CanarySettingBaitNames:      "old-fs-01,old-fs-02",
+			CanarySettingSegmentProfile: "linux",
+		}
+		if len(got) != len(want) || got[CanarySettingBaitNames] != want[CanarySettingBaitNames] || got[CanarySettingSegmentProfile] != want[CanarySettingSegmentProfile] {
+			t.Fatalf("seeded canary_settings = %v, want %v", got, want)
+		}
+	})
+}
+
+// TestProvisionSeedsNothingWithoutEnrolmentFlags proves the fallback
+// path: no flags at enrolment means no canary_settings rows, so the
+// agent keeps reading its environment variables exactly as it did
+// before issue #124.
+func TestProvisionSeedsNothingWithoutEnrolmentFlags(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		secret, _ := contactedFixture(t, database, mintedAt)
+
+		result, _, err := Provision(context.Background(), database, HashToken(secret), mintedAt.Add(2*time.Minute), fakeIssue)
+		if err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		settings, err := ListCanarySettings(context.Background(), database, result.CanaryID)
+		if err != nil {
+			t.Fatalf("ListCanarySettings: %v", err)
+		}
+		if len(settings) != 0 {
+			t.Fatalf("ListCanarySettings after an enrolment with no flags = %v, want empty", settings)
 		}
 	})
 }

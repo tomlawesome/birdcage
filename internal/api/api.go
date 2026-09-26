@@ -1,12 +1,10 @@
-// Package api serves birdcage's dashboard HTTP API (#3): mostly a
-// read-only JSON view over the alerts table (no handler here can mutate
-// it), plus one write path added by issue #34 -- POST /api/heartbeat,
-// which records a canary's phone-home into the separate
-// canaries/heartbeats registry and never touches alerts. Until #8 lands,
-// SECURITY.md's "no authentication yet" stance means reaching that
-// handler unauthenticated lets a caller record heartbeats for any known
-// canary id, not arbitrary writes -- the per-canary ingest token (#32)
-// narrows that once it exists.
+// Package api serves birdcage's dashboard HTTP API (#3): a read-only
+// JSON view over the alerts table -- no handler here can mutate it or
+// anything else. Issue #34 once added a write path, POST
+// /api/heartbeat, that let a caller record a heartbeat for any known
+// canary id with no credential at all; issue #135 removed it once #32's
+// per-canary ingest token gave real agents their own authenticated path
+// (POST /ingest/heartbeat, internal/ingest).
 package api
 
 import (
@@ -98,7 +96,6 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	mux.Handle("/api/canaries/{id}/runs", protected)
 	mux.Handle("/api/canary", protected)
 	mux.Handle("/api/scans", protected)
-	mux.Handle("/api/heartbeat", protected)
 	mux.Handle("/api/visitors", protected)
 	mux.Handle("/api/trace", protected)
 	mux.Handle("/api/stream", protected)
@@ -108,31 +105,64 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	return mux
 }
 
-// dashboardRoutes registers birdcage's entire dashboard API -- twelve
-// GET routes (including /api/stream, issue #44, /api/history, issue #56,
+// dashboardRouteSpec is one dashboardRoutes registration. Kept as data
+// rather than inline mux.HandleFunc calls so api_test.go's
+// TestDashboardRoutesAllReadOnly can inspect the exact same list
+// dashboardRoutes registers from -- there is no second copy for the two
+// to drift apart from, so a route added here without updating that test
+// is still caught by it, not just by remembering to.
+type dashboardRouteSpec struct {
+	method  string
+	path    string
+	handler http.HandlerFunc
+}
+
+// dashboardRouteSpecs is birdcage's entire dashboard API -- twelve GET
+// routes (including /api/stream, issue #44, /api/history, issue #56,
 // /api/mail, issue #55, /api/scans, issue #108 slice 1, /api/canary,
-// issue #118, and /api/canaries/{id}/runs, issue #116) and one POST
-// (/api/heartbeat) -- and nothing else. Mirrors mikroview's
-// readOnlyRoutes (internal/api/auth.go there): a caller dispatched to
-// this mux is structurally unable to reach anything but these routes,
-// because nothing else is ever registered on it. That property is what
-// requireAuth (issue #8, ADR-0003) will rely on once it exists: a
-// lesser-privileged credential can be routed here and nowhere else.
+// issue #118, and /api/canaries/{id}/runs, issue #116) -- and nothing
+// else.
+//
+// Owner, 2026-09-26: the dashboard API stays read-only until login
+// exists (#8) -- requireAuth is still a no-op, so any mutating route
+// registered here would let anyone who can reach the dashboard change
+// birdcage's state. Issue #124 briefly added POST /api/canary/settings
+// here and was told to take it back out; issue #135 removed the one
+// mutating route that did exist, POST /api/heartbeat, for the same
+// reason (it required no credential at all). TestDashboardRoutesAllRead
+// Only (api_test.go) is what stops a mutating route landing here
+// silently again. birdcage's one per-canary-settings write path is the
+// `birdcage agent settings set` CLI (cmd/birdcage/agentsettings.go), run
+// on the host, not over this API.
+func dashboardRouteSpecs(h *handler) []dashboardRouteSpec {
+	return []dashboardRouteSpec{
+		{http.MethodGet, "/api/alerts", h.handleAlerts},
+		{http.MethodGet, "/api/instances", h.handleInstances},
+		{http.MethodGet, "/api/stats", h.handleStats},
+		{http.MethodGet, "/api/canaries", h.handleCanaries},
+		{http.MethodGet, "/api/canary", h.handleCanary},
+		{http.MethodGet, "/api/canaries/{id}/runs", h.handleCanaryRuns},
+		{http.MethodGet, "/api/scans", h.handleScans},
+		{http.MethodGet, "/api/visitors", h.handleVisitors},
+		{http.MethodGet, "/api/trace", h.handleTrace},
+		{http.MethodGet, "/api/stream", h.handleStream},
+		{http.MethodGet, "/api/history", h.handleHistory},
+		{http.MethodGet, "/api/mail", h.handleMail},
+	}
+}
+
+// dashboardRoutes registers dashboardRouteSpecs on a fresh mux. Mirrors
+// mikroview's readOnlyRoutes (internal/api/auth.go there): a caller
+// dispatched to this mux is structurally unable to reach anything but
+// these routes, because nothing else is ever registered on it. That
+// property is what requireAuth (issue #8, ADR-0003) will rely on once it
+// exists: a lesser-privileged credential can be routed here and nowhere
+// else.
 func dashboardRoutes(h *handler) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/alerts", h.handleAlerts)
-	mux.HandleFunc("GET /api/instances", h.handleInstances)
-	mux.HandleFunc("GET /api/stats", h.handleStats)
-	mux.HandleFunc("GET /api/canaries", h.handleCanaries)
-	mux.HandleFunc("GET /api/canary", h.handleCanary)
-	mux.HandleFunc("GET /api/canaries/{id}/runs", h.handleCanaryRuns)
-	mux.HandleFunc("GET /api/scans", h.handleScans)
-	mux.HandleFunc("POST /api/heartbeat", h.handleHeartbeat)
-	mux.HandleFunc("GET /api/visitors", h.handleVisitors)
-	mux.HandleFunc("GET /api/trace", h.handleTrace)
-	mux.HandleFunc("GET /api/stream", h.handleStream)
-	mux.HandleFunc("GET /api/history", h.handleHistory)
-	mux.HandleFunc("GET /api/mail", h.handleMail)
+	for _, spec := range dashboardRouteSpecs(h) {
+		mux.HandleFunc(spec.method+" "+spec.path, spec.handler)
+	}
 	return mux
 }
 

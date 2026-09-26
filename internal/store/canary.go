@@ -449,11 +449,15 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 	return nil
 }
 
-// RecordHeartbeat records that canaryID phoned home at at (POST
-// /api/heartbeat): it updates canaries.last_heartbeat_at, inserts a
-// heartbeats row, and prunes that canary's heartbeats older than
-// heartbeatRetention. Returns ErrCanaryNotFound if canaryID isn't
-// registered -- no heartbeat row is inserted for an unknown canary.
+// RecordHeartbeat records that canaryID phoned home at at: it updates
+// canaries.last_heartbeat_at, inserts a heartbeats row, and prunes that
+// canary's heartbeats older than heartbeatRetention. Returns
+// ErrCanaryNotFound if canaryID isn't registered -- no heartbeat row is
+// inserted for an unknown canary. Called from RecordCanaryAgentHeartbeat
+// and RecordCanaryCommonHeartbeat below, which the ingest listener's
+// authenticated POST /ingest/heartbeat uses (issue #32); the dashboard's
+// own unauthenticated POST /api/heartbeat called this directly until
+// issue #135 removed that route.
 func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at time.Time) error {
 	at = at.UTC()
 	atStr := at.Format(receivedAtLayout)
@@ -491,10 +495,11 @@ func RecordHeartbeat(ctx context.Context, database *db.DB, canaryID string, at t
 // net.SplitHostPort(r.RemoteAddr)'s host, never a payload value, on
 // both the honeypot and the common heartbeat shape. Separate from
 // RecordHeartbeat/RecordCanaryAgentHeartbeat/RecordCanaryCommonHeartbeat
-// above: those are also reached from the dashboard's own POST
-// /api/heartbeat (issue #34), which has no peer address worth recording
-// here, so this is its own narrow write rather than a parameter added to
-// three existing functions one of whose callers could never supply it.
+// above: RecordHeartbeat itself has no peer address worth recording
+// (issue #135's dashboard test fixtures call it directly, off any HTTP
+// request), so this is its own narrow write rather than a parameter
+// added to three existing functions one of whose callers could never
+// supply it.
 func SetCanaryLastSeenAddr(ctx context.Context, database *db.DB, canaryID, addr string) error {
 	res, err := database.ExecContext(ctx, `UPDATE agents SET last_seen_addr = ? WHERE id = ?`, addr, canaryID)
 	if err != nil {

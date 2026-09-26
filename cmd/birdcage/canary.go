@@ -424,7 +424,7 @@ func runCanaryEnrol(args []string) error {
 	defer rollbackCanaryTx(tx, &committed)
 
 	now := time.Now().UTC()
-	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, now)
+	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, bait, string(segment), now)
 	if err != nil {
 		return fmt.Errorf("mint enrolment session: %w", err)
 	}
@@ -464,14 +464,27 @@ func runCanaryEnrol(args []string) error {
 		if image == "" {
 			image = profile.DefaultImage
 		}
+		// The holder (issue #126) is printed first, and only when the lure
+		// is being deployed: it is what the canary's and the lure's own
+		// `--network container:` flags join below, so it has to exist
+		// before either of them starts. With no lure, nothing else ever
+		// joins the canary's own namespace, so there is nothing for a
+		// holder to protect.
+		if lures.smb {
+			if err := printHolderRunCommand(os.Stdout, holderImage()); err != nil {
+				return fmt.Errorf("print holder run command: %w", err)
+			}
+			if _, err := fmt.Println(); err != nil {
+				return fmt.Errorf("print holder run command: %w", err)
+			}
+		}
 		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image, lures.smb, bait, string(segment)); err != nil {
 			return fmt.Errorf("print docker run command: %w", err)
 		}
-		// The lure is a second container, so it is a second command --
-		// printed after the canary's, because it joins that container's
-		// network namespace and cannot start before it exists. The volume
-		// comes first inside that block, for the reason smbAuditVolume's
-		// own comment gives.
+		// The lure is a third command -- printed after the holder and the
+		// canary, because it joins the holder's network namespace (not
+		// the canary's own, since #126) and cannot start before the
+		// holder exists.
 		if lures.smb {
 			if _, err := fmt.Println(); err != nil {
 				return fmt.Errorf("print smb lure run command: %w", err)
@@ -553,6 +566,18 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	}
 	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \\\n"); err != nil {
 		return err
+	}
+	// The address holder (issue #126), joined only when the lure is being
+	// deployed: with no lure, nothing else ever joins this container's
+	// own network namespace, so there is nothing to protect by joining a
+	// holder instead. When the lure is on, this container's own network
+	// namespace is the holder's -- printHolderRunCommand's own comment has
+	// the reasoning -- so a restart of this container never takes the
+	// lure's listening socket down with it.
+	if smbLure {
+		if _, err := fmt.Fprintf(w, "  --network container:%s \\\n", holderContainerName); err != nil {
+			return err
+		}
 	}
 	// The SMB lure's audit volume (#87), mounted READ-ONLY and only when
 	// the lure is being deployed. Read-only is the whole of decision 6:

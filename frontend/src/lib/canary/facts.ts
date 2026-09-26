@@ -75,5 +75,17 @@ export function factRows(input: CanaryPageInput): FactRow[] {
     const nextClause = next !== null && next > now ? ` · next in ${countdown((next - now) / 1000)}` : ''
     rows.push({ label: 'token', value: `rotated ${stamp(facts.token_rotated_at, false)}${nextClause}` })
   }
+
+  // Issue #124's per-canary settings: one row per canary_settings row,
+  // value plus whether the agent has confirmed it -- the same "● / ○
+  // word" convention ledger.ts's answerWords already uses for a
+  // self-test service's own answered/did-not-answer state, so this reads
+  // as the same kind of fact rather than a new visual language. Absent
+  // entirely for a canary nothing has ever been pushed to, matching this
+  // whole column's "a fact birdcage does not know is left out" rule.
+  for (const setting of facts.settings ?? []) {
+    const mark = setting.confirmed ? '● confirmed' : '○ not yet confirmed'
+    rows.push({ label: setting.key.replace(/_/g, ' '), value: `${setting.value} · ${mark}` })
+  }
   return rows
 }

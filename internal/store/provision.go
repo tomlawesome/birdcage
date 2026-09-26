@@ -196,6 +196,14 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("insert canary: %w", err)
 	}
 
+	// Issue #124: the enrolment flags' own values, if any, become this
+	// canary's first canary_settings rows -- in the same transaction as
+	// the canary row itself, so a canary is never created with its
+	// enrolment settings only half-seeded.
+	if err := SeedCanarySettingsFromEnrolment(ctx, tx, canaryID, found.BaitNames, found.SegmentProfile, now); err != nil {
+		return ProvisionResult{}, UnknownSecret, fmt.Errorf("seed canary settings: %w", err)
+	}
+
 	certPEM, cert, err := sign(canaryID, found.Kind)
 	if err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("sign client certificate: %w", err)

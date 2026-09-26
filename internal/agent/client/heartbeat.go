@@ -40,6 +40,17 @@ type SelfReport struct {
 	// which is an ordinary state and is why the wire field below is
 	// omitempty rather than a zero value birdcage would store.
 	PoisonerNames string
+
+	// SettingsHash is issue #124's own addition: SettingsHash's own
+	// digest of this agent's currently-effective per-canary settings
+	// (cmd/mockingbird's own record of what it last validated and
+	// applied from a birdcage push, or nothing at all if birdcage has
+	// never pushed one). Empty until this canary has an effective
+	// setting to hash, which is an ordinary state for a canary running
+	// on its environment variables alone -- see
+	// handleHoneypotHeartbeat's own comment on why an empty hash is
+	// never treated as "settings differ".
+	SettingsHash string
 }
 
 // wireHeartbeat mirrors internal/ingest/heartbeat.go's ingestHeartbeat
@@ -65,9 +76,26 @@ type wireHeartbeat struct {
 	EventIDCollisions *int64 `json:"event_id_collisions,omitempty"`
 	PositionFound     *bool  `json:"position_found,omitempty"`
 	PoisonerNames     string `json:"poisoner_names,omitempty"`
+	SettingsHash      string `json:"settings_hash,omitempty"`
 }
 
-// SendHeartbeat posts report to POST /ingest/heartbeat on token.
+// heartbeatResponse is POST /ingest/heartbeat's response body (issue
+// #124): `ok` alone, unchanged from before this issue, or `ok` beside a
+// `settings` object naming birdcage's full current per-canary settings
+// for this agent -- sent only when it differs from the SettingsHash this
+// heartbeat reported. Settings is nil, not an empty map, when birdcage
+// has nothing to push, which is the ordinary case for a canary nobody
+// has ever set a setting for.
+type heartbeatResponse struct {
+	OK       bool              `json:"ok"`
+	Settings map[string]string `json:"settings,omitempty"`
+}
+
+// SendHeartbeat posts report to POST /ingest/heartbeat on token,
+// returning the settings birdcage pushed back (issue #124), if any --
+// nil when birdcage sent none, which is the ordinary case whenever
+// report.SettingsHash already matches what birdcage has stored, or
+// birdcage has nothing stored for this canary at all.
 //
 // A non-nil error is ErrUnauthorized or a *RetryableError (429, 5xx, a
 // malformed response, or any status this package does not otherwise
@@ -78,8 +106,11 @@ type wireHeartbeat struct {
 // the caller's normal heartbeat cadence try again). #32's fail-closed
 // rule -- "invalid heartbeat body -> 4xx, recorded; the canary's
 // last-seen does NOT advance" -- is enforced entirely on birdcage's
-// side; this function just reports whichever status came back.
-func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfReport) error {
+// side; this function just reports whichever status came back. A
+// malformed response body on an otherwise-200 response is treated the
+// same as no settings pushed -- the heartbeat itself still succeeded,
+// and the next heartbeat's hash mismatch will ask again.
+func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfReport) (map[string]string, error) {
 	body, err := json.Marshal(wireHeartbeat{
 		QueueDepth:        report.QueueDepth,
 		LogReadOK:         report.LogReadOK,
@@ -90,24 +121,29 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 		EventIDCollisions: &report.EventIDCollisions,
 		PositionFound:     &report.PositionFound,
 		PoisonerNames:     report.PoisonerNames,
+		SettingsHash:      report.SettingsHash,
 	})
 	if err != nil {
-		return fmt.Errorf("client: encode heartbeat: %w", err)
+		return nil, fmt.Errorf("client: encode heartbeat: %w", err)
 	}
 
 	resp, doErr := c.post(ctx, "/ingest/heartbeat", token, body)
 	if doErr != nil {
-		return doErr
+		return nil, doErr
 	}
 	defer closeBody(resp)
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		return nil
+		var out heartbeatResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, nil
+		}
+		return out.Settings, nil
 	case http.StatusUnauthorized:
-		return ErrUnauthorized
+		return nil, ErrUnauthorized
 	default:
-		return retryable(fmt.Errorf("client: heartbeat: unexpected status %d (%s)", resp.StatusCode, errorMessage(resp)))
+		return nil, retryable(fmt.Errorf("client: heartbeat: unexpected status %d (%s)", resp.StatusCode, errorMessage(resp)))
 	}
 }
 

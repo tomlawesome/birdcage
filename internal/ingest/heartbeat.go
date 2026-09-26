@@ -53,6 +53,14 @@ type ingestHeartbeat struct {
 	// ordinary, and all of which are stored as NULL rather than as an empty
 	// list.
 	PoisonerNames string `json:"poisoner_names,omitempty"`
+
+	// SettingsHash is issue #124's own addition: the sha256 hex of this
+	// agent's currently-effective per-canary settings
+	// (client.SettingsHash, computed identically on both sides -- see
+	// that function's own comment). Absent from an agent built before
+	// this issue, or from one that has never applied a birdcage push --
+	// both ordinary states this handler must keep working for.
+	SettingsHash string `json:"settings_hash,omitempty"`
 }
 
 // ingestCommonHeartbeat is POST /ingest/heartbeat's body for every kind
@@ -148,11 +156,10 @@ func (h *ingestHandler) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 // unchanged in shape: Honeypot's own log-tailer self-report. Issue #106
 // item 6 (owner, 2026-09-14): heartbeat moves off the dashboard's
 // human-auth seam onto this submux, authenticated by the canary token,
-// identity from the token. The dashboard's POST /api/heartbeat
-// (internal/api/handlers.go) is left exactly as it is -- see this file's
-// package doc and the commit message for what still depends on it --
-// this is a second, independent write path onto the same
-// canaries/heartbeats registry.
+// identity from the token. The dashboard's own POST /api/heartbeat
+// (internal/api/handlers.go), which had no credential requirement at
+// all, was removed by issue #135 -- this submux is now the only write
+// path onto the canaries/heartbeats registry.
 //
 // Fail-closed (issue #32): an invalid body is a 4xx and the canary's
 // last-seen does NOT advance -- a broken agent must look broken, never
@@ -212,7 +219,66 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 		return
 	}
 	recordLastSeenAddr(r, h.db, tok.CanaryID)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	h.pushSettings(r, tok.CanaryID, body.SettingsHash, w)
+}
+
+// pushSettings serves issue #124's own half of the heartbeat reply: it
+// writes the response body -- {"ok":true}, or {"ok":true,"settings":{...}}
+// when this canary has at least one canary_settings row and its hash
+// differs from what the agent just reported.
+//
+// A canary with no canary_settings rows at all is never compared and
+// never pushed to, regardless of what hash the agent sent (including
+// none) -- issue #124's own fallback: "environment variables remain the
+// agent's fallback when birdcage has never sent settings." This is what
+// keeps an old agent (SettingsHash always "") and a fresh one that has
+// never been pushed to (SettingsHash also "" -- cmd/mockingbird's
+// agentSettings.Hash) both simply running on their environment, forever,
+// with no wasted comparison.
+//
+// Recording the agent's own reported hash (RecordCanarySettingsHash) is
+// best-effort and never turns an otherwise-accepted heartbeat into a
+// failure -- the same stance recordLastSeenAddr already takes on a
+// secondary signal.
+func (h *ingestHandler) pushSettings(r *http.Request, canaryID, reportedHash string, w http.ResponseWriter) {
+	if reportedHash != "" {
+		if err := store.RecordCanarySettingsHash(r.Context(), h.db, canaryID, reportedHash, h.now().UTC()); err != nil {
+			slog.Warn("ingest: record canary settings hash failed", "canary", canaryID, "err", err)
+		}
+	}
+
+	settings, err := store.ListCanarySettings(r.Context(), h.db, canaryID)
+	if err != nil {
+		slog.Warn("ingest: list canary settings failed; answering with no settings block", "canary", canaryID, "err", err)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if len(settings) == 0 {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	currentHash := store.SettingsHash(settings)
+	if currentHash == reportedHash {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
+	pairs := make(map[string]string, len(settings))
+	for _, s := range settings {
+		pairs[string(s.Key)] = s.Value
+	}
+	writeJSON(w, http.StatusOK, ingestHeartbeatResponse{OK: true, Settings: pairs})
+}
+
+// ingestHeartbeatResponse is POST /ingest/heartbeat's response body
+// (issue #124), used by handleHoneypotHeartbeat's pushSettings only --
+// handleCommonHeartbeat below is unchanged: no kind other than Honeypot
+// has a canary_settings key defined yet (canarySettingDefs is honeypot
+// poisoner settings only), so there is nothing for a scanner's heartbeat
+// to push.
+type ingestHeartbeatResponse struct {
+	OK       bool              `json:"ok"`
+	Settings map[string]string `json:"settings,omitempty"`
 }
 
 // recordLastSeenAddr stores r's peer host as canaryID's

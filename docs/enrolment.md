@@ -48,13 +48,30 @@ birdcage agent enrol --name office-nas --lane front-door
 ```
 
 This prints a `docker run` command and one line underneath it saying how
-long the token is valid. It looks like this (values differ every time):
+long the token is valid. With the SMB lure on (the default), it prints
+three blocks: the address holder first (see ["The SMB
+lure"](#the-smb-lure) below for what it is and why it comes first), then
+the canary, then the lure. It looks like this (values differ every time):
 
 ```
+docker volume create --driver local \
+  --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=0755 \
+  smb-audit
+
+docker run -d --name holder --restart unless-stopped \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 16 \
+  --memory 32m \
+  -v smb-audit:/audit:ro \
+  holder:latest
+
 docker run -d --name mockingbird --restart unless-stopped --init \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --cap-add NET_RAW \
   -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \
+  --network container:holder \
   -v smb-audit:/audit:ro \
   -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log \
   -e MOCKINGBIRD_BIRDCAGE_URL=https://203.0.113.10:8444 \
@@ -63,7 +80,7 @@ docker run -d --name mockingbird --restart unless-stopped --init \
   mockingbird:latest
 ```
 
-followed by a second block for the SMB lure (see ["The SMB
+followed by a third block for the SMB lure (see ["The SMB
 lure"](#the-smb-lure) below), and then the line saying how long the token
 is valid:
 
@@ -72,7 +89,8 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 ```
 
 `--cap-add NET_RAW` is what lets the canary notice being scanned: the
-agent opens one raw socket inside the container to see connection
+agent opens one raw socket inside the container's own network namespace
+(the holder's, when the SMB lure is on -- see below) to see connection
 attempts aimed at ports none of its emulated services answer on, which
 is the only way it can report a port sweep (OpenCanary's own port-scan
 module needs firewall rules and a root process, and this container has
@@ -94,21 +112,49 @@ and any hits not yet delivered are gone.
 
 A canary that offers a file share is the most ordinary thing on an office
 network, and it is the thing an intruder looks for first. So `birdcage
-canary enrol` also prints a second container: a real Samba, serving
-read-only guest shares on the canary's own address.
+canary enrol` also prints two more containers: the address holder, and a
+real Samba serving read-only guest shares on the canary's own address.
 
-Run these **after** the canary's own `docker run`, in this order. The
-volume has to exist before either container touches it, and the lure joins
-the canary container's network namespace, so that container has to be
-there first.
+#### The address holder
+
+The holder (issue #126) does nothing at all -- it just sits there holding
+a network address and the audit volume, so the canary and the lure can
+each be restarted independently without taking the other one's listening
+socket down. It is what the canary's and the lure's own `--network
+container:` flags join, in place of joining each other directly.
+
+Run it **first**, before either the canary or the lure: both of the
+others join its network namespace, so it has to exist before they do.
 
 ```
 docker volume create --driver local \
   --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=0755 \
   smb-audit
 
+docker run -d --name holder --restart unless-stopped \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 16 \
+  --memory 32m \
+  -v smb-audit:/audit:ro \
+  holder:latest
+```
+
+It never needs restarting, upgrading only when a new birdcage release
+says so, and answers nothing on the network itself -- the canary and the
+lure are what actually listen, on the address it holds.
+
+#### The lure itself
+
+Run this **after** both the holder and the canary's own `docker run`: the
+lure joins the holder's network namespace, so the holder has to exist
+first, and the canary has to be enrolled (its state volume created)
+before there is anything for the lure to sit beside.
+
+```
 docker run -d --name smb-lure --restart unless-stopped \
-  --network container:mockingbird \
+  --network container:holder \
   --read-only \
   --cap-drop ALL \
   --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
@@ -166,33 +212,40 @@ restarts. Nothing an intruder changes in there survives.
 `build/smb-lure/README.md` has the per-flag table and the evidence for
 which capabilities are actually needed.
 
-#### Restarting the canary takes the lure with it
+#### Restarting the canary, or the lure, takes nothing else down
 
-The lure listens inside the canary container's network namespace, so
-restarting the canary destroys the namespace its Samba is listening in.
-The lure container stays `running` with nothing answering on port 445 --
-the most misleading state it could be in, because `docker ps` says it is
-fine. Docker will not re-attach it by itself.
+Before issue #126, the lure joined the canary container's own network
+namespace directly, and restarting the canary destroyed the namespace its
+Samba was listening in -- the lure stayed `running` with nothing
+answering on port 445, the most misleading state it could be in, because
+`docker ps` said it was fine, and only `docker restart smb-lure` fixed it.
 
-So restart the lure too, every time you restart the canary:
+With the holder in place, neither the canary nor the lure owns the
+namespace the other depends on, so a plain `docker restart mockingbird`
+or `docker restart smb-lure` -- on its own, no companion command needed
+-- leaves the other one running and the share still answering. The
+holder itself is never restarted as part of this; it has nothing to lose
+by staying up.
 
-```
-docker restart mockingbird
-docker restart smb-lure
-```
+Nothing is lost in the gap either way: the agent picks up where it left
+off in the audit file, so an access either side of a restart still
+reaches birdcage, and a line it reads twice raises one alert rather than
+two. The audit file's own lines also survive a longer gap than one
+restart -- the holder keeps the volume mounted even while both the
+canary and the lure are stopped, so nothing unread is wiped.
 
-`docker start smb-lure` does nothing, because the container never stopped.
-It has to be `restart`.
-
-Nothing is lost in the gap: the agent picks up where it left off in the
-audit file, so an access either side of a restart still reaches birdcage,
-and a line it reads twice raises one alert rather than two.
+A host reboot, or stopping the holder, is the one thing that does wipe
+it: the volume lives in memory. Only lines the agent had not yet sent
+are lost, and those pile up only while birdcage is unreachable -- a gap
+birdcage already shows as the canary going quiet. This is deliberate
+(issue #131): keeping the volume in memory is what caps its size in a
+way a compromised Samba cannot get around.
 
 #### Turning it off, and naming the shares
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--lure smb=off` | on | Deploy no SMB lure. The enrol output then prints no second block and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
+| `--lure smb=off` | on | Deploy no SMB lure, and no address holder either -- with nothing else to join its namespace, the canary keeps its own. The enrol output then prints no holder block, no lure block and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
 | `--smb-workgroup` | `WORKGROUP` | The workgroup the share announces. Use whatever the rest of your network uses; a share in a workgroup of its own is the one thing on the segment that looks odd. |
 | `--smb-shares` | `public,backup,scans` | The three share names, in that order: documents, configuration backups, scanner output. Names only -- what is on each share is part of the image. |
 
@@ -200,9 +253,13 @@ A name outside `A-Z a-z 0-9 _ -` is refused when you enrol, rather than by
 a container that will not start.
 
 The lure's own NetBIOS name and description are not settable, on purpose:
-sharing the canary's network namespace shares its hostname, so the share
-already names itself after the canary, and a flag would only be a way to
-get that wrong.
+sharing a network namespace shares its hostname too (Docker shares both
+together), so the canary, the holder and the lure all present the same
+hostname -- Docker's own default (the holder's container id, since
+nothing here sets `--hostname`) unless you set one yourself. Nothing
+about this reveals what the lure is any more than the unnamed default
+already did before #126, and a flag on the lure alone would only be a
+way to get it out of step with the address it actually answers on.
 
 Copy the whole `docker run` block and paste it into a shell on the box
 you want to turn into a canary. That's it -- the canary's agent
@@ -697,11 +754,34 @@ with the two variables above.
 
 ### Changing these later
 
-These are per-canary settings, changed by restarting the container
-with a different `-e` value -- you do not need a new release of
-birdcage. They cannot yet be changed from the canary page in the
-dashboard: birdcage has no way to push a setting to a running canary
-today, so the container's environment is the only place they are set.
+These are per-canary settings, and issue #124 gives them a second way to
+change: `birdcage agent settings set <agent_id> <key>=<value> [<key>=<value> ...]`,
+run on the birdcage host, reaches the running canary on its next
+heartbeat with no restart and no new release. For example:
+
+```
+birdcage agent settings set fs-lon-04 segment_profile=off
+```
+
+The keys are `segment_profile`, `bait_names`, `pace_floor`,
+`pace_ceiling` and `working_hours`, validated by the same rules as the
+`-e` variables and the enrolment flags above. `birdcage agent settings
+show <agent_id>` prints the current value of each, its version, and
+whether the agent has actually confirmed running with it (its own
+next heartbeat has to report back that it applied the change -- that
+takes one heartbeat interval more than applying it does).
+
+The environment variables above still work and are still the only way
+to set a starting value the canary boots with -- an operator who never
+runs `birdcage agent settings set` for a canary sees exactly the
+behaviour this section already describes. Once a value has been set
+this way, though, it is what the agent runs with, not the environment.
+
+This cannot yet be done from the canary page in the dashboard: the
+dashboard API stays read-only until the login the whole product needs
+(#8) exists, so a page that could reprogram a canary's settings with
+no authentication at all would be worse than not having the page. The
+canary page is issue #134, waiting on that login.
 
 ### What the alert says
 

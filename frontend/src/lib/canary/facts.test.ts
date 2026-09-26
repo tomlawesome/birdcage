@@ -65,4 +65,21 @@ describe('factRows', () => {
     input.page.facts.token_rotates_at = '2026-09-09T22:04:31Z'
     expect(factRows(input).find((r) => r.label === 'token')?.value).toBe('rotated thu 3 sep · next in 4 d')
   })
+
+  it('renders a confirmed setting with the ● mark and an unconfirmed one with ○', () => {
+    const input = sceneInput('quiet')
+    input.page.facts.settings = [
+      { key: 'segment_profile', value: 'off', version: 2, updated_at: '2026-09-01T00:00:00Z', confirmed: false },
+      { key: 'pace_floor', value: '2h', version: 1, updated_at: '2026-09-01T00:00:00Z', confirmed: true },
+    ]
+    const found = factRows(input)
+    expect(found.find((r) => r.label === 'segment profile')?.value).toBe('off · ○ not yet confirmed')
+    expect(found.find((r) => r.label === 'pace floor')?.value).toBe('2h · ● confirmed')
+  })
+
+  it('shows no settings rows for a canary nothing has ever been pushed to', () => {
+    const input = sceneInput('quiet')
+    delete input.page.facts.settings
+    expect(factRows(input).some((r) => r.value.includes('confirmed'))).toBe(false)
+  })
 })

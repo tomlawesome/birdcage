@@ -22,7 +22,7 @@ func TestSendHeartbeatStoresReport(t *testing.T) {
 
 		sendHeartbeat(ctx(), c, ts, func() client.SelfReport {
 			return client.SelfReport{QueueDepth: 3, LogReadOK: true, LastEventID: validID1, AgentVersion: "9.9.9"}
-		})
+		}, nil, nil)
 
 		var (
 			version     string
@@ -56,7 +56,7 @@ func TestSendHeartbeatPersistentUnauthorizedLogsLoudly(t *testing.T) {
 		ts := &TokenStore{current: "not-a-real-token"}
 
 		out := captureStdout(t, func() {
-			sendHeartbeat(ctx(), c, ts, func() client.SelfReport { return client.SelfReport{} })
+			sendHeartbeat(ctx(), c, ts, func() client.SelfReport { return client.SelfReport{} }, nil, nil)
 		})
 
 		if !strings.Contains(out, "re-enrolment") {

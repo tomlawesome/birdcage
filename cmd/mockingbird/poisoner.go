@@ -22,11 +22,13 @@ import (
 //
 // Issue #86 design point 3 asks for these to be per-canary settings
 // "changeable without a release", and point 7 for the profile to be
-// changeable from the canary page. These variables deliver the first:
-// an operator changes one and restarts the container. They do not deliver
-// the second -- birdcage has no channel that pushes a setting to an agent
-// at all today (heartbeat and command-poll responses carry none), so the
-// canary page cannot change one. See docs/configuration.md.
+// changeable from the canary page. These variables deliver both today:
+// they are still read once at startup and remain this agent's fallback
+// for as long as birdcage has never pushed a setting (issue #124), but a
+// value birdcage has pushed and this agent has validated -- through the
+// heartbeat reply, agentSettings.Apply, and
+// internal/agent/poisoner.Detector.SetLiveSettings -- overrides it live,
+// with no restart. See agentsettings.go.
 const (
 	// envPoisoner turns the whole road off when set to "0", sockets
 	// included. Anything else, including unset, leaves it on -- one
@@ -199,9 +201,14 @@ func plural(n int, one, many string) string {
 // It never returns an error, the same contract newPortscanRoad and
 // newSNMPRoad state: detection being unavailable is a running condition to
 // report, not a reason to refuse to be a honeypot.
-func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisonerInventory) {
+// cfg is also returned (issue #124): main.go seeds this canary's
+// agentSettings record from the exact Config the detector was built
+// with, so a live push from birdcage and this process' own
+// environment-variable defaults can never disagree about the starting
+// point.
+func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisonerInventory, poisoner.Config) {
 	if !poisonerEnabled() {
-		return nil, poisonerInventory{Active: false}
+		return nil, poisonerInventory{Active: false}, poisoner.Config{}
 	}
 
 	cfg, warnings := poisonerSettings()
@@ -224,7 +231,7 @@ func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisoner
 				"net.ipv4.ip_unprivileged_port_start=0, which is what makes binding them work without "+
 				"root. Without it, a poisoner on this segment is not caught.",
 			safeErr(err)))
-		return nil, poisonerInventory{Active: false}
+		return nil, poisonerInventory{Active: false}, cfg
 	}
 
 	return detector, poisonerInventory{
@@ -232,7 +239,7 @@ func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisoner
 		Profile:  detector.Profile(),
 		Sending:  detector.CanSend(),
 		Counting: detector.Listening(),
-	}
+	}, cfg
 }
 
 // runPoisonerRoad asks and listens until ctx is done. A nil detector --
