@@ -38,10 +38,13 @@ set -eu
 }
 
 # POISONER_CANARY_ADDR is this canary's own address on the shared
-# network -- read from the container, the same way poisoner.sh reads the
-# fixture's own address from docker inspect rather than assuming one.
-POISONER_CANARY_ADDR="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POISONER_CANARY")"
-[ -n "$POISONER_CANARY_ADDR" ] || fail "could not read $POISONER_CANARY's address" "$POISONER_CANARY"
+# network -- read with docker inspect, the same way poisoner.sh reads the
+# fixture's own address rather than assuming one. Since #132 the canary
+# joins its holder's network namespace and has no address of its own
+# in docker inspect, so the address is read from the holder.
+[ -n "${POISONER_HOLDER:-}" ] || fail "POISONER_HOLDER unset -- run: eval \"\$(scripts/e2e/poisoner-stack.sh up)\"" "$POISONER_CANARY"
+POISONER_CANARY_ADDR="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POISONER_HOLDER")"
+[ -n "$POISONER_CANARY_ADDR" ] || fail "could not read the address of $POISONER_CANARY's holder $POISONER_HOLDER" "$POISONER_CANARY"
 
 # poisoned_answer_count reads the fixture's own log for how many times it
 # has answered THIS canary's bait lookups -- the attacker's own side of
