@@ -56,7 +56,7 @@ github.com/tomlawesome/gauntlet
 ```
 
 `passkey/` (the WebAuthn ceremony, `github.com/go-webauthn/webauthn`) is
-a fifth package that is *not* in v1.0 -- §1.6.
+a fifth package that is *not* in v0.1.0 -- §1.6.
 
 ### 1.1 Why these boundaries
 
@@ -325,7 +325,7 @@ it. The data for all of this lives on `User`.
   base32, crypto/rand), already inseparable from `Authenticate`, and
   ~800 lines that exist and are tested. Leaving them out would mean
   building a `gate` that cannot run mikroview's login flow.
-- **Passkeys: the ceremony is not in v1.0.** The `Passkey` struct is
+- **Passkeys: the ceremony is not in v0.1.0.** The `Passkey` struct is
   plain fields (`[]byte`, `uint32`, `[]string`, a flags struct mirrored
   from `webauthn.CredentialFlags`), so storing them costs no dependency.
   The ceremony (`RelyingParty`, two sealed cookies, the spent-challenge
@@ -599,7 +599,7 @@ once G4 is tagged.
   `internal/api/auth_test.go` cases for register, login, TOTP door,
   change-password door, token dispatch, OIDC callback (fake provider) and
   CSRF.
-- **G7 Tag v1.0.0.** *Done when:* `CHANGELOG.md` lists G1-G6 and
+- **G7 Tag v0.1.0** (owner, 2026-09-26: the first release is v0.1.0, not v1.0.0). *Done when:* `CHANGELOG.md` lists G1-G6 and
   birdcage can `go get` the tag.
 - **B1 Storage backend and migration.** `0025_auth_store`,
   `store.NewAuthBackend`, `VersionReader`. *Done when:* the persist
@@ -629,7 +629,7 @@ once G4 is tagged.
 
 ## 6. What the owner has to do
 
-**Owner decisions, 2026-09-26 (Q17-Q24):** licence **Apache-2.0**; the
+**Owner decisions, 2026-09-26 (Q17-Q24):** licence **Apache-2.0**; first tag **v0.1.0**; the
 three G2/G5 dependencies below **approved** (`go-webauthn` still waits for
 G8); passkeys: data in v1, ceremony in G8; second factor **mandatory** in
 birdcage; roles as recommended; document store as recommended; the owner
