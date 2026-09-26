@@ -12,8 +12,9 @@
 // Two kinds of entry, both refused identically by Check:
 //
 //   - Fixed categories, compiled into the binary and never configurable:
-//     loopback, link-local and multicast (v4 and v6), and RFC1918 private
-//     IPv4 space. See staticFloor.
+//     loopback, link-local and multicast (v4 and v6), RFC1918 private
+//     IPv4 space, IPv6 unique local space, the unspecified ranges, and
+//     RFC 6598 shared address space. See staticFloor.
 //   - Dynamic categories, whose *membership* is fixed in code but whose
 //     *value* a caller supplies per call, because this package cannot know
 //     the router's address, the OIDC provider, or which address an admin
@@ -89,6 +90,9 @@ const (
 	CategoryLinkLocal      Category = "link_local"
 	CategoryMulticast      Category = "multicast"
 	CategoryPrivateRFC1918 Category = "rfc1918_private"
+	CategoryUniqueLocal    Category = "ipv6_unique_local"
+	CategoryUnspecified    Category = "unspecified"
+	CategorySharedAddress  Category = "shared_address_space"
 	CategoryRouter         Category = "router"
 	CategoryBirdcageHost   Category = "birdcage_host"
 	CategoryMikroviewHost  Category = "mikroview_host"
@@ -121,6 +125,14 @@ var staticFloor = []entry{
 	{netip.MustParsePrefix("10.0.0.0/8"), CategoryPrivateRFC1918, "RFC1918 private range"},
 	{netip.MustParsePrefix("172.16.0.0/12"), CategoryPrivateRFC1918, "RFC1918 private range"},
 	{netip.MustParsePrefix("192.168.0.0/16"), CategoryPrivateRFC1918, "RFC1918 private range"},
+	// Added by the owner beyond #33's list (2026-09-26): IPv6's private
+	// range, the "no address" ranges, and the shared address space that
+	// Tailscale and carrier-grade NAT use -- which may be the admin's own
+	// way in.
+	{netip.MustParsePrefix("fc00::/7"), CategoryUniqueLocal, "IPv6 unique local (private) range"},
+	{netip.MustParsePrefix("0.0.0.0/8"), CategoryUnspecified, "IPv4 \"this network\" / unspecified"},
+	{netip.MustParsePrefix("::/128"), CategoryUnspecified, "IPv6 unspecified address"},
+	{netip.MustParsePrefix("100.64.0.0/10"), CategorySharedAddress, "shared address space (RFC 6598: carrier-grade NAT, Tailscale)"},
 }
 
 // Inputs carries the dynamic floor categories for one Check call. Each

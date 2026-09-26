@@ -59,6 +59,10 @@ func TestCheckRefusesEveryStaticFloorCategory(t *testing.T) {
 		{"rfc1918 10/8", "10.1.2.3"},
 		{"rfc1918 172.16/12", "172.16.5.5"},
 		{"rfc1918 192.168/16", "192.168.1.1"},
+		{"ipv6 unique local fc00::/7", "fd12:3456::1"},
+		{"ipv4 unspecified 0/8", "0.0.0.0"},
+		{"ipv6 unspecified", "::"},
+		{"shared address space 100.64/10", "100.100.1.1"},
 	}
 
 	for _, tgt := range dbtest.Targets(t) {
