@@ -12,9 +12,19 @@
 // slice built. Eleven long-lived goroutines share one cancellation
 // context and one TokenStore: the receiver, the log road (tailer plus its
 // eviction-recovery restart), the sender, the heartbeat, the command
-// poll, the command runner, token rotation, (#69) the OpenCanary child
-// supervisor, (#65) the port-scan road, (#88) the snmp road, (#87) the
-// smb audit road, and (#86) the poisoner road.
+// poll, the command runner, token rotation, (#65) the boot-time
+// readiness road, (#65 again) the port-scan road, (#88) the snmp road,
+// (#87) the smb audit road, and (#86) the poisoner road.
+//
+// OpenCanary is no longer this agent's own child process (issue #132:
+// it moved into its own container, so #69's supervision -- start it,
+// forward its signals, notice its exit -- no longer applies here, and
+// neither does the readiness road's old gate on a child argv being
+// present). What replaces #69 is not a goroutine of its own: the
+// heartbeat loop dials OpenCanary's own configured ports once per tick
+// (cmd/mockingbird/readiness.go's openCanaryProbe) and reports the
+// result in the same self-report the queue/tailer counters already ride
+// in -- see currentSelfReport's call site below.
 //
 // The port-scan road (#65) is the third way an event reaches the queue,
 // alongside the webhook receiver and the log tailer, and the only one
@@ -87,7 +97,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
@@ -116,11 +125,7 @@ func main() {
 	// #90, cmd/birdcage/main.go around line 195) exactly: it comes first,
 	// before mainLog or cfg exist, and writes to stdout rather than the
 	// log, because the release job compares its output with the tag it
-	// built from -- one line, no level prefix. It also has to come before
-	// os.Args[1:] is handed to runChild below as OpenCanary's own
-	// arguments: `docker run <image> version` replaces the Dockerfile's
-	// CMD entirely, so without this check "version" would be run as
-	// OpenCanary's argv instead of being answered.
+	// built from -- one line, no level prefix.
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		if err := runVersion(os.Stdout); err != nil {
 			os.Exit(1)
@@ -150,13 +155,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Before issue #132, this was wrapped in a second, derived
+	// context.WithCancel so OpenCanary exiting as this agent's own child
+	// process (runChild, since removed) could also stop the run. That
+	// child no longer exists -- OpenCanary is a separate container now
+	// -- so a signal is the only thing that ends this process, and
+	// sigCtx alone is the run's context.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	// A second, derived cancel: the run must also stop if OpenCanary (see
-	// runChild, below) exits on its own, not only on a signal.
-	ctx, cancel := context.WithCancel(sigCtx)
-	defer cancel()
 
 	var wg sync.WaitGroup
 
@@ -236,6 +242,14 @@ func main() {
 	// agreement.
 	agentSettingsState := newAgentSettings(poisonerCfg)
 
+	// The OpenCanary liveness probe (issue #132): a plain port dial
+	// against OpenCanary's own configured ports, run once per heartbeat
+	// tick from inside the report() closure below -- see
+	// openCanaryProbe's own doc comment in readiness.go for why this
+	// replaces #69's child-exit supervision now that OpenCanary is a
+	// separate container.
+	ocProbe := newOpenCanaryProbe(defaultReadinessConfig(), logging.New("opencanary"))
+
 	wg.Add(9)
 	go func() {
 		defer wg.Done()
@@ -244,7 +258,9 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
-			return currentSelfReport(version, in, poisonerDetector)
+			sr := currentSelfReport(version, in, poisonerDetector)
+			sr.OpenCanaryUp = ocProbe.Probe(ctx)
+			return sr
 		}, agentSettingsState, poisonerDetector)
 	}()
 	go func() {
@@ -281,41 +297,19 @@ func main() {
 		runPoisonerRoad(ctx, poisonerDetector, poisonerLog)
 	}()
 
-	// OpenCanary as mockingbird's child process (#69): the receiver above
-	// is already listening, so OpenCanary's first webhook attempt finds
-	// it open. With no arguments (os.Args[1:] empty) this is a no-op --
-	// today's behaviour, untouched.
-	childLog := logging.New("child")
-	var childDied atomic.Bool
-	if len(os.Args) > 1 {
-		childLog.Info(fmt.Sprintf("starting %v", os.Args[1:]))
-	}
+	// The readiness road (#65): a one-shot, bounded-window check that
+	// every module opencanary.conf enables answered at least once near
+	// boot. Unconditional now: issue #132 split OpenCanary out into its
+	// own container, so it is no longer this agent's own os.Args[1:]
+	// child (see supervise.go's removal note, below) and this check has
+	// something to prove for every honeypot canary, not only one started
+	// with a child argv.
+	readinessLog := logging.New("readiness")
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runChild(ctx, os.Args[1:], func(err error) {
-			if err != nil {
-				childLog.Warn(fmt.Sprintf("%v exited: %v", os.Args[1:], err))
-			} else {
-				childLog.Info(fmt.Sprintf("%v exited", os.Args[1:]))
-			}
-			childDied.Store(true)
-			cancel()
-		})
+		runReadinessCheck(ctx, defaultReadinessConfig(), readinessLog)
 	}()
-
-	// The readiness road (#65): only meaningful alongside a real
-	// OpenCanary child -- os.Args[1:] empty is the same "no child at all"
-	// case runChild itself no-ops on, and a check that only ever reads its
-	// own agent's empty environment has nothing to prove.
-	if len(os.Args) > 1 {
-		readinessLog := logging.New("readiness")
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runReadinessCheck(ctx, defaultReadinessConfig(), readinessLog)
-		}()
-	}
 
 	<-ctx.Done()
 	mainLog.Info("shutting down")
@@ -324,12 +318,6 @@ func main() {
 	// advanced past them, so the next start re-reads them from the log
 	// -- the durability design working, not a loss.
 	wg.Wait()
-	// A run ended by the child dying is a failure whatever the child's
-	// own status -- even a clean exit means the honeypot is gone -- and
-	// the container's restart policy only acts on a non-zero exit.
-	if childDied.Load() {
-		os.Exit(1)
-	}
 }
 
 // boot builds the birdcage client, token store and intake from cfg, and
