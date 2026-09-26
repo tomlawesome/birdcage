@@ -22,11 +22,13 @@ import (
 //
 // Issue #86 design point 3 asks for these to be per-canary settings
 // "changeable without a release", and point 7 for the profile to be
-// changeable from the canary page. These variables deliver the first:
-// an operator changes one and restarts the container. They do not deliver
-// the second -- birdcage has no channel that pushes a setting to an agent
-// at all today (heartbeat and command-poll responses carry none), so the
-// canary page cannot change one. See docs/configuration.md.
+// changeable from the canary page. These variables deliver both today:
+// they are still read once at startup and remain this agent's fallback
+// for as long as birdcage has never pushed a setting (issue #124), but a
+// value birdcage has pushed and this agent has validated -- through the
+// heartbeat reply, agentSettings.Apply, and
+// internal/agent/poisoner.Detector.SetLiveSettings -- overrides it live,
+// with no restart. See agentsettings.go.
 const (
 	// envPoisoner turns the whole road off when set to "0", sockets
 	// included. Anything else, including unset, leaves it on -- one

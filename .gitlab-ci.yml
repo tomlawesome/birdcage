@@ -1745,6 +1745,12 @@ e2e:poisoner:
     - scripts/ci-ensure-image.sh "$E2E_POISONER_FIXTURE_IMAGE" "$E2E_POISONER_FIXTURE_DIGEST"
     - eval "$(scripts/e2e/poisoner-stack.sh up)"
     - scripts/e2e/poisoner.sh
+    # Issue #124: reuses this same canary and fixture -- poisoner.sh has
+    # already proved the canary is baiting; this pushes a live settings
+    # change to it and proves the change reaches the running container,
+    # with no restart, rather than standing up a second four-container
+    # stack to prove the same push in isolation.
+    - scripts/e2e/agent-settings.sh
   after_script:
     # poisoner-stack.sh down first: it removes containers attached to the
     # network stack.sh down is about to remove, the same ordering

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# agent-settings.sh -- issue #124's live check: changing a per-canary
+# setting on the dashboard reaches the already-running canary within one
+# heartbeat, with no container restart, and the facts column shows the
+# agent's own confirmation.
+#
+# Reuses scripts/e2e/poisoner-stack.sh's infrastructure rather than
+# standing up a second one: that canary is already paced to burst every
+# few seconds and already proves bait lookups go out and reach birdcage
+# as poisoner alerts (poisoner.sh). This journey's own job starts where
+# that one leaves off -- it changes the segment profile from "windows"
+# (the default poisoner-stack.sh enrols with) to "off" through
+# POST /api/canary/settings, then proves the change took effect on the
+# running container: no more bait lookups go out, the facts column reads
+# the setting as confirmed, and the container was never restarted.
+#
+#   eval "$(scripts/e2e/stack.sh up)"
+#   eval "$(scripts/e2e/poisoner-stack.sh up)"
+#   scripts/e2e/poisoner.sh
+#   scripts/e2e/agent-settings.sh
+#   scripts/e2e/poisoner-stack.sh down
+#   scripts/e2e/stack.sh down
+set -eu
+
+. "$(dirname "$0")/journey.sh"
+
+[ -n "${POISONER_CANARY:-}" ] && [ -n "${POISONER_CANARY_ID:-}" ] \
+  && [ -n "${POISONER_FIXTURE:-}" ] || {
+  echo "agent-settings: POISONER_CANARY/_ID or POISONER_FIXTURE unset -- run: eval \"\$(scripts/e2e/poisoner-stack.sh up)\"" >&2
+  exit 2
+}
+
+# poisoned_answer_count reads the fixture's own log for how many times it
+# has answered a bait lookup -- the attacker's own side of the wire, the
+# same reasoning poisoner.sh's fixture_poisoned uses, so "the canary
+# stopped asking" is proved from the one place that could disagree with
+# birdcage's own code.
+poisoned_answer_count() {
+  docker logs "$POISONER_FIXTURE" 2>&1 | grep -c "Poisoned answer sent to" || true
+}
+
+# setting_field reads one field of key's row out of GET /api/canary's
+# facts.settings -- one helper() call with the pipe inside it, the same
+# shape poisoner.sh's own poisoner_alert_count uses, rather than two
+# separate helper containers joined by an outer pipe (untested, and this
+# journey has no need to be the first thing that tries it).
+setting_field() { # setting_field <key> <jq-field>
+  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canary?id=$POISONER_CANARY_ID&range=15m' | jq -r '.facts.settings[]? | select(.key==\"$1\") | .$2'"
+}
+
+setting_confirmed() { [ "$(setting_field "$1" confirmed 2>/dev/null || true)" = "true" ]; } # setting_confirmed <key>
+setting_value() { setting_field "$1" value; } # setting_value <key>, for the journey's own log only
+
+step "the canary's segment profile starts at the enrolled default"
+if setting_confirmed segment_profile; then
+  fail "segment_profile already reads as confirmed before this journey pushed anything -- a previous run's state was not torn down" "$POISONER_CANARY"
+fi
+ok "no confirmed segment_profile row yet (poisoner-stack.sh enrols with the default, never writing canary_settings)"
+
+step "the canary is still asking, so there is something to prove stops"
+before="$(poisoned_answer_count)"
+[ "${before:-0}" -ge 1 ] || fail "the fixture has not logged a single poisoned answer yet -- run scripts/e2e/poisoner.sh first, or wait for its own first burst" "$POISONER_CANARY" "$POISONER_FIXTURE"
+ok "$before poisoned answer(s) logged so far"
+
+startedAt="$(docker inspect --format '{{.State.StartedAt}}' "$POISONER_CANARY")" \
+  || fail "could not read $POISONER_CANARY's start time" "$POISONER_CANARY"
+
+step "birdcage is asked to turn the segment profile off"
+resp="$(helper "curl -sS --cacert /tls/dashboard-ca.pem -X POST -d '{\"segment_profile\":\"off\"}' '$BIRDCAGE_URL/api/canary/settings?id=$POISONER_CANARY_ID'")"
+case "$resp" in
+  *'"ok":true'*) ok "birdcage accepted the write: $resp" ;;
+  *) fail "POST /api/canary/settings was refused: $resp" "$POISONER_CANARY" ;;
+esac
+
+step "the running canary stops asking within one heartbeat -- no restart"
+# heartbeatInterval (cmd/mockingbird/heartbeat.go) is a hard-coded 60s:
+# the push above lands in birdcage's reply to whichever heartbeat request
+# is in flight or next due, so the agent has applied it, live, well
+# inside one interval from here. 75s is that one interval plus headroom
+# for a loaded runner's scheduling delay, not uncertainty about the
+# cadence.
+sleep 75
+after_wait="$(poisoned_answer_count)"
+ok "poisoned answers before the push: $before, once one heartbeat interval has passed: $after_wait"
+
+nowStartedAt="$(docker inspect --format '{{.State.StartedAt}}' "$POISONER_CANARY")" \
+  || fail "could not re-read $POISONER_CANARY's start time" "$POISONER_CANARY"
+[ "$nowStartedAt" = "$startedAt" ] \
+  || fail "the canary container restarted (was $startedAt, now $nowStartedAt) -- the setting must reach it live" "$POISONER_CANARY"
+ok "the container never restarted (still started at $startedAt)"
+
+step "the canary keeps not asking -- the stop was not a one-off gap between bursts"
+# The fixture's own tight pacing (poisoner-stack.sh's 2s ceiling) would
+# have landed several more bursts in this window if the agent were still
+# asking on the old profile.
+sleep 15
+final="$(poisoned_answer_count)"
+[ "$final" = "$after_wait" ] \
+  || fail "the fixture logged $((final - after_wait)) more poisoned answer(s) after the profile was pushed off -- the live push did not actually stop the burst loop" "$POISONER_CANARY" "$POISONER_FIXTURE"
+ok "no further poisoned answers ($final, unchanged)"
+
+step "the facts column shows the agent's own confirmation"
+# Confirmation needs a second heartbeat, not the first: the one that
+# carried the push also has to report back the resulting hash before
+# birdcage can say the agent is actually running with it (an honest
+# "confirmed" cannot be assumed from the push alone -- see
+# internal/ingest/heartbeat.go's pushSettings). Two heartbeat intervals
+# plus generous scheduling headroom, not one, is the right bound here.
+poll 200 setting_confirmed segment_profile \
+  || fail "segment_profile never confirmed after 200s, though the canary provably stopped asking above -- the agent's own reported hash never reached birdcage" "$POISONER_CANARY"
+ok "segment_profile confirmed, value $(setting_value segment_profile)"
+
+finish
