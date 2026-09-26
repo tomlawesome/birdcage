@@ -27,8 +27,8 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
-  # Where the four images are published (#90, #125). Deliberately NOT named
-  # BIRDCAGE_IMAGE: that is the environment variable
+  # Where the five images are published (#90, #125, #126). Deliberately NOT
+  # named BIRDCAGE_IMAGE: that is the environment variable
   # scripts/verify-validation-evidence.sh reads to know which repository it
   # is judging, and a pipeline-wide value of that name would be inherited by
   # every verifier call -- including the one checking the *other* image,
@@ -37,6 +37,7 @@ variables:
   MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
   NIGHTJAR_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/nightjar
   SMB_LURE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/smb-lure
+  HOLDER_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/holder
   # Where the same digests are mirrored, read-only, for the public (#90,
   # note 22233): GitLab is where a release is published and promoted --
   # the evidence is bound to the digest here -- and GHCR is only ever a
@@ -46,6 +47,7 @@ variables:
   MOCKINGBIRD_MIRROR_REPO: ghcr.io/tomlawesome/mockingbird
   NIGHTJAR_MIRROR_REPO: ghcr.io/tomlawesome/nightjar
   SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
+  HOLDER_MIRROR_REPO: ghcr.io/tomlawesome/holder
   # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
   # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
   # was failing e2e and test:go before they ever ran. Same bytes, cached on
@@ -699,7 +701,7 @@ build:images:
       set -eu
       max_age_seconds=$((6 * 3600))
       now_epoch="$(date -u +%s)"
-      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build; do
+      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build holder-build; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
           | grep -v ":${CI_PIPELINE_ID}$" \
           | while IFS= read -r tag; do
@@ -721,7 +723,7 @@ build:images:
       : > release.env
       # One list entry per image -- the build, the local tag, the registry
       # push and the dotenv lines below all read from $name.
-      for name in birdcage mockingbird nightjar smb-lure; do
+      for name in birdcage mockingbird nightjar smb-lure holder; do
         local_tag="${name}-build:${CI_PIPELINE_ID}"
         # --provenance=false --sbom=false: with the containerd image store
         # (Docker 29's default on the runner) a build otherwise produces an
@@ -1342,9 +1344,10 @@ e2e:smb-lure:
   needs:
     - job: build:images
       artifacts: true
-  # Builds one extra image (a small Alpine smbclient; the lure and the
-  # canary are both tags build:images already built) and runs a second
-  # canary plus the lure alongside the base stack's four containers.
+  # Builds one extra image (a small Alpine smbclient; the lure, the holder
+  # and the canary are all tags build:images already built) and runs a
+  # second canary, the holder and the lure alongside the base stack's
+  # four containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -1352,6 +1355,7 @@ e2e:smb-lure:
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
@@ -1364,15 +1368,24 @@ e2e:smb-lure:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
-    # The lure has no test:image job of its own; its version stamp, which
-    # release:promote relies on (#125), is checked here.
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    # Neither the lure nor the holder has a test:image job of its own;
+    # their version stamps, which release:promote relies on (#125, #126),
+    # are checked here.
     - |
       got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
       if [ "$got" != "$BIRDCAGE_STAMP" ]; then
         echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
         exit 1
       fi
-      echo "version stamped: $got"
+      echo "smb-lure version stamped: $got"
+    - |
+      got="$(docker run --rm "$HOLDER_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "holder reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "holder version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -1401,9 +1414,10 @@ e2e:smb-lure:postgres:
   needs:
     - job: build:images
       artifacts: true
-  # Builds one extra image (a small Alpine smbclient; the lure and the
-  # canary are both tags build:images already built) and runs a second
-  # canary plus the lure alongside the base stack's four containers.
+  # Builds one extra image (a small Alpine smbclient; the lure, the holder
+  # and the canary are all tags build:images already built) and runs a
+  # second canary, the holder and the lure alongside the base stack's
+  # four containers.
   tags: [big]
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
@@ -1412,6 +1426,7 @@ e2e:smb-lure:postgres:
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
@@ -1426,15 +1441,24 @@ e2e:smb-lure:postgres:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
-    # The lure has no test:image job of its own; its version stamp, which
-    # release:promote relies on (#125), is checked here.
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    # Neither the lure nor the holder has a test:image job of its own;
+    # their version stamps, which release:promote relies on (#125, #126),
+    # are checked here.
     - |
       got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
       if [ "$got" != "$BIRDCAGE_STAMP" ]; then
         echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
         exit 1
       fi
-      echo "version stamped: $got"
+      echo "smb-lure version stamped: $got"
+    - |
+      got="$(docker run --rm "$HOLDER_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "holder reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "holder version stamped: $got"
     - eval "$(scripts/e2e/stack.sh up)"
     - eval "$(scripts/e2e/smb-lure-stack.sh up)"
     - scripts/e2e/smb-lure.sh
@@ -2128,6 +2152,7 @@ release:push:
       scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
       # Only the anchor is pushed here. It is immutable by construction (a
       # commit sha names one build) and it is never what a user pulls: the
       # channel name is release:preview's to create, after the evidence has
@@ -2138,6 +2163,7 @@ release:push:
       docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${MOCKINGBIRD_RELEASE_REPO}:${anchor}"
       docker tag "$NIGHTJAR_BUILD_IMAGE" "${NIGHTJAR_RELEASE_REPO}:${anchor}"
       docker tag "$SMB_LURE_BUILD_IMAGE" "${SMB_LURE_RELEASE_REPO}:${anchor}"
+      docker tag "$HOLDER_BUILD_IMAGE" "${HOLDER_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
       # which is also what would happen if a second runner host ever meant
@@ -2146,6 +2172,7 @@ release:push:
       mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
       nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
       smb_lure_digest="$(scripts/publish-image.sh "${SMB_LURE_RELEASE_REPO}:${anchor}" "$SMB_LURE_BUILD_ID")"
+      holder_digest="$(scripts/publish-image.sh "${HOLDER_RELEASE_REPO}:${anchor}" "$HOLDER_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
       # docker:29-cli has no python and no jq, and a digest read wrongly is
       # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
@@ -2157,6 +2184,7 @@ release:push:
         echo "RELEASE_MOCKINGBIRD_DIGEST=$mockingbird_digest"
         echo "RELEASE_NIGHTJAR_DIGEST=$nightjar_digest"
         echo "RELEASE_SMB_LURE_DIGEST=$smb_lure_digest"
+        echo "RELEASE_HOLDER_DIGEST=$holder_digest"
       } > digests.env
       cat digests.env
       # The durable record of what this pipeline published, kept for 90
@@ -2172,7 +2200,8 @@ release:push:
         "    \"birdcage\": { \"repository\": \"${BIRDCAGE_RELEASE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
         "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }," \
         "    \"nightjar\": { \"repository\": \"${NIGHTJAR_RELEASE_REPO}\", \"digest\": \"${nightjar_digest}\" }," \
-        "    \"smb-lure\": { \"repository\": \"${SMB_LURE_RELEASE_REPO}\", \"digest\": \"${smb_lure_digest}\" }" \
+        "    \"smb-lure\": { \"repository\": \"${SMB_LURE_RELEASE_REPO}\", \"digest\": \"${smb_lure_digest}\" }," \
+        "    \"holder\": { \"repository\": \"${HOLDER_RELEASE_REPO}\", \"digest\": \"${holder_digest}\" }" \
         '  }' \
         '}' > .birdcage-release/tested-images.json
       cat .birdcage-release/tested-images.json
@@ -2205,7 +2234,7 @@ release:attest:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         echo "attesting $repo@$digest"
@@ -2229,7 +2258,7 @@ release:preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}"; do
         repo="${pair%|*}"
         digest="${pair#*|}"
         BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
@@ -2274,7 +2303,7 @@ release:mirror-preview:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
@@ -2354,11 +2383,12 @@ release:promote:
       commit="$(cat .release-commit)"
       # --expect-stamp (#97): each image has a `version` command to ask,
       # so promotion proves the released bytes carry the released version
-      # for all four (smb-lure's since #125).
+      # for all five (smb-lure's since #125, holder's since #126).
       birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
       mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
       nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
       smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
+      holder_digest="$(scripts/promote-release.sh --expect-stamp "$HOLDER_RELEASE_REPO" "$commit")"
       # `latest` moves on every release. Whether a 0.x release is the
       # right thing to run is the decision of whoever pulls it, not this
       # pipeline's.
@@ -2369,7 +2399,7 @@ release:promote:
       # -- which re-verifies the validation evidence before it moves any
       # name at all. Nobody moves it by hand. A tag that moves is not a
       # weaker promise when the moving is gated.
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}" "${HOLDER_RELEASE_REPO}|${holder_digest}"; do
         BIRDCAGE_COMMIT="$commit" \
           scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
       done
@@ -2406,7 +2436,7 @@ release:mirror-release:
   script:
     - |
       set -eu
-      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}"; do
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}"; do
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
@@ -2451,6 +2481,7 @@ release:gitlab:
       - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
       - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
       - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
+      - `$HOLDER_RELEASE_REPO:$RELEASE_TAG`
 
       Verify before you run either of them -- docs/releasing.md has the
       commands. Both carry a key-based validation attestation; the keyless

@@ -57,6 +57,10 @@ on:
         description: The smb-lure digest to countersign, sha256:<64 hex>
         required: true
         type: string
+      holder_digest:
+        description: The holder digest to countersign, sha256:<64 hex>
+        required: true
+        type: string
       commit:
         description: The 40-hex commit both digests were built from
         required: true
@@ -97,6 +101,7 @@ jobs:
           MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
           NIGHTJAR_DIGEST_IN: ${{ inputs.nightjar_digest }}
           SMB_LURE_DIGEST_IN: ${{ inputs.smb_lure_digest }}
+          HOLDER_DIGEST_IN: ${{ inputs.holder_digest }}
           COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
@@ -104,16 +109,16 @@ jobs:
           # registry call: a malformed digest would otherwise come back as
           # "not found", which reads like a missing image rather than a
           # typo.
-          for d in "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN" "$NIGHTJAR_DIGEST_IN" "$SMB_LURE_DIGEST_IN"; do
+          for d in "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN" "$NIGHTJAR_DIGEST_IN" "$SMB_LURE_DIGEST_IN" "$HOLDER_DIGEST_IN"; do
             printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' \
               || { echo "digest is not sha256:<64 hex>: $d"; exit 1; }
           done
-          # Every one of the four must be distinct -- one image's digest
+          # Every one of the five must be distinct -- one image's digest
           # accidentally reused for another would sign the wrong bytes under
           # the right name.
-          unique="$(printf '%s\n' "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN" "$NIGHTJAR_DIGEST_IN" "$SMB_LURE_DIGEST_IN" | sort -u | wc -l)"
-          [ "$unique" -eq 4 ] \
-            || { echo "two or more of the four digests are the same -- each image needs its own"; exit 1; }
+          unique="$(printf '%s\n' "$BIRDCAGE_DIGEST_IN" "$MOCKINGBIRD_DIGEST_IN" "$NIGHTJAR_DIGEST_IN" "$SMB_LURE_DIGEST_IN" "$HOLDER_DIGEST_IN" | sort -u | wc -l)"
+          [ "$unique" -eq 5 ] \
+            || { echo "two or more of the five digests are the same -- each image needs its own"; exit 1; }
           printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
             || { echo "commit is not 40 lowercase hex characters: $COMMIT"; exit 1; }
 
@@ -133,6 +138,7 @@ jobs:
           MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
           NIGHTJAR_DIGEST_IN: ${{ inputs.nightjar_digest }}
           SMB_LURE_DIGEST_IN: ${{ inputs.smb_lure_digest }}
+          HOLDER_DIGEST_IN: ${{ inputs.holder_digest }}
           COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
@@ -141,10 +147,10 @@ jobs:
           # signer can never be running different binaries.
           cosign_dir="$(mktemp -d)"
           cosign_bin="$(scripts/ensure-cosign.sh "$cosign_dir")"
-          # All four images in one run, because a release is all four: a
+          # All five images in one run, because a release is all five: a
           # second dispatch invites one to be forgotten, leaving part of a
           # release countersigned and nothing saying which part.
-          for pair in "birdcage|$BIRDCAGE_DIGEST_IN" "mockingbird|$MOCKINGBIRD_DIGEST_IN" "nightjar|$NIGHTJAR_DIGEST_IN" "smb-lure|$SMB_LURE_DIGEST_IN"; do
+          for pair in "birdcage|$BIRDCAGE_DIGEST_IN" "mockingbird|$MOCKINGBIRD_DIGEST_IN" "nightjar|$NIGHTJAR_DIGEST_IN" "smb-lure|$SMB_LURE_DIGEST_IN" "holder|$HOLDER_DIGEST_IN"; do
             name="${pair%|*}"
             digest="${pair#*|}"
             image="ghcr.io/${OWNER}/${name}"
@@ -169,6 +175,7 @@ jobs:
           MOCKINGBIRD_DIGEST_IN: ${{ inputs.mockingbird_digest }}
           NIGHTJAR_DIGEST_IN: ${{ inputs.nightjar_digest }}
           SMB_LURE_DIGEST_IN: ${{ inputs.smb_lure_digest }}
+          HOLDER_DIGEST_IN: ${{ inputs.holder_digest }}
         run: |
           {
             echo "### Countersigned"
@@ -177,6 +184,7 @@ jobs:
             echo "- \`ghcr.io/${OWNER}/mockingbird@${MOCKINGBIRD_DIGEST_IN}\`"
             echo "- \`ghcr.io/${OWNER}/nightjar@${NIGHTJAR_DIGEST_IN}\`"
             echo "- \`ghcr.io/${OWNER}/smb-lure@${SMB_LURE_DIGEST_IN}\`"
+            echo "- \`ghcr.io/${OWNER}/holder@${HOLDER_DIGEST_IN}\`"
             echo
             echo "The key-based validation evidence verified first, then each"
             echo "digest was signed keyless. Both signatures are in the public"
