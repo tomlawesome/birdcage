@@ -47,27 +47,39 @@ image (AGENTS.md, "Shipped as a binary in an agent image").
 
 ## Run it beside the canary
 
-The lure joins the Mockingbird container's network namespace (decision
-3), so 445 sits on the canary's own address beside telnet, ssh and http:
-one enrolment, one address, and a host offering all four *is* a small
-NAS. It publishes no port of its own.
+The lure joins the address holder's network namespace (issue #126,
+amending decision 3 -- the holder sits between the lure and the canary
+now, not the canary directly), so 445 sits on the canary's own address
+beside telnet, ssh and http: one enrolment, one address, and a host
+offering all four *is* a small NAS. It publishes no port of its own.
 
-Create the audit volume first. It is a size-capped tmpfs: filling it
-crashes the lure, which is an alarm, and never touches the host.
+Create the audit volume and start the holder first. `holder` (cmd/holder)
+is a do-nothing container whose only job is to own that network address
+and keep the tmpfs volume mounted, so restarting the canary or the lure
+never takes the other one down (see "Restarting" below).
 
 ```
 docker volume create --driver local \
   --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=0755 \
   smb-audit
+
+docker run -d --name holder --restart unless-stopped \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 16 \
+  --memory 32m \
+  -v smb-audit:/audit:ro \
+  holder:latest
 ```
 
-Then the lure. `mockingbird` is the name `birdcage canary enrol` gives the
-canary container; the lure joins its network namespace, so that container
-has to exist first.
+Then the canary (`birdcage canary enrol`'s own printed command joins the
+holder too), and then the lure -- it joins the holder's network
+namespace, so the holder has to exist first.
 
 ```
 docker run -d --name smb-lure --restart unless-stopped \
-  --network container:mockingbird \
+  --network container:holder \
   --read-only \
   --cap-drop ALL \
   --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
@@ -88,15 +100,17 @@ docker run -d --name smb-lure --restart unless-stopped \
 ```
 
 This is the same text `birdcage canary enrol` prints and the same text
-`docs/enrolment.md` shows; `TestSMBLureRunCommandMatchesTheDocs` in
-`cmd/birdcage` fails if the three ever drift, because a hardening flag
-quietly dropped from one copy is a lure running without it.
+`docs/enrolment.md` shows; `TestSMBLureRunCommandMatchesTheDocs` and
+`TestHolderRunCommandMatchesTheDocs` in `cmd/birdcage` fail if the copies
+ever drift, because a hardening flag quietly dropped from one copy is a
+lure running without it.
 
-And Mockingbird mounts the same volume **read-only** and is told where to
-read (decision 6: the volume is the only thing shared, and it is
-one-way):
+And Mockingbird joins the same holder namespace and mounts the same
+volume **read-only**, telling the agent where to read it (decision 6: the
+volume is the only thing shared, and it is one-way):
 
 ```
+  --network container:holder \
   -v smb-audit:/audit:ro \
   -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log
 ```
@@ -104,10 +118,10 @@ one-way):
 Without that variable the agent's SMB road does not run at all, which is
 what a canary deployed without the lure looks like.
 
-Either container may start first. The agent's tailer waits for the file
-to appear and, unlike OpenCanary's own SMB module, reads from a saved
-position rather than from the end of the file — so a restart of either
-side loses nothing.
+The canary or the lure may start first, once the holder is up. The
+agent's tailer waits for the file to appear and, unlike OpenCanary's own
+SMB module, reads from a saved position rather than from the end of the
+file — so a restart of either side loses nothing.
 
 ### What each flag is holding shut
 
@@ -145,34 +159,40 @@ with each one removed (2026-09-23, Docker 29.7.2 rootless):
   files are world-readable (0444), so the guest account reads them
   without it.
 
-### Restarting the canary takes the lure with it
+### Restarting the canary, or the lure, takes nothing else down
 
-The lure listens inside the canary container's network namespace, so
-restarting the canary destroys the namespace its Samba is listening in. The
-lure container stays `running` with nothing answering on 445, which is the
-most misleading state it could be in -- Docker does not re-attach a
-container to a namespace that has been replaced.
+Before issue #126, the lure listened inside the canary container's own
+network namespace, so restarting the canary destroyed the namespace its
+Samba was listening in: the lure container stayed `running` with nothing
+answering on 445, the most misleading state it could be in, and only
+`docker restart smb-lure` -- a second, easily forgotten command -- fixed
+it, because Docker does not re-attach a container to a namespace that has
+been replaced.
 
-So restart the lure too, every time you restart the canary:
+The address holder above exists precisely so neither of them owns a
+namespace the other depends on. `docker restart mockingbird` and `docker
+restart smb-lure` each work on their own now, with no companion command
+needed, because both containers are only ever *joining* the holder's
+namespace -- restarting a joiner does not touch it. The holder itself is
+never restarted as part of this; it has nothing to lose by staying up,
+which is the whole point of it doing nothing else.
 
-```
-docker restart mockingbird
-docker restart smb-lure
-```
-
-`docker start smb-lure` does nothing here: the container never stopped. It
-has to be `restart`.
-
-Nothing is lost in the gap. The lure writes to the audit volume and the
-agent resumes from its saved position, so accesses either side of the
-restart still reach birdcage, and a line read twice mints the id it already
-had rather than a second alert.
+Nothing is lost in the gap either way. The lure writes to the audit
+volume and the agent resumes from its saved position, so accesses either
+side of a restart still reach birdcage, and a line read twice mints the
+id it already had rather than a second alert. The audit file's own lines
+also survive a longer gap than one restart: the holder keeps the volume
+mounted even while both the canary and the lure are stopped, so nothing
+unread is wiped -- before the holder, a tmpfs volume's backing memory was
+freed the moment no container had it mounted.
 
 ## Configuration
 
 Identity follows the operator's naming (decision 7), never ours. Sharing
-the canary's network namespace shares its hostname too, so the defaults
-are already the canary's own name and nothing needs setting.
+a network namespace shares its hostname too, so the canary, the holder
+and the lure all present the same one -- Docker's own default (the
+holder's container id) unless an operator sets `--hostname` themselves --
+and nothing needs setting here for that reason.
 
 | Variable | Default | |
 |---|---|---|
