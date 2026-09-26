@@ -629,6 +629,13 @@ once G4 is tagged.
 
 ## 6. What the owner has to do
 
+**Owner decisions, 2026-09-26 (Q17-Q24):** licence **Apache-2.0**; the
+three G2/G5 dependencies below **approved** (`go-webauthn` still waits for
+G8); passkeys: data in v1, ceremony in G8; second factor **mandatory** in
+birdcage; roles as recommended; document store as recommended; the owner
+creates the repository. Retiring `POST /api/heartbeat` is now #135, which
+removes it before login rather than in B6.
+
 - **Create the repository** `github.com/tomlawesome/gauntlet` (GitLab
   primary under `ai/`, GitHub mirror, as birdcage), default branch `dev`,
   with the layout in §1. Recommendation: same protection rules and CI
@@ -667,4 +674,4 @@ once G4 is tagged.
   Recommendation: the document table; the alternative is a second read
   model.
 
-Written by Fable 5.1, 2026-09-26.
+Written by Fable 5.1, 2026-09-26. Owner decisions recorded by Opus 5.5, 2026-09-26.
