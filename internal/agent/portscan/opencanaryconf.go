@@ -9,7 +9,7 @@ import (
 
 // DefaultNodeID is what an event's node_id falls back to when the
 // OpenCanary configuration could not be read or names none. It is the
-// same literal build/mockingbird/opencanary.conf ships as
+// same literal build/opencanary/opencanary.conf ships as
 // device.node_id, so an agent whose config file is missing still emits
 // events that group with the ones OpenCanary itself emitted on that box
 // rather than under an empty or invented name.

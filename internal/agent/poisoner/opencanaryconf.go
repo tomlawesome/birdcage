@@ -9,7 +9,7 @@ import (
 // DefaultNodeID and DefaultConfPath mirror internal/agent/portscan's and
 // internal/agent/snmp's constants of the same name -- see portscan's
 // opencanaryconf.go for the reasoning, which applies here unchanged:
-// DefaultNodeID is the literal build/mockingbird/opencanary.conf ships as
+// DefaultNodeID is the literal build/opencanary/opencanary.conf ships as
 // device.node_id, so an agent whose configuration file is missing still
 // emits events that group with the rest of the box's own.
 const (

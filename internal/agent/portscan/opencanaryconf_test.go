@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// shippedConf is the configuration the Mockingbird image actually
+// shippedConf is the configuration the OpenCanary image actually
 // carries. Reading the real file rather than a fixture is the point of
 // this test: the listening-port set is derived from it at runtime, so a
 // future change that enables a module -- or renames a key -- should show
 // up here rather than as a canary alerting on its own services.
-const shippedConf = "../../../build/mockingbird/opencanary.conf"
+const shippedConf = "../../../build/opencanary/opencanary.conf"
 
 func TestReadsTheShippedOpenCanaryConf(t *testing.T) {
 	t.Parallel()

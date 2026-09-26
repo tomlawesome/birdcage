@@ -4,7 +4,7 @@
 // log (#65).
 //
 // OpenCanary's own module loader (opencanary.tac's start_mod, in the
-// pinned 0.9.9 release build/mockingbird/requirements.txt installs) wraps
+// pinned 0.9.9 release build/opencanary/requirements.txt installs) wraps
 // each module's instantiation and startup in a try/except: a module that
 // raises there -- the original report on this issue was the portscan
 // module refusing to run without iptables-legacy, since superseded by

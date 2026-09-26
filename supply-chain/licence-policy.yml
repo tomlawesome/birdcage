@@ -88,23 +88,24 @@ allow-npm-licenses:
   # Public-domain dedication; no obligations at all.
   - CC0-1.0
 
-# Licence policy for the pip packages installed into the mockingbird
+# Licence policy for the pip packages installed into the OpenCanary
 # image, read by scripts/licence-check-python.py (called via
 # scripts/licence-check-python.sh). A separate key from the two above for
 # the same reason they are separate from each other: each script's
 # extraction is a plain prefix match on its own key, and the keys must
 # never collide.
 #
-# Covers build/mockingbird/requirements.txt -- everything pip installs
-# into the distroless mockingbird image (build/mockingbird/Dockerfile).
-# Before #95 this was the one ecosystem nothing gated at all.
+# Covers build/opencanary/requirements.txt -- everything pip installs
+# into the distroless OpenCanary image (build/opencanary/Dockerfile;
+# issue #132 moved this out of the mockingbird image, unchanged
+# otherwise). Before #95 this was the one ecosystem nothing gated at all.
 #
 # Same house rule as the two lists above: only the licences actually in
 # use, not a general list of acceptable ones. A dependency arriving under
 # a licence not yet here fails the job, and adding the entry is a
 # reviewed change, not a silent pass.
 #
-# Scanned build/mockingbird/requirements.txt on 2026-09-20 (#95) by
+# Scanned build/opencanary/requirements.txt on 2026-09-20 (#95) by
 # actually installing it (`pip install --require-hashes --target`, same
 # as the Dockerfile) and reading every installed package's own metadata:
 # 36 packages, 33 declaring a permissive licence in one of the three

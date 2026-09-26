@@ -45,7 +45,7 @@ func probePostgres(ctx context.Context, address string, port int, marker string)
 // redis.max_arg_length, 30 bytes by default -- two short of the
 // 32-character hex marker (selftest.MarkerBytes), so the logged ARGS
 // could never contain the whole marker birdcage matches by substring
-// (MR !60 pipeline 1524). build/mockingbird/opencanary.conf sets that
+// (MR !60 pipeline 1524). build/opencanary/opencanary.conf sets that
 // key to 64 for this reason; a canary running its own OpenCanary config
 // needs the same, or its redis target never passes.
 func probeRedis(ctx context.Context, address string, port int, marker string) error {

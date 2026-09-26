@@ -56,7 +56,7 @@ type Profile struct {
 	// kind's image serves -- written into a provisioned node's canaries
 	// row (store.Provision) since a node is never asked for its own
 	// ports. For Honeypot this must match every `"*.enabled": true`
-	// module's `.port` entry in build/mockingbird/opencanary.conf
+	// module's `.port` entry in build/opencanary/opencanary.conf
 	// exactly: ftp(21), ssh(22), telnet(23), tftp(69), http(80),
 	// mssql(1433), mysql(3306), rdp(3389), sip(5060), redis(6379). A
 	// change to that file must update this literal -- it is now the one

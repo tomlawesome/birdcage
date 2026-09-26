@@ -6,7 +6,7 @@
 # Deliberately fixture-only: unlike licence-check-npm.test.sh's "the real
 # thing must pass" case (frontend/node_modules is already installed and
 # already clean), running this checker against a real pip install would
-# need network access on every test run. build/mockingbird/requirements.txt
+# need network access on every test run. build/opencanary/requirements.txt
 # really does pull in a GPL package (hpfeeds) and two with no declared
 # licence at all (setuptools, ordereddict) -- all three pass for real, but
 # only via named exceptions in allow-python-package-licenses:, not because

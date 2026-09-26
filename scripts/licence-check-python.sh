@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Gates the licences of the pip packages installed into the mockingbird
-# image -- the counterpart to scripts/licence-check.sh (Go modules) and
-# scripts/licence-check-npm.sh (npm). Unlike either of those, nothing in
-# this repository already installs the Python dependencies before this
-# script runs (the npm gate rides inside test:frontend precisely because
-# that job already has an installed node_modules; no Python job does), so
-# this wrapper does the install itself: `pip install --require-hashes`
-# against build/mockingbird/requirements.txt, same as the Dockerfile's
-# honeypot stage, into a throwaway directory.
+# Gates the licences of the pip packages installed into the OpenCanary
+# image (build/opencanary -- moved out of mockingbird by issue #132,
+# unchanged otherwise) -- the counterpart to scripts/licence-check.sh (Go
+# modules) and scripts/licence-check-npm.sh (npm). Unlike either of those,
+# nothing in this repository already installs the Python dependencies
+# before this script runs (the npm gate rides inside test:frontend
+# precisely because that job already has an installed node_modules; no
+# Python job does), so this wrapper does the install itself: `pip install
+# --require-hashes` against build/opencanary/requirements.txt, same as
+# the Dockerfile's honeypot stage, into a throwaway directory.
 #
 # A licence is not recorded anywhere in requirements.txt itself -- only a
 # name, a version and a hash -- so there is no way to gate it without
@@ -23,7 +24,7 @@ set -euo pipefail
 # escape hatch NODE_MODULES_DIR gives licence-check-npm.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-$SCRIPT_DIR/../build/mockingbird/requirements.txt}"
+REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-$SCRIPT_DIR/../build/opencanary/requirements.txt}"
 POLICY_FILE="${POLICY_FILE:-$SCRIPT_DIR/../supply-chain/licence-policy.yml}"
 
 if [ -n "${PYTHON_PACKAGES_DIR:-}" ]; then
