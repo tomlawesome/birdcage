@@ -108,7 +108,18 @@ func TestHandleCanariesRejectsUnknownRange(t *testing.T) {
 	}
 }
 
-func TestHandleHeartbeatRecordsAndUpdatesCanary(t *testing.T) {
+// TestDashboardHeartbeatRouteRemoved is issue #135: POST /api/heartbeat
+// used to let anyone who could reach the dashboard mark any known canary
+// alive with no credential at all -- this test used to be
+// TestHandleHeartbeatRecordsAndUpdatesCanary, which posted exactly that
+// unauthenticated body and asserted 200 plus an updated LastHeartbeatAt.
+// The route is gone now; a real agent's heartbeat travels over the
+// ingest listener's own POST /ingest/heartbeat instead (mTLS + token,
+// internal/ingest/heartbeat.go). Both GET and POST are checked because
+// removing the mux.Handle registration in api.go (rather than just the
+// method) means the outer mux never dispatches either verb to
+// dashboardRoutes at all -- see notFoundJSON.
+func TestDashboardHeartbeatRouteRemoved(t *testing.T) {
 	database := openTempDB(t)
 	enrolledAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	insertCanary(t, database, store.Canary{
@@ -116,64 +127,23 @@ func TestHandleHeartbeatRecordsAndUpdatesCanary(t *testing.T) {
 		HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
 	})
 
-	beatAt := enrolledAt.Add(5 * time.Minute)
-	h := newHandler(database, fixedNow(beatAt), nil)
-	rec := httptest.NewRecorder()
+	checkAt := enrolledAt.Add(5 * time.Minute)
+	h := newHandler(database, fixedNow(checkAt), nil)
 	body, _ := json.Marshal(map[string]string{"canary": "canary-lan"})
-	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", bytes.NewReader(body))
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, "/api/heartbeat", bytes.NewReader(body))
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /api/heartbeat = %d, want 404 or 405 (the route must not exist); body=%s", method, rec.Code, rec.Body.String())
+		}
 	}
 
-	canaries, err := store.ListCanaries(context.Background(), database, beatAt, 14*24*time.Hour)
+	canaries, err := store.ListCanaries(context.Background(), database, checkAt, 14*24*time.Hour)
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}
-	if len(canaries) != 1 || canaries[0].LastHeartbeatAt == nil || !canaries[0].LastHeartbeatAt.Equal(beatAt) {
-		t.Errorf("canaries = %+v, want canary-lan with LastHeartbeatAt %v", canaries, beatAt)
-	}
-}
-
-func TestHandleHeartbeatUnknownCanaryReturns404(t *testing.T) {
-	database := openTempDB(t)
-	h := newHandler(database, time.Now, nil)
-
-	rec := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]string{"canary": "no-such-canary"})
-	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", bytes.NewReader(body))
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleHeartbeatBadRequests(t *testing.T) {
-	database := openTempDB(t)
-	h := newHandler(database, time.Now, nil)
-
-	cases := []string{`not json`, `{}`, `{"canary": ""}`, `{"canary": "  "}`}
-	for _, body := range cases {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", bytes.NewReader([]byte(body)))
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("body=%q: status = %d, want 400; resp=%s", body, rec.Code, rec.Body.String())
-		}
-	}
-}
-
-func TestHandleHeartbeatRejectsGet(t *testing.T) {
-	database := openTempDB(t)
-	h := newHandler(database, time.Now, nil)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/heartbeat", nil)
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405; body=%s", rec.Code, rec.Body.String())
+	if len(canaries) != 1 || canaries[0].LastHeartbeatAt != nil {
+		t.Errorf("canaries = %+v, want canary-lan with no LastHeartbeatAt (an unauthenticated request must not record one)", canaries)
 	}
 }

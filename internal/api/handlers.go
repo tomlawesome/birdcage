@@ -1,12 +1,9 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/store"
@@ -191,39 +188,6 @@ func (h *handler) handleScans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, scansResponse{Scans: scans})
-}
-
-// heartbeatRequest is POST /api/heartbeat's body.
-type heartbeatRequest struct {
-	Canary string `json:"canary"`
-}
-
-// handleHeartbeat serves POST /api/heartbeat, recording that the named
-// canary phoned home at h.now(). A canary id that isn't registered
-// (store.ErrCanaryNotFound) is reported as 404 rather than silently
-// accepted, since enrollment (#1) is what's supposed to create the row.
-func (h *handler) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var req heartbeatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, `body must be JSON: {"canary": "<id>"}`)
-		return
-	}
-	if strings.TrimSpace(req.Canary) == "" {
-		writeError(w, http.StatusBadRequest, "canary must not be empty")
-		return
-	}
-
-	err := store.RecordHeartbeat(r.Context(), h.db, req.Canary, h.now())
-	switch {
-	case errors.Is(err, store.ErrCanaryNotFound):
-		writeError(w, http.StatusNotFound, "unknown canary")
-		return
-	case err != nil:
-		log.Printf("api: record heartbeat: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // visitorsResponse is GET /api/visitors' body. NextBefore mirrors

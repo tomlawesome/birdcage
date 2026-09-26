@@ -1,8 +1,10 @@
 // Package store is birdcage's query layer backing the dashboard API
 // (#3). Reading the alerts table is its main job. This package also owns
 // two write paths of its own: the canaries/heartbeats registry (issue
-// #34, canary.go) -- POST /api/heartbeat and canary enrollment -- and,
-// as of issue #32, InsertAlertIfNew (this file), the sole writer of
+// #34, canary.go) -- canary enrollment and the ingest listener's
+// authenticated heartbeats (issue #32's POST /ingest/heartbeat; #135
+// removed the dashboard's own unauthenticated POST /api/heartbeat) --
+// and, as of issue #32, InsertAlertIfNew (this file), the sole writer of
 // alert rows since slice 7 retired the old UDP syslog listener's own
 // direct insert, and the canary_tokens table (token.go) for the
 // token-authenticated ingest path that calls it.
