@@ -845,10 +845,14 @@ test:image:birdcage:
 
 # The agent fails closed without a token and client certificate in its
 # state directory, so the job mints throwaway ones into a named volume
-# (never into the repository) and points MOCKINGBIRD_BIRDCAGE_URL at a closed
-# port: what is under test is that the image starts as uid 65532, binds
-# the honeypot ports, and answers an FTP client. The loopback path from
-# OpenCanary to the agent is #48's end-to-end test, not this job's.
+# (never into the repository) and points MOCKINGBIRD_BIRDCAGE_URL at a
+# closed port: what is under test is that the image starts as uid 65532
+# and its own loopback receiver answers. Since issue #132 this image
+# carries no honeypot service of its own to prove against -- OpenCanary
+# moved to build/opencanary, and test:image:opencanary below is its own
+# equivalent of this job, proving the FTP banner the way this job used
+# to. The loopback path from OpenCanary to the agent across the two
+# containers is #48's/#132's end-to-end test, not this job's.
 test:image:mockingbird:
   stage: test
   image: $DOCKER_CLI_IMAGE
@@ -902,34 +906,114 @@ test:image:mockingbird:
     # relaxing its hardening to exercise a different feature would cost
     # more than it proves. The capability itself is proved by the image
     # test in #65 and by the unit tests in internal/agent/portscan.
+    #
+    # No --tmpfs for /var/log/opencanary or /var/tmp any more (#132):
+    # this image never writes to either now -- OpenCanary owned both,
+    # and OpenCanary is a different image. The log tailer opening an
+    # empty, read-only, image-baked directory and finding no file there
+    # is an ordinary "nothing to read yet" state (config.go's own
+    # comment), not a startup failure.
     - >-
       docker run --detach --name "$APP" --init
-      --sysctl net.ipv4.ip_unprivileged_port_start=0
       --volume "$APP-state:/var/lib/mockingbird"
-      --tmpfs /var/log/opencanary:rw,noexec,nosuid,size=64m,uid=65532,gid=65532
-      --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
       --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges
       --pids-limit 64 --memory 256m --cpus 0.5
       --env MOCKINGBIRD_BIRDCAGE_URL=https://127.0.0.1:1
       "$APP"
     - |
-      # The `sleep 2` is the point (#77). BusyBox nc shuts the socket
-      # down for writing the moment its stdin ends, and can exit without
-      # draining what the server already sent -- so `printf | nc` races
-      # the server's replies rather than waiting for them. It won that
-      # race on a workstation and lost it 26 times running on this
-      # runner, where the container is held to half a CPU: OpenCanary
-      # logged an authentication for nearly every attempt, proving it had
-      # sent its 220 greeting, while the check reported no answer at all.
-      # Holding stdin open until the replies arrive is what makes this a
-      # readiness check rather than a timing measurement.
-      #
-      # Still assert the banner, not just that the port accepts a
-      # connection: this job exists to prove OpenCanary is serving FTP,
-      # and a bare connect would pass against a socket with nothing
-      # behind it.
+      # #132: OpenCanary is a separate image now (test:image:opencanary
+      # below proves its own FTP banner, the way this job used to), so
+      # what this job can still prove about this one is that its own
+      # loopback receiver -- the socket OpenCanary's webhook posts to --
+      # comes up and accepts a connection under the same hardening.
       for attempt in $(seq 1 30); do
-        reply=$(docker run --rm --network "container:$APP" "$ALPINE_IMAGE" \
+        if docker run --rm --network "container:$APP" "$ALPINE_IMAGE" sh -c 'nc -z -w2 127.0.0.1 9919'; then
+          echo "the agent's own loopback receiver answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 30 ]; then
+          echo "the agent's own receiver never answered on 127.0.0.1:9919"
+          echo "container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container -- docker-init, the agent -- must be
+    # uid 65532; a root process here is the failure the image exists to
+    # prevent.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
+    - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# test:image:opencanary is issue #132's own split of what
+# test:image:mockingbird used to prove about the combined image: OpenCanary
+# starts as uid 65532 under the exact hardening this image ships with
+# (build/opencanary/README.md has the per-flag evidence) and answers a real
+# FTP client. Unlike the agent, OpenCanary needs the sysctl to bind ports
+# under 1024 at all -- see build/opencanary/Dockerfile's own comment -- so
+# this job's own throwaway holder gives it a network namespace to bind in,
+# the same shape scripts/e2e/stack.sh's start_holder uses for the real
+# journeys.
+test:image:opencanary:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: opencanary-test-$CI_JOB_ID
+    APP_HOLDER: opencanary-test-holder-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - docker tag "$OPENCANARY_BUILD_IMAGE" "$APP"
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    # A throwaway holder (#126), exactly as an operator's own enrolment
+    # would deploy one, so OpenCanary has a network namespace to bind its
+    # ports in without owning one directly -- the shape it actually ships
+    # in, not a simplification of it.
+    - >-
+      docker run --detach --name "$APP_HOLDER"
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 16 --memory 32m
+      "$HOLDER_BUILD_IMAGE"
+    - >-
+      docker run --detach --name "$APP" --init
+      --network "container:$APP_HOLDER"
+      --sysctl net.ipv4.ip_unprivileged_port_start=0
+      --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
+      --tmpfs /var/log/opencanary:rw,noexec,nosuid,size=64m,uid=65532,gid=65532
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 32 --memory 128m --cpus 0.5
+      "$APP"
+    - |
+      # The `sleep 2` and the banner assertion are #77's own finding,
+      # carried over unchanged from this job's pre-#132 shape: BusyBox nc
+      # shuts the socket down for writing the moment its stdin ends and
+      # can exit before draining what the server already sent, so holding
+      # stdin open until the reply arrives is what makes this a readiness
+      # check rather than a timing measurement. Still assert the banner,
+      # not just that the port accepts a connection -- a bare connect
+      # would pass against a socket with nothing behind it.
+      for attempt in $(seq 1 30); do
+        reply=$(docker run --rm --network "container:$APP_HOLDER" "$ALPINE_IMAGE" \
                   sh -c '{ printf "USER x\r\nPASS y\r\nQUIT\r\n"; sleep 2; } | nc -w 5 127.0.0.1 21' || true)
         if printf '%s' "$reply" | grep -q '^220 '; then
           echo "FTP answered on attempt $attempt"
@@ -937,9 +1021,6 @@ test:image:mockingbird:
         fi
         sleep 1
         if [ "$attempt" = 30 ]; then
-          # Say which half failed. "Never answered" sent the last
-          # investigation to the honeypot, which was working the whole
-          # time; the check was what broke.
           if [ -n "$reply" ]; then
             echo "FTP replied but never sent a 220 greeting. Last reply:"
             printf '%s\n' "$reply"
@@ -951,16 +1032,16 @@ test:image:mockingbird:
           exit 1
         fi
       done
-    # Every process in the container -- docker-init, the agent, twistd --
-    # must be uid 65532; a root process here is the failure the image
-    # exists to prevent.
+    # Every process in the container -- docker-init, twistd -- must be
+    # uid 65532; a root process here is the failure the image exists to
+    # prevent.
     - docker top "$APP" -o pid,user,args
     - docker top "$APP" -o pid,user,args | grep -q ' 65532 .*python3' || { echo "OpenCanary is not running as 65532"; exit 1; }
     - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
   after_script:
-    - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
-    - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
-    - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker rm --force "$APP" >/dev/null 2>&1 || true
+    - docker rm --force "$APP_HOLDER" >/dev/null 2>&1 || true
+    - docker image rm "$APP" >/dev/null 2>&1 || true
 
 # Nightjar's own equivalent of test:image:mockingbird above, #108 section
 # 8: proves non-root start under the exact run-command shape the enrol
