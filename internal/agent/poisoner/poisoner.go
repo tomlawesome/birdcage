@@ -81,6 +81,13 @@ type Detector struct {
 	counter  *paceCounter
 	arpPath  string
 
+	// afterBurstStepHook, when non-nil, is called at the end of each
+	// per-name step inside burst -- test-only (nil in every production
+	// Detector), so a test can deterministically inject a live settings
+	// change between two lookup steps of a single burst call instead of
+	// racing against burst's own randomized inter-lookup gaps.
+	afterBurstStepHook func()
+
 	// rand draws the transaction ids. Separate from schedule's stream so
 	// that how many questions a burst sends cannot shift the rhythm, and
 	// seeded from the same node id so a test can reproduce a run.
@@ -492,12 +499,22 @@ func (d *Detector) waitForWorkingHours(ctx context.Context) bool {
 }
 
 // burst makes one burst of lookups: two to five of them, on every protocol
-// the profile asks, spread unevenly across a minute. shape and names are
-// read once, at the top, rather than once per lookup: a live settings
-// push mid-burst must not change which protocols or names the burst
-// already in flight uses, only the next one.
+// the profile asks, spread unevenly across a minute.
+//
+// shape and names are re-read from the live settings before every
+// lookup step (up to maxBurstLookups times), not once at the top of the
+// burst. A burst can itself take close to a minute to finish
+// (burstSpread's own comment), spread across gaps up to
+// burstSpread/maxBurstLookups (12s) apart -- reading once at the top
+// meant a live push landing mid-burst (issue #124) had to wait for the
+// whole burst, not just the next lookup step, to notice it, which is
+// what let a burst already in flight when segment_profile was pushed to
+// "off" keep asking on the old profile for up to another ~48s on top of
+// however long the push itself took to reach this agent. See
+// TestBurstPicksUpALiveSettingsChangeBetweenLookups, which reproduces
+// this by pushing a change through afterBurstStepHook between two
+// lookup steps of a single burst call.
 func (d *Detector) burst(ctx context.Context) {
-	shape, names, _ := d.getShapeNamesPace()
 	size := d.schedule.BurstSize()
 	gaps := d.schedule.BurstGaps(size)
 	d.bursts.Add(1)
@@ -506,6 +523,7 @@ func (d *Detector) burst(ctx context.Context) {
 		if i > 0 && !sleepCtx(ctx, gaps[i-1]) {
 			return
 		}
+		shape, names, _ := d.getShapeNamesPace()
 		name := d.schedule.NextName(names)
 		if name == "" {
 			return
@@ -528,6 +546,10 @@ func (d *Detector) burst(ctx context.Context) {
 			for _, a := range answers {
 				d.emit(a)
 			}
+		}
+		if d.afterBurstStepHook != nil {
+			// Test-only: see TestBurstPicksUpALiveSettingsChangeBetweenLookups.
+			d.afterBurstStepHook()
 		}
 	}
 }
