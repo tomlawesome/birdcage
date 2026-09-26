@@ -36,6 +36,7 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
 	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
@@ -264,23 +265,35 @@ func upsertCanarySetting(ctx context.Context, conn db.Conn, canaryID string, key
 }
 
 // SetCanarySettings validates and writes every (key, value) in updates
-// for canaryID, in one transaction -- issue #124's "one API write path
-// edits them", so a partial write (some keys valid, one not) never
-// applies: the whole call fails before anything is stored, and the
-// caller's error names the offending key.
+// for canaryID, in one transaction -- so a partial write (some keys
+// valid, one not) never applies: the whole call fails before anything is
+// stored, and the caller's error names the offending key. It is
+// birdcage's one write path onto canary_settings today: `birdcage agent
+// settings set` (cmd/birdcage/agentsettings.go) -- there is no dashboard
+// write path, deliberately (owner, 2026-09-26: the dashboard API stays
+// read-only until login exists, #8; dashboardRoutes' own doc comment is
+// the enforced half of that).
 //
 // kind is the canary's own agentkind.Kind, checked against
 // CanarySettingAppliesToKind for every key before anything is validated
 // -- the same "only the honeypot has lures" refusal
 // cmd/birdcage/canary.go's own enrol command makes for --lure and
-// --smb-*, applied here to the dashboard write path instead of a CLI
-// flag.
-func SetCanarySettings(ctx context.Context, database *db.DB, canaryID string, kind agentkind.Kind, updates map[CanarySettingKey]string, updatedAt time.Time) error {
+// --smb-*.
+//
+// One audit entry is written in the same transaction, naming every
+// changed key but never a value (bait_names must never reach a log --
+// see internal/agent/poisoner's package comment): triggeredBy identifies
+// the caller ("cli" for the only caller today), matching the mint/revoke/
+// enrol commands' own audit entries in cmd/birdcage/canary.go.
+func SetCanarySettings(ctx context.Context, database *db.DB, canaryID string, kind agentkind.Kind, updates map[CanarySettingKey]string, updatedAt time.Time, triggeredBy string) error {
 	if len(updates) == 0 {
 		return fmt.Errorf("store: SetCanarySettings: updates is empty")
 	}
 	if updatedAt.IsZero() {
 		return fmt.Errorf("store: SetCanarySettings: updatedAt must be set by the caller")
+	}
+	if triggeredBy == "" {
+		return fmt.Errorf("store: SetCanarySettings: triggeredBy must be set by the caller")
 	}
 	for key := range updates {
 		if _, ok := canarySettingDefs[key]; !ok {
@@ -305,8 +318,8 @@ func SetCanarySettings(ctx context.Context, database *db.DB, canaryID string, ki
 	// Sorted so a caller's map iteration order can never make two
 	// concurrent multi-key writes apply in a different order against
 	// each other -- version increments would still be correct either
-	// way, but a stable order makes this function's behaviour
-	// reproducible to test against.
+	// way, and it makes both this function's behaviour and the audit
+	// entry's key list reproducible to test against.
 	keys := make([]CanarySettingKey, 0, len(updates))
 	for key := range updates {
 		keys = append(keys, key)
@@ -317,6 +330,20 @@ func SetCanarySettings(ctx context.Context, database *db.DB, canaryID string, ki
 		if err := upsertCanarySetting(ctx, tx, canaryID, key, updates[key], updatedAt); err != nil {
 			return err
 		}
+	}
+
+	names := make([]string, len(keys))
+	for i, key := range keys {
+		names[i] = string(key)
+	}
+	if _, err := audit.Append(ctx, tx, audit.Entry{
+		Action:      "canary_settings.updated",
+		Target:      canaryID,
+		Reason:      "updated " + strings.Join(names, ", "),
+		TriggeredBy: triggeredBy,
+		CreatedAt:   updatedAt,
+	}); err != nil {
+		return fmt.Errorf("record canary settings audit entry: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

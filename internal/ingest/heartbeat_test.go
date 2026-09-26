@@ -466,7 +466,7 @@ func TestHandleHeartbeatPushesOnHashMismatch(t *testing.T) {
 		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		if err := store.SetCanarySettings(context.Background(), database, "canary-a", agentkind.Honeypot,
-			map[store.CanarySettingKey]string{store.CanarySettingSegmentProfile: "off"}, time.Now().UTC()); err != nil {
+			map[store.CanarySettingKey]string{store.CanarySettingSegmentProfile: "off"}, time.Now().UTC(), "test"); err != nil {
 			t.Fatalf("SetCanarySettings: %v", err)
 		}
 

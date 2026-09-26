@@ -232,7 +232,7 @@ func TestHandleCanaryFactsSettingsConfirmedFollowsTheAgentsOwnHash(t *testing.T)
 	writeAt := enrolledAt.Add(time.Hour)
 	if err := store.SetCanarySettings(ctx, database, "canary-iot", agentkind.Honeypot, map[store.CanarySettingKey]string{
 		store.CanarySettingSegmentProfile: "off",
-	}, writeAt); err != nil {
+	}, writeAt, "test"); err != nil {
 		t.Fatalf("SetCanarySettings: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestHandleCanaryFactsSettingsConfirmedFollowsTheAgentsOwnHash(t *testing.T)
 	// no longer applies -- computed fresh, not stored.
 	if err := store.SetCanarySettings(ctx, database, "canary-iot", agentkind.Honeypot, map[store.CanarySettingKey]string{
 		store.CanarySettingSegmentProfile: "windows",
-	}, writeAt.Add(2*time.Minute)); err != nil {
+	}, writeAt.Add(2*time.Minute), "test"); err != nil {
 		t.Fatalf("SetCanarySettings (second write): %v", err)
 	}
 	resp = get()

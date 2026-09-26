@@ -697,11 +697,34 @@ with the two variables above.
 
 ### Changing these later
 
-These are per-canary settings, changed by restarting the container
-with a different `-e` value -- you do not need a new release of
-birdcage. They cannot yet be changed from the canary page in the
-dashboard: birdcage has no way to push a setting to a running canary
-today, so the container's environment is the only place they are set.
+These are per-canary settings, and issue #124 gives them a second way to
+change: `birdcage agent settings set <agent_id> <key>=<value> [<key>=<value> ...]`,
+run on the birdcage host, reaches the running canary on its next
+heartbeat with no restart and no new release. For example:
+
+```
+birdcage agent settings set fs-lon-04 segment_profile=off
+```
+
+The keys are `segment_profile`, `bait_names`, `pace_floor`,
+`pace_ceiling` and `working_hours`, validated by the same rules as the
+`-e` variables and the enrolment flags above. `birdcage agent settings
+show <agent_id>` prints the current value of each, its version, and
+whether the agent has actually confirmed running with it (its own
+next heartbeat has to report back that it applied the change -- that
+takes one heartbeat interval more than applying it does).
+
+The environment variables above still work and are still the only way
+to set a starting value the canary boots with -- an operator who never
+runs `birdcage agent settings set` for a canary sees exactly the
+behaviour this section already describes. Once a value has been set
+this way, though, it is what the agent runs with, not the environment.
+
+This cannot yet be done from the canary page in the dashboard: the
+dashboard API stays read-only until the login the whole product needs
+(#8) exists, so a page that could reprogram a canary's settings with
+no authentication at all would be worse than not having the page. The
+canary page is issue #134, waiting on that login.
 
 ### What the alert says
 

@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # agent-settings.sh -- issue #124's live check: changing a per-canary
-# setting on the dashboard reaches the already-running canary within one
-# heartbeat, with no container restart, and the facts column shows the
-# agent's own confirmation.
+# setting reaches the already-running canary within one heartbeat, with
+# no container restart, and the facts column shows the agent's own
+# confirmation.
+#
+# The write is `birdcage agent settings set`, run on the birdcage host --
+# not a dashboard API call. The dashboard API stays read-only until login
+# exists (owner, 2026-09-26; #8): reading GET /api/canary's facts.settings
+# is fine, but the only door onto store.SetCanarySettings is the CLI (see
+# internal/api/api.go's dashboardRouteSpecs and
+# cmd/birdcage/agentsettings.go).
 #
 # Reuses scripts/e2e/poisoner-stack.sh's infrastructure rather than
 # standing up a second one: that canary is already paced to burst every
 # few seconds and already proves bait lookups go out and reach birdcage
 # as poisoner alerts (poisoner.sh). This journey's own job starts where
 # that one leaves off -- it changes the segment profile from "windows"
-# (the default poisoner-stack.sh enrols with) to "off" through
-# POST /api/canary/settings, then proves the change took effect on the
-# running container: no more bait lookups go out, the facts column reads
-# the setting as confirmed, and the container was never restarted.
+# (the default poisoner-stack.sh enrols with) to "off" through the CLI,
+# then proves the change took effect on the running container: no more
+# bait lookups go out, the facts column reads the setting as confirmed,
+# and the container was never restarted.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/poisoner-stack.sh up)"
@@ -65,11 +72,12 @@ ok "$before poisoned answer(s) logged so far"
 startedAt="$(docker inspect --format '{{.State.StartedAt}}' "$POISONER_CANARY")" \
   || fail "could not read $POISONER_CANARY's start time" "$POISONER_CANARY"
 
-step "birdcage is asked to turn the segment profile off"
-resp="$(helper "curl -sS --cacert /tls/dashboard-ca.pem -X POST -d '{\"segment_profile\":\"off\"}' '$BIRDCAGE_URL/api/canary/settings?id=$POISONER_CANARY_ID'")"
+step "the segment profile is turned off through the CLI"
+resp="$("$E2E_STACK" birdcage agent settings set "$POISONER_CANARY_ID" segment_profile=off)" \
+  || fail "birdcage agent settings set failed" "$POISONER_CANARY"
 case "$resp" in
-  *'"ok":true'*) ok "birdcage accepted the write: $resp" ;;
-  *) fail "POST /api/canary/settings was refused: $resp" "$POISONER_CANARY" ;;
+  *segment_profile=off*) ok "birdcage accepted the write: $resp" ;;
+  *) fail "birdcage agent settings set did not echo segment_profile=off: $resp" "$POISONER_CANARY" ;;
 esac
 
 step "the running canary stops asking within one heartbeat -- no restart"

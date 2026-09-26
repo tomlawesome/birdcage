@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
@@ -41,7 +42,7 @@ func TestSetCanarySettingsRoundTripsAndVersions(t *testing.T) {
 		firstWrite := mustParse(t, "2026-01-01T00:00:00Z")
 		if err := SetCanarySettings(ctx, database, "canary-a", agentkind.Honeypot, map[CanarySettingKey]string{
 			CanarySettingSegmentProfile: "linux",
-		}, firstWrite); err != nil {
+		}, firstWrite, "test"); err != nil {
 			t.Fatalf("SetCanarySettings: %v", err)
 		}
 
@@ -56,7 +57,7 @@ func TestSetCanarySettingsRoundTripsAndVersions(t *testing.T) {
 		secondWrite := mustParse(t, "2026-01-02T00:00:00Z")
 		if err := SetCanarySettings(ctx, database, "canary-a", agentkind.Honeypot, map[CanarySettingKey]string{
 			CanarySettingSegmentProfile: "off",
-		}, secondWrite); err != nil {
+		}, secondWrite, "test"); err != nil {
 			t.Fatalf("SetCanarySettings (second write): %v", err)
 		}
 		got, err = ListCanarySettings(ctx, database, "canary-a")
@@ -69,11 +70,42 @@ func TestSetCanarySettingsRoundTripsAndVersions(t *testing.T) {
 	})
 }
 
+// TestSetCanarySettingsAuditsKeysNeverValues proves the write path's own
+// security point: the audit entry names which keys changed, with the
+// caller's triggeredBy, but never a value -- bait_names especially must
+// never reach the audit log (internal/agent/poisoner's package comment).
+func TestSetCanarySettingsAuditsKeysNeverValues(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z")})
+		secretName := "secret-fs-01"
+		if err := SetCanarySettings(context.Background(), database, "canary-a", agentkind.Honeypot, map[CanarySettingKey]string{
+			CanarySettingBaitNames: secretName,
+		}, mustParse(t, "2026-01-01T00:00:00Z"), "cli"); err != nil {
+			t.Fatalf("SetCanarySettings: %v", err)
+		}
+
+		var action, target, reason, triggeredBy string
+		row := database.QueryRow(`SELECT action, target, reason, triggered_by FROM audit_log ORDER BY id DESC LIMIT 1`)
+		if err := row.Scan(&action, &target, &reason, &triggeredBy); err != nil {
+			t.Fatalf("scan audit row: %v", err)
+		}
+		if action != "canary_settings.updated" || target != "canary-a" || triggeredBy != "cli" {
+			t.Errorf("audit entry = (%q, %q, %q), unexpected", action, target, triggeredBy)
+		}
+		if !strings.Contains(reason, "bait_names") {
+			t.Errorf("audit reason %q does not name the changed key", reason)
+		}
+		if strings.Contains(reason, secretName) {
+			t.Fatalf("audit reason %q leaks the bait name", reason)
+		}
+	})
+}
+
 func TestSetCanarySettingsRejectsUnknownKey(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z")})
 		err := SetCanarySettings(context.Background(), database, "canary-a", agentkind.Honeypot,
-			map[CanarySettingKey]string{"not_a_real_key": "x"}, mustParse(t, "2026-01-01T00:00:00Z"))
+			map[CanarySettingKey]string{"not_a_real_key": "x"}, mustParse(t, "2026-01-01T00:00:00Z"), "test")
 		if !errors.Is(err, ErrCanarySettingUnknown) {
 			t.Fatalf("SetCanarySettings(unknown key) = %v, want ErrCanarySettingUnknown", err)
 		}
@@ -87,7 +119,7 @@ func TestSetCanarySettingsRejectsInvalidValue(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z")})
 		err := SetCanarySettings(context.Background(), database, "canary-a", agentkind.Honeypot,
-			map[CanarySettingKey]string{CanarySettingSegmentProfile: "not-a-profile"}, mustParse(t, "2026-01-01T00:00:00Z"))
+			map[CanarySettingKey]string{CanarySettingSegmentProfile: "not-a-profile"}, mustParse(t, "2026-01-01T00:00:00Z"), "test")
 		if !errors.Is(err, ErrCanarySettingInvalidValue) {
 			t.Fatalf("SetCanarySettings(bad value) = %v, want ErrCanarySettingInvalidValue", err)
 		}
@@ -102,7 +134,7 @@ func TestSetCanarySettingsRejectsWrongKindAtomically(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "scanner-a", Name: "scanner-a", Lane: "lan", Kind: agentkind.Scanner, HeartbeatIntervalS: 60, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z")})
 		err := SetCanarySettings(context.Background(), database, "scanner-a", agentkind.Scanner,
-			map[CanarySettingKey]string{CanarySettingSegmentProfile: "windows"}, mustParse(t, "2026-01-01T00:00:00Z"))
+			map[CanarySettingKey]string{CanarySettingSegmentProfile: "windows"}, mustParse(t, "2026-01-01T00:00:00Z"), "test")
 		if !errors.Is(err, ErrCanarySettingWrongKind) {
 			t.Fatalf("SetCanarySettings(segment_profile on a scanner) = %v, want ErrCanarySettingWrongKind", err)
 		}
