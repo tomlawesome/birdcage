@@ -293,6 +293,37 @@ lint:govulncheck:
     - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
     - GOTOOLCHAIN=local govulncheck ./...
 
+# gitleaks (#28, owner approval 2026-09-27): the released MIT binary, not
+# the commercially-licensed gitleaks-action -- scripts/ensure-gitleaks.sh
+# installs it from a checksum-verified release, the same shape as
+# scripts/ensure-cosign.sh. CI-only, never linked or shipped.
+#
+# GIT_DEPTH: 0 overrides the project's default shallow clone so full
+# history is actually there to scan (acceptance criterion 1); a shallow
+# checkout would make this job pass on a repository it never really
+# looked at. scripts/gitleaks-scan.sh is the one place the scan command
+# itself is written (--redact, criteria 3/4) so this job and its own
+# test run the identical invocation.
+#
+# The self-test runs before the real scan, in the same job: it proves the
+# gate can fail (criterion 2, a planted secret) using the gitleaks this
+# job just installed, rather than assuming a check that never ran red
+# actually gates anything.
+lint:gitleaks:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    # $GOLANG_IMAGE (Debian) already ships git, bash, curl, openssl and
+    # tar -- everything ensure-gitleaks.sh and the self-test need. Only
+    # gitleaks itself is missing.
+    - scripts/ensure-gitleaks.sh /usr/local/bin
+  script:
+    - scripts/gitleaks-scan.test.sh
+    - scripts/gitleaks-scan.sh .
+
 # ---------------------------------------------------------------------------
 # TEST
 # ---------------------------------------------------------------------------
