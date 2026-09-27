@@ -22,19 +22,18 @@ type carrierFunc func(ctx context.Context, address string, port int, marker stri
 // vnc is #46 slice 2 (notes 19854/19855/19897): its challenge-marked
 // HMAC is matched and claimed today (internal/store/selftest_vnc.go).
 var carriers = map[string]carrierFunc{
-	"ftp":      probeFTP,
-	"telnet":   probeTelnet,
-	"http":     probeHTTP,
-	"snmp":     probeSNMP,
-	"tftp":     probeTFTP,
-	"sip":      probeSIP,
-	"mysql":    probeMySQL,
-	"mssql":    probeMSSQL,
-	"postgres": probePostgres,
-	"redis":    probeRedis,
-	"rdp":      probeRDP,
-	"ssh":      probeSSH,
-	"vnc":      probeVNC,
+	"ftp":    probeFTP,
+	"telnet": probeTelnet,
+	"http":   probeHTTP,
+	"snmp":   probeSNMP,
+	"tftp":   probeTFTP,
+	"sip":    probeSIP,
+	"mysql":  probeMySQL,
+	"mssql":  probeMSSQL,
+	"redis":  probeRedis,
+	"rdp":    probeRDP,
+	"ssh":    probeSSH,
+	"vnc":    probeVNC,
 }
 
 // attributionCarriers maps the two "attributed" grade services (notes

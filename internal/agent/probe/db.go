@@ -9,33 +9,6 @@ import (
 	"unicode/utf16"
 )
 
-// probePostgres plants marker as the "user" (and, for good measure,
-// "database") startup parameter -- the first thing a Postgres client
-// ever sends, in cleartext, before any auth exchange (#46 carrier
-// table). No response is read: the startup message alone is enough for
-// OpenCanary's postgres module to log the attempted user.
-func probePostgres(ctx context.Context, address string, port int, marker string) error {
-	conn, err := dialTCP(ctx, address, port)
-	if err != nil {
-		return err
-	}
-	// Deferred cleanup after this probe's single write; a failed close
-	// here can't change whether the probe itself succeeded.
-	defer func() { _ = conn.Close() }()
-
-	body := concat(
-		[]byte{0x00, 0x03, 0x00, 0x00}, // protocol version 3.0
-		[]byte("user\x00"), []byte(marker), []byte{0x00},
-		[]byte("database\x00"), []byte(marker), []byte{0x00},
-		[]byte{0x00}, // parameter list terminator
-	)
-	length := make([]byte, 4)
-	binary.BigEndian.PutUint32(length, uint32(4+len(body)))
-
-	_, err = conn.Write(concat(length, body))
-	return err
-}
-
 // probeRedis plants marker as the password in a RESP-encoded AUTH
 // command (#46 carrier table: "the username or equivalent first-
 // credential field" -- Redis's own AUTH has no separate username short

@@ -32,6 +32,18 @@ func TestGradeForService_KnownAndDefault(t *testing.T) {
 	}
 }
 
+// TestServiceGrades_NoPostgresEntry pins issue #144: OpenCanary 0.9.10
+// ships no postgres module (verified against the pinned wheel), so a
+// service that can never be graded must not have a table entry --
+// gradeForService's absent-service default (GradeMarked) is for a
+// service this build hasn't heard of yet, not a standing placeholder
+// for one that cannot exist.
+func TestServiceGrades_NoPostgresEntry(t *testing.T) {
+	if _, ok := serviceGrades["postgres"]; ok {
+		t.Error(`serviceGrades["postgres"] exists for a module OpenCanary does not ship`)
+	}
+}
+
 // TestSelfTestServiceResults_MultipleGradesAndOrdering is item 4 of the
 // slice 2 brief, exercised directly against store.SelfTestServiceResults
 // rather than only through internal/api's handler test: three targets at

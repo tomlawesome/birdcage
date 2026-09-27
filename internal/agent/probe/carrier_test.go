@@ -10,7 +10,7 @@ import "testing"
 func TestCarriers_CoversTheDocumentedTable(t *testing.T) {
 	want := []string{
 		"ssh", "ftp", "http", "telnet", "snmp", "tftp", "sip",
-		"mysql", "mssql", "postgres", "redis", "rdp",
+		"mysql", "mssql", "redis", "rdp",
 		"vnc",
 	}
 	for _, svc := range want {
@@ -22,6 +22,15 @@ func TestCarriers_CoversTheDocumentedTable(t *testing.T) {
 		if _, ok := carriers[svc]; ok {
 			t.Errorf("carriers[%q] exists -- attributed services belong in attributionCarriers, not here", svc)
 		}
+	}
+}
+
+// TestCarriers_NoPostgresCarrier pins issue #144: OpenCanary 0.9.10 ships
+// no postgres module (verified against the pinned wheel), so a carrier
+// for it can never be exercised by a real target and must not come back.
+func TestCarriers_NoPostgresCarrier(t *testing.T) {
+	if _, ok := carriers["postgres"]; ok {
+		t.Error(`carriers["postgres"] exists for a module OpenCanary does not ship`)
 	}
 }
 
