@@ -100,15 +100,16 @@ type canaryPageResponse struct {
 }
 
 // canaryPageCanary is the page's canary object: /api/canaries' own
-// shape plus issue #54's upgrade_command, which only this page carries --
-// building it is two per-canary queries, and the fleet read polls every
-// canary every thirty seconds. Always present on this route, "" unless
-// the canary is agent_out_of_date and this server can print a command
-// (handler.upgradeCommand), so a reader can tell "nothing to run" from
-// "a backend too old to say".
+// shape plus issue #54's upgrade_available, which only this page
+// carries. Always present on this route: true when the canary is
+// agent_out_of_date and this server can print an upgrade command
+// (handler.upgradeAvailable), so a reader can tell "nothing to run" from
+// "a backend too old to say". The command itself is never on the page:
+// each one carries a freshly minted single-use token, and the dashboard
+// API mints nothing while it is read-only (#8).
 type canaryPageCanary struct {
 	canaryWithSelfTest
-	UpgradeCommand string `json:"upgrade_command"`
+	UpgradeAvailable bool `json:"upgrade_available"`
 }
 
 // handleCanary serves GET /api/canary?id=<id>&range=<Range>: everything
@@ -179,16 +180,7 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Best-effort, like the per-service results above: a command this
-	// read could not build leaves the field empty, and the page points
-	// at docs/enrolment.md's manual procedure instead -- the rest of the
-	// page is still worth drawing.
-	upgrade, err := h.upgradeCommand(r.Context(), *found)
-	if err != nil {
-		log.Printf("api: upgrade command for %s: %v", found.ID, err)
-	} else {
-		out.UpgradeCommand = upgrade
-	}
+	out.UpgradeAvailable = h.upgradeAvailable(*found)
 
 	facts, err := h.canaryFacts(r, *found, now)
 	if err != nil {

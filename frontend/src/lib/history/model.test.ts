@@ -173,6 +173,7 @@ describe('tierFor -- which colour a state carries', () => {
   // Issue #54: coloured like rotation/renewal stalled -- an old build
   // is a lapsed protection, not a fault in progress.
   it('agent_out_of_date takes the warning tier', () => expect(tierFor('agent_out_of_date')).toBe('warn'))
+  it('upgrade_in_progress takes the warning tier', () => expect(tierFor('upgrade_in_progress')).toBe('warn'))
 
   // ADR-0012 decision 10 (issue #116): db_stale is coloured like the
   // nearest existing warning state, even though it ranks with the
@@ -243,6 +244,20 @@ describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
     expect(summaryLine([entry({ state: 'agent_out_of_date', count: 1, longest_s: 60, total_s: 60 })])).toBe(
       'agent out of date once, 1 m',
     ))
+
+  it('upgrade_in_progress reads "upgrade in progress"', () =>
+    expect(summaryLine([entry({ state: 'upgrade_in_progress', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'upgrade in progress once, 1 m',
+    ))
+
+  it('ordering: upgrade_in_progress sits after renewal_stalled, before agent_out_of_date', () => {
+    const line = summaryLine([
+      entry({ state: 'agent_out_of_date', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'upgrade_in_progress', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe('renewal stalled once, 1 m · upgrade in progress once, 1 m · agent out of date once, 1 m')
+  })
 
   it('ordering: credential_conflict sits with token_conflict, renewal_stalled sits with rotation_stalled', () => {
     const line = summaryLine([

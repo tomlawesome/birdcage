@@ -9,6 +9,7 @@
 import type { Canary, CanaryStatus, Range, Visitor } from '../types'
 import { durationCoarse } from './duration'
 import { shortVersion } from './version'
+import { formatClockShort } from './time'
 
 export type StatusInfo =
   | { kind: 'quiet'; okCount: number; total: number; visitorCount: number; range: Range }
@@ -53,11 +54,13 @@ const RANK: Record<CanaryStatus, number> = {
   rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
   renewal_stalled: 8,
-  // Issue #54: ranked between renewal_stalled and pending, exactly
-  // where the API contract puts it.
-  agent_out_of_date: 9,
-  pending: 10,
-  ok: 11,
+  // Issue #54: the upgrade window ranks straight before
+  // agent_out_of_date, and agent_out_of_date between it and pending,
+  // exactly where the API contract puts them.
+  upgrade_in_progress: 9,
+  agent_out_of_date: 10,
+  pending: 11,
+  ok: 12,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {
@@ -102,6 +105,10 @@ function label(c: Canary): string {
       return `${c.name} rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
     case 'renewal_stalled':
       return `${c.name} renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
+    case 'upgrade_in_progress':
+      return c.upgrade_window_until
+        ? `${c.name} upgrade in progress until ${formatClockShort(c.upgrade_window_until)}`
+        : `${c.name} upgrade in progress`
     case 'agent_out_of_date':
       return `${c.name} agent behind: runs ${shortVersion(c.agent_version ?? '?')}, current ${shortVersion(c.birdcage_version ?? '?')}`
     default:
@@ -141,7 +148,12 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
   ) {
     return { kind: 'critical', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
-  if (worst?.status === 'rotation_stalled' || worst?.status === 'renewal_stalled' || worst?.status === 'agent_out_of_date') {
+  if (
+    worst?.status === 'rotation_stalled' ||
+    worst?.status === 'renewal_stalled' ||
+    worst?.status === 'upgrade_in_progress' ||
+    worst?.status === 'agent_out_of_date'
+  ) {
     return { kind: 'degraded', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
   if (visitorCount > 0) {

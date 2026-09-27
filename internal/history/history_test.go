@@ -583,3 +583,53 @@ func TestTickRecordsHitsMerged(t *testing.T) {
 		}
 	})
 }
+
+// TestTickRecordsUpgradeInProgress: issue #54's upgrade window is in
+// store.ActiveStates like every other state, so the recorder opens a
+// span when an upgrade token is accepted and closes it, cleared, when
+// the five minutes end.
+func TestTickRecordsUpgradeInProgress(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "upgrading", "u", t0)
+		agentBeat := func(at time.Time, version string) {
+			t.Helper()
+			if err := store.RecordCanaryAgentHeartbeat(ctx, database, "upgrading", at, store.AgentHeartbeat{LogReadOK: true, AgentVersion: version}); err != nil {
+				t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+			}
+		}
+		agentBeat(t0, "1.0.0")
+		r := New(database, "1.1.0")
+
+		raw, _, err := store.MintUpgradeToken(ctx, database, "upgrading", "1.1.0", t0)
+		if err != nil {
+			t.Fatalf("MintUpgradeToken: %v", err)
+		}
+		if res, err := store.PresentUpgradeToken(ctx, database, "upgrading", raw, t0.Add(time.Second)); err != nil || res.Outcome != store.UpgradeTokenAccepted {
+			t.Fatalf("PresentUpgradeToken = %+v, %v", res, err)
+		}
+		agentBeat(t0.Add(2*time.Second), "1.1.0")
+		tick(t, r, t0.Add(3*time.Second))
+
+		var found *store.StatePeriod
+		for _, p := range periods(t, database, "upgrading") {
+			if p.State == string(store.StateUpgradeInProgress) {
+				p := p
+				found = &p
+			}
+		}
+		if found == nil || found.EndedAt != nil {
+			t.Fatalf("periods = %+v, want an open upgrade_in_progress span", periods(t, database, "upgrading"))
+		}
+
+		end := t0.Add(time.Second + store.UpgradeWindow)
+		agentBeat(end, "1.1.0")
+		tick(t, r, end)
+		for _, p := range periods(t, database, "upgrading") {
+			if p.State == string(store.StateUpgradeInProgress) && (p.EndedAt == nil || p.EndReason == nil || *p.EndReason != "cleared") {
+				t.Errorf("upgrade_in_progress span %+v, want closed as cleared when the window ends", p)
+			}
+		}
+	})
+}

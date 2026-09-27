@@ -90,14 +90,15 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 	// 9's agent token management, `enrol` issue #47 slice 1b's deploy-
 	// token mint, `settings` issue #124's per-canary settings (the CLI is
 	// the only write path onto them: the dashboard API stays read-only
-	// until login exists, #8) -- that exit immediately rather than
-	// starting the HTTP/ingest services below. ADR-0009 gave nodes a kind
-	// (honeypot, scanner), so `agent` is the noun for the command, not
-	// `canary` -- which is kept working as an alias (issue #107) since
-	// scripts and muscle memory already use it.
+	// until login exists, #8), `upgrade-command` issue #54's upgrade
+	// token mint and command (CLI-only for the same reason) -- that exit
+	// immediately rather than starting the HTTP/ingest services below.
+	// ADR-0009 gave nodes a kind (honeypot, scanner), so `agent` is the
+	// noun for the command, not `canary` -- which is kept working as an
+	// alias (issue #107) since scripts and muscle memory already use it.
 	if len(args) > 1 && (args[1] == "agent" || args[1] == "canary") {
 		if len(args) < 3 {
-			agentLog.Error("usage: birdcage agent <add|mint|list|revoke|enrol|settings> ... (canary is an accepted alias for agent)")
+			agentLog.Error("usage: birdcage agent <add|mint|list|revoke|enrol|settings|upgrade-command> ... (canary is an accepted alias for agent)")
 			return true, 1
 		}
 		var err error
@@ -114,8 +115,10 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 			err = runCanaryEnrol(args[3:])
 		case "settings":
 			err = runAgentSettings(args[3:])
+		case "upgrade-command":
+			err = runAgentUpgradeCommand(args[3:], os.Getenv, os.Stdout, os.Stderr)
 		default:
-			agentLog.Error(fmt.Sprintf("unknown agent subcommand %q (want add, mint, list, revoke, enrol or settings)", args[2]))
+			agentLog.Error(fmt.Sprintf("unknown agent subcommand %q (want add, mint, list, revoke, enrol, settings or upgrade-command)", args[2]))
 			return true, 1
 		}
 		if err != nil {

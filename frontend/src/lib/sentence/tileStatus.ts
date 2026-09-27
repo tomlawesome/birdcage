@@ -60,6 +60,9 @@ export interface TileCanaryInput {
   // MAJOR.MINOR.PATCH before they're shown.
   agent_version?: string
   birdcage_version?: string
+  // Issue #54: when the open upgrade window ends, for the
+  // upgrade_in_progress line.
+  upgrade_window_until?: string
   // issue #46: the most recently completed self-test round, carried the
   // same independent way -- present whether or not it is what made
   // `status` self_test_failed, since a passing run still earns its own
@@ -305,6 +308,20 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
         },
       ]
     }
+    case 'upgrade_in_progress': {
+      // Issue #54 (owner, 2026-09-27): the window an accepted upgrade
+      // token opened, shown so it is never invisible. Nothing to do; it
+      // ends by itself.
+      const until = canary.upgrade_window_until ? formatClockShort(canary.upgrade_window_until) : null
+      return [
+        {
+          text: until
+            ? `⏳ upgrade in progress — the old agent has until ${until} to go offline`
+            : '⏳ upgrade in progress — the old agent has a few minutes to go offline',
+          cls: 'wn',
+        },
+      ]
+    }
     case 'agent_out_of_date': {
       // Issue #54: same degraded tier as rotation/renewal stalled --
       // nothing is missed by an old build, but the next step lives on
@@ -313,7 +330,7 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
       const current = shortVersion(canary.birdcage_version ?? '?')
       return [
         {
-          text: `⏳ agent behind: runs ${running}, current ${current} — run the upgrade command on the canary page`,
+          text: `⏳ agent behind: runs ${running}, current ${current} — the canary page says how to upgrade it`,
           cls: 'wn',
         },
       ]

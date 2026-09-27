@@ -190,6 +190,11 @@ type Canary struct {
 	RenewalStalledForS *int64              `json:"renewal_stalled_for_s,omitempty"`
 	CertificateExpired bool                `json:"certificate_expired,omitempty"`
 
+	// UpgradeWindowUntil is when this canary's open upgrade window ends
+	// (issue #54): present only while upgrade_in_progress holds, from
+	// the upgrade token's acceptance until then.
+	UpgradeWindowUntil *time.Time `json:"upgrade_window_until,omitempty"`
+
 	// dualUse is the raw credential_dual_use_* columns, read by
 	// ListCanaries and turned into CredentialConflict by
 	// applyCredentialHealth. Never serialised.
@@ -884,6 +889,9 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		applyHitsMergedHealth(&canaries[i])
 		applyOpenCanaryHealth(&canaries[i])
 		applyAgentOutOfDateHealth(&canaries[i], birdcageVersion)
+		if err := applyUpgradeWindowHealth(ctx, database, &canaries[i], now); err != nil {
+			return nil, fmt.Errorf("upgrade window for %s: %w", canaries[i].ID, err)
+		}
 
 		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {

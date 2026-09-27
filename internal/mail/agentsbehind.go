@@ -47,9 +47,10 @@ type AgentsBehindAlert struct {
 // birdcage is running, which agents are behind and by how much, and
 // where to act -- each canary's own page, never a link (the mailbox is
 // outside birdcage's trust boundary, the same reasoning TokenConflictBody
-// documents), since #54 deliberately leaves the exact upgrade command to
-// that page rather than composing one into a mail an attacker's mailbox
-// compromise could read.
+// documents), since #54 deliberately leaves the exact upgrade command --
+// which now carries a single-use token -- to the birdcage host rather
+// than composing one into a mail an attacker's mailbox compromise could
+// read.
 func AgentsBehindBody(a AgentsBehindAlert) string {
 	var b strings.Builder
 
@@ -66,7 +67,7 @@ func AgentsBehindBody(a AgentsBehindAlert) string {
 	}
 
 	b.WriteString("\nWhat to do\n")
-	b.WriteString("  - Open birdcage the way you always do, and open each agent's own\n    page there: the exact upgrade command for that agent is shown\n    there.\n")
+	b.WriteString("  - Open birdcage the way you always do, and open each agent's own\n    page there: it names the command, run on the birdcage host, that\n    prints that agent's upgrade command.\n")
 
 	b.WriteString("\nThis message carries no link and no upgrade command, on purpose: the\n")
 	b.WriteString("mailbox it arrived in is outside birdcage's trust boundary, so it\n")

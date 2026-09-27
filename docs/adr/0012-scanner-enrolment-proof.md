@@ -1,6 +1,7 @@
 # ADR-0012: A scanner proves its enrolment by answering an ordered scan, over the same road as a honeypot's self-test
 
-**Status:** Accepted by the owner, 2026-09-24 (after one review round)
+**Status:** Accepted by the owner, 2026-09-24 (after one review round);
+amended 2026-09-27 (B4's upgrade window, #54)
 **Date:** 2026-09-24
 **Relates to:** #116 (this proof), #129 (manual scan, M3), #47
 (enrolment; pending until the first self-test passes), #46 (self-test),
@@ -698,6 +699,9 @@ recorded per request from what the auth path already resolves:
    become a button that silences the real canary. Both put the node in
    a red state that names the next action.
 
+   *Amended 2026-09-27: one version change during an operator's upgrade
+   is not flagged; see "Amendment: the upgrade window" below.*
+
 **B5. One operator action ends both holders.** `birdcage canary revoke
 <canary-id>` (today it takes a token id) revokes every token and every
 certificate for the node in one transaction; from that moment every
@@ -744,6 +748,55 @@ Stated concretely, because the first draft did not:
   red tile; for a scanner the loss is one host's findings, which the
   attacker already owns by owning the host. Both are bounded to that
   one node.
+
+## Amendment: the upgrade window (owner, 2026-09-27, #54)
+
+**The problem.** Following an agent's upgrade command, the old build's
+last heartbeat and the new build's first land within B4's 60 seconds on
+the same certificate: two builds on one credential, so every normal
+upgrade showed `credential_conflict` for about two minutes. A signal
+that fires on every routine upgrade teaches operators to ignore it.
+
+**The decision** (owner, verbatim: "we include a single use token in
+the command. Valid for 15 minutes. When birdcage sees the token, a five
+minute window exists for the old agent to disappear."):
+
+- `birdcage agent upgrade-command <agent-id>`, on the birdcage host,
+  mints a single-use upgrade token for that one agent, valid for 15
+  minutes, and prints the agent's upgrade command with it. Only the
+  token's SHA-256 is stored (`upgrade_tokens`, migration 0027), with
+  the version pair it covers: the agent's last-reported build and
+  birdcage's own. Minting a new one supersedes any unused earlier one.
+  Every mint is audited.
+- The command pipes the token on stdin into a throwaway container of
+  the new image (`<agent> upgrade-token`, state volume read-only), run
+  after the old agent is removed and before the new one starts, so the
+  window exists before the new build's first heartbeat. It presents the
+  token to `POST /ingest/upgrade-token` over the agent's own mTLS
+  certificate and bearer token.
+- Birdcage accepts it only if its hash matches an unused, unsuperseded,
+  unexpired token minted for the agent the presenting credential
+  belongs to, marking it used in one guarded update (so of two
+  concurrent presentations exactly one wins). Acceptance opens a
+  **five-minute window** for that agent, shown as the
+  `upgrade_in_progress` health state with its end time.
+- Inside the window, B4's *version* dual use is not flagged when the two
+  builds are exactly the token's pair; it is audited as
+  `ingest.credential_dual_use_upgrade` instead. A third build, and any
+  *address* dual use, are flagged as always. After the window,
+  detection is exactly as before.
+- Every refusal (another agent's token, already used, superseded,
+  expired, unknown) opens nothing and is audited
+  `ingest.upgrade_token_refused`.
+
+**Why this does not weaken B4 against a stolen credential.** A copied
+credential alone cannot open a window: tokens are minted only by the
+birdcage-host CLI, which no agent credential reaches (the dashboard API
+stays read-only until #8). An attacker who also obtains a fresh token
+gains at most five minutes in which their build and the real one may
+both report -- but only as those two exact builds, from the same
+address, while `upgrade_in_progress` is on the dashboard -- and only
+once per token the operator minted.
 
 ## Security analysis
 

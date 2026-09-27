@@ -117,12 +117,34 @@ func recordDualUse(ctx context.Context, database *db.DB, now func() time.Time, c
 // observeAgentVersion is the version half of B4's dual-use signal,
 // called by the heartbeat handlers (the one place an agent states its
 // build) with the certificate requireBearerToken resolved.
+//
+// Issue #54's one exception (ADR-0012's B4 amendment): a version pair
+// store.UpgradeWindowCovers says is exactly the agent's own accepted
+// upgrade -- its old build and birdcage's, inside the five minutes the
+// upgrade token opened -- is the old build disappearing, and is audited
+// as ingest.credential_dual_use_upgrade instead of being flagged. Only
+// this half asks: an address change is never covered, and neither is a
+// third version. A failed lookup flags, never the other way round.
 func (h *ingestHandler) observeAgentVersion(ctx context.Context, tok store.CanaryToken, version string) {
 	cert, ok := clientCertFromContext(ctx)
 	if !ok || h.dualUse == nil {
 		return
 	}
-	if prev, dual := h.dualUse.observe(cert.Fingerprint, version, true, h.now().UTC()); dual {
-		recordDualUse(ctx, h.db, h.now, h.coalescer, tok.CanaryID, store.DualUseVersions, prev, version)
+	now := h.now().UTC()
+	prev, dual := h.dualUse.observe(cert.Fingerprint, version, true, now)
+	if !dual {
+		return
 	}
+	covered, err := store.UpgradeWindowCovers(ctx, h.db, tok.CanaryID, prev, version, now)
+	if err != nil {
+		slog.Error("ingest: check upgrade window; flagging the dual use", "canary", tok.CanaryID, "err", err)
+		covered = false
+	}
+	if covered {
+		h.recordKeyedAudit(ctx, tok.CanaryID, "ingest.credential_dual_use_upgrade", "ingest.credential_dual_use_upgrade",
+			fmt.Sprintf("credential in use by two agent builds: %q and %q, inside this agent's upgrade window; not flagged", prev, version),
+			"observations")
+		return
+	}
+	recordDualUse(ctx, h.db, h.now, h.coalescer, tok.CanaryID, store.DualUseVersions, prev, version)
 }

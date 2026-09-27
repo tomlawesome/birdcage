@@ -6,6 +6,7 @@ import canaryAgentOutOfDate from '../../dev/fixtures/canary-agent-out-of-date.js
 import canaryFailed from '../../dev/fixtures/canary-failed.json'
 import canaryNight from '../../dev/fixtures/canary-night.json'
 import canaryPending from '../../dev/fixtures/canary-pending.json'
+import canaryUpgradeInProgress from '../../dev/fixtures/canary-upgrade-in-progress.json'
 import canaryQuiet from '../../dev/fixtures/canary-quiet.json'
 import canarySilent from '../../dev/fixtures/canary-silent.json'
 import type { CanaryPageInput } from './model'
@@ -17,6 +18,7 @@ const SCENES = {
   night: canaryNight,
   pending: canaryPending,
   agentOutOfDate: canaryAgentOutOfDate,
+  upgradeInProgress: canaryUpgradeInProgress,
 } as unknown as Record<string, {
   trace: CanaryPageInput['trace']
   visitors: { visitors: CanaryPageInput['visitors'] }
@@ -24,7 +26,7 @@ const SCENES = {
   canary: Record<string, CanaryPageInput['page']>
 }>
 
-export type SceneName = 'quiet' | 'failed' | 'silent' | 'night' | 'pending' | 'agentOutOfDate'
+export type SceneName = 'quiet' | 'failed' | 'silent' | 'night' | 'pending' | 'agentOutOfDate' | 'upgradeInProgress'
 
 /** One scene's page input, for the canary the scene is about. */
 export function sceneInput(scene: SceneName, canaryId = 'canary-iot'): CanaryPageInput {

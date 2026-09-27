@@ -90,6 +90,14 @@ const (
 	// completed. Ranked immediately after rotation-stalled. At the
 	// certificate's expiry it gives way to not-delivering.
 	StateRenewalStalled HealthState = "renewal_stalled"
+	// StateUpgradeInProgress (issue #54, owner 2026-09-27, Q29) is a
+	// canary with an open upgrade window: its upgrade token was accepted
+	// and, until the window ends (Canary.UpgradeWindowUntil), its old
+	// build may still heartbeat beside the new one without
+	// credential_conflict (ADR-0012's B4 amendment). Shown so the window
+	// is never invisible. Ranked immediately before agent-out-of-date,
+	// same degraded tier; it ends by itself when the window does.
+	StateUpgradeInProgress HealthState = "upgrade_in_progress"
 	// StateAgentOutOfDate (issue #54) is a canary whose agent last
 	// reported a release version (agentBehindBirdcage, version.go)
 	// strictly older than birdcage's own -- both must parse as plain
@@ -147,9 +155,10 @@ var healthStateRank = map[HealthState]int{
 	StateThrottled:          8,
 	StateRotationStalled:    9,
 	StateRenewalStalled:     10,
-	StateAgentOutOfDate:     11,
-	StatePending:            12,
-	StateOK:                 13,
+	StateUpgradeInProgress:  11,
+	StateAgentOutOfDate:     12,
+	StatePending:            13,
+	StateOK:                 14,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -274,6 +283,22 @@ func applyAgentOutOfDateHealth(c *Canary, birdcageVersion string) {
 		return
 	}
 	addActiveStates(c, StateAgentOutOfDate)
+}
+
+// applyUpgradeWindowHealth sets c.UpgradeWindowUntil and adds
+// StateUpgradeInProgress while c has an open upgrade window (issue #54):
+// from its upgrade token's acceptance until UpgradeWindow later.
+func applyUpgradeWindowHealth(ctx context.Context, database *db.DB, c *Canary, now time.Time) error {
+	until, err := OpenUpgradeWindowUntil(ctx, database, c.ID, now)
+	if err != nil {
+		return err
+	}
+	if until == nil {
+		return nil
+	}
+	c.UpgradeWindowUntil = until
+	addActiveStates(c, StateUpgradeInProgress)
+	return nil
 }
 
 // addActiveStates merges states into c.ActiveStates, re-sorts by

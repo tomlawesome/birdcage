@@ -185,6 +185,31 @@ describe('the status pill: issue #45 ranking', () => {
     }
   })
 
+  // Issue #54 (owner, 2026-09-27): the upgrade window reads as degraded,
+  // ranked straight before agent_out_of_date.
+  it('upgrade_in_progress reads as degraded, naming the window end, and outranks agent_out_of_date', () => {
+    const s = computeStatus(
+      [
+        canary('a', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+        canary('b', 'upgrade_in_progress', { upgrade_window_until: '2026-09-20T09:18:02Z' }),
+      ],
+      [],
+      '14d',
+    )
+    expect(s.kind).toBe('degraded')
+    if (s.kind === 'degraded') {
+      expect(s.canaryName).toBe('b')
+      expect(s.label).toBe('b upgrade in progress until 09:18')
+    }
+    const under = computeStatus(
+      [canary('a', 'upgrade_in_progress'), canary('b', 'renewal_stalled', { renewal_stalled_for_s: 60 })],
+      [],
+      '14d',
+    )
+    if (under.kind === 'degraded') expect(under.canaryName).toBe('b')
+    else throw new Error(`kind = ${under.kind}, want degraded`)
+  })
+
   it('renewal_stalled outranks agent_out_of_date, which outranks pending', () => {
     const behind = canary('a', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' })
     const s = computeStatus([behind, canary('b', 'renewal_stalled', { renewal_stalled_for_s: 60 })], [], '14d')

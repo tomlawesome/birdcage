@@ -50,7 +50,14 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * Degraded ('warn') tier, like rotation/renewal stalled -- nothing is
  * missed by an old build, but a protection has quietly lapsed. Never
  * auto-repairs itself the way a heartbeat clears silence; an operator
- * runs `upgrade_command` on the box. */
+ * runs the agent's upgrade command on the box (the canary page says how
+ * to get one: `upgrade_available`).
+ *
+ * 'upgrade_in_progress' (issue #54, owner 2026-09-27) ranks straight
+ * before 'agent_out_of_date', same degraded tier: an upgrade token was
+ * accepted, and until `upgrade_window_until` the old agent may still
+ * heartbeat beside the new one without credential_conflict. Clears by
+ * itself when the window ends. */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
@@ -63,6 +70,7 @@ export type CanaryStatus =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'upgrade_in_progress'
   | 'agent_out_of_date'
   | 'pending'
   | 'ok'
@@ -175,10 +183,17 @@ export interface Canary {
    * shape, e.g. "0.1.1+edc3691a") -- what `agent_version` is compared
    * against to decide `agent_out_of_date`. */
   birdcage_version?: string
-  /** Issue #54: the multi-line shell script to paste on the canary host
-   * to bring it up to `birdcage_version`. Empty or absent on an older
-   * backend that doesn't send it, or when the agent isn't behind. */
-  upgrade_command?: string
+  /** Issue #54, canary page only: true when the agent is behind and this
+   * birdcage can print its upgrade command. The command itself is never
+   * on the page -- each one carries a freshly minted single-use token,
+   * and the dashboard API mints nothing while it is read-only (#8); the
+   * operator gets it from `birdcage agent upgrade-command <id>` on the
+   * birdcage host. False or absent: nothing to run, or no command this
+   * server could print. */
+  upgrade_available?: boolean
+  /** Issue #54: when this canary's open upgrade window ends (RFC 3339),
+   * present only while 'upgrade_in_progress' holds. */
+  upgrade_window_until?: string
   /** ADR-0012 Part B: one live credential seen from two places at once
    * (#130's credential_conflict) -- the two source addresses and/or the
    * two agent build versions seen presenting it within the detection
@@ -316,6 +331,7 @@ export type HistoryState =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'upgrade_in_progress'
   | 'agent_out_of_date'
   | 'pending'
   | 'unobserved'

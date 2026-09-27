@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { sceneInput } from './fixtures'
-import { factRows } from './facts'
+import { factRows, upgradeCommandCLI } from './facts'
 
 const rows = (scene: Parameters<typeof sceneInput>[0]) =>
   Object.fromEntries(factRows(sceneInput(scene)).map((r) => [r.label, r.value]))
@@ -98,19 +98,34 @@ describe('factRows: agent_out_of_date (issue #54)', () => {
     expect(rows.find((r) => r.label === 'upgrade')?.value).toBe('runs 0.1.0 · current 0.1.1')
   })
 
-  it('renders upgrade_command as its own copyable code row', () => {
+  it('offers the command that prints the upgrade command, never a command itself', () => {
     const input = sceneInput('agentOutOfDate')
-    const row = factRows(input).find((r) => r.label === 'run this')
-    expect(row?.code).toBe(input.page.canary.upgrade_command)
+    const rows = factRows(input)
+    const row = rows.find((r) => r.label === 'run this')
+    expect(row?.code).toBe('birdcage agent upgrade-command canary-iot')
     expect(row?.value).toBe('')
+    expect(rows.find((r) => r.label === 'where')?.value).toBe(
+      "on the birdcage host — it prints this agent's upgrade command, single use and valid for 15 minutes; paste all of it on the agent's host in one go",
+    )
+    expect(rows.some((r) => (r.code ?? '').includes('docker'))).toBe(false)
   })
 
-  it('falls back to a docs pointer when upgrade_command is empty while the state is active', () => {
+  it('falls back to a docs pointer when this birdcage cannot print one', () => {
     const input = sceneInput('agentOutOfDate')
-    input.page.canary.upgrade_command = ''
-    const row = factRows(input).find((r) => r.label === 'run this')
+    input.page.canary.upgrade_available = false
+    const rows = factRows(input)
+    const row = rows.find((r) => r.label === 'run this')
     expect(row?.code).toBeUndefined()
-    expect(row?.value).toBe('not available yet — see docs/enrolment.md, "Upgrading a canary"')
+    expect(row?.value).toBe('not available from this birdcage — see docs/enrolment.md, "Upgrading a canary"')
+    expect(rows.some((r) => r.label === 'where')).toBe(false)
+  })
+
+  it('never hands the copy button an id a shell would read as more than a word', () => {
+    const input = sceneInput('agentOutOfDate')
+    input.page.canary.id = 'canary-iot; rm -rf /'
+    expect(factRows(input).find((r) => r.label === 'run this')?.code).toBeUndefined()
+    expect(upgradeCommandCLI({ id: 'a$(x)', upgrade_available: true })).toBeNull()
+    expect(upgradeCommandCLI({ id: '0f3a9c', upgrade_available: true })).toBe('birdcage agent upgrade-command 0f3a9c')
   })
 
   it('shows the rows when active_states names it, even though a worse state holds `status`', () => {
@@ -119,7 +134,7 @@ describe('factRows: agent_out_of_date (issue #54)', () => {
     input.page.canary.active_states = ['silent', 'agent_out_of_date']
     const rows = factRows(input)
     expect(rows.find((r) => r.label === 'upgrade')?.value).toBe('runs 0.1.0 · current 0.1.1')
-    expect(rows.find((r) => r.label === 'run this')?.code).toBe(input.page.canary.upgrade_command)
+    expect(rows.find((r) => r.label === 'run this')?.code).toBe('birdcage agent upgrade-command canary-iot')
   })
 
   it('says nothing when neither `status` nor `active_states` names it, even if the versions differ', () => {
@@ -127,5 +142,23 @@ describe('factRows: agent_out_of_date (issue #54)', () => {
     input.page.canary.status = 'ok'
     input.page.canary.active_states = ['ok']
     expect(factRows(input).some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
+  })
+})
+
+// Issue #54 (owner, 2026-09-27): the upgrade window, with its end.
+describe('factRows: upgrade_in_progress (issue #54)', () => {
+  it('names when the window ends', () => {
+    const rows = factRows(sceneInput('upgradeInProgress'))
+    expect(rows.find((r) => r.label === 'upgrade window')?.value).toBe(
+      'open until sun 20 sep 09:18 — the old agent has until then to go offline',
+    )
+    expect(rows.some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
+  })
+
+  it('says nothing about a window once the state is gone', () => {
+    const input = sceneInput('upgradeInProgress')
+    input.page.canary.status = 'ok'
+    input.page.canary.active_states = []
+    expect(factRows(input).some((r) => r.label === 'upgrade window')).toBe(false)
   })
 })

@@ -133,6 +133,14 @@ func main() {
 		return
 	}
 
+	// `mockingbird upgrade-token` (issue #54) presents the upgrade command's
+	// single-use token and exits -- upgradetoken.go. Like `version`, it
+	// runs before any configuration is loaded: it needs none of the
+	// running agent's inputs, and must not trigger their side effects.
+	if len(os.Args) > 1 && os.Args[1] == "upgrade-token" {
+		os.Exit(runUpgradeToken(os.Args[2:], os.Stdin, os.Stdout))
+	}
+
 	mainLog := logging.New("mockingbird")
 
 	cfg, err := loadConfig()

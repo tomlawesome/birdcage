@@ -12,9 +12,30 @@ export interface FactRow {
   /** Rendered in the canary's lane colour, as its name is everywhere
    * else on the page. */
   accent?: boolean
-  /** Issue #54: present only for the upgrade-command row -- rendered
-   * as a copyable code block instead of plain text, `value` left empty. */
+  /** Issue #54: present only for the "run this" row -- the command that
+   * prints the upgrade command -- rendered as a copyable code block
+   * instead of plain text, `value` left empty. */
   code?: string
+}
+
+/** internal/store's UpgradeTokenTTL, in minutes. */
+const UPGRADE_TOKEN_MINUTES = 15
+
+/** Agent ids a copied command may carry: what birdcage mints (hex) and
+ * what `birdcage agent add` is sensibly given. Anything else -- a shell
+ * metacharacter in a hand-typed id -- gets no copyable command at all,
+ * since the copy button would put it straight into a shell. */
+const SAFE_AGENT_ID = /^[A-Za-z0-9._-]{1,128}$/
+
+function hasState(canary: { status: string; active_states?: string[] }, state: string): boolean {
+  return canary.status === state || (canary.active_states?.includes(state) ?? false)
+}
+
+/** The command that prints this agent's upgrade command, or null when
+ * this birdcage cannot print one or the id is not safe to hand a shell. */
+export function upgradeCommandCLI(canary: { id: string; upgrade_available?: boolean }): string | null {
+  if (!canary.upgrade_available || !SAFE_AGENT_ID.test(canary.id)) return null
+  return `birdcage agent upgrade-command ${canary.id}`
 }
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -81,23 +102,42 @@ export function factRows(input: CanaryPageInput): FactRow[] {
   // can hold `status` while the canary is still behind underneath it --
   // `active_states` is what says so). The backend is the single source
   // of truth for "behind": the frontend never re-derives it by comparing
-  // version strings itself. `upgrade_command` is the multi-line script
-  // an operator pastes on the box; an active backend that sent none yet
-  // points at the docs instead of a dangling row.
-  const behind = canary.status === 'agent_out_of_date' || (canary.active_states?.includes('agent_out_of_date') ?? false)
+  // version strings itself.
+  //
+  // The page never carries the upgrade command itself: each one holds a
+  // freshly minted single-use token, and the dashboard API mints nothing
+  // while it is read-only (#8). So the copyable row is the command that
+  // prints it, run on the birdcage host -- offered only when the backend
+  // says this server can print one (`upgrade_available`), else a
+  // pointer to the docs.
+  const behind = hasState(canary, 'agent_out_of_date')
   if (behind) {
     rows.push({
       label: 'upgrade',
       value: `runs ${shortVersion(facts.agent_version ?? '?')} · current ${shortVersion(canary.birdcage_version ?? '?')}`,
     })
-    rows.push(
-      canary.upgrade_command
-        ? { label: 'run this', value: '', code: canary.upgrade_command }
-        : {
-            label: 'run this',
-            value: 'not available yet — see docs/enrolment.md, "Upgrading a canary"',
-          },
-    )
+    const cli = upgradeCommandCLI(canary)
+    if (cli) {
+      rows.push({ label: 'run this', value: '', code: cli })
+      rows.push({
+        label: 'where',
+        value: `on the birdcage host — it prints this agent's upgrade command, single use and valid for ${UPGRADE_TOKEN_MINUTES} minutes; paste all of it on the agent's host in one go`,
+      })
+    } else {
+      rows.push({
+        label: 'run this',
+        value: 'not available from this birdcage — see docs/enrolment.md, "Upgrading a canary"',
+      })
+    }
+  }
+
+  // Issue #54 (owner, 2026-09-27): an accepted upgrade token's window,
+  // with its end, while it is open.
+  if (hasState(canary, 'upgrade_in_progress') && canary.upgrade_window_until) {
+    rows.push({
+      label: 'upgrade window',
+      value: `open until ${stamp(canary.upgrade_window_until, true)} — the old agent has until then to go offline`,
+    })
   }
 
   if (facts.token_rotated_at) {

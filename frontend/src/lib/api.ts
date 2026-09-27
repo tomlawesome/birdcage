@@ -78,6 +78,11 @@ type SceneName =
   // a captured baseline (docs/design/concepts/round-7/shots), which
   // nothing has judged by eye yet.
   | 'canary-pending'
+  // Issue #54: an agent behind birdcage, and the same canary during the
+  // upgrade window an accepted upgrade token opened. Not in the pixel
+  // gate either, for the same reason as canary-pending.
+  | 'canary-agent-out-of-date'
+  | 'canary-upgrade-in-progress'
   // Issue #86 slice D's own scene: one poisoner answered a bait query.
   // Its own scene rather than a poisoner added to an existing one, so no
   // reference image that has already been reviewed moves.
@@ -94,6 +99,8 @@ const SCENES: SceneName[] = [
   'canary-silent',
   'canary-night',
   'canary-pending',
+  'canary-agent-out-of-date',
+  'canary-upgrade-in-progress',
   'poisoner',
 ]
 
@@ -124,6 +131,10 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/canary-night.json')) as unknown as Fixture
     case 'canary-pending':
       return (await import('../dev/fixtures/canary-pending.json')) as unknown as Fixture
+    case 'canary-agent-out-of-date':
+      return (await import('../dev/fixtures/canary-agent-out-of-date.json')) as unknown as Fixture
+    case 'canary-upgrade-in-progress':
+      return (await import('../dev/fixtures/canary-upgrade-in-progress.json')) as unknown as Fixture
   }
 }
 

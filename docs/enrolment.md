@@ -393,7 +393,9 @@ place, which is what a copied key or token looks like:
   versions, within one heartbeat interval (60 seconds). A canary whose
   address legitimately changes (DHCP, a container restart onto a new
   IP) flips this once and clears within a minute; the history keeps the
-  flap either way.
+  flap either way. The one exception is an upgrade run from the upgrade
+  command (below): its change of build shows as
+  `upgrade_in_progress` for five minutes instead.
 
 Neither state revokes anything by itself -- a copied key must never be
 a button that silences the real canary. Both mean: **look at this node,
@@ -865,10 +867,59 @@ answering machine.
 ## Upgrading a canary
 
 The canary page names an agent that is running an older build than
-birdcage itself, and shows a copy-and-paste command to fix it (issue
-#54). This is not the same problem revoking and re-enrolling solves
-above: nothing is wrong with this canary's credential, its containers
-are just running old images.
+birdcage itself (issue #54). This is not the same problem revoking and
+re-enrolling solves above: nothing is wrong with this canary's
+credential, its containers are just running old images.
+
+**Getting the command.** The canary page shows the command to run on
+the birdcage host; it prints the agent's upgrade command:
+
+```
+birdcage agent upgrade-command <agent-id>
+```
+
+Run it the way you run `birdcage agent enrol` (with `docker exec` into
+the birdcage container). It prints one block: copy all of it, and paste
+it on the agent's host in one go. The block is one grouped shell
+command, `( set -e` to `)`, so the shell reads the whole paste before
+running any of it, runs every step in order, stops at the first step
+that fails and names it ("birdcage upgrade stopped at: ..."), and ends
+with "birdcage upgrade: done". It runs the same in bash or plain sh.
+
+**It carries a single-use upgrade token, valid for 15 minutes.** The
+note above the block says until when. Each run of the command mints a
+new one and makes any earlier unused one useless, so if you let one
+expire, just run it again. The token is only ever printed, never shown
+on the dashboard: minting one is a change of state, and the dashboard
+stays read-only until it has a login (#8). An agent that is not behind
+gets no token and no command.
+
+**Why a token: no `credential_conflict` during a normal upgrade.** The
+old agent and the new one report two different builds on the same
+credential within a minute of each other, which on its own is exactly
+what a copied credential looks like (ADR-0012 B4). The upgrade command
+hands the token to the new agent image straight after the old agent is
+removed and before the new one starts; birdcage accepts it once, and
+for the next five minutes that one change of build on that one canary
+is expected rather than a conflict. The canary shows
+**`upgrade_in_progress`** meanwhile, with the time the window ends.
+After it, detection is exactly as before: an old build still running
+five minutes on shows `credential_conflict` as usual. The window never
+covers a third build, and never a second address.
+
+The token goes to the agent on standard input, piped from the shell's
+own `echo`, into a throwaway container of the new image that has the
+agent's state volume mounted read-only: it is never in a container's
+environment (which Docker keeps for the life of the container), never
+a command-line argument, and never written anywhere. That container
+presents it with the agent's own certificate and bearer token, prints
+one line (accepted, or refused and why), and exits. A refused or
+expired token does not stop the upgrade -- the rest of the block runs,
+and the worst case is the `credential_conflict` the token exists to
+avoid, clearing within two minutes of the old agent's last heartbeat.
+Every mint, acceptance and refusal is in the audit log
+(`canary.upgrade_token_minted`, `ingest.upgrade_token_accepted`,
+`ingest.upgrade_token_refused`).
 
 **A plain `docker restart` does not fix this.** Restarting a container
 starts the same image it already had; it never pulls anything newer.
@@ -887,8 +938,10 @@ volume before looking at `MOCKINGBIRD_DEPLOY_TOKEN`/
 config.go and cmd/nightjar/enrol.go): once the state is there, an agent
 enrols itself only once, ever, and every later boot -- including this
 one -- reads the credential already on disk and ignores the
-environment variable entirely. Printing a token here would do nothing
-but confuse whoever reads it later into thinking it mattered.
+environment variable entirely. Printing a deploy token here would do
+nothing but confuse whoever reads it later into thinking it mattered.
+(The upgrade token above is a different thing: it re-enrols nothing,
+and only tells birdcage the change of build is expected.)
 
 **The order matters for a honeypot**, which can run up to four
 containers sharing one network namespace (owned by the address holder,
@@ -896,9 +949,12 @@ containers sharing one network namespace (owned by the address holder,
 container is removed -- the three that joined the holder's namespace
 before the holder itself, since removing a namespace something is still
 attached to fails outright -- and then each is re-run in the same order
-enrolment used: holder, Mockingbird, OpenCanary, the SMB lure. A
-scanner has none of this: Nightjar is a single standalone container, so
-its upgrade command is just pull, remove, re-run.
+enrolment used: holder, Mockingbird, OpenCanary, the SMB lure -- with
+the upgrade token presented between the holder and Mockingbird, from
+inside the holder's network namespace so birdcage sees it from the
+canary's own address. A scanner has none of this: Nightjar is a single
+standalone container, so its upgrade command is just pull, remove,
+present the token, re-run.
 
 **Anything you added to the enrolment lines by hand, add again.** The
 upgrade command reprints what `birdcage agent enrol` printed, nothing
@@ -925,20 +981,23 @@ line-building functions `birdcage agent enrol` itself uses (moved into
 `internal/runcmd` for exactly this reason: one wrong flag and the two
 could never quietly drift apart from each other).
 
-**The server's half comes from the running birdcage, not from a CLI
-run.** The address, port and pin in the command are the ones the
-running server enrols canaries with -- `BIRDCAGE_ADVERTISE_HOST`, the
-port of `BIRDCAGE_ENROL_ADDR`, and its own CA's pin -- and the images
-are whatever `MOCKINGBIRD_IMAGE`, `NIGHTJAR_IMAGE`, `HOLDER_IMAGE`,
-`OPENCANARY_IMAGE` and `SMB_LURE_IMAGE` name in the server's own
-environment, each falling back to the same default enrolment uses. Set
-an image override on the birdcage container itself, not only on a
-`docker exec ... agent enrol` line, or the upgrade command will name the
-default image. A server that could not enrol anything (ingest off, or no
-`BIRDCAGE_ADVERTISE_HOST`) prints no command, and the page points here
-instead.
+**The server's half comes from the birdcage container's own
+environment.** The address, port and pin in the command are the ones
+birdcage enrols canaries with -- `BIRDCAGE_ADVERTISE_HOST`, the port of
+`BIRDCAGE_ENROL_ADDR`, and its own CA's pin -- and the images are
+whatever `MOCKINGBIRD_IMAGE`, `NIGHTJAR_IMAGE`, `HOLDER_IMAGE`,
+`OPENCANARY_IMAGE` and `SMB_LURE_IMAGE` name, each falling back to the
+same default enrolment uses. `docker exec` inherits the container's
+environment, so set an image override on the birdcage container itself
+and both the page and the command agree. A birdcage that could not
+enrol anything (ingest off, or no `BIRDCAGE_ADVERTISE_HOST`) prints no
+command, and the page points here instead.
 
-`scripts/e2e/upgrade.sh` runs this command for real on every merge
-request: it reports an older release from the canary's own credential,
-reads the command off the canary page, runs it, and checks the same
-canary comes back on the same certificate with its self-test passing.
+`scripts/e2e/upgrade.sh` runs this for real on every merge request: it
+reports an older release from the canary's own credential, gets the
+command from `birdcage agent upgrade-command`, feeds the block to `sh`
+as one unit, and checks that the token is accepted, `upgrade_in_progress`
+shows and `credential_conflict` never does, and the same canary comes
+back on the same certificate with its self-test passing. It then
+presents the spent token again and checks it is refused, audited, and
+opens nothing.

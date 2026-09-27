@@ -24,12 +24,13 @@
         "name": "canary-iot",
         "lane": "iot",
         "ports": "telnet 23 · ssh 22 · smb 445",
-        "status": "agent_out_of_date",
-        "active_states": ["agent_out_of_date"],
+        "status": "upgrade_in_progress",
+        "active_states": ["upgrade_in_progress"],
         "last_heartbeat_at": "2026-09-20T09:14:19Z",
         "hits": 0,
-        "agent_version": "0.1.0+2ea21b94",
+        "agent_version": "0.1.1+edc3691a",
         "birdcage_version": "0.1.1+edc3691a",
+        "upgrade_window_until": "2026-09-20T09:18:02Z",
         "last_self_test_at": "2026-09-20T04:00:07Z",
         "last_self_test_passed": true,
         "self_test": [
@@ -77,7 +78,7 @@
       {
         "id": "canary-iot",
         "lane": "iot",
-        "status": "agent_out_of_date",
+        "status": "upgrade_in_progress",
         "last_heartbeat_at": "2026-09-20T09:14:19Z",
         "beats": ["2026-09-20T09:14:19Z"],
         "hits": []
@@ -118,6 +119,15 @@
         "canary_name": "canary-iot",
         "state": "agent_out_of_date",
         "started_at": "2026-09-17T08:00:00Z",
+        "ended_at": "2026-09-20T09:13:10Z",
+        "flap_count": 1,
+        "end_reason": "cleared"
+      },
+      {
+        "canary_id": "canary-iot",
+        "canary_name": "canary-iot",
+        "state": "upgrade_in_progress",
+        "started_at": "2026-09-20T09:13:02Z",
         "ended_at": null,
         "flap_count": 1,
         "end_reason": null
@@ -129,8 +139,16 @@
         "canary_name": "canary-iot",
         "state": "agent_out_of_date",
         "count": 1,
-        "longest_s": 262831,
-        "total_s": 262831
+        "longest_s": 263590,
+        "total_s": 263590
+      },
+      {
+        "canary_id": "canary-iot",
+        "canary_name": "canary-iot",
+        "state": "upgrade_in_progress",
+        "count": 1,
+        "longest_s": 89,
+        "total_s": 89
       }
     ]
   },
@@ -141,13 +159,14 @@
         "name": "canary-iot",
         "lane": "iot",
         "ports": "telnet 23 · ssh 22 · smb 445",
-        "status": "agent_out_of_date",
-        "active_states": ["agent_out_of_date"],
+        "status": "upgrade_in_progress",
+        "active_states": ["upgrade_in_progress"],
         "last_heartbeat_at": "2026-09-20T09:14:19Z",
         "hits": 0,
-        "agent_version": "0.1.0+2ea21b94",
+        "agent_version": "0.1.1+edc3691a",
         "birdcage_version": "0.1.1+edc3691a",
-        "upgrade_available": true,
+        "upgrade_window_until": "2026-09-20T09:18:02Z",
+        "upgrade_available": false,
         "last_self_test_at": "2026-09-20T04:00:07Z",
         "last_self_test_passed": true,
         "self_test": [
@@ -167,7 +186,7 @@
         "self_test_schedule": "04:00",
         "enrolled_at": "2026-07-02T09:41:00Z",
         "registered_at": "2026-07-02T09:44:50Z",
-        "agent_version": "0.1.0+2ea21b94",
+        "agent_version": "0.1.1+edc3691a",
         "token_rotated_at": "2026-09-17T00:00:00Z",
         "token_rotates_at": "2026-09-21T09:14:31Z"
       },

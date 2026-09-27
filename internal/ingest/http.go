@@ -114,6 +114,8 @@ type ingestRoute struct {
 //     2), the commit that mints the first scanner command (scan).
 //     handleCommands' commandKindsFor still lets each kind claim only its
 //     own command kinds, failing closed for any other.
+//   - /ingest/upgrade-token -- both kinds: issue #54's single-use upgrade
+//     token (upgrade.go), which every kind's upgrade command presents.
 func ingestRoutes(h *ingestHandler) []ingestRoute {
 	return []ingestRoute{
 		{"POST /ingest/events", []agentkind.Kind{agentkind.Honeypot}, h.handleBatch},
@@ -122,6 +124,7 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 		{"POST /ingest/heartbeat", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleHeartbeat},
 		{"POST /ingest/commands", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleCommands},
 		{"POST /ingest/scans", []agentkind.Kind{agentkind.Scanner}, h.handleScan},
+		{"POST /ingest/upgrade-token", []agentkind.Kind{agentkind.Honeypot, agentkind.Scanner}, h.handleUpgradeToken},
 	}
 }
 

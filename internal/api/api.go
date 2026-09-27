@@ -97,7 +97,7 @@ func newHandlerWithVersion(database *db.DB, now func() time.Time, birdcageVersio
 }
 
 // newHandlerWithUpgrade is newHandlerWithVersion with issue #54's
-// upgrade-command facts set, for the tests of upgrade_command.
+// upgrade-command facts set, for the tests of upgrade_available.
 func newHandlerWithUpgrade(database *db.DB, now func() time.Time, birdcageVersion string, upgrade UpgradeConfig) http.Handler {
 	return newHandlerWithHub(database, now, nil, stream.NewHub(), false, birdcageVersion, upgrade)
 }
