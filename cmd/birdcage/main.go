@@ -18,6 +18,7 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/driftsched"
 	"github.com/tomlawesome/birdcage/internal/history"
 	"github.com/tomlawesome/birdcage/internal/logging"
 	"github.com/tomlawesome/birdcage/internal/mail"
@@ -179,6 +180,15 @@ const (
 	// the schedule itself is a "HH:MM" time of day and a tick any more
 	// often than that could fire the same minute twice.
 	selfTestTickInterval = time.Minute
+
+	// driftTickInterval is how often internal/driftsched checks whether
+	// any agent is out of date (issue #54). Unlike selfTestTickInterval
+	// this check has no time-of-day to hit exactly -- its "once a day"
+	// rule is enforced by internal/mail's own mail_outbox lookup, not by
+	// this cadence -- so an hour is chosen for how promptly a fresh
+	// drift shows up in the day's mail rather than for any scheduling
+	// precision it needs to hit.
+	driftTickInterval = time.Hour
 )
 
 // serviceResult is what each of the two services below reports once it
@@ -293,6 +303,16 @@ func main() {
 		historyLog.Error(fmt.Sprintf("start canary state recorder: %v", err))
 	}
 	go runHistoryLoop(ctx, stateRecorder, mailSender, historyTickInterval, historyLog, mailLog)
+
+	// Issue #54's daily out-of-date check rides its own, far slower
+	// ticker: unlike the recorder, it never needs to notice a state
+	// change within seconds, only "has today's mail gone out yet" --
+	// which internal/mail's own EnqueueAgentsBehind answers by reading
+	// mail_outbox back, not by anything this loop remembers. mailSender
+	// may be nil (mail off); Scheduler.Tick is nil-safe.
+	driftLog := logging.New("drift")
+	driftScheduler := driftsched.New(database, mailSender, version, time.Now, driftLog)
+	go driftScheduler.Run(ctx, driftTickInterval)
 
 	// Started only when the mailbox is configured; there is no
 	// nil-safe no-op tick to run otherwise.
