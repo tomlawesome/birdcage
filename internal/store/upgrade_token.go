@@ -321,7 +321,7 @@ func upgradeWindows(ctx context.Context, database *db.DB, canaryID string, now t
 	if err != nil {
 		return nil, fmt.Errorf("list upgrade windows: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var open []upgradeWindow
 	for rows.Next() {
 		var w upgradeWindow

@@ -26,7 +26,7 @@ import (
 // Exit status: 0 accepted, 1 refused or not presented, 2 usage.
 func runUpgradeToken(args []string, stdin io.Reader, stdout io.Writer) int {
 	if len(args) != 0 {
-		fmt.Fprintln(stdout, "usage: echo <token> | nightjar upgrade-token (the token is read from standard input, never from an argument)")
+		_, _ = fmt.Fprintln(stdout, "usage: echo <token> | nightjar upgrade-token (the token is read from standard input, never from an argument)")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -48,7 +48,7 @@ func runUpgradeToken(args []string, stdin io.Reader, stdout io.Writer) int {
 	default:
 		// safeErr: a file error here could otherwise carry the state
 		// directory, which this agent never prints.
-		fmt.Fprintf(stdout, "upgrade token not presented: %s\n", safeErr(err))
+		_, _ = fmt.Fprintf(stdout, "upgrade token not presented: %s\n", safeErr(err))
 		return 1
 	}
 }

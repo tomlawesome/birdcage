@@ -91,7 +91,7 @@ type Options struct {
 func Run(ctx context.Context, o Options) error {
 	token, err := readToken(o.Stdin)
 	if err != nil {
-		fmt.Fprintf(o.Stdout, "upgrade token: %v\n", err)
+		_, _ = fmt.Fprintf(o.Stdout, "upgrade token: %v\n", err)
 		return ErrUsage
 	}
 
@@ -119,22 +119,22 @@ func Run(ctx context.Context, o Options) error {
 		answer, err := c.PresentUpgradeToken(ctx, bearer, token)
 		switch {
 		case err == nil && answer.Accepted:
-			fmt.Fprintf(o.Stdout, "upgrade token accepted: until %s birdcage will not flag this agent's old build as credential_conflict\n",
+			_, _ = fmt.Fprintf(o.Stdout, "upgrade token accepted: until %s birdcage will not flag this agent's old build as credential_conflict\n",
 				answer.WindowUntil.UTC().Format(time.RFC3339))
 			return nil
 		case err == nil:
-			fmt.Fprintf(o.Stdout, "upgrade token refused: %s. The upgrade goes on; the agent may show credential_conflict for about two minutes.\n",
+			_, _ = fmt.Fprintf(o.Stdout, "upgrade token refused: %s. The upgrade goes on; the agent may show credential_conflict for about two minutes.\n",
 				printable(answer.Reason))
 			return ErrRefused
 		case client.IsUnauthorized(err):
-			fmt.Fprintln(o.Stdout, "upgrade token not presented: birdcage refused this agent's own credential (401). The upgrade goes on; see docs/enrolment.md if the agent stays down.")
+			_, _ = fmt.Fprintln(o.Stdout, "upgrade token not presented: birdcage refused this agent's own credential (401). The upgrade goes on; see docs/enrolment.md if the agent stays down.")
 			return ErrRefused
 		case errors.Is(err, client.ErrUpgradeTokenMalformed):
-			fmt.Fprintln(o.Stdout, "upgrade token not presented: birdcage refused the request as malformed.")
+			_, _ = fmt.Fprintln(o.Stdout, "upgrade token not presented: birdcage refused the request as malformed.")
 			return ErrRefused
 		}
 		if !client.IsRetryable(err) || time.Now().Add(backoff).After(deadline) {
-			fmt.Fprintf(o.Stdout, "upgrade token not presented: birdcage did not answer (%s). The upgrade goes on; the agent may show credential_conflict for about two minutes.\n",
+			_, _ = fmt.Fprintf(o.Stdout, "upgrade token not presented: birdcage did not answer (%s). The upgrade goes on; the agent may show credential_conflict for about two minutes.\n",
 				printable(err.Error()))
 			return ErrRefused
 		}

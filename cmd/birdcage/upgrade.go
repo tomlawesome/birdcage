@@ -185,7 +185,7 @@ func runAgentUpgradeCommand(args []string, getenv func(string) string, stdout, s
 	}
 	committed = true
 
-	fmt.Fprintf(stderr, "Upgrade command for agent %s, from %s to %s. It carries a single-use upgrade token, valid until %s (%d minutes). Paste the whole block on the agent's host, as one paste:\n",
+	_, _ = fmt.Fprintf(stderr, "Upgrade command for agent %s, from %s to %s. It carries a single-use upgrade token, valid until %s (%d minutes). Paste the whole block on the agent's host, as one paste:\n",
 		term.Escape(agentID), term.Escape(tok.FromVersion), term.Escape(tok.ToVersion),
 		tok.ExpiresAt.Format(time.RFC3339), int(store.UpgradeTokenTTL/time.Minute))
 	_, err = io.WriteString(stdout, script.String())
