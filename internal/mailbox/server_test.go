@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,11 +80,24 @@ func newTestServer(t *testing.T) *testServer {
 		MinVersion:   tls.VersionTLS12,
 	})
 
+	// Wait for Serve to reach its accept loop before any test can close
+	// the server (#136). go-imap's Serve registers the listener, unlocks,
+	// and only then adds itself to the WaitGroup that Close waits on; a
+	// Close landing in that gap races Add against Wait. A test that never
+	// connects (a cancelled context, say) closes almost at once, which is
+	// exactly that gap. Serve calls Accept only after the Add, so the
+	// first Accept is the signal that Close is now safe.
+	accepting := &firstAcceptListener{Listener: ln, ready: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = srv.Serve(ln)
+		_ = srv.Serve(accepting)
 	}()
+	select {
+	case <-accepting.ready:
+	case <-done:
+		t.Fatal("test IMAP server stopped before it began accepting")
+	}
 	t.Cleanup(func() {
 		_ = srv.Close()
 		<-done
@@ -187,3 +201,16 @@ func quietLogger(t *testing.T) *slog.Logger {
 type quietServerLogger struct{}
 
 func (quietServerLogger) Printf(format string, args ...any) {}
+
+// firstAcceptListener closes ready the first time Accept is called; see
+// newTestServer for why that moment matters.
+type firstAcceptListener struct {
+	net.Listener
+	once  sync.Once
+	ready chan struct{}
+}
+
+func (l *firstAcceptListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.ready) })
+	return l.Listener.Accept()
+}

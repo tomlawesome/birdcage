@@ -20,15 +20,15 @@
 #     docker run -d --name mockingbird --restart unless-stopped \
 #       --network container:holder \
 #       --cap-add NET_RAW \
+#       --security-opt no-new-privileges \
 #       -v mockingbird-state:/var/lib/mockingbird \
 #       -v mockingbird-log:/var/log/opencanary:ro \
 #       -e MOCKINGBIRD_BIRDCAGE_URL=https://birdcage.example:8443 mockingbird
 #
-# This container's own hardening flags are unchanged by this split (no
-# --security-opt no-new-privileges in the printed command; see
-# docs/enrolment.md, "If you also use --security-opt no-new-privileges",
-# for why the two now mix as long as --init is absent). What did change:
-# no more --sysctl and no more --init. The sysctl moved to OpenCanary's
+# Since #137 the printed command also carries --security-opt
+# no-new-privileges, which keeps NET_RAW only because --init is absent
+# (docs/enrolment.md, "no-new-privileges and --init", has why). What
+# #132 changed: no more --sysctl and no more --init. The sysctl moved to OpenCanary's
 # own line; the agent's own privileged ports (137, 161, 5353, 5355) still
 # bind because Docker already sets net.ipv4.ip_unprivileged_port_start=0
 # in the holder's namespace, which this container joins. --init went

@@ -563,12 +563,13 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped \\\n"); err != nil {
 		return err
 	}
-	// No --sysctl and no --init here since issue #132: this container
-	// binds no privileged port any more -- OpenCanary does, in its own
-	// container printed next, which carries the sysctl instead -- and
-	// spawns no child process to reap or forward signals to (#69,
+	// No --sysctl and no --init here since issue #132: the sysctl moved
+	// to OpenCanary's own container, printed next (this agent's own
+	// privileged ports bind because Docker already sets
+	// ip_unprivileged_port_start=0 in the holder's namespace), and this
+	// agent spawns no child process to reap or forward signals to (#69,
 	// superseded; build/mockingbird/Dockerfile's own comment has the
-	// reasoning).
+	// reasoning). Keeping --init off also matters for the flag below.
 	//
 	// --cap-add NET_RAW (#65): the agent watches for port scans with one
 	// raw socket in the container's own network namespace, because
@@ -580,6 +581,17 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	// cannot see somebody sweeping the ports nothing answers on, and
 	// says so in one line at startup.
 	if _, err := fmt.Fprintf(w, "  --cap-add NET_RAW \\\n"); err != nil {
+		return err
+	}
+	// --security-opt no-new-privileges (#137): nothing in this container
+	// can gain privileges through a setuid or file-capability binary. It
+	// does not cost the agent its NET_RAW, because the runtime starts the
+	// agent directly and already holds NET_RAW from the flag above. Put
+	// --init in front of the agent and it would: the init holds no
+	// capabilities, so the agent it starts gets none either.
+	// docs/enrolment.md, "no-new-privileges and --init", has the
+	// detail.
+	if _, err := fmt.Fprintf(w, "  --security-opt no-new-privileges \\\n"); err != nil {
 		return err
 	}
 	// mockingbird-log is now READ-ONLY here (issue #132): OpenCanary

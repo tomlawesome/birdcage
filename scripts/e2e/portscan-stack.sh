@@ -11,10 +11,12 @@
 # includes NET_RAW, so that container is not a clean negative case. This
 # file starts two canaries built for the purpose:
 #
-#   - POS_CANARY: --cap-drop ALL --cap-add NET_RAW, no
-#     no-new-privileges -- issue #65's own capability, and nothing else.
-#   - NEG_CANARY: the same flags plus --security-opt no-new-privileges
-#     AND --init -- see below for why this file adds --init itself now.
+#   - POS_CANARY: --cap-drop ALL --cap-add NET_RAW, plus the
+#     --security-opt no-new-privileges the printed command carries since
+#     #137 -- issue #65's own capability and nothing else, proving
+#     detection stays on under that flag.
+#   - NEG_CANARY: the same flags AND --init -- see below for why this
+#     file adds --init itself.
 #
 # A third combination was tried and rejected while building this
 # journey, worth recording here so nobody re-discovers it the hard way:
@@ -318,7 +320,7 @@ up() {
   start_holder "$POS_HOLDER" "$POS_CANARY"
   enrol "$POS_NAME" "$POS_LANE" portscan-pos-enrol-output.txt
   run portscan-pos-enrol-output.txt "$POS_CANARY" "$POS_HOLDER" "$POS_STATE_VOL" "$POS_LOG_VOL" \
-    "--cap-drop ALL --cap-add NET_RAW" "--cap-drop ALL" "--cap-add NET_RAW"
+    "--cap-drop ALL --cap-add NET_RAW" "--cap-drop ALL" "--cap-add NET_RAW" "no-new-privileges"
   run_opencanary portscan-pos-enrol-output.txt "$POS_OPENCANARY" "$POS_HOLDER" "$POS_LOG_VOL"
   POS_CANARY_ID="$(wait_for_provision "$POS_NAME" "$POS_CANARY")"
   wait_for_line "$POS_CANARY" "port-scan detection active"
@@ -326,7 +328,7 @@ up() {
   start_holder "$NEG_HOLDER" "$NEG_CANARY"
   enrol "$NEG_NAME" "$NEG_LANE" portscan-neg-enrol-output.txt
   run portscan-neg-enrol-output.txt "$NEG_CANARY" "$NEG_HOLDER" "$NEG_STATE_VOL" "$NEG_LOG_VOL" \
-    "--init --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges" \
+    "--init --cap-drop ALL --cap-add NET_RAW" \
     "--init" "--cap-drop ALL" "--cap-add NET_RAW" "no-new-privileges"
   run_opencanary portscan-neg-enrol-output.txt "$NEG_OPENCANARY" "$NEG_HOLDER" "$NEG_LOG_VOL"
   NEG_CANARY_ID="$(wait_for_provision "$NEG_NAME" "$NEG_CANARY")"
