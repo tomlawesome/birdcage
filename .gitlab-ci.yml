@@ -62,16 +62,20 @@ variables:
   # needs its own `docker login` first -- see the jobs that do. Versions
   # unchanged from before this issue; only the source moved.
   GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27
-  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:22-trixie
-  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-alpine
+  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
+  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
+  # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
+  # not the newest Python: lint:licences-python audits the pip packages
+  # exactly as that image installs them, and zope.interface==7.2 (pinned by
+  # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-slim-trixie
   ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/alpine:3.24
   DOCKER_CLI_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/docker:29-cli
-  POSTGRES17_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:17-alpine
-  # scripts/e2e/stack.sh's own Postgres backend builds a TLS-enabled image
-  # FROM this one -- a different tag from POSTGRES17_IMAGE above (test:go's
-  # service), kept separate rather than unified so neither tag bump moves
-  # the other.
+  # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
+  # now the one Postgres pin in this file, used by both test:go's service
+  # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
+  # separate call sites (one env var, one script default) rather than
+  # unified, so a future major-version bump is one line here.
   POSTGRES18_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:18-alpine
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
@@ -143,8 +147,8 @@ lint:go:
       unformatted=$(gofmt -l $files)
       [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
     # Built from source with the image's Go: the prebuilt binary is built
-    # with an older Go and refuses go.mod's `go 1.27.0` directive.
-    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+    # with an older Go and refuses go.mod's `go 1.27.1` directive.
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     - golangci-lint run ./...
 
 # Ported from licence.yml; the script is host independent by design.
@@ -266,11 +270,11 @@ lint:agent-deps:
 # govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
 # CI-only tool, never linked into birdcage (AGENTS.md, "Approved third-
 # party modules"). Installed from source and run against this project's
-# own `go 1.27.0` (go.mod) -- the Go checksum database verifies the
+# own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
 # module download the same way it does for golangci-lint above.
 #
 # GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
-# go.mod names a lower floor than 1.27.0, and GOTOOLCHAIN=auto's default
+# go.mod names a lower floor than 1.27.1, and GOTOOLCHAIN=auto's default
 # module-aware toolchain selection picks a toolchain that satisfies
 # *that* floor, not this project's -- observed directly: it built
 # govulncheck with go1.26.8, which then refused to analyse this
@@ -334,8 +338,10 @@ lint:gitleaks:
 # do with the change in front of it, would make every pipeline pay for a
 # round trip to half a dozen registries, and would go red for a reason
 # nobody in the merge request can fix by editing their own diff. A
-# schedule (project Settings > CI/CD > Schedules, owner sets up once)
-# with the variable SCHEDULED_JOB=staleness is what runs it; the
+# pipeline schedule whose description is exactly `staleness` is what
+# runs it (schedule 14, weekly on `dev`; GitLab exposes the description
+# as $CI_PIPELINE_SCHEDULE_DESCRIPTION, so no schedule variable has to
+# be set by hand -- the endpoint for those is owner-only, #139); the
 # `when: never` fallback keeps every other trigger, including an
 # unrelated schedule, from running it by accident. `scripts/ci-e2e-
 # guard.py` carries the matching rule (docs/ci-hops.md's own guard,
@@ -347,7 +353,7 @@ audit:staleness:
   image: $PYTHON_ALPINE_IMAGE
   needs: []
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULED_JOB == "staleness"
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION == "staleness"
     - when: never
   before_script:
     - pip install --quiet pyyaml
@@ -395,7 +401,7 @@ test:frontend:
     # installed node_modules and this is the only job that has one --
     # a separate job would pay a second `npm ci` on every merge request
     # to check the same tree. It runs before the tests so a licence
-    # problem is reported without waiting for them. node:22-trixie ships
+    # problem is reported without waiting for them. node:26-trixie ships
     # python3 (3.13.5, verified), which the checker needs.
     - ../scripts/licence-check-npm.sh
     - npm run check
@@ -452,7 +458,7 @@ test:go:
   <<: [*gate, *git_safe]
   needs: []
   services:
-    - name: $POSTGRES17_IMAGE
+    - name: $POSTGRES18_IMAGE
       alias: postgres
       entrypoint: ["sh", "-c"]
       command:
@@ -565,7 +571,7 @@ test:smoke:
   variables:
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -589,7 +595,7 @@ test:smoke:safari:
   variables:
     BIRDCAGE_BROWSER: safari
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -611,7 +617,7 @@ test:smoke:edge:
   variables:
     BIRDCAGE_BROWSER: edge
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -642,7 +648,7 @@ test:smoke:postgres:
     - job: test:frontend
       artifacts: true
   services:
-    - name: $POSTGRES17_IMAGE
+    - name: $POSTGRES18_IMAGE
       alias: postgres
       entrypoint: ["sh", "-c"]
       command:
@@ -660,7 +666,7 @@ test:smoke:postgres:
     POSTGRES_PASSWORD: birdcage-ci
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -773,47 +779,15 @@ build:images:
     # Build images from earlier pipelines are pruned here rather than in an
     # after_script somewhere: a later job cannot know whether the pipeline
     # still needs them, and a cancelled pipeline never reaches its cleanup
-    # at all. Matching on the name and excluding this pipeline's own tag
-    # used to be enough (#112): every other pipeline's tag was assumed
-    # dead. On this shared daemon that assumption is false whenever
-    # another pipeline is still running, so a tag only goes now if it is
-    # also OLD -- older than any pipeline still on this host could be,
-    # so it cannot be a tag someone is mid-use of. 6 hours is that
-    # cutoff: this project sets no per-job or per-pipeline `timeout:`, so
-    # the GitLab default (1h per job) applies, and 6h leaves a wide
-    # margin over that for a job a runner picked up late, clock skew
-    # between runners, or a future job whose timeout is raised, without
-    # ever getting close to how long a genuinely abandoned tag sits
-    # around before the next pipeline's prune finds it anyway. Age comes
-    # from `docker image inspect`'s own Created timestamp, not
-    # CI_PIPELINE_ID or a file mtime -- these Dockerfiles set no
-    # SOURCE_DATE_EPOCH or other reproducible-build stamp (grep
-    # build/*/Dockerfile), so Created is the real wall-clock build time,
-    # not a fixed value every rebuild of the same commit would share.
-    # docker:29-cli is Alpine/busybox, so GNU `date -d` (which parses
-    # RFC3339 directly) is not available; busybox `date -D` instead
-    # takes the input format explicitly, so the fractional seconds
-    # RFC3339Nano always includes are stripped first since busybox's
-    # parser has no token for them -- tested directly against
-    # `docker:29-cli` (see #112's write-up in docs/ci-hops.md). A
-    # missing or unparseable image just gets skipped rather than
-    # counted as young, and `|| true` on the removal itself (as
-    # before) means a prune failure never fails this build.
-    - |
-      set -eu
-      max_age_seconds=$((6 * 3600))
-      now_epoch="$(date -u +%s)"
-      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build holder-build opencanary-build; do
-        docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
-          | grep -v ":${CI_PIPELINE_ID}$" \
-          | while IFS= read -r tag; do
-              created="$(docker image inspect --format '{{.Created}}' "$tag" 2>/dev/null)" || continue
-              created_epoch="$(date -u -D '%Y-%m-%dT%H:%M:%S' -d "${created%%.*}" +%s 2>/dev/null)" || continue
-              age=$((now_epoch - created_epoch))
-              [ "$age" -gt "$max_age_seconds" ] || continue
-              docker image rm --force "$tag" >/dev/null 2>&1 || true
-            done || true
-      done
+    # at all. #145: the prune used to list only the local repo name, so it
+    # removed the local "<name>-build:<pipeline id>" tag and left the
+    # registry-named "${CI_REGISTRY_IMAGE}/<name>-build:ci-<pipeline id>"
+    # tag on the same image, which kept the image alive for good. On the
+    # runner host on 2026-09-27, 268 of 305 images were this project's
+    # build images this left behind. scripts/ci-prune-build-images.sh has
+    # the fixed loop and its own header for the age rule, the busybox
+    # `date -D` parsing, and the failure posture.
+    - scripts/ci-prune-build-images.sh
     - |
       set -eu
       stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"

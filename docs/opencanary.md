@@ -22,8 +22,9 @@ record lives here.
 |---|---|---|---|
 | `llmnr` module | The agent sends the bait queries itself | The module imports scapy (not in the image) and its send needs a raw socket, which uid 65532 cannot open; one failure kills its timer for good. Listening alone catches nothing. | #85, #86 |
 | `smb` module (reads Samba's `full_audit` file) | The agent tails the audit file with its own tailer and parse | The module starts at end-of-file (a blind window on every restart), picks fields by fixed index (a shifted line gives wrong values, not an error), and only matches lines that went through syslog, so a syslog daemon has to ride along. | #78 note, #87 |
-| Start-up lines (logtype 1000-1006, service `base`) | Acked on ingest, never stored or counted | They are OpenCanary announcing its own modules, not visitors; before #117 a fresh canary showed ~11 hits of nothing. The agent still forwards them because #65 will read which modules started. | #117 |
+| Start-up lines (logtype 1000-1006, service `base`) | Acked on ingest, never stored or counted, and never parsed for content | They are OpenCanary announcing its own modules, not visitors; before #117 a fresh canary showed ~11 hits of nothing. #65 (closed) turned out not to read them for "which modules started": a module that fails to start and one that starts fine both log through the same logtype (`LOG_BASE_MSG`, `opencanary.tac`'s `start_mod`) with nothing but free text telling them apart, so #65 instead added an independent TCP-dial readiness check (`internal/agent/readiness`) that never looks at this log at all. Nothing currently reads these lines for any purpose. | #117, #65 |
 | `full_audit:success = open` (upstream wiki) | `close` | On SMB2 the open message carries an extra field ahead of the path. | #78 note |
+| `snmp` module | The agent's own UDP listener (`internal/agent/snmp`) parses the request itself, at the same logtype (13001) | Needs scapy, which isn't in the image's dependency closure -- the same reasoning #85 found for llmnr, applied to snmp by the same issue | #85, #88 |
 
 ## Nothing goes upstream
 
