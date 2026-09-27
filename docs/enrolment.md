@@ -861,3 +861,59 @@ address read from the canary's own neighbour table, which of the
 three protocols carried the answer, and which name was answered for.
 The canary reads the MAC passively and never sends anything to the
 answering machine.
+
+## Upgrading a canary
+
+The canary page names an agent that is running an older build than
+birdcage itself, and shows a copy-and-paste command to fix it (issue
+#54). This is not the same problem revoking and re-enrolling solves
+above: nothing is wrong with this canary's credential, its containers
+are just running old images.
+
+**A plain `docker restart` does not fix this.** Restarting a container
+starts the same image it already had; it never pulls anything newer.
+The upgrade command instead pulls every image this canary uses, removes
+every one of its containers, and re-runs them -- the same containers
+`birdcage agent enrol` printed originally, with the same flags, against
+whatever images birdcage's own environment now names.
+
+**No new deploy token is minted, and nothing is asked for one.** Each
+agent's credential lives in its own named volume --
+`mockingbird-state` for a honeypot, `nightjar-state` for a scanner --
+which `docker rm` never touches (only naming a volume in `docker rm -v`
+would, and the upgrade command never does that). Both agents check that
+volume before looking at `MOCKINGBIRD_DEPLOY_TOKEN`/
+`NIGHTJAR_DEPLOY_TOKEN` at all (`ensureEnrolled`, cmd/mockingbird/
+config.go and cmd/nightjar/enrol.go): once the state is there, an agent
+enrols itself only once, ever, and every later boot -- including this
+one -- reads the credential already on disk and ignores the
+environment variable entirely. Printing a token here would do nothing
+but confuse whoever reads it later into thinking it mattered.
+
+**The order matters for a honeypot**, which can run up to four
+containers sharing one network namespace (owned by the address holder,
+"The address holder" above): every image is pulled first, then every
+container is removed -- the three that joined the holder's namespace
+before the holder itself, since removing a namespace something is still
+attached to fails outright -- and then each is re-run in the same order
+enrolment used: holder, Mockingbird, OpenCanary, the SMB lure. A
+scanner has none of this: Nightjar is a single standalone container, so
+its upgrade command is just pull, remove, re-run.
+
+**A canary enrolled before this shipped may have an SMB lure birdcage
+never recorded.** Issue #54 is the first thing that ever wrote a
+canary's lure decision anywhere durable; before it, `--lure`/
+`--smb-workgroup`/`--smb-shares` only decided what that one enrolment
+run printed, nothing more. The upgrade command refuses to guess whether
+one of these older canaries has a lure running: it prints that
+container's own pull/remove/run lines commented out, with a note to
+check the host (`docker ps -a --filter name=smb-lure`) and fill in the
+workgroup and share names by hand, since those were never recorded
+either. A canary enrolled after this shipped never sees this: its lure
+decision, on or off, is always known, and the command either includes
+the lure's lines plainly or says in one line that this canary has none.
+
+The command is built by `internal/runcmd.Upgrade` from the same
+line-building functions `birdcage agent enrol` itself uses (moved into
+`internal/runcmd` for exactly this reason: one wrong flag and the two
+could never quietly drift apart from each other).

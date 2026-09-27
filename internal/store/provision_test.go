@@ -28,7 +28,7 @@ func fakeIssue(canaryID string, kind agentkind.Kind) ([]byte, *x509.Certificate,
 func contactedFixture(t *testing.T, database *db.DB, mintedAt time.Time) (secret string, session EnrolmentSession) {
 	t.Helper()
 	ctx := context.Background()
-	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", agentkind.Honeypot, "", "", mintedAt)
+	raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-canary", "front-door", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestProvisionScannerAcceptsEmptyPorts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
 		ctx := context.Background()
-		raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-scanner", "front-door", agentkind.Scanner, "", "", mintedAt)
+		raw, _, err := MintEnrolmentSession(ctx, database, "provisioned-scanner", "front-door", agentkind.Scanner, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -383,7 +383,7 @@ func TestProvisionSeedsCanarySettingsFromEnrolmentFlags(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, _, err := MintEnrolmentSession(ctx, database, "seeded-canary", "front-door", agentkind.Honeypot, "old-fs-01,old-fs-02", "linux", mintedAt)
+		raw, _, err := MintEnrolmentSession(ctx, database, "seeded-canary", "front-door", agentkind.Honeypot, "old-fs-01,old-fs-02", "linux", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -443,6 +443,93 @@ func TestProvisionSeedsNothingWithoutEnrolmentFlags(t *testing.T) {
 		}
 		if len(settings) != 0 {
 			t.Fatalf("ListCanarySettings after an enrolment with no flags = %v, want empty", settings)
+		}
+	})
+}
+
+// TestProvisionCopiesSMBLureOntoCanary is issue #54's own "the SMB
+// lure's enrolment-time identity survives past enrolment": unlike
+// BaitNames/SegmentProfile above (seeded into canary_settings, a
+// pushed-to-the-agent value), SMBLure/SMBWorkgroup/SMBShares are copied
+// straight onto the new agents row -- GetCanaryUpgradeFacts is the read
+// path a canary's upgrade command (internal/runcmd.Upgrade) uses.
+func TestProvisionCopiesSMBLureOntoCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		raw, _, err := MintEnrolmentSession(ctx, database, "lured-canary", "front-door", agentkind.Honeypot, "", "", boolPtr(true), "OFFICE", "public,backup,scans", mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+		secret, _, outcome, err := FirstContact(ctx, database, HashToken(raw), mintedAt.Add(time.Minute))
+		if err != nil {
+			t.Fatalf("FirstContact: %v", err)
+		}
+		if outcome != Contacted {
+			t.Fatalf("FirstContact outcome = %v, want Contacted", outcome)
+		}
+
+		result, outcome2, err := Provision(ctx, database, HashToken(secret), mintedAt.Add(2*time.Minute), fakeIssue)
+		if err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		if outcome2 != Provisioned {
+			t.Fatalf("Provision outcome = %v, want Provisioned", outcome2)
+		}
+
+		facts, err := GetCanaryUpgradeFacts(ctx, database, result.CanaryID)
+		if err != nil {
+			t.Fatalf("GetCanaryUpgradeFacts: %v", err)
+		}
+		if facts.Kind != agentkind.Honeypot {
+			t.Errorf("Kind = %q, want %q", facts.Kind, agentkind.Honeypot)
+		}
+		if facts.SMBLure == nil || !*facts.SMBLure {
+			t.Fatalf("SMBLure = %v, want true", facts.SMBLure)
+		}
+		if facts.SMBWorkgroup != "OFFICE" {
+			t.Errorf("SMBWorkgroup = %q, want %q", facts.SMBWorkgroup, "OFFICE")
+		}
+		if facts.SMBShares != "public,backup,scans" {
+			t.Errorf("SMBShares = %q, want %q", facts.SMBShares, "public,backup,scans")
+		}
+	})
+}
+
+// TestProvisionLeavesSMBLureUnknownWithoutASessionValue confirms the
+// nil-means-unknown convention actually round-trips through Provision:
+// an enrolment that never carried an SMB lure decision (a scanner, or
+// any session minted before issue #54 existed) leaves the new canary's
+// SMBLure nil, never a guessed false.
+func TestProvisionLeavesSMBLureUnknownWithoutASessionValue(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		secret, _ := contactedFixture(t, database, mintedAt)
+
+		result, _, err := Provision(context.Background(), database, HashToken(secret), mintedAt.Add(2*time.Minute), fakeIssue)
+		if err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		facts, err := GetCanaryUpgradeFacts(context.Background(), database, result.CanaryID)
+		if err != nil {
+			t.Fatalf("GetCanaryUpgradeFacts: %v", err)
+		}
+		if facts.SMBLure != nil {
+			t.Fatalf("SMBLure = %v, want nil (unknown)", *facts.SMBLure)
+		}
+		if facts.SMBWorkgroup != "" || facts.SMBShares != "" {
+			t.Errorf("SMBWorkgroup/SMBShares = %q/%q, want both empty", facts.SMBWorkgroup, facts.SMBShares)
+		}
+	})
+}
+
+// TestGetCanaryUpgradeFactsUnknownCanary confirms the same
+// ErrCanaryNotFound stance GetCanaryKind and GetCanarySettingsHash take.
+func TestGetCanaryUpgradeFactsUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		_, err := GetCanaryUpgradeFacts(context.Background(), database, "no-such-canary")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("GetCanaryUpgradeFacts on an unknown id: err = %v, want ErrCanaryNotFound", err)
 		}
 	})
 }

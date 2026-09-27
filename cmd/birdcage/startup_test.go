@@ -651,7 +651,7 @@ func TestBuildIngestServersAppliesTestClientCertTTL(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-ttl-test", "lane-a", agentkind.Honeypot, "", "", now)
+	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-ttl-test", "lane-a", agentkind.Honeypot, "", "", nil, "", "", now)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}

@@ -16,7 +16,7 @@ import (
 func TestMintEnrolmentSessionReturnsRawOnceAndStoresOnlyHash(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, session, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+		raw, session, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -54,6 +54,58 @@ func TestMintEnrolmentSessionReturnsRawOnceAndStoresOnlyHash(t *testing.T) {
 	})
 }
 
+// TestMintEnrolmentSessionCarriesSMBLureIdentity is issue #54's own
+// round trip: --lure/--smb-workgroup/--smb-shares' already-validated
+// values ride on the session exactly the way BaitNames/SegmentProfile
+// already do, for store.Provision to copy onto the new canary row
+// later (TestProvisionCopiesSMBLureOntoCanary, provision_test.go).
+func TestMintEnrolmentSessionCarriesSMBLureIdentity(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		raw, session, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", boolPtr(true), "OFFICE", "public,backup,scans", mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+		if session.SMBLure == nil || !*session.SMBLure {
+			t.Fatalf("SMBLure = %v, want true", session.SMBLure)
+		}
+		if session.SMBWorkgroup != "OFFICE" || session.SMBShares != "public,backup,scans" {
+			t.Errorf("SMBWorkgroup/SMBShares = %q/%q, want %q/%q", session.SMBWorkgroup, session.SMBShares, "OFFICE", "public,backup,scans")
+		}
+
+		// Read the row back the same way FirstContact would, to prove the
+		// values above came from the row itself and not just from
+		// MintEnrolmentSession's own return value.
+		found, err := scanEnrolmentSessionByHash(context.Background(), database, HashToken(raw))
+		if err != nil {
+			t.Fatalf("scanEnrolmentSessionByHash: %v", err)
+		}
+		if found.SMBLure == nil || !*found.SMBLure || found.SMBWorkgroup != "OFFICE" || found.SMBShares != "public,backup,scans" {
+			t.Errorf("read back SMBLure/SMBWorkgroup/SMBShares = %v/%q/%q, want true/%q/%q",
+				found.SMBLure, found.SMBWorkgroup, found.SMBShares, "OFFICE", "public,backup,scans")
+		}
+	})
+}
+
+// TestMintEnrolmentSessionLeavesSMBLureNilWhenNotGiven is the
+// unknown/inapplicable case (a scanner, or any caller passing nil): the
+// three columns must read back NULL/empty, never a guessed false.
+func TestMintEnrolmentSessionLeavesSMBLureNilWhenNotGiven(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		_, session, err := MintEnrolmentSession(context.Background(), database, "canary-scanner", "lane-a", agentkind.Scanner, "", "", nil, "", "", mintedAt)
+		if err != nil {
+			t.Fatalf("MintEnrolmentSession: %v", err)
+		}
+		if session.SMBLure != nil {
+			t.Fatalf("SMBLure = %v, want nil", *session.SMBLure)
+		}
+		if session.SMBWorkgroup != "" || session.SMBShares != "" {
+			t.Errorf("SMBWorkgroup/SMBShares = %q/%q, want both empty", session.SMBWorkgroup, session.SMBShares)
+		}
+	})
+}
+
 // TestFirstContactUnknownToken is the "unknown" leg of design note
 // decision 1's "unknown/expired/burned all get the same" refusal set: a
 // hash matching no row at all.
@@ -82,7 +134,7 @@ func TestFirstContactUnknownToken(t *testing.T) {
 func TestFirstContactSucceedsAndBurnsSession(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -136,7 +188,7 @@ func TestFirstContactSucceedsAndBurnsSession(t *testing.T) {
 func TestFirstContactSecondCallReturnsReused(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -176,7 +228,7 @@ func TestFirstContactSecondCallReturnsReused(t *testing.T) {
 func TestFirstContactAfterDeadlineReturnsExpired(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+		raw, minted, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -223,7 +275,7 @@ func TestFirstContactAfterDeadlineReturnsExpired(t *testing.T) {
 func TestFirstContactContactedSessionNeverReusableAfterItsWindow(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
-		raw, _, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+		raw, _, err := MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession: %v", err)
 		}
@@ -260,11 +312,11 @@ func TestFirstContactContactedSessionNeverReusableAfterItsWindow(t *testing.T) {
 func TestListEnrolmentSessionsOrderedByCreatedAt(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
-		_, first, err := MintEnrolmentSession(ctx, database, "canary-first", "lane-a", agentkind.Honeypot, "", "", mustParse(t, "2026-01-01T00:00:00Z"))
+		_, first, err := MintEnrolmentSession(ctx, database, "canary-first", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mustParse(t, "2026-01-01T00:00:00Z"))
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession first: %v", err)
 		}
-		_, second, err := MintEnrolmentSession(ctx, database, "canary-second", "lane-a", agentkind.Honeypot, "", "", mustParse(t, "2026-01-02T00:00:00Z"))
+		_, second, err := MintEnrolmentSession(ctx, database, "canary-second", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mustParse(t, "2026-01-02T00:00:00Z"))
 		if err != nil {
 			t.Fatalf("MintEnrolmentSession second: %v", err)
 		}
