@@ -472,7 +472,7 @@ agent_image="$(running_image "$E2E_CANARY")" || fail "could not read the agent's
 reuse_rc=0
 reuse_out="$(helper "sed -n 's/^echo \\([0-9a-f]\\{64\\}\\) | .*/\\1/p' /work/upgrade-command.txt" \
   | docker run --rm -i --network "container:$E2E_HOLDER" \
-      --read-only --cap-drop ALL --security-opt no-new-privileges \
+      --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges \
       -v "$STATE_VOL:/var/lib/mockingbird:ro" \
       "$agent_image" upgrade-token 2>&1)" || reuse_rc=$?
 [ "$reuse_rc" = 1 ] || fail "upgrade-token with a spent token exited $reuse_rc, want 1: $reuse_out" "$E2E_BIRDCAGE"

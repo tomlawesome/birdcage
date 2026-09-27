@@ -46,7 +46,7 @@ var honeypotTokenStep = []string{
 	"step='present the upgrade token'",
 	"echo " + testUpgradeToken + ` | docker run --rm -i \`,
 	`  --network container:holder \`,
-	`  --read-only --cap-drop ALL --security-opt no-new-privileges \`,
+	`  --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges \`,
 	`  -v mockingbird-state:/var/lib/mockingbird:ro \`,
 	"  mockingbird:latest upgrade-token || true",
 }

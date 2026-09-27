@@ -175,13 +175,19 @@ func step(w io.Writer, name string) error {
 // agent at all. The subcommand has already said why; the upgrade goes
 // on, and the worst case is the credential_conflict this token exists
 // to avoid.
-func writeUpgradeTokenStep(w io.Writer, token, image, volumeFlag, networkLine string) error {
+//
+// capsLine is the line of hardening flags. Mockingbird's binary carries
+// cap_net_raw as a file capability (build/mockingbird/Dockerfile, #65),
+// and the kernel refuses to exec such a binary when the capability is
+// outside the container's bounding set -- so its throwaway container
+// keeps exactly that one; Nightjar's needs none.
+func writeUpgradeTokenStep(w io.Writer, token, image, volumeFlag, networkLine, capsLine string) error {
 	lines := []string{fmt.Sprintf(`echo %s | docker run --rm -i \`, token)}
 	if networkLine != "" {
 		lines = append(lines, networkLine)
 	}
 	lines = append(lines,
-		"  --read-only --cap-drop ALL --security-opt no-new-privileges \\",
+		capsLine,
 		fmt.Sprintf("  %s \\", volumeFlag),
 		fmt.Sprintf("  %s upgrade-token || true", term.Escape(image)),
 	)
@@ -214,7 +220,8 @@ func upgradeScanner(w io.Writer, in UpgradeInput) error {
 	if err := blank(w); err != nil {
 		return err
 	}
-	if err := writeUpgradeTokenStep(w, in.UpgradeToken, in.AgentImage, "-v nightjar-state:/var/lib/nightjar:ro", ""); err != nil {
+	if err := writeUpgradeTokenStep(w, in.UpgradeToken, in.AgentImage, "-v nightjar-state:/var/lib/nightjar:ro", "",
+		"  --read-only --cap-drop ALL --security-opt no-new-privileges \\"); err != nil {
 		return err
 	}
 	if err := blank(w); err != nil {
@@ -302,7 +309,8 @@ func upgradeHoneypot(w io.Writer, in UpgradeInput) error {
 
 	if err := writeUpgradeTokenStep(w, in.UpgradeToken, in.AgentImage,
 		"-v mockingbird-state:/var/lib/mockingbird:ro",
-		fmt.Sprintf("  --network container:%s \\", HolderContainerName)); err != nil {
+		fmt.Sprintf("  --network container:%s \\", HolderContainerName),
+		"  --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges \\"); err != nil {
 		return err
 	}
 	if err := blank(w); err != nil {
