@@ -98,7 +98,7 @@ of it by this issue.
 | `test:image:birdcage` | Proves the shipped image starts and answers. |
 | `test:image:mockingbird` | Proves nothing in the agent image runs as root. |
 | `test:image:opencanary` | Issue #132's own split of what this job used to prove about the combined image: OpenCanary starts as uid 65532 under its shipped hardening and answers a real FTP client. |
-| `e2e:enrol-and-hit` | Enrolment and the ingest path change often and are the product's spine. |
+| `e2e:enrol-and-hit` | Enrolment and the ingest path change often and are the product's spine. Includes `upgrade.sh` (#54): an agent reporting an older release reads `agent_out_of_date`, and the upgrade command the canary page prints is run for real and brings the same canary back without a token. |
 | `e2e:enrol-and-hit:postgres` | The same spine against the other engine birdcage ships. |
 | `e2e:agent-credentials` | #130 (ADR-0012 Part B): the credential itself -- agent-made keys, renewal from half-life, conflict detection, one-action revocation. As much the product's spine as enrolment above; a regression here is a scanner an operator cannot trust or cannot get rid of. |
 | `e2e:agent-credentials:postgres` | The same journeys against the other engine: `client_certs`' own migration comment warns the two engines compare stored timestamps at different resolutions, and this feature's health signals (`renewal_stalled`, `certificate_expired`) are computed entirely from those comparisons. |

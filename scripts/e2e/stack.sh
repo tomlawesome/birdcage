@@ -191,7 +191,17 @@ build_image() { # build_image <tag> <dockerfile> <override-var-name-or-empty>
     die "$3=$1 names no local image -- it should have been built by build:images and handed to this job; refusing rather than building a different one"
   fi
   log "building $1 from $2 (this takes a few minutes the first time)"
-  docker build --file "$REPO_ROOT/$2" --tag "$1" "$REPO_ROOT" >/dev/null \
+  # The same release stamp build:images gives every image, so a local
+  # run reports a release version the way CI's does: scripts/e2e/upgrade.sh
+  # (#54) needs one on birdcage and the agent, since "dev" is never behind
+  # anything. Unstamped ("dev", the Dockerfiles' default) when this is not
+  # a git checkout.
+  local stamp="" commit
+  if commit="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    stamp="$("$REPO_ROOT/scripts/release-version.sh" --stamp "$commit")" \
+      || die "scripts/release-version.sh could not stamp $commit"
+  fi
+  docker build ${stamp:+--build-arg "VERSION=$stamp"} --file "$REPO_ROOT/$2" --tag "$1" "$REPO_ROOT" >/dev/null \
     || die "building $1 from $2 failed"
 }
 

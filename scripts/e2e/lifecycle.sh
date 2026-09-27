@@ -3,9 +3,9 @@
 # heartbeat, silence, restart, revocation, rotation -- proved against the
 # real stack rather than against internal/store's unit tests.
 #
-# Runs after enrol-and-hit.sh and refusals.sh in the same job, on the
-# canary those scripts already enrolled and hit: this file never enrols
-# its own. It leaves that canary's live credential working when it
+# Runs after enrol-and-hit.sh, refusals.sh and upgrade.sh (#54) in the
+# same job, on the canary those scripts already enrolled and hit: this
+# file never enrols its own. It leaves that canary's live credential working when it
 # finishes, because surface.sh (issue #78 journey B) runs after this file
 # in the same job and needs to cause a hit on the same canary for its SSE
 # check -- see the revocation step below, which enrols and revokes its
@@ -18,6 +18,7 @@
 #   eval "$(scripts/e2e/stack.sh up)"
 #   scripts/e2e/enrol-and-hit.sh
 #   scripts/e2e/refusals.sh
+#   scripts/e2e/upgrade.sh
 #   scripts/e2e/lifecycle.sh
 set -eu
 

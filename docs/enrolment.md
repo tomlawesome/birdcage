@@ -924,3 +924,21 @@ The command is built by `internal/runcmd.Upgrade` from the same
 line-building functions `birdcage agent enrol` itself uses (moved into
 `internal/runcmd` for exactly this reason: one wrong flag and the two
 could never quietly drift apart from each other).
+
+**The server's half comes from the running birdcage, not from a CLI
+run.** The address, port and pin in the command are the ones the
+running server enrols canaries with -- `BIRDCAGE_ADVERTISE_HOST`, the
+port of `BIRDCAGE_ENROL_ADDR`, and its own CA's pin -- and the images
+are whatever `MOCKINGBIRD_IMAGE`, `NIGHTJAR_IMAGE`, `HOLDER_IMAGE`,
+`OPENCANARY_IMAGE` and `SMB_LURE_IMAGE` name in the server's own
+environment, each falling back to the same default enrolment uses. Set
+an image override on the birdcage container itself, not only on a
+`docker exec ... agent enrol` line, or the upgrade command will name the
+default image. A server that could not enrol anything (ingest off, or no
+`BIRDCAGE_ADVERTISE_HOST`) prints no command, and the page points here
+instead.
+
+`scripts/e2e/upgrade.sh` runs this command for real on every merge
+request: it reports an older release from the canary's own credential,
+reads the command off the canary page, runs it, and checks the same
+canary comes back on the same certificate with its self-test passing.
