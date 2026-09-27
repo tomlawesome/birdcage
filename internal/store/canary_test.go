@@ -508,6 +508,19 @@ func TestWellKnownServiceForPort(t *testing.T) {
 	}
 }
 
+// TestWellKnownPortNamesNoPostgresEntry pins issue #144: port 5432 used
+// to be named "postgresql" here while the carrier/grade tables keyed on
+// "postgres" -- two spellings that could never match even if the module
+// existed, and OpenCanary 0.9.10 ships no postgres module at all. A
+// self-test target can only be minted from a name this table returns
+// (WellKnownServiceForPort), so 5432 must come back unmapped rather
+// than under a name that can never pass a self-test.
+func TestWellKnownPortNamesNoPostgresEntry(t *testing.T) {
+	if name, ok := WellKnownServiceForPort(5432); ok {
+		t.Errorf("WellKnownServiceForPort(5432) = %q, true, want false (no postgres module)", name)
+	}
+}
+
 // TestListHoneypotCanariesForSelfTest is issue #46 item 5's store-level
 // test: only kind-honeypot canaries come back, each with its raw ports
 // parsed to ints (not portsDisplay's joined string) and its

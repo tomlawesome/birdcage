@@ -85,7 +85,6 @@ var serviceGrades = map[string]Grade{
 	"redis":    GradeMarked,
 	"mysql":    GradeMarked,
 	"mssql":    GradeMarked,
-	"postgres": GradeMarked,
 	"rdp":      GradeMarked,
 	"ssh":      GradeMarked,
 	"vnc":      GradeChallengeMarked,

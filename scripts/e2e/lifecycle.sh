@@ -57,6 +57,80 @@ esac
 # heartbeat_interval_s, so a stale beat would already have read silent.
 ok "canary $E2E_CANARY_ID: $canary_json (status ok with a real, non-null last_heartbeat_at)"
 
+step "the self-test that just passed exercised rdp, tftp, sip, redis and mssql, and each stored alert carries the field triedFor reads (issue #142)"
+# The self-test that just made the canary "ok" already probed every
+# service build/opencanary/opencanary.conf enables for it, rdp/tftp/sip/
+# redis/mssql included (internal/agent/probe/carrier.go's carriers table,
+# unchanged by #142 -- only what the dashboard *displayed* from the
+# result was missing). This can't assert through GET /api/visitors: that
+# endpoint deliberately excludes synthetic alerts (store.alertsInRange's
+# own "a self-test's own traffic must never appear there"), so a
+# self-test hit is invisible there by design, permanently. Instead this
+# reads the stored raw event straight from the table -- the same one
+# triedFor (internal/store/visitor.go) parses -- and checks for the exact
+# field each carrier plants, proving the real OpenCanary module, the real
+# probe and the real ingest path agree on that field's shape. triedFor's
+# own formatting of it is covered by the unit tests added for #142
+# (internal/store/visitor_test.go), against fixtures verified the same
+# way, against the pinned opencanary==0.9.10 wheel.
+latest_alert_raw() {
+  "$E2E_STACK" query "select raw from alerts where instance_id = '$E2E_CANARY_ID' and service = '$1' order by id desc limit 1"
+}
+require_field() {
+  # $1 = raw, $2 = the "KEY": "value pattern (up to and including the
+  # opening quote of the value), $3 = service, $4 = what this names, for
+  # the failure message.
+  case "$1" in
+    *"$2"'"'*) fail "$3 alert's $4 is empty: $1" ;;
+    *"$2"*) ;;
+    *) fail "$3 alert has no $4: $1" ;;
+  esac
+}
+
+rdp_raw="$(latest_alert_raw rdp)" || fail "could not query the rdp self-test alert"
+[ -n "$rdp_raw" ] || fail "no rdp alert stored despite the self-test passing"
+require_field "$rdp_raw" '"USERNAME": "' rdp "a non-empty USERNAME (rdp.py's mstshash cookie, probeRDP.go)"
+ok "rdp: $rdp_raw"
+
+tftp_raw="$(latest_alert_raw tftp)" || fail "could not query the tftp self-test alert"
+[ -n "$tftp_raw" ] || fail "no tftp alert stored despite the self-test passing"
+require_field "$tftp_raw" '"FILENAME": "' tftp "a non-empty FILENAME (probeTFTP plants the marker there)"
+case "$tftp_raw" in
+  *'"OPCODE": "READ"'*) ;;
+  *) fail "tftp alert's OPCODE is not READ (probeTFTP always sends an RRQ): $tftp_raw" ;;
+esac
+case "$tftp_raw" in
+  *'"MODE": "octet"'*) ;;
+  *) fail "tftp alert's MODE is not octet (probeTFTP's own fixed transfer mode): $tftp_raw" ;;
+esac
+ok "tftp: $tftp_raw"
+
+sip_raw="$(latest_alert_raw sip)" || fail "could not query the sip self-test alert"
+[ -n "$sip_raw" ] || fail "no sip alert stored despite the self-test passing"
+case "$sip_raw" in
+  *'"from": ["<sip:'*) ;;
+  *) fail "sip alert's HEADERS has no from header carrying a sip: URI (probeSIP plants the marker in it): $sip_raw" ;;
+esac
+ok "sip: $sip_raw"
+
+redis_raw="$(latest_alert_raw redis)" || fail "could not query the redis self-test alert"
+[ -n "$redis_raw" ] || fail "no redis alert stored despite the self-test passing"
+case "$redis_raw" in
+  *'"CMD": "AUTH"'*) ;;
+  *) fail "redis alert's CMD is not AUTH (probeRedis always sends AUTH): $redis_raw" ;;
+esac
+require_field "$redis_raw" '"ARGS": "' redis "a non-empty ARGS (probeRedis plants the marker as the AUTH password)"
+ok "redis: $redis_raw"
+
+mssql_raw="$(latest_alert_raw mssql)" || fail "could not query the mssql self-test alert"
+[ -n "$mssql_raw" ] || fail "no mssql alert stored despite the self-test passing"
+case "$mssql_raw" in
+  *'"AppName": "birdcage-selftest"'*) ;;
+  *) fail "mssql alert's AppName is not birdcage-selftest (buildLogin7's own fixed value): $mssql_raw" ;;
+esac
+require_field "$mssql_raw" '"UserName": "' mssql "a non-empty UserName (probeMSSQL plants the marker there, mixed case)"
+ok "mssql: $mssql_raw"
+
 step "POST /api/heartbeat no longer exists on the dashboard listener (issue #135)"
 # That route used to let anyone who could reach the dashboard mark any
 # known canary alive with no credential at all (internal/api/api.go's
