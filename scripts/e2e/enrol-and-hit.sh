@@ -178,6 +178,15 @@ ok "the start-up not_delivering transient cleared"
 # closer proof than restarting it: a restart might land between two
 # heartbeats and never show as down at all, where stopping it leaves it
 # down until this step explicitly starts it again.
+#
+# Wait for the canary's first self-test to settle before stopping
+# anything (#146). Its probes run whenever the agent first polls for
+# commands, 50-70 s after it starts; stop OpenCanary before then and
+# they miss, the canary stays pending until the run's 10-minute window
+# lapses, and lifecycle.sh -- which runs next -- times out waiting for ok.
+poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
+  || fail "the canary never became ok before OpenCanary was stopped (its first self-test did not settle)" "$E2E_CANARY" "$E2E_BIRDCAGE"
+ok "the first self-test settled (status ok) before OpenCanary is stopped"
 docker stop --time 5 "$E2E_OPENCANARY" >/dev/null || fail "stopping $E2E_OPENCANARY failed" "$E2E_OPENCANARY"
 poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .active_states // [] | index(\"opencanary_down\")'" \
   || fail "the canary never reported opencanary_down after OpenCanary stopped" "$E2E_CANARY" "$E2E_BIRDCAGE"

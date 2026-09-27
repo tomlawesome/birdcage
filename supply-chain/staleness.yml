@@ -56,6 +56,16 @@ accepted:
     held-at: "3.0.0"
     reason: "opencanary==0.9.10 pins hpfeeds==3.0.0 exactly; moves only with a new OpenCanary release"
     review-by: "2026-12-27"
+  # Owner decisions on #140, 2026-09-27.
+  - pin: "image:python:3.13-slim-trixie"
+    held-at: "3.13-slim-trixie"
+    reason: "the OpenCanary image and its licence job stay on the Python OpenCanary 0.9.10 and Twisted 26.4.0 declare (up to 3.13); zope.interface 7.2 has no 3.14 wheel"
+    review-by: "2026-12-27"
+  - pin: "npm:typescript"
+    held-at: "6.0.3"
+    reason: "svelte-check 4.7.6, the newest release, accepts TypeScript 5 or 6 only; lift when it supports 7"
+    review-by: "2026-12-27"
+
 unchecked: []
 
 alpine-branch:

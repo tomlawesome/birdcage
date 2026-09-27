@@ -214,7 +214,7 @@ expect 2 "an unreadable file fails red, not green" 'stages: [e2e
 audit_good="audit:staleness:
   stage: lint
   rules:
-    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$CI_PIPELINE_SCHEDULE_DESCRIPTION == \"staleness\"
     - when: never
   script: [true]"
 
@@ -243,7 +243,7 @@ e2e:enrol:postgres:
 audit:staleness:
   stage: e2e
   rules:
-    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$CI_PIPELINE_SCHEDULE_DESCRIPTION == \"staleness\"
     - when: never
   script: [true]"
 
@@ -274,7 +274,7 @@ e2e:enrol:postgres:
 audit:staleness:
   stage: lint
   rules:
-    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$CI_PIPELINE_SCHEDULE_DESCRIPTION == \"staleness\"
     - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
   script: [true]"
 

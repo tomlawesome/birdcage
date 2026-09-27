@@ -48,7 +48,7 @@ RUN apk add --no-cache curl \
 # CI job lint:agent-deps, run once per agent kind since #108): no server
 # package, and no other kind's own package (internal/opencanary), can be
 # linked in here.
-FROM golang:1.27.0-alpine AS agent
+FROM golang:1.27.1-alpine AS agent
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

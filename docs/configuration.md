@@ -8,6 +8,10 @@ mandatory in v1, not SQLite-with-Postgres-as-an-option: every migration and
 every query in `internal/db` and `internal/store` runs on both, and CI tests
 both on every change.
 
+Postgres 18 is the supported and tested version -- CI runs against it
+everywhere. Postgres 17 is expected to work but is not promised; the project
+moves to each new major as it ships and CI proves it, so 19 will be next.
+
 `DATABASE_URL` selects which one birdcage uses:
 
 | `DATABASE_URL` | Engine | Notes |
