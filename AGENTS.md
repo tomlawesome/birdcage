@@ -78,6 +78,16 @@ Shipped as a binary in an agent image, never linked into birdcage:
   record; GPLv3 in a shipped image has the owner's precedent in
   `hpfeeds@3.0.0`.
 
+CI-only tools, never linked or shipped:
+
+- `golang.org/x/vuln` (govulncheck) -- Go team, BSD-3-Clause; owner,
+  2026-09-27, #51. Installed at CI time in `lint:govulncheck`; never
+  imported by any package birdcage builds.
+- `gitleaks` (gitleaks project) -- MIT; owner, 2026-09-27, #28. The
+  released binary, checksum-verified by `scripts/ensure-gitleaks.sh`,
+  never the commercially-licensed `gitleaks-action`; installed at CI
+  time in `lint:gitleaks`.
+
 Frontend (`frontend/package.json`), dev-only, never shipped:
 
 - `@vitest/coverage-v8` -- the coverage plugin of the test runner the
