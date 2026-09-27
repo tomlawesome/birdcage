@@ -29,6 +29,23 @@ What it refuses, and why each one matters:
 Weakening the live checks is then a visible change to this file rather
 than a quiet line in a job definition.
 
+A second, unrelated rule lives in this same file because it is the
+mirror image of the first one (#139): an `audit:`-prefixed job (the
+scheduled-only staleness check, and anything shaped like it later) must
+never run anywhere the live checks do, and must never quietly start
+running on a merge request or on `dev` either. So it refuses:
+
+  - an `audit:` job in the `e2e` stage -- a check that only reads the
+    outside world proves nothing about the code under test, and has no
+    business sharing the stage that does;
+  - an `audit:` job whose `rules:` has any branch, other than a
+    `when: never` one, that does not require
+    `$CI_PIPELINE_SOURCE == "schedule"` -- the whole point of running it
+    on a schedule is that nothing about it is worth a merge request
+    waiting on a round trip to half a dozen registries, and a rule that
+    can also match a push or a merge request quietly turns it back into
+    one.
+
 The stage name and the job prefix are read from the CI config itself,
 not copied here, so the guard cannot drift from what it guards. The
 same is true of the two anchors' rule lists: this file reads
@@ -102,6 +119,35 @@ def rules_reach_merge_requests(body):
         # A matching rule that then refuses to run is worse than none.
         return rule.get("when") not in ("never",)
     return False
+
+
+def audit_jobs(doc):
+    """Every top-level job whose name starts with `audit:`."""
+    return {
+        name: body
+        for name, body in doc.items()
+        if isinstance(name, str) and name.startswith("audit:") and isinstance(body, dict)
+    }
+
+
+def audit_rules_are_schedule_only(rules):
+    """True iff `rules:` is a non-empty list, every branch that is not a
+    bare `when: never` requires `$CI_PIPELINE_SOURCE == "schedule"`, and
+    at least one such schedule-gated branch exists (otherwise the job
+    can never run at all, which is not what "schedule-only" means)."""
+    if not isinstance(rules, list) or not rules:
+        return False
+    saw_schedule_branch = False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            return False
+        if rule.get("when") == "never":
+            continue
+        cond = str(rule.get("if", ""))
+        if "CI_PIPELINE_SOURCE" not in cond or "schedule" not in cond:
+            return False
+        saw_schedule_branch = True
+    return saw_schedule_branch
 
 
 def anchor_rules(doc, name):
@@ -181,6 +227,18 @@ def check(path):
             problems.append(
                 f"no `{STAGE}` job is at the `.higher_bar` hop, so "
                 f"`preview` would carry the same bar as `dev`.")
+
+    for name, body in sorted(audit_jobs(doc).items()):
+        if body.get("stage") == STAGE:
+            problems.append(
+                f"{name}: an `audit:` job is in the `{STAGE}` stage. It "
+                f"proves nothing about the code under test and has no "
+                f"business sharing the stage that does.")
+        if not audit_rules_are_schedule_only(body.get("rules")):
+            problems.append(
+                f"{name}: its rules let it run somewhere other than a "
+                f"schedule -- every branch that is not `when: never` "
+                f"must require $CI_PIPELINE_SOURCE == \"schedule\".")
 
     if problems:
         print("ci-e2e-guard: the live checks can be skipped:\n",

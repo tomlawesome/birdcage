@@ -209,6 +209,91 @@ e2e:enrol:postgres:
 expect 2 "an unreadable file fails red, not green" 'stages: [e2e
   this is not: valid yaml: at all'
 
+# #139's audit: rule. A minimal passing e2e shape is included in every
+# case below so the only thing in play is the audit: job itself.
+audit_good="audit:staleness:
+  stage: lint
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - when: never
+  script: [true]"
+
+expect 0 "a schedule-only audit: job outside e2e passes" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+$audit_good"
+
+expect 1 "an audit: job in the e2e stage is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+audit:staleness:
+  stage: e2e
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - when: never
+  script: [true]"
+
+expect 1 "an audit: job with no rules is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+audit:staleness:
+  stage: lint
+  script: [true]"
+
+expect 1 "an audit: job a merge request can also trigger is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+audit:staleness:
+  stage: lint
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == \"schedule\" && \$SCHEDULED_JOB == \"staleness\"
+    - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
+  script: [true]"
+
+expect 1 "an audit: job whose only rule is when: never is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+audit:staleness:
+  stage: lint
+  rules:
+    - when: never
+  script: [true]"
+
 # The real thing must pass.
 repo_root="$(cd "$here/.." && pwd)"
 if python3 "$guard" "$repo_root/.gitlab-ci.yml" >/dev/null 2>&1; then

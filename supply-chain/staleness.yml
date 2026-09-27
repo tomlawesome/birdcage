@@ -1,0 +1,26 @@
+# Config for scripts/staleness-check.py (#139). Read with PyYAML, same as
+# every other supply-chain/*.yml -- see that script's own docstring for
+# what each key means and how a row's status is decided.
+#
+# Entries below exist because the live run genuinely needs them, not on
+# spec: an `alpine-branch:` entry only for a Dockerfile whose own `FROM`
+# line does not literally name `alpine:X.Y` (so the script has nowhere
+# else to read the branch from), and nothing at all yet under `accepted:`
+# or `unchecked:` -- every row this check found either passes on its own
+# merits or is a real, unaccepted lag the report is supposed to surface.
+# A row that is unreachable from this repository's own CI runner (not
+# just from wherever this file happened to be edited) is the only reason
+# to add one of those, with an honest reason and, for `accepted:`, a
+# review-by date.
+accepted: []
+unchecked: []
+
+alpine-branch:
+  # None of these three has a literal `FROM alpine:X.Y` -- each builds
+  # `FROM ${BASE_IMAGE}`, an ARG whose default is `alpine:3.24` (read the
+  # Dockerfile itself for the current default). Bump this alongside that
+  # default, or the apk pins in these three files quietly get checked
+  # against the wrong Alpine branch.
+  build/e2e-dns/Dockerfile: v3.24
+  build/e2e-mail/Dockerfile: v3.24
+  build/e2e-smbclient/Dockerfile: v3.24

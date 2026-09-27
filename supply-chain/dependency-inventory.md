@@ -10,9 +10,12 @@ and `.github/workflows/*.yml`.
 
 Nothing here changes a dependency. Owner decisions on individual rows still
 belong on issue #73; this file is the durable record those decisions can
-point at, and the baseline the scheduled staleness check named in that
-issue's addendum (2026-09-19: *"Third party dependencies must be checked for
-staleness regularly by CI"*) should eventually diff against.
+point at. The scheduled staleness check named in that issue's addendum
+(2026-09-19: *"Third party dependencies must be checked for staleness
+regularly by CI"*) is `audit:staleness` (#139, docs/ci-hops.md): every
+"Latest upstream" cell below is a dated snapshot, current only as of the
+date this file says, and that job's `staleness-report.md` artifact --
+not this table -- is the live figure.
 
 ## Methodology
 
