@@ -41,7 +41,16 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * no longer supervised as the agent's own child process (#69,
  * superseded) -- not answering. Ranked beside 'not_delivering', ahead of
  * 'hits_merged'; this placement is the change's own implementation
- * choice, not a ratified precedence (docs/adr/0013-opencanary-own-container.md). */
+ * choice, not a ratified precedence (docs/adr/0013-opencanary-own-container.md).
+ *
+ * 'agent_out_of_date' (issue #48, this frontend slice shipped by #54)
+ * ranks between 'renewal_stalled' and 'pending': birdcage's own
+ * comparison of the agent's build (`agent_version`) against its own
+ * stamped version (`birdcage_version`) found the agent behind.
+ * Degraded ('warn') tier, like rotation/renewal stalled -- nothing is
+ * missed by an old build, but a protection has quietly lapsed. Never
+ * auto-repairs itself the way a heartbeat clears silence; an operator
+ * runs `upgrade_command` on the box. */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
@@ -54,6 +63,7 @@ export type CanaryStatus =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'agent_out_of_date'
   | 'pending'
   | 'ok'
 
@@ -147,6 +157,20 @@ export interface Canary {
    * own log-read report did not say so -- the certificate it was using
    * has expired (internal/store's CertificateExpired). */
   certificate_expired?: boolean
+  /** Issue #54: the agent's own reported build (already on the wire,
+   * internal/store.Canary's AgentVersion -- e.g. "0.1.0+2ea21b94", or
+   * "dev" for an unstamped build), carried here so the tile can compare
+   * it against `birdcage_version` without a facts fetch. The same value
+   * appears on the canary page as `facts.agent_version`. */
+  agent_version?: string
+  /** Issue #54: birdcage's own stamped version (scripts/release-version.sh's
+   * shape, e.g. "0.1.1+edc3691a") -- what `agent_version` is compared
+   * against to decide `agent_out_of_date`. */
+  birdcage_version?: string
+  /** Issue #54: the multi-line shell script to paste on the canary host
+   * to bring it up to `birdcage_version`. Empty or absent on an older
+   * backend that doesn't send it, or when the agent isn't behind. */
+  upgrade_command?: string
   /** ADR-0012 Part B: one live credential seen from two places at once
    * (#130's credential_conflict) -- the two source addresses and/or the
    * two agent build versions seen presenting it within the detection
@@ -284,6 +308,7 @@ export type HistoryState =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'agent_out_of_date'
   | 'pending'
   | 'unobserved'
 

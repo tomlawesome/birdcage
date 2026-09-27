@@ -2,6 +2,7 @@
 // JSON the dev scenes and the pixel gate use, so a copy assertion here
 // and the rendered page can never drift apart. Test-only -- nothing in
 // the app imports this, and a production build never reaches it.
+import canaryAgentOutOfDate from '../../dev/fixtures/canary-agent-out-of-date.json'
 import canaryFailed from '../../dev/fixtures/canary-failed.json'
 import canaryNight from '../../dev/fixtures/canary-night.json'
 import canaryPending from '../../dev/fixtures/canary-pending.json'
@@ -15,6 +16,7 @@ const SCENES = {
   silent: canarySilent,
   night: canaryNight,
   pending: canaryPending,
+  agentOutOfDate: canaryAgentOutOfDate,
 } as unknown as Record<string, {
   trace: CanaryPageInput['trace']
   visitors: { visitors: CanaryPageInput['visitors'] }
@@ -22,7 +24,7 @@ const SCENES = {
   canary: Record<string, CanaryPageInput['page']>
 }>
 
-export type SceneName = 'quiet' | 'failed' | 'silent' | 'night' | 'pending'
+export type SceneName = 'quiet' | 'failed' | 'silent' | 'night' | 'pending' | 'agentOutOfDate'
 
 /** One scene's page input, for the canary the scene is about. */
 export function sceneInput(scene: SceneName, canaryId = 'canary-iot'): CanaryPageInput {

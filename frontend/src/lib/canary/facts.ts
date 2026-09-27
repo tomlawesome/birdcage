@@ -4,6 +4,7 @@
 // birdcage does not know is left out rather than guessed at.
 import { intervalWords } from './sentence'
 import { canaryOf, selfTestCards, type CanaryPageInput } from './model'
+import { isBehind, shortVersion } from '../sentence/version'
 
 export interface FactRow {
   label: string
@@ -11,6 +12,9 @@ export interface FactRow {
   /** Rendered in the canary's lane colour, as its name is everywhere
    * else on the page. */
   accent?: boolean
+  /** Issue #54: present only for the upgrade-command row -- rendered
+   * as a copyable code block instead of plain text, `value` left empty. */
+  code?: string
 }
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -69,6 +73,28 @@ export function factRows(input: CanaryPageInput): FactRow[] {
   })
   rows.push({ label: 'enrolled', value: stamp(facts.enrolled_at, true) })
   if (facts.agent_version) rows.push({ label: 'agent', value: `mockingbird ${facts.agent_version}` })
+
+  // Issue #54: birdcage's own comparison of the agent's build against
+  // its own stamped version -- a standing fact, shown whenever the two
+  // differ regardless of which state currently ranks worst on `status`
+  // (a worse fault can outrank agent_out_of_date on the tile while the
+  // agent is still behind underneath it). `upgrade_command` is the
+  // multi-line script an operator pastes on the box; an active backend
+  // that sent none yet points at the docs instead of a dangling row.
+  if (isBehind(facts.agent_version, canary.birdcage_version)) {
+    rows.push({
+      label: 'upgrade',
+      value: `runs ${shortVersion(facts.agent_version ?? '?')} · current ${shortVersion(canary.birdcage_version ?? '?')}`,
+    })
+    rows.push(
+      canary.upgrade_command
+        ? { label: 'run this', value: '', code: canary.upgrade_command }
+        : {
+            label: 'run this',
+            value: 'not available yet — see docs/enrolment.md, "Upgrading a canary"',
+          },
+    )
+  }
 
   if (facts.token_rotated_at) {
     const next = facts.token_rotates_at ? Date.parse(facts.token_rotates_at) : null

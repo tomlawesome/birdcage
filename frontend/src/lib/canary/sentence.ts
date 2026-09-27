@@ -10,6 +10,7 @@ import { agoWords, durationCoarse, durationExact } from '../sentence/duration'
 import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } from '../sentence/time'
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
 import { numberToWords, plural, wordOrNumber } from '../sentence/words'
+import { shortVersion } from '../sentence/version'
 import {
   canaryOf,
   lastCompletedRun,
@@ -124,6 +125,8 @@ function stateWords(c: Canary): string {
       return `rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
     case 'renewal_stalled':
       return `renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
+    case 'agent_out_of_date':
+      return `agent behind: runs ${shortVersion(c.agent_version ?? '?')}, current ${shortVersion(c.birdcage_version ?? '?')}`
     case 'pending':
       return 'pending its first self-test'
     default:
@@ -507,6 +510,23 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
               'working once the certificate expires. ',
           },
           { text: "Check the agent can reach birdcage's ingest listener.", bold: true },
+        ],
+      }
+    case 'agent_out_of_date':
+      // Issue #54: birdcage's own comparison of the agent's build
+      // against its own stamped version -- same degraded severity as
+      // rotation/renewal stalled, nothing missed, a lapsed protection.
+      // The next step is the upgrade command the facts column below
+      // renders as a copyable block, not repeated here.
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s agent has fallen behind.", bold: true }],
+        sub: [
+          { text: 'It is running ' },
+          { text: shortVersion(canary.agent_version ?? '?'), bold: true },
+          { text: '; birdcage is on ' },
+          { text: shortVersion(canary.birdcage_version ?? '?'), bold: true },
+          { text: '. Nothing is being missed by the old build, but a protection has quietly lapsed. ' },
+          { text: 'Run the upgrade command below.', bold: true },
         ],
       }
     default:

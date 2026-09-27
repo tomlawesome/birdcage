@@ -405,6 +405,50 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     expect(plainText(s.hero)).toContain("canary-srv's certificate renewal has stalled")
   })
 
+  // Issue #54: birdcage's own comparison of the agent's build against
+  // its own stamped version, ranked between renewal_stalled and pending.
+  it('agent out of date: hero and sub name the running and current versions, dropping the commit', () => {
+    const bad = canary('canary-iot', 'agent_out_of_date', {
+      agent_version: '0.1.0+2ea21b94',
+      birdcage_version: '0.1.1+edc3691a',
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's agent has fallen behind.")
+    expect(plainText(s.sub)).toBe(
+      'It is running 0.1.0; birdcage is on 0.1.1. Nothing is being missed by the old build, but a protection ' +
+        'has quietly lapsed. Run the upgrade command shown on its own page. The other three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === '0.1.0')?.bold).toBe(true)
+    expect(s.sub.some((seg) => seg.text.includes('2ea21b94'))).toBe(false)
+  })
+
+  it('agent out of date is ranked between renewal stalled and pending', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'pending'),
+        canary('canary-srv', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's agent has fallen behind")
+
+    const outranked = computeSentence(
+      [
+        canary('canary-lan', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+        canary('canary-srv', 'renewal_stalled', { renewal_stalled: true, renewal_stalled_for_s: 1200 }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(outranked.hero)).toContain("canary-srv's certificate renewal has stalled")
+  })
+
   it('with no last_hit the opener is the contrast alone, as rule 2 already does', () => {
     const bad = canary('canary-iot', 'throttled', { throttled_for_s: 120 })
     const s = computeSentence(fleet(bad), [], '14d', now, null)

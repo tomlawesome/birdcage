@@ -44,6 +44,25 @@
   let facts = $derived(factRows(input))
   let actions = $derived(canaryActions(input))
 
+  // Issue #54: the upgrade-command fact row is a copyable code block,
+  // not a label/value pair, so it renders outside the label/value grid
+  // below. copiedLabel names which row's button last succeeded, cleared
+  // after a couple of seconds -- the button is the only proof copying
+  // worked, since the page can't tell the OS clipboard changed.
+  let copiedLabel: string | null = $state(null)
+  async function copyCommand(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      copiedLabel = label
+      setTimeout(() => {
+        if (copiedLabel === label) copiedLabel = null
+      }, 1500)
+    } catch {
+      // Clipboard API can be unavailable (insecure context, denied
+      // permission) -- the command is still selectable text below.
+    }
+  }
+
   // ADR-0012 (issue #116): a scanner's own ordered-scan proof -- the
   // open run's stage timeline and the Runs list, shown only on a
   // scanner's own page (decision 11), beside the state history and
@@ -142,7 +161,17 @@
   <h3>this agent</h3>
   <div class="facts">
     {#each facts as row (row.label)}
-      <span>{row.label}</span><span class={row.accent ? 'c' : ''}>{row.value}</span>
+      {#if row.code}
+        <span>{row.label}</span><span></span>
+        <div class="code-row">
+          <pre>{row.code}</pre>
+          <button type="button" class="copy" onclick={() => copyCommand(row.code ?? '', row.label)}>
+            {copiedLabel === row.label ? 'copied' : 'copy'}
+          </button>
+        </div>
+      {:else}
+        <span>{row.label}</span><span class={row.accent ? 'c' : ''}>{row.value}</span>
+      {/if}
     {/each}
   </div>
   <div class="acts">
@@ -505,6 +534,38 @@
   }
   .facts :global(.c) {
     color: var(--c);
+  }
+  /* Issue #54: the upgrade command spans both grid columns, under its
+     own "run this" label above it. */
+  .code-row {
+    grid-column: 1 / -1;
+    position: relative;
+  }
+  .code-row pre {
+    margin: 0;
+    padding: 10px 64px 10px 12px;
+    background: var(--void);
+    border: 1px solid var(--hair-2);
+    border-radius: 6px;
+    font: 11px/1.5 var(--mono);
+    color: var(--ink);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .code-row .copy {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font: 600 10px var(--sans);
+    color: var(--ink-2);
+    background: var(--raised);
+    border: 1px solid var(--hair-2);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .code-row .copy:hover {
+    color: var(--ink);
   }
   .acts {
     margin-top: 16px;

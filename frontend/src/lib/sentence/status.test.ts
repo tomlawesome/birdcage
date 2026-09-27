@@ -169,6 +169,32 @@ describe('the status pill: issue #45 ranking', () => {
       expect(s.label).toBe('b renewal stalled 30 m')
     }
   })
+
+  // Issue #54: agent_out_of_date reads as degraded, ranked between
+  // renewal_stalled and pending, and the pill drops the commit suffix.
+  it('agent_out_of_date reads as degraded, naming the running and current versions', () => {
+    const canaries = [
+      canary('a', 'pending'),
+      canary('b', 'agent_out_of_date', { agent_version: '0.1.0+2ea21b94', birdcage_version: '0.1.1+edc3691a' }),
+    ]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('degraded')
+    if (s.kind === 'degraded') {
+      expect(s.canaryName).toBe('b')
+      expect(s.label).toBe('b agent behind: runs 0.1.0, current 0.1.1')
+    }
+  })
+
+  it('renewal_stalled outranks agent_out_of_date, which outranks pending', () => {
+    const behind = canary('a', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' })
+    const s = computeStatus([behind, canary('b', 'renewal_stalled', { renewal_stalled_for_s: 60 })], [], '14d')
+    expect(s.kind).toBe('degraded')
+    if (s.kind === 'degraded') expect(s.canaryName).toBe('b')
+
+    const lone = computeStatus([canary('c', 'pending'), behind], [], '14d')
+    expect(lone.kind).toBe('degraded')
+    if (lone.kind === 'degraded') expect(lone.canaryName).toBe('a')
+  })
 })
 
 // Issue #45, owner-ratified 2026-09-25: hits_merged joins the critical

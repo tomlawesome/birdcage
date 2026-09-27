@@ -43,6 +43,8 @@
         renewal_stalled_escalated: c.renewal_stalled_escalated,
         certificate_expired: c.certificate_expired,
         credential_conflict: c.credential_conflict,
+        agent_version: c.agent_version,
+        birdcage_version: c.birdcage_version,
         last_self_test_at: c.last_self_test_at,
         last_self_test_passed: c.last_self_test_passed,
         self_test_failed_services: c.self_test_failed_services,
@@ -60,7 +62,7 @@
         c.status === 'self_test_failed' ||
         c.status === 'throttled'}
       class:conflict={c.status === 'token_conflict' || c.status === 'credential_conflict'}
-      class:degraded={c.status === 'rotation_stalled' || c.status === 'renewal_stalled'}
+      class:degraded={c.status === 'rotation_stalled' || c.status === 'renewal_stalled' || c.status === 'agent_out_of_date'}
       class:pending={c.status === 'pending'}
     >
       <!-- The tile is the way into the canary's own page (issue #118).

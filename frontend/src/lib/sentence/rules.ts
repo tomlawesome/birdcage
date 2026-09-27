@@ -17,6 +17,7 @@ import { formatClock, formatClockShort } from './time'
 import { canariesPhrase, minutesPhrase, rangeNoun, servicesNarrative, triedNarrative } from './narrative'
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { wordOrNumber } from './words'
+import { shortVersion } from './version'
 import type { Segment } from './types'
 
 export interface SentenceResult {
@@ -396,6 +397,32 @@ function rule2RenewalStalled(c: Canary, canaries: Canary[], now: string, lastHit
   }
 }
 
+/** Agent out of date (issue #54): birdcage's own comparison of the
+ * agent's build against its own stamped version, ranked between
+ * renewal_stalled and pending -- degraded, the same tier as the two
+ * stalled states above, since nothing is missed by an old build, but a
+ * protection has quietly lapsed. Unlike rotation/renewal stalled there
+ * is no "since" the API sends; the next step is the same
+ * `upgrade_command` the canary page renders as a copyable block. */
+function rule2AgentOutOfDate(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s agent has fallen behind.`, bold: true }],
+    sub: [
+      { text: 'It is running ' },
+      { text: shortVersion(c.agent_version ?? '?'), bold: true },
+      { text: '; birdcage is on ' },
+      { text: shortVersion(c.birdcage_version ?? '?'), bold: true },
+      {
+        text:
+          '. Nothing is being missed by the old build, but a protection has quietly lapsed. ',
+      },
+      { text: 'Run the upgrade command shown on its own page.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** No fixture or shot covers this state; the issue gives only an example
  * shape ("One address swept all four on {day}; {ip} keeps knocking on
  * {canary} :{port}."), so this builds one line per visitor kind present
@@ -457,8 +484,11 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
   renewal_stalled: 8,
-  pending: 9,
-  ok: 10,
+  // Issue #54: ranked between renewal_stalled and pending -- see
+  // status.ts's own RANK for the same addition.
+  agent_out_of_date: 9,
+  pending: 10,
+  ok: 11,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -548,6 +578,8 @@ export function computeSentence(
         return rule2RotationStalled(worst, canaries, now, lastHit)
       case 'renewal_stalled':
         return rule2RenewalStalled(worst, canaries, now, lastHit)
+      case 'agent_out_of_date':
+        return rule2AgentOutOfDate(worst, canaries, now, lastHit)
     }
   }
 
