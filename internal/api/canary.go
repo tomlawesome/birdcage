@@ -94,9 +94,21 @@ type selfTestRunSummary struct {
 // /api/canaries already sends for it, so the page and the tile can never
 // disagree about a status; the rest is what only this page asks for.
 type canaryPageResponse struct {
-	Canary       canaryWithSelfTest   `json:"canary"`
+	Canary       canaryPageCanary     `json:"canary"`
 	Facts        canaryFacts          `json:"facts"`
 	SelfTestRuns []selfTestRunSummary `json:"self_test_runs"`
+}
+
+// canaryPageCanary is the page's canary object: /api/canaries' own
+// shape plus issue #54's upgrade_command, which only this page carries --
+// building it is two per-canary queries, and the fleet read polls every
+// canary every thirty seconds. Always present on this route, "" unless
+// the canary is agent_out_of_date and this server can print a command
+// (handler.upgradeCommand), so a reader can tell "nothing to run" from
+// "a backend too old to say".
+type canaryPageCanary struct {
+	canaryWithSelfTest
+	UpgradeCommand string `json:"upgrade_command"`
 }
 
 // handleCanary serves GET /api/canary?id=<id>&range=<Range>: everything
@@ -141,7 +153,7 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := canaryWithSelfTest{Canary: *found}
+	out := canaryPageCanary{canaryWithSelfTest: canaryWithSelfTest{Canary: *found}}
 	results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, found.ID)
 	if err != nil {
 		// Best-effort, exactly as handleCanaries treats it: the
@@ -165,6 +177,17 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 			Passed:         run.Passed,
 			FailedServices: run.FailedServices,
 		}
+	}
+
+	// Best-effort, like the per-service results above: a command this
+	// read could not build leaves the field empty, and the page points
+	// at docs/enrolment.md's manual procedure instead -- the rest of the
+	// page is still worth drawing.
+	upgrade, err := h.upgradeCommand(r.Context(), *found)
+	if err != nil {
+		log.Printf("api: upgrade command for %s: %v", found.ID, err)
+	} else {
+		out.UpgradeCommand = upgrade
 	}
 
 	facts, err := h.canaryFacts(r, *found, now)

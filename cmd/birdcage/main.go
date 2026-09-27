@@ -335,7 +335,7 @@ func main() {
 	if cfg.internalRangesEnv != "" {
 		configLog.Info(fmt.Sprintf("%s=%s", envInternalRanges, cfg.internalRangesEnv))
 	}
-	apiHandler := api.NewHandlerWithHub(database, cfg.internalRanges, hub, mailEnabled, version)
+	apiHandler := api.NewHandlerWithHub(database, cfg.internalRanges, hub, mailEnabled, version, startupUpgradeConfig(cfg, birdcageCA, os.Getenv))
 
 	dashboardServer, unixPath, err := buildDashboardServer(cfg, birdcageCA, apiHandler, configLog, httpLog)
 	if err != nil {
