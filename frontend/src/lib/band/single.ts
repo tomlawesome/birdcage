@@ -165,7 +165,19 @@ function risesFor(
         const newest = ordered.reduce((a, b) => (Date.parse(b.at) > Date.parse(a.at) ? b : a))
         l2 = buildLine2(newest.visitor, canaryId, newest.service, new Date(newest.at), now)
       }
-      rises.push({ xFrom: cluster.xFrom, xTo: cluster.xTo, y, kind, l1, l2, labelled, h: RISE_H[kind] })
+      const times = ordered.map((h) => Date.parse(h.at))
+      rises.push({
+        xFrom: cluster.xFrom,
+        xTo: cluster.xTo,
+        y,
+        kind,
+        l1,
+        l2,
+        labelled,
+        h: RISE_H[kind],
+        atFrom: Math.min(...times),
+        atTo: Math.max(...times),
+      })
     })
   }
   return rises

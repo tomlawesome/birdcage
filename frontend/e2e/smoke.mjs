@@ -183,7 +183,13 @@ async function main() {
 
     console.log(`launching ${resolveBrowserName()}...`)
     browser = await launchBrowser()
-    const page = await browser.newPage()
+    // 1400x1000 (issue #58's own reproduction viewport): the round-6
+    // story's sweep always lands in the last quarter hour, stretched
+    // against the axis, so four canaries' credential rises land close
+    // together near the right edge on every run -- exactly the crowding
+    // the label-collapse assertion below needs to be a real check rather
+    // than a check that happens to have nothing to catch.
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
 
     // Captured for the whole test, but only *enforced* up to the
     // deliberate-failure journey at the end: killing birdcage on purpose
@@ -210,6 +216,46 @@ async function main() {
     const bandCount = await page.locator('.band-svg').count()
     if (bandCount !== 1) throw new Error(`expected the trace band to render once, found ${bandCount}`)
     ok('band (the trace) rendered')
+
+    // Issue #58: coincident trace labels used to stack straight past the
+    // top of the chart and into the header above it. The chart's own box
+    // has no dedicated element to measure, so this reads it off the page
+    // itself -- nothing the trace draws may reach above where the sub
+    // sentence ends, and specifically never over the hero sentence or the
+    // admin pill, which is what the fix (frontend/src/lib/band/placement.ts)
+    // is meant to guarantee under any data.
+    const chartFloor = await page.evaluate(() => document.querySelector('.sub').getBoundingClientRect().bottom)
+    const [heroBox, whoBox, labelBoxes] = await Promise.all([
+      page.locator('.hero').first().boundingBox(),
+      page.locator('.status .who').first().boundingBox(),
+      page.evaluate(() =>
+        [...document.querySelectorAll('svg.band-svg text.bl:not(.dim)')].map((t) => {
+          const r = t.getBoundingClientRect()
+          return { text: t.textContent, top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+        }),
+      ),
+    ])
+    const rectOverlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+    if (labelBoxes.length === 0) throw new Error('expected at least one trace label to check against the chart box')
+    for (const box of labelBoxes) {
+      if (box.top < chartFloor) {
+        throw new Error(`trace label ${JSON.stringify(box.text)} reaches above the chart box (top=${box.top}, chart floor=${chartFloor})`)
+      }
+      if (rectOverlaps(box, heroBox)) {
+        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the hero sentence`)
+      }
+      if (rectOverlaps(box, whoBox)) {
+        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the "tom (admin)" pill`)
+      }
+    }
+    for (let i = 0; i < labelBoxes.length; i++) {
+      for (let j = i + 1; j < labelBoxes.length; j++) {
+        if (rectOverlaps(labelBoxes[i], labelBoxes[j])) {
+          throw new Error(`trace labels overlap each other: ${JSON.stringify(labelBoxes[i].text)} / ${JSON.stringify(labelBoxes[j].text)}`)
+        }
+      }
+    }
+    ok(`${labelBoxes.length} trace labels, all within the chart box, clear of the hero sentence and the admin pill`)
     const historyCount = await page.locator('.history').count()
     if (historyCount !== 1) throw new Error('the state history section did not render')
     ok('state history rendered')
