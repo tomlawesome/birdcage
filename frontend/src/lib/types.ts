@@ -129,6 +129,14 @@ export interface Canary {
   lane: Lane
   ports: string
   status: CanaryStatus
+  /** Issue #54: every state currently active on this canary, worst
+   * first (internal/store.Canary's ActiveStates -- already on the wire,
+   * newly modelled here). `status` alone only ever names the worst one;
+   * a worse fault (e.g. 'silent') can hold `status` while a milder one
+   * like 'agent_out_of_date' is still true underneath it, which is why
+   * a reader that cares about one specific state checks this list, not
+   * just `status`. */
+  active_states?: CanaryStatus[]
   last_heartbeat_at: string | null
   /** Present only when status is 'silent'. */
   silent_for_s?: number

@@ -10,12 +10,3 @@ export function shortVersion(v: string): string {
   const i = v.indexOf('+')
   return i === -1 ? v : v.slice(0, i)
 }
-
-/** Whether the agent's own build trails birdcage's stamped version, by
- * MAJOR.MINOR.PATCH alone. A 'dev' agent is never behind -- it isn't a
- * release, so there is nothing to compare it against -- and neither is
- * a canary an older backend never sent `birdcage_version` for. */
-export function isBehind(agentVersion: string | undefined, birdcageVersion: string | undefined): boolean {
-  if (!agentVersion || !birdcageVersion || agentVersion === 'dev') return false
-  return shortVersion(agentVersion) !== shortVersion(birdcageVersion)
-}

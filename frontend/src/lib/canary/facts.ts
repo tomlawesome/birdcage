@@ -4,7 +4,7 @@
 // birdcage does not know is left out rather than guessed at.
 import { intervalWords } from './sentence'
 import { canaryOf, selfTestCards, type CanaryPageInput } from './model'
-import { isBehind, shortVersion } from '../sentence/version'
+import { shortVersion } from '../sentence/version'
 
 export interface FactRow {
   label: string
@@ -75,13 +75,17 @@ export function factRows(input: CanaryPageInput): FactRow[] {
   if (facts.agent_version) rows.push({ label: 'agent', value: `mockingbird ${facts.agent_version}` })
 
   // Issue #54: birdcage's own comparison of the agent's build against
-  // its own stamped version -- a standing fact, shown whenever the two
-  // differ regardless of which state currently ranks worst on `status`
-  // (a worse fault can outrank agent_out_of_date on the tile while the
-  // agent is still behind underneath it). `upgrade_command` is the
-  // multi-line script an operator pastes on the box; an active backend
-  // that sent none yet points at the docs instead of a dangling row.
-  if (isBehind(facts.agent_version, canary.birdcage_version)) {
+  // its own stamped version -- a standing fact, shown whenever
+  // agent_out_of_date is active, whether or not it is the state
+  // currently ranked worst on `status` (a worse fault, e.g. 'silent',
+  // can hold `status` while the canary is still behind underneath it --
+  // `active_states` is what says so). The backend is the single source
+  // of truth for "behind": the frontend never re-derives it by comparing
+  // version strings itself. `upgrade_command` is the multi-line script
+  // an operator pastes on the box; an active backend that sent none yet
+  // points at the docs instead of a dangling row.
+  const behind = canary.status === 'agent_out_of_date' || (canary.active_states?.includes('agent_out_of_date') ?? false)
+  if (behind) {
     rows.push({
       label: 'upgrade',
       value: `runs ${shortVersion(facts.agent_version ?? '?')} · current ${shortVersion(canary.birdcage_version ?? '?')}`,

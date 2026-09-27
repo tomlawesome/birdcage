@@ -85,9 +85,10 @@ describe('factRows', () => {
 })
 
 // Issue #54: birdcage's own comparison of the agent's build against its
-// own stamped version, shown as a standing fact whenever the two
-// differ -- independent of whichever state currently ranks worst on
-// `status`.
+// own stamped version, shown as a standing fact whenever
+// agent_out_of_date is active. The backend is the single source of
+// truth for "active" -- `status` or `active_states` -- never a version
+// comparison the frontend re-derives itself.
 describe('factRows: agent_out_of_date (issue #54)', () => {
   it('names the running and current versions, dropping the commit suffix from both', () => {
     const rows = factRows(sceneInput('agentOutOfDate'))
@@ -112,21 +113,19 @@ describe('factRows: agent_out_of_date (issue #54)', () => {
     expect(row?.value).toBe('not available yet — see docs/enrolment.md, "Upgrading a canary"')
   })
 
-  it('says nothing when the two versions match -- not behind', () => {
+  it('shows the rows when active_states names it, even though a worse state holds `status`', () => {
     const input = sceneInput('agentOutOfDate')
-    input.page.facts.agent_version = '0.1.1+2ea21b94'
-    expect(factRows(input).some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
+    input.page.canary.status = 'silent'
+    input.page.canary.active_states = ['silent', 'agent_out_of_date']
+    const rows = factRows(input)
+    expect(rows.find((r) => r.label === 'upgrade')?.value).toBe('runs 0.1.0 · current 0.1.1')
+    expect(rows.find((r) => r.label === 'run this')?.code).toBe(input.page.canary.upgrade_command)
   })
 
-  it('says nothing on an older backend that never sent birdcage_version', () => {
+  it('says nothing when neither `status` nor `active_states` names it, even if the versions differ', () => {
     const input = sceneInput('agentOutOfDate')
-    delete input.page.canary.birdcage_version
-    expect(factRows(input).some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
-  })
-
-  it('a "dev" agent build is never called behind', () => {
-    const input = sceneInput('agentOutOfDate')
-    input.page.facts.agent_version = 'dev'
+    input.page.canary.status = 'ok'
+    input.page.canary.active_states = ['ok']
     expect(factRows(input).some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
   })
 })
