@@ -100,7 +100,7 @@ func TestTickOpensAndClearsAState(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.rate_limited", "canary-1", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		got := periods(t, database, "canary-1")
@@ -152,7 +152,7 @@ func TestTickClosesTokenConflictAsQuietPeriod(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.token_conflict", "canary-1", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 		if got := periods(t, database, "canary-1"); len(got) != 1 || got[0].State != string(store.StateTokenConflict) {
 			t.Fatalf("after the first tick: %+v, want one token_conflict span", got)
@@ -186,7 +186,7 @@ func TestFlapCollapseBoundary(t *testing.T) {
 		signal(t, database, "ingest.rate_limited", "canary-in", t0)
 		signal(t, database, "ingest.rate_limited", "canary-out", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		// Both clear at t1.
@@ -245,7 +245,7 @@ func TestStartRecordsTheUnobservedGap(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.rate_limited", "canary-1", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		// Six minutes later: past the throttled window, so the state is
@@ -296,7 +296,7 @@ func TestStartWithFreshLastTickRecordsNothing(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.rate_limited", "canary-1", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		t1 := t0.Add(30 * time.Second)
@@ -325,7 +325,7 @@ func TestStartOnAnEmptyDatabaseRecordsNothing(t *testing.T) {
 		t0 := mustParse(t, "2026-01-01T00:00:00Z")
 		addCanary(t, database, "canary-1", "one", t0)
 
-		if err := New(database).Start(context.Background(), t0); err != nil {
+		if err := New(database, "").Start(context.Background(), t0); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		if got := periods(t, database, ""); len(got) != 0 {
@@ -352,7 +352,7 @@ func TestTickPropagatesDatabaseErrors(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.rate_limited", "canary-1", t0)
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		if _, err := database.Exec(`DROP TABLE agent_state_periods`); err != nil {
@@ -393,7 +393,7 @@ func TestTokenConflictHookFiresOnOpenAndReopen(t *testing.T) {
 		signal(t, database, "ingest.token_conflict", "canary-1", t0)
 
 		var calls []hookCall
-		r := NewWithTokenConflictHook(database, recordingHook(&calls))
+		r := NewWithTokenConflictHook(database, "", recordingHook(&calls))
 
 		// Opened.
 		tick(t, r, t0)
@@ -446,7 +446,7 @@ func TestTokenConflictHookIgnoresOtherStates(t *testing.T) {
 		signal(t, database, "ingest.rate_limited", "canary-1", t0)
 
 		var calls []hookCall
-		r := NewWithTokenConflictHook(database, recordingHook(&calls))
+		r := NewWithTokenConflictHook(database, "", recordingHook(&calls))
 		tick(t, r, t0)
 
 		if got := periods(t, database, "canary-1"); len(got) != 1 || got[0].State != string(store.StateThrottled) {
@@ -467,7 +467,7 @@ func TestTokenConflictHookFailureRollsTheTickBack(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.token_conflict", "canary-1", t0)
 
-		r := NewWithTokenConflictHook(database, func(context.Context, *db.Tx, string, string, time.Time) error {
+		r := NewWithTokenConflictHook(database, "", func(context.Context, *db.Tx, string, string, time.Time) error {
 			return errHookFailed
 		})
 		if err := r.Tick(context.Background(), t0); err == nil {
@@ -489,7 +489,7 @@ func TestNilHookIsTheOldBehaviour(t *testing.T) {
 		addCanary(t, database, "canary-1", "one", t0)
 		signal(t, database, "ingest.token_conflict", "canary-1", t0)
 
-		r := NewWithTokenConflictHook(database, nil)
+		r := NewWithTokenConflictHook(database, "", nil)
 		tick(t, r, t0)
 		if got := periods(t, database, "canary-1"); len(got) != 1 {
 			t.Errorf("expected one span with a nil hook, got %+v", got)
@@ -506,7 +506,7 @@ func TestTickRecordsCredentialStates(t *testing.T) {
 		t0 := mustParse(t, "2026-01-01T00:00:00Z")
 		addCanary(t, database, "certconflict", "a", t0)
 		addCanary(t, database, "dual", "b", t0)
-		r := New(database)
+		r := New(database, "")
 
 		signal(t, database, "ingest.cert_conflict", "certconflict", t0)
 		if err := store.RecordCredentialDualUse(context.Background(), database, "dual", store.DualUseAddresses, "10.0.0.1", "10.0.0.2", t0); err != nil {
@@ -553,7 +553,7 @@ func TestTickRecordsHitsMerged(t *testing.T) {
 			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
 		}
 
-		r := New(database)
+		r := New(database, "")
 		tick(t, r, t0)
 
 		got := periods(t, database, "canary-1")
@@ -580,6 +580,56 @@ func TestTickRecordsHitsMerged(t *testing.T) {
 		}
 		if got[0].EndReason == nil || *got[0].EndReason != store.EndReasonCleared {
 			t.Errorf("EndReason = %v, want %q", got[0].EndReason, store.EndReasonCleared)
+		}
+	})
+}
+
+// TestTickRecordsUpgradeInProgress: issue #54's upgrade window is in
+// store.ActiveStates like every other state, so the recorder opens a
+// span when an upgrade token is accepted and closes it, cleared, when
+// the five minutes end.
+func TestTickRecordsUpgradeInProgress(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		addCanary(t, database, "upgrading", "u", t0)
+		agentBeat := func(at time.Time, version string) {
+			t.Helper()
+			if err := store.RecordCanaryAgentHeartbeat(ctx, database, "upgrading", at, store.AgentHeartbeat{LogReadOK: true, AgentVersion: version}); err != nil {
+				t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+			}
+		}
+		agentBeat(t0, "1.0.0")
+		r := New(database, "1.1.0")
+
+		raw, _, err := store.MintUpgradeToken(ctx, database, "upgrading", "1.1.0", t0)
+		if err != nil {
+			t.Fatalf("MintUpgradeToken: %v", err)
+		}
+		if res, err := store.PresentUpgradeToken(ctx, database, "upgrading", raw, t0.Add(time.Second)); err != nil || res.Outcome != store.UpgradeTokenAccepted {
+			t.Fatalf("PresentUpgradeToken = %+v, %v", res, err)
+		}
+		agentBeat(t0.Add(2*time.Second), "1.1.0")
+		tick(t, r, t0.Add(3*time.Second))
+
+		var found *store.StatePeriod
+		for _, p := range periods(t, database, "upgrading") {
+			if p.State == string(store.StateUpgradeInProgress) {
+				p := p
+				found = &p
+			}
+		}
+		if found == nil || found.EndedAt != nil {
+			t.Fatalf("periods = %+v, want an open upgrade_in_progress span", periods(t, database, "upgrading"))
+		}
+
+		end := t0.Add(time.Second + store.UpgradeWindow)
+		agentBeat(end, "1.1.0")
+		tick(t, r, end)
+		for _, p := range periods(t, database, "upgrading") {
+			if p.State == string(store.StateUpgradeInProgress) && (p.EndedAt == nil || p.EndReason == nil || *p.EndReason != "cleared") {
+				t.Errorf("upgrade_in_progress span %+v, want closed as cleared when the window ends", p)
+			}
 		}
 	})
 }

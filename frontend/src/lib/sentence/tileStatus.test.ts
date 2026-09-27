@@ -155,6 +155,42 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(fresh.lines[0][0].cls).toBe('wn')
   })
 
+  // Issue #54: birdcage's own comparison of the agent's build against
+  // its own stamped version -- same degraded ('wn') tier as rotation and
+  // renewal stalled, and the commit suffix is dropped from both
+  // versions before they reach the tile.
+  it('agent_out_of_date: names the running and current versions, dropping the commit', () => {
+    const result = computeTileStatus(
+      { ...base, status: 'agent_out_of_date', agent_version: '0.1.0+2ea21b94', birdcage_version: '0.1.1+edc3691a' },
+      '2026-01-01T00:00:00Z',
+    )
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toBe('⏳ agent behind: runs 0.1.0, current 0.1.1 — the canary page says how to upgrade it')
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+
+  // Issue #54 (owner, 2026-09-27): the upgrade window, with its end.
+  it('upgrade_in_progress: names when the old agent has to be gone by', () => {
+    const result = computeTileStatus(
+      { ...base, status: 'upgrade_in_progress', upgrade_window_until: '2026-01-01T00:05:00Z' },
+      '2026-01-01T00:00:00Z',
+    )
+    expect(result.lines).toHaveLength(1)
+    expect(plainText(result.lines[0])).toBe('⏳ upgrade in progress — the old agent has until 00:05 to go offline')
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+
+  it('upgrade_in_progress: still reads without the window end', () => {
+    const result = computeTileStatus({ ...base, status: 'upgrade_in_progress' }, '2026-01-01T00:00:00Z')
+    expect(plainText(result.lines[0])).toBe('⏳ upgrade in progress — the old agent has a few minutes to go offline')
+  })
+
+  it('agent_out_of_date: falls back to "?" when a version is missing', () => {
+    const result = computeTileStatus({ ...base, status: 'agent_out_of_date' }, '2026-01-01T00:00:00Z')
+    expect(plainText(result.lines[0])).toContain('runs ?, current ?')
+  })
+
   it('silent still takes the original branch, unchanged', () => {
     const result = computeTileStatus({ ...base, status: 'silent', silent_for_s: 372 }, '2026-01-01T00:06:12Z')
     expect(plainText(result.lines[0])).toContain('silent')

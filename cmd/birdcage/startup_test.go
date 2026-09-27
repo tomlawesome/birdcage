@@ -450,7 +450,7 @@ func TestOpenStartupDatabaseUnopenablePathErrors(t *testing.T) {
 
 func TestRunHistoryLoopReturnsOnCancel(t *testing.T) {
 	database := openTestDB(t)
-	recorder := history.NewWithTokenConflictHook(database, nil)
+	recorder := history.NewWithTokenConflictHook(database, "", nil)
 	if err := recorder.Start(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatalf("recorder.Start: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestBuildIngestServersAppliesTestClientCertTTL(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-ttl-test", "lane-a", agentkind.Honeypot, "", "", now)
+	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-ttl-test", "lane-a", agentkind.Honeypot, "", "", nil, "", "", now)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}

@@ -405,6 +405,93 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     expect(plainText(s.hero)).toContain("canary-srv's certificate renewal has stalled")
   })
 
+  // Issue #54: birdcage's own comparison of the agent's build against
+  // its own stamped version, ranked between renewal_stalled and pending.
+  it('agent out of date: hero and sub name the running and current versions, dropping the commit', () => {
+    const bad = canary('canary-iot', 'agent_out_of_date', {
+      agent_version: '0.1.0+2ea21b94',
+      birdcage_version: '0.1.1+edc3691a',
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's agent has fallen behind.")
+    expect(plainText(s.sub)).toBe(
+      'It is running 0.1.0; birdcage is on 0.1.1. Nothing is being missed by the old build, but a protection ' +
+        'has quietly lapsed. Its own page says how to get the upgrade command. The other three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === '0.1.0')?.bold).toBe(true)
+    expect(s.sub.some((seg) => seg.text.includes('2ea21b94'))).toBe(false)
+  })
+
+  // Issue #54 (owner, 2026-09-27): the upgrade window, ranked straight
+  // before agent_out_of_date.
+  it('upgrade in progress: hero and sub name when the old agent has to be gone by', () => {
+    const s = computeSentence(
+      fleet(canary('canary-iot', 'upgrade_in_progress', { upgrade_window_until: '2026-09-20T09:18:02Z' })),
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-iot is being upgraded.')
+    expect(plainText(s.sub)).toBe(
+      'The old agent has until 09:18 to go offline; until then, both builds reporting on one credential is ' +
+        'expected. The other three are fine.',
+    )
+  })
+
+  it('upgrade in progress outranks agent out of date and is outranked by renewal stalled', () => {
+    const over = computeSentence(
+      [
+        canary('canary-lan', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+        canary('canary-srv', 'upgrade_in_progress', { upgrade_window_until: '2026-09-20T09:18:02Z' }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(over.hero)).toContain('canary-srv is being upgraded')
+    const under = computeSentence(
+      [
+        canary('canary-lan', 'upgrade_in_progress'),
+        canary('canary-srv', 'renewal_stalled', { renewal_stalled: true, renewal_stalled_for_s: 1200 }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(under.hero)).toContain("canary-srv's certificate renewal has stalled")
+  })
+
+  it('agent out of date is ranked between renewal stalled and pending', () => {
+    const s = computeSentence(
+      [
+        canary('canary-lan', 'pending'),
+        canary('canary-srv', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(s.hero)).toContain("canary-srv's agent has fallen behind")
+
+    const outranked = computeSentence(
+      [
+        canary('canary-lan', 'agent_out_of_date', { agent_version: '0.1.0', birdcage_version: '0.1.1' }),
+        canary('canary-srv', 'renewal_stalled', { renewal_stalled: true, renewal_stalled_for_s: 1200 }),
+      ],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(outranked.hero)).toContain("canary-srv's certificate renewal has stalled")
+  })
+
   it('with no last_hit the opener is the contrast alone, as rule 2 already does', () => {
     const bad = canary('canary-iot', 'throttled', { throttled_for_s: 120 })
     const s = computeSentence(fleet(bad), [], '14d', now, null)

@@ -244,7 +244,7 @@ func TestDashboardRoutesAllReadOnly(t *testing.T) {
 
 func TestNewHandlerServesThroughPublicConstructor(t *testing.T) {
 	database := openTempDB(t)
-	h := NewHandler(database, nil)
+	h := NewHandler(database, nil, "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)

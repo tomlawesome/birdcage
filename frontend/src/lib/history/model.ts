@@ -54,6 +54,11 @@ const TIER: Record<HistoryState, HistoryTier> = {
   rotation_stalled: 'warn',
   // ADR-0012 Part B: rotation_stalled's certificate twin, same tier.
   renewal_stalled: 'warn',
+  // Issue #54: coloured like rotation/renewal stalled -- an old build
+  // is a lapsed protection, not a fault in progress.
+  agent_out_of_date: 'warn',
+  // Issue #54: the upgrade window, same tier as the state it ends.
+  upgrade_in_progress: 'warn',
   // pending (issue #47) is neither a fault nor health, the same reasoning
   // 'unobserved' above already carries -- provisioned but not yet proven,
   // never the canary's own doing.
@@ -80,6 +85,8 @@ const STATE_ORDER: HistoryState[] = [
   'throttled',
   'rotation_stalled',
   'renewal_stalled',
+  'upgrade_in_progress',
+  'agent_out_of_date',
   'pending',
   'unobserved',
 ]
@@ -100,6 +107,8 @@ const STATE_LABEL: Record<HistoryState, string> = {
   throttled: 'throttled',
   rotation_stalled: 'rotation stalled',
   renewal_stalled: 'renewal stalled',
+  upgrade_in_progress: 'upgrade in progress',
+  agent_out_of_date: 'agent out of date',
   pending: 'pending',
   unobserved: 'birdcage was not watching',
 }

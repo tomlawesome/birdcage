@@ -41,7 +41,23 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * no longer supervised as the agent's own child process (#69,
  * superseded) -- not answering. Ranked beside 'not_delivering', ahead of
  * 'hits_merged'; this placement is the change's own implementation
- * choice, not a ratified precedence (docs/adr/0013-opencanary-own-container.md). */
+ * choice, not a ratified precedence (docs/adr/0013-opencanary-own-container.md).
+ *
+ * 'agent_out_of_date' (issue #48, this frontend slice shipped by #54)
+ * ranks between 'renewal_stalled' and 'pending': birdcage's own
+ * comparison of the agent's build (`agent_version`) against its own
+ * stamped version (`birdcage_version`) found the agent behind.
+ * Degraded ('warn') tier, like rotation/renewal stalled -- nothing is
+ * missed by an old build, but a protection has quietly lapsed. Never
+ * auto-repairs itself the way a heartbeat clears silence; an operator
+ * runs the agent's upgrade command on the box (the canary page says how
+ * to get one: `upgrade_available`).
+ *
+ * 'upgrade_in_progress' (issue #54, owner 2026-09-27) ranks straight
+ * before 'agent_out_of_date', same degraded tier: an upgrade token was
+ * accepted, and until `upgrade_window_until` the old agent may still
+ * heartbeat beside the new one without credential_conflict. Clears by
+ * itself when the window ends. */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
@@ -54,6 +70,8 @@ export type CanaryStatus =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'upgrade_in_progress'
+  | 'agent_out_of_date'
   | 'pending'
   | 'ok'
 
@@ -119,6 +137,14 @@ export interface Canary {
   lane: Lane
   ports: string
   status: CanaryStatus
+  /** Issue #54: every state currently active on this canary, worst
+   * first (internal/store.Canary's ActiveStates -- already on the wire,
+   * newly modelled here). `status` alone only ever names the worst one;
+   * a worse fault (e.g. 'silent') can hold `status` while a milder one
+   * like 'agent_out_of_date' is still true underneath it, which is why
+   * a reader that cares about one specific state checks this list, not
+   * just `status`. */
+  active_states?: CanaryStatus[]
   last_heartbeat_at: string | null
   /** Present only when status is 'silent'. */
   silent_for_s?: number
@@ -147,6 +173,27 @@ export interface Canary {
    * own log-read report did not say so -- the certificate it was using
    * has expired (internal/store's CertificateExpired). */
   certificate_expired?: boolean
+  /** Issue #54: the agent's own reported build (already on the wire,
+   * internal/store.Canary's AgentVersion -- e.g. "0.1.0+2ea21b94", or
+   * "dev" for an unstamped build), carried here so the tile can compare
+   * it against `birdcage_version` without a facts fetch. The same value
+   * appears on the canary page as `facts.agent_version`. */
+  agent_version?: string
+  /** Issue #54: birdcage's own stamped version (scripts/release-version.sh's
+   * shape, e.g. "0.1.1+edc3691a") -- what `agent_version` is compared
+   * against to decide `agent_out_of_date`. */
+  birdcage_version?: string
+  /** Issue #54, canary page only: true when the agent is behind and this
+   * birdcage can print its upgrade command. The command itself is never
+   * on the page -- each one carries a freshly minted single-use token,
+   * and the dashboard API mints nothing while it is read-only (#8); the
+   * operator gets it from `birdcage agent upgrade-command <id>` on the
+   * birdcage host. False or absent: nothing to run, or no command this
+   * server could print. */
+  upgrade_available?: boolean
+  /** Issue #54: when this canary's open upgrade window ends (RFC 3339),
+   * present only while 'upgrade_in_progress' holds. */
+  upgrade_window_until?: string
   /** ADR-0012 Part B: one live credential seen from two places at once
    * (#130's credential_conflict) -- the two source addresses and/or the
    * two agent build versions seen presenting it within the detection
@@ -284,6 +331,8 @@ export type HistoryState =
   | 'throttled'
   | 'rotation_stalled'
   | 'renewal_stalled'
+  | 'upgrade_in_progress'
+  | 'agent_out_of_date'
   | 'pending'
   | 'unobserved'
 

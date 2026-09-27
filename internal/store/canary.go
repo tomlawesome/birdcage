@@ -58,6 +58,20 @@ type Canary struct {
 	// immediately, unchanged.
 	Pending bool `json:"-"`
 
+	// SMBLure, SMBWorkgroup and SMBShares are issue #54's own addition:
+	// this canary's enrolment-time SMB lure identity, copied by
+	// store.Provision from the enrolment session that carried it
+	// (EnrolmentSession's own doc comment). Like Pending above, these are
+	// InsertCanary's own write-time instruction, not values ListCanaries
+	// reads back -- GetCanaryUpgradeFacts (canary_upgrade.go) is the read
+	// path, for internal/runcmd.Upgrade. SMBLure nil means this kind has
+	// no lure at all (a scanner) or this canary predates issue #54, which
+	// InsertCanary and GetCanaryUpgradeFacts must never tell apart by
+	// guessing -- both read back as "unknown".
+	SMBLure      *bool  `json:"-"`
+	SMBWorkgroup string `json:"-"`
+	SMBShares    string `json:"-"`
+
 	// AgentLogReadOK is the agent's own last self-reported log-read
 	// status (#32 slice 5a, canaries.agent_log_read_ok). nil means no
 	// self-report has ever arrived, distinct from an explicit false --
@@ -72,6 +86,17 @@ type Canary struct {
 	// the fleet dashboard has never needed it, which is why it arrives
 	// here only now.
 	AgentVersion *string `json:"agent_version,omitempty"`
+
+	// BirdcageVersion is birdcage's own stamped version (issue #54),
+	// passed into ListCanaries by its caller -- cmd/birdcage/version.go's
+	// package-level var, unreachable from this package -- and copied
+	// onto every canary rather than read once at the top level, so GET
+	// /api/canaries and GET /api/canary can say "runs X, current is Y"
+	// on the same tile the frontend already reads AgentVersion from,
+	// with no second round trip. Always set (never omitted): unlike
+	// AgentVersion this is never unknown, so there is no nil case to
+	// represent.
+	BirdcageVersion string `json:"birdcage_version"`
 
 	// PoisonerNames is the bait names this canary last reported asking for
 	// (canaries.poisoner_names, written by RecordCanaryAgentHeartbeat, #86
@@ -164,6 +189,11 @@ type Canary struct {
 	RenewalStalled     bool                `json:"renewal_stalled,omitempty"`
 	RenewalStalledForS *int64              `json:"renewal_stalled_for_s,omitempty"`
 	CertificateExpired bool                `json:"certificate_expired,omitempty"`
+
+	// UpgradeWindowUntil is when this canary's open upgrade window ends
+	// (issue #54): present only while upgrade_in_progress holds, from
+	// the upgrade token's acceptance until then.
+	UpgradeWindowUntil *time.Time `json:"upgrade_window_until,omitempty"`
 
 	// dualUse is the raw credential_dual_use_* columns, read by
 	// ListCanaries and turned into CredentialConflict by
@@ -450,10 +480,32 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 		s := c.EnrolledAt.UTC().Format(receivedAtLayout)
 		registeredAt = &s
 	}
+	// smb_lure/smb_workgroup/smb_shares follow c.SMBLure's own nil-means-
+	// unknown convention (its doc comment above): every existing caller
+	// leaves these at their zero value (nil, "", "") and so keeps writing
+	// NULL for all three, byte-for-byte what this INSERT did before the
+	// columns existed -- the same "unknown", not "off", a canary that
+	// predates issue #54 gets.
+	var storedSMBLure any
+	if c.SMBLure != nil {
+		if *c.SMBLure {
+			storedSMBLure = 1
+		} else {
+			storedSMBLure = 0
+		}
+	}
+	var storedSMBWorkgroup, storedSMBShares any
+	if c.SMBWorkgroup != "" {
+		storedSMBWorkgroup = c.SMBWorkgroup
+	}
+	if c.SMBShares != "" {
+		storedSMBShares = c.SMBShares
+	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt)
+		INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at, smb_lure, smb_workgroup, smb_shares)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt,
+		storedSMBLure, storedSMBWorkgroup, storedSMBShares)
 	if err != nil {
 		return fmt.Errorf("insert canary: %w", err)
 	}
@@ -687,7 +739,13 @@ func ParseRange(s string) (time.Duration, error) {
 // and token-conflict, keeping whichever is worst), state detail, and
 // hits (alerts rows for that canary's instance_id received within
 // rangeWindow of now).
-func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration) ([]Canary, error) {
+//
+// birdcageVersion is birdcage's own stamped version (issue #54),
+// threaded in by the caller rather than read from a global: it both
+// drives applyAgentOutOfDateHealth below and is copied onto every
+// returned Canary as BirdcageVersion, the JSON field the dashboard reads
+// "current is Y" from.
+func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration, birdcageVersion string) ([]Canary, error) {
 	now = now.UTC()
 
 	rows, err := database.QueryContext(ctx, `
@@ -773,6 +831,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			c.RegisteredAt = &t
 		}
 		applyStatus(&c, now)
+		c.BirdcageVersion = birdcageVersion
 		canaries = append(canaries, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -828,6 +887,10 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
 		applyHitsMergedHealth(&canaries[i])
 		applyOpenCanaryHealth(&canaries[i])
+		applyAgentOutOfDateHealth(&canaries[i], birdcageVersion)
+		if err := applyUpgradeWindowHealth(ctx, database, &canaries[i], now); err != nil {
+			return nil, fmt.Errorf("upgrade window for %s: %w", canaries[i].ID, err)
+		}
 
 		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {

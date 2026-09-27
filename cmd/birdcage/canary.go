@@ -18,7 +18,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
-	"github.com/tomlawesome/birdcage/internal/hostmask"
+	"github.com/tomlawesome/birdcage/internal/runcmd"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/term"
 )
@@ -423,8 +423,26 @@ func runCanaryEnrol(args []string) error {
 	committed := false
 	defer rollbackCanaryTx(tx, &committed)
 
+	// Issue #54: the SMB lure identity `MintEnrolmentSession` carries
+	// through to the new canary's own row (for the upgrade command's own
+	// use, later) is nil/empty for anything but a honeypot -- smb and
+	// lures.smb above are always computed from parseSMBSettings' and the
+	// --lure flag's own defaults regardless of --kind, but a scanner has
+	// no lure at all, so recording its unused defaults would read back as
+	// a lure decision nobody made.
+	var smbLure *bool
+	var smbWorkgroupStored, smbSharesStored string
+	if kind == agentkind.Honeypot {
+		enabled := lures.smb
+		smbLure = &enabled
+		if enabled {
+			smbWorkgroupStored = smb.workgroup
+			smbSharesStored = strings.Join(smb.shares, ",")
+		}
+	}
+
 	now := time.Now().UTC()
-	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, bait, string(segment), now)
+	raw, session, err := store.MintEnrolmentSession(ctx, tx, *name, *lane, kind, bait, string(segment), smbLure, smbWorkgroupStored, smbSharesStored, now)
 	if err != nil {
 		return fmt.Errorf("mint enrolment session: %w", err)
 	}
@@ -559,94 +577,23 @@ func runCanaryEnrol(args []string) error {
 // term.Escape is applied anyway, because this file's rule is that every
 // operator-supplied value is escaped at the point it reaches the
 // terminal, and a rule with an exception is a rule somebody forgets.
+//
+// Moved to internal/runcmd.WriteMockingbirdRun (issue #54), so
+// `birdcage agent enrol` and the canary page's upgrade command build
+// this line identically; this stays as the thin wrapper this package's
+// tests call directly, with token always set (enrolment always has a
+// freshly minted one -- only the upgrade command ever omits it).
 func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string, smbLure bool, baitNames, segmentProfile string) error {
-	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped \\\n"); err != nil {
-		return err
-	}
-	// No --sysctl and no --init here since issue #132: the sysctl moved
-	// to OpenCanary's own container, printed next (this agent's own
-	// privileged ports bind because Docker already sets
-	// ip_unprivileged_port_start=0 in the holder's namespace), and this
-	// agent spawns no child process to reap or forward signals to (#69,
-	// superseded; build/mockingbird/Dockerfile's own comment has the
-	// reasoning). Keeping --init off also matters for the flag below.
-	//
-	// --cap-add NET_RAW (#65): the agent watches for port scans with one
-	// raw socket in the container's own network namespace, because
-	// OpenCanary's own portscan module needs iptables-legacy and root,
-	// which this image does not have. NET_RAW is the only capability the
-	// container gets, and the binary carries cap_net_raw as a file
-	// capability so the process stays uid 65532. Leave it off and the
-	// canary still reports every hit on an emulated service -- it just
-	// cannot see somebody sweeping the ports nothing answers on, and
-	// says so in one line at startup.
-	if _, err := fmt.Fprintf(w, "  --cap-add NET_RAW \\\n"); err != nil {
-		return err
-	}
-	// --security-opt no-new-privileges (#137): nothing in this container
-	// can gain privileges through a setuid or file-capability binary. It
-	// does not cost the agent its NET_RAW, because the runtime starts the
-	// agent directly and already holds NET_RAW from the flag above. Put
-	// --init in front of the agent and it would: the init holds no
-	// capabilities, so the agent it starts gets none either.
-	// docs/enrolment.md, "no-new-privileges and --init", has the
-	// detail.
-	if _, err := fmt.Fprintf(w, "  --security-opt no-new-privileges \\\n"); err != nil {
-		return err
-	}
-	// mockingbird-log is now READ-ONLY here (issue #132): OpenCanary
-	// writes it from its own container, printed after this one, and this
-	// agent only tails it -- the same shared-volume, one-writer-one-reader
-	// shape the SMB lure's audit file already uses below.
-	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary:ro \\\n"); err != nil {
-		return err
-	}
-	// The address holder (issue #126, unconditional since #132): every
-	// honeypot canary now has OpenCanary joining this same namespace
-	// (printOpenCanaryRunCommand, printed after this container), so this
-	// container's own network namespace is always the holder's, whether
-	// or not the SMB lure is also deployed -- a restart of this
-	// container never takes OpenCanary's, or the lure's, listening
-	// sockets down with it.
-	if _, err := fmt.Fprintf(w, "  --network container:%s \\\n", holderContainerName); err != nil {
-		return err
-	}
-	// The SMB lure's audit volume (#87), mounted READ-ONLY and only when
-	// the lure is being deployed. Read-only is the whole of decision 6:
-	// the volume is the only thing the two containers share, the lure
-	// writes and this container reads, so a compromised smbd can forge
-	// SMB alerts on its own canary and nothing else. Without
-	// MOCKINGBIRD_SMB_AUDIT_PATH the agent's smb road does not run at
-	// all, which is what `--lure smb=off` leaves behind.
-	if smbLure {
-		if _, err := fmt.Fprintf(w, "  -v %s:/audit:ro \\\n", smbAuditVolume); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_SMB_AUDIT_PATH=%s \\\n", smbAuditPath); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_CA_PIN=%s \\\n", pin); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_DEPLOY_TOKEN=%s \\\n", token); err != nil {
-		return err
-	}
-	if baitNames != "" {
-		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_POISONER_NAMES=%s \\\n", term.Escape(baitNames)); err != nil {
-			return err
-		}
-	}
-	if segmentProfile != "" {
-		if _, err := fmt.Fprintf(w, "  -e MOCKINGBIRD_POISONER_PROFILE=%s \\\n", term.Escape(segmentProfile)); err != nil {
-			return err
-		}
-	}
-	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
-	return err
+	return runcmd.WriteMockingbirdRun(w, runcmd.MockingbirdConfig{
+		AdvertiseHost:  advertiseHost,
+		EnrolPort:      enrolPort,
+		Pin:            pin,
+		Token:          token,
+		Image:          image,
+		SMBLure:        smbLure,
+		BaitNames:      baitNames,
+		SegmentProfile: segmentProfile,
+	})
 }
 
 // poisonerBaitNames validates the --bait-names list and returns it in the
@@ -696,35 +643,18 @@ func poisonerBaitNames(raw string) (string, error) {
 // to drop that one flag from the pasted command -- e.g. a host with no
 // /etc/ssh -- not to abandon the covering; internal/hostmask.Check
 // treats an absent mask path as nothing to cover, matching this.
+//
+// Moved to internal/runcmd.WriteNightjarRun (issue #54); this stays as
+// the thin wrapper this package's tests call directly, with token
+// always set (only the upgrade command ever omits it).
 func printScannerEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string) error {
-	if _, err := fmt.Fprintf(w, "docker run -d --name nightjar --restart unless-stopped \\\n"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  --read-only --cap-drop ALL --security-opt no-new-privileges \\\n"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -v /:/host:ro \\\n"); err != nil {
-		return err
-	}
-	for _, flag := range hostmask.RunFlags("/host") {
-		if _, err := fmt.Fprintf(w, "  %s \\\n", flag); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(w, "  -v nightjar-state:/var/lib/nightjar -v nightjar-grype-db:/var/lib/nightjar-grype-db \\\n"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_BIRDCAGE_URL=https://%s:%s \\\n", term.Escape(advertiseHost), enrolPort); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_CA_PIN=%s \\\n", pin); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "  -e NIGHTJAR_DEPLOY_TOKEN=%s \\\n", token); err != nil {
-		return err
-	}
-	_, err := fmt.Fprintf(w, "  %s\n", term.Escape(image))
-	return err
+	return runcmd.WriteNightjarRun(w, runcmd.NightjarConfig{
+		AdvertiseHost: advertiseHost,
+		EnrolPort:     enrolPort,
+		Pin:           pin,
+		Token:         token,
+		Image:         image,
+	})
 }
 
 // requireEnrolAddresses reads #54's two settings and fails with a clear,

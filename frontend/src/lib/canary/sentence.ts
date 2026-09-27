@@ -10,6 +10,7 @@ import { agoWords, durationCoarse, durationExact } from '../sentence/duration'
 import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } from '../sentence/time'
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
 import { numberToWords, plural, wordOrNumber } from '../sentence/words'
+import { shortVersion } from '../sentence/version'
 import {
   canaryOf,
   lastCompletedRun,
@@ -124,6 +125,12 @@ function stateWords(c: Canary): string {
       return `rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
     case 'renewal_stalled':
       return `renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
+    case 'upgrade_in_progress':
+      return c.upgrade_window_until
+        ? `upgrade in progress until ${formatClockShort(c.upgrade_window_until)}`
+        : 'upgrade in progress'
+    case 'agent_out_of_date':
+      return `agent behind: runs ${shortVersion(c.agent_version ?? '?')}, current ${shortVersion(c.birdcage_version ?? '?')}`
     case 'pending':
       return 'pending its first self-test'
     default:
@@ -507,6 +514,44 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
               'working once the certificate expires. ',
           },
           { text: "Check the agent can reach birdcage's ingest listener.", bold: true },
+        ],
+      }
+    case 'upgrade_in_progress': {
+      // Issue #54 (owner, 2026-09-27): an accepted upgrade token's
+      // window, shown so it is never invisible. It ends by itself.
+      const until = canary.upgrade_window_until ? formatClockShort(canary.upgrade_window_until) : null
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: ' is being upgraded.', bold: true }],
+        sub: until
+          ? [
+              { text: 'The old agent has until ' },
+              { text: until, bold: true },
+              {
+                text: ' to go offline. Until then, the old and new builds both reporting on this credential is expected, not a credential conflict; after it, detection is back to normal.',
+              },
+            ]
+          : [
+              {
+                text: 'The old agent has a few minutes to go offline. Until then, the old and new builds both reporting on this credential is expected, not a credential conflict.',
+              },
+            ],
+      }
+    }
+    case 'agent_out_of_date':
+      // Issue #54: birdcage's own comparison of the agent's build
+      // against its own stamped version -- same degraded severity as
+      // rotation/renewal stalled, nothing missed, a lapsed protection.
+      // The next step is the facts column below, which names the
+      // command that prints the upgrade command.
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s agent has fallen behind.", bold: true }],
+        sub: [
+          { text: 'It is running ' },
+          { text: shortVersion(canary.agent_version ?? '?'), bold: true },
+          { text: '; birdcage is on ' },
+          { text: shortVersion(canary.birdcage_version ?? '?'), bold: true },
+          { text: '. Nothing is being missed by the old build, but a protection has quietly lapsed. ' },
+          { text: 'Get its upgrade command as shown below.', bold: true },
         ],
       }
     default:

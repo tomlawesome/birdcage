@@ -35,7 +35,7 @@ func TestScannerProofStatesAreRecorded(t *testing.T) {
 			t.Fatalf("SetCanaryDBRefresh: %v", err)
 		}
 
-		r := New(database)
+		r := New(database, "")
 		at := t0.Add(25 * time.Hour)
 		beat(t, database, "scan-1", at)
 		tick(t, r, at)

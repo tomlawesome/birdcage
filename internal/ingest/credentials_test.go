@@ -145,7 +145,7 @@ func auditCount(t *testing.T, database *db.DB, action, target string) int {
 
 func canaryState(t *testing.T, database *db.DB, id string, at time.Time) store.Canary {
 	t.Helper()
-	canaries, err := store.ListCanaries(context.Background(), database, at, time.Hour)
+	canaries, err := store.ListCanaries(context.Background(), database, at, time.Hour, "")
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}

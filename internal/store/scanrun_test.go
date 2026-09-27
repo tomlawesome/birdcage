@@ -463,7 +463,7 @@ func TestListScannerRunsOrderLimitAndSnapshot(t *testing.T) {
 
 func scannerCanary(t *testing.T, database *db.DB, id string, now time.Time) Canary {
 	t.Helper()
-	canaries, err := ListCanaries(context.Background(), database, now, time.Hour)
+	canaries, err := ListCanaries(context.Background(), database, now, time.Hour, "")
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}

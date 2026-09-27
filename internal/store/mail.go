@@ -40,10 +40,21 @@ type MailKind string
 // argument for birdcage owning an SMTP client at all.
 const MailKindTokenConflict MailKind = "token_conflict"
 
+// MailKindAgentsBehind is issue #54's daily check: at most one message a
+// day, listing every agent whose last-reported version
+// agentBehindBirdcage (version.go) says is behind birdcage's own.
+// Unlike token_conflict this is never about one canary -- CanaryID is
+// nil on every row of this kind -- so its own cooldown is a calendar day
+// rather than the per-canary/fleet-wide rate limits internal/mail's
+// EnqueueTokenConflict enforces: a version drift is not attacker-paced,
+// so there is nothing here for that machinery to defend against.
+const MailKindAgentsBehind MailKind = "agents_behind"
+
 // mailKinds is EnqueueMail's allow-list, so an unrecognized kind fails
 // at the call rather than becoming a value no reader understands.
 var mailKinds = map[MailKind]bool{
 	MailKindTokenConflict: true,
+	MailKindAgentsBehind:  true,
 }
 
 // MailMessage is one row of mail_outbox.

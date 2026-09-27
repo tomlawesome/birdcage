@@ -1346,6 +1346,11 @@ e2e:enrol-and-hit:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
+    # Issue #54: replaces the canary's containers by running the upgrade
+    # command the canary page prints, and hands the same canary back ok.
+    # Before lifecycle.sh, whose deliberate use of a rotated-out token
+    # holds token_conflict for 24 h, so the canary never reads ok again.
+    - scripts/e2e/upgrade.sh
     - scripts/e2e/lifecycle.sh
     - scripts/e2e/surface.sh
   after_script:
@@ -1399,6 +1404,11 @@ e2e:enrol-and-hit:postgres:
     - eval "$(scripts/e2e/stack.sh up)"
     - scripts/e2e/enrol-and-hit.sh
     - scripts/e2e/refusals.sh
+    # Issue #54: replaces the canary's containers by running the upgrade
+    # command the canary page prints, and hands the same canary back ok.
+    # Before lifecycle.sh, whose deliberate use of a rotated-out token
+    # holds token_conflict for 24 h, so the canary never reads ok again.
+    - scripts/e2e/upgrade.sh
     - scripts/e2e/lifecycle.sh
     - scripts/e2e/surface.sh
   after_script:

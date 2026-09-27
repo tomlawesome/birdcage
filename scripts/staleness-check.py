@@ -40,9 +40,12 @@ Ecosystems covered, and where each pin comes from:
   - Checksum-pinned tools (cosign, gitleaks, grype) -- compared against
     each project's GitHub "latest release". SHA-pinned GitHub Actions
     `uses:` lines -- compared against that repo's newest semver tag.
-  - The Responder fixture digest pinned in .gitlab-ci.yml -- compared
-    against the registry's current digest for `latest` (needs
-    CI_REGISTRY_USER/PASSWORD; unverifiable without them).
+  - The Responder fixture digest pinned in .gitlab-ci.yml -- the private
+    fixtures project publishes it only under a version tag (no
+    `latest`), so this lists the repository's tags, picks the newest
+    `vN.N...` one, and compares that tag's own manifest digest against
+    the pin (needs CI_REGISTRY_USER/PASSWORD; unverifiable without
+    them).
 
 Every row gets a status: `current`, `behind`, `floating` (no version
 component in the pin at all -- never "behind"), `accepted` (a `behind` or
@@ -208,6 +211,65 @@ class Fetcher:
             return (False, None, str(e.reason))
         except Exception as e:  # noqa: BLE001
             return (False, None, str(e))
+
+    def get_tags_list(self, first_url, headers=None):
+        """GET a Docker Registry `tags/list` endpoint. Returns (ok, tags, err).
+
+        Follows the registry's own Link-header pagination (`<url>;
+        rel="next"`), one page at a time, for a real run.
+
+        Under --upstream there is exactly one page: the fixture's value
+        for this URL is treated as the whole tags/list response body --
+        there is no Link header to fake, so a fixture-replayed run never
+        exercises pagination, the same simplification head_digest makes
+        for the Docker-Content-Digest header.
+        """
+        if self.fixture is not None:
+            ok, body, err = self.get(first_url)
+            if not ok:
+                return (False, None, err)
+            try:
+                data = json.loads(body)
+            except Exception as e:  # noqa: BLE001
+                return (False, None, f"bad JSON from {first_url}: {e}")
+            return (True, data.get("tags", []), None)
+
+        tags = []
+        url = first_url
+        seen = set()
+        while url:
+            if url in seen:
+                return (False, None, f"pagination loop reading tags/list from {first_url}")
+            seen.add(url)
+            try:
+                req = urllib.request.Request(url, headers=headers or {})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = resp.read()
+                    link = resp.headers.get("Link")
+            except urllib.error.HTTPError as e:
+                return (False, None, f"HTTP {e.code}")
+            except urllib.error.URLError as e:
+                return (False, None, str(e.reason))
+            except Exception as e:  # noqa: BLE001
+                return (False, None, str(e))
+            try:
+                data = json.loads(body)
+            except Exception as e:  # noqa: BLE001
+                return (False, None, f"bad JSON from {url}: {e}")
+            tags.extend(data.get("tags", []))
+            url = _next_page_url(url, link)
+        return (True, tags, None)
+
+
+def _next_page_url(current_url, link_header):
+    """Absolute URL of the next tags/list page named in a registry
+    `Link` response header (`<...>; rel="next"`), or None."""
+    if not link_header:
+        return None
+    m = re.match(r'^\s*<([^>]+)>\s*;\s*rel="next"', link_header)
+    if not m:
+        return None
+    return urllib.parse.urljoin(current_url, m.group(1))
 
 
 def github_headers():
@@ -1063,6 +1125,32 @@ def check_actions(root, fetcher):
 # The Responder fixture digest
 # ---------------------------------------------------------------------------
 
+_VERSION_TAG = re.compile(r"^v(\d+(?:\.\d+)*)$")
+
+
+def parse_version_tag(tag):
+    """Numeric tuple for a tag shaped like v1.2.3(.4...), any number of
+    components, or None for a tag with any other shape -- this
+    repository's tags are a released tool's own version strings, not
+    always a version (e.g. a build tag), and only version tags order
+    meaningfully."""
+    m = _VERSION_TAG.match(tag)
+    if not m:
+        return None
+    return tuple(int(x) for x in m.group(1).split("."))
+
+
+def newest_version_tag(tags):
+    """(tag_name, nums) for the highest-numbered version tag among
+    `tags`, or (None, None) if none of them parse as one."""
+    parsed = [(tag, parse_version_tag(tag)) for tag in tags]
+    parsed = [(tag, nums) for tag, nums in parsed if nums is not None]
+    if not parsed:
+        return None, None
+    maxlen = max(len(nums) for _, nums in parsed)
+    return max(parsed, key=lambda tn: padded(tn[1], maxlen))
+
+
 def check_registry_fixture(root, fetcher):
     ci_path = os.path.join(root, ".gitlab-ci.yml")
     if not os.path.isfile(ci_path):
@@ -1082,61 +1170,72 @@ def check_registry_fixture(root, fetcher):
                                   "CI_REGISTRY_USER/CI_REGISTRY_PASSWORD not set -- "
                                   "cannot authenticate to the registry from here")]
 
-    manifest_url = f"https://{registry}/v2/{repo}/manifests/latest"
-
-    if fetcher.fixture is not None:
-        ok, digest, err = fetcher.head_digest(manifest_url)
-        if not ok:
-            return [unverifiable(row_id, pinned_digest, err)]
-        return [Row(row_id, pinned_digest, digest, "current" if digest == pinned_digest else "behind")]
-
-    ok, body, err = fetcher.get(f"https://{registry}/v2/")
-    challenge = None
-    if not ok and err and err.startswith("HTTP 401"):
-        # urllib's HTTPError swallows the body/headers by the time we get
-        # here via Fetcher.get; redo the request directly to read the
-        # WWW-Authenticate challenge.
-        try:
-            req = urllib.request.Request(f"https://{registry}/v2/")
-            urllib.request.urlopen(req, timeout=30)
-        except urllib.error.HTTPError as e:
-            challenge = e.headers.get("WWW-Authenticate")
-    if not challenge:
-        return [unverifiable(row_id, pinned_digest, "could not read the registry's auth challenge")]
-
-    m2 = re.search(r'realm="([^"]+)".*service="([^"]+)"', challenge)
-    if not m2:
-        return [unverifiable(row_id, pinned_digest, f"unrecognised auth challenge: {challenge}")]
-    realm, service = m2.group(1), m2.group(2)
-    user = os.environ.get("CI_REGISTRY_USER")
-    password = os.environ.get("CI_REGISTRY_PASSWORD")
-    if not (user and password):
-        return [unverifiable(row_id, pinned_digest,
-                              "CI_REGISTRY_USER/CI_REGISTRY_PASSWORD not set -- "
-                              "cannot authenticate to the registry from here")]
-
-    token_url = f"{realm}?service={urllib.parse.quote(service)}&scope=repository:{repo}:pull"
-    try:
-        req = urllib.request.Request(token_url)
-        auth = f"{user}:{password}".encode()
-        import base64
-        req.add_header("Authorization", "Basic " + base64.b64encode(auth).decode())
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            token = json.loads(resp.read()).get("token")
-    except Exception as e:  # noqa: BLE001
-        return [unverifiable(row_id, pinned_digest, f"could not get a registry token: {e}")]
-    if not token:
-        return [unverifiable(row_id, pinned_digest, "no token in registry auth response")]
-
     accept = ("application/vnd.oci.image.index.v1+json, "
               "application/vnd.oci.image.manifest.v1+json, "
               "application/vnd.docker.distribution.manifest.list.v2+json, "
               "application/vnd.docker.distribution.manifest.v2+json")
-    ok, digest, err = fetcher.head_digest(
-        manifest_url, headers={"Authorization": f"Bearer {token}", "Accept": accept})
+
+    if fetcher.fixture is not None:
+        auth_headers = {}
+    else:
+        ok, body, err = fetcher.get(f"https://{registry}/v2/")
+        challenge = None
+        if not ok and err and err.startswith("HTTP 401"):
+            # urllib's HTTPError swallows the body/headers by the time we get
+            # here via Fetcher.get; redo the request directly to read the
+            # WWW-Authenticate challenge.
+            try:
+                req = urllib.request.Request(f"https://{registry}/v2/")
+                urllib.request.urlopen(req, timeout=30)
+            except urllib.error.HTTPError as e:
+                challenge = e.headers.get("WWW-Authenticate")
+        if not challenge:
+            return [unverifiable(row_id, pinned_digest, "could not read the registry's auth challenge")]
+
+        m2 = re.search(r'realm="([^"]+)".*service="([^"]+)"', challenge)
+        if not m2:
+            return [unverifiable(row_id, pinned_digest, f"unrecognised auth challenge: {challenge}")]
+        realm, service = m2.group(1), m2.group(2)
+        user = os.environ.get("CI_REGISTRY_USER")
+        password = os.environ.get("CI_REGISTRY_PASSWORD")
+        if not (user and password):
+            return [unverifiable(row_id, pinned_digest,
+                                  "CI_REGISTRY_USER/CI_REGISTRY_PASSWORD not set -- "
+                                  "cannot authenticate to the registry from here")]
+
+        token_url = f"{realm}?service={urllib.parse.quote(service)}&scope=repository:{repo}:pull"
+        try:
+            req = urllib.request.Request(token_url)
+            auth = f"{user}:{password}".encode()
+            import base64
+            req.add_header("Authorization", "Basic " + base64.b64encode(auth).decode())
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                token = json.loads(resp.read()).get("token")
+        except Exception as e:  # noqa: BLE001
+            return [unverifiable(row_id, pinned_digest, f"could not get a registry token: {e}")]
+        if not token:
+            return [unverifiable(row_id, pinned_digest, "no token in registry auth response")]
+        auth_headers = {"Authorization": f"Bearer {token}"}
+
+    tags_url = f"https://{registry}/v2/{repo}/tags/list"
+    ok, tags, err = fetcher.get_tags_list(tags_url, headers=auth_headers)
     if not ok:
         return [unverifiable(row_id, pinned_digest, err)]
-    return [Row(row_id, pinned_digest, digest, "current" if digest == pinned_digest else "behind")]
+
+    newest_tag, _ = newest_version_tag(tags or [])
+    if newest_tag is None:
+        return [unverifiable(row_id, pinned_digest,
+                              f"no version tag (vN.N...) found among this repository's tags: {tags_url}")]
+
+    manifest_url = f"https://{registry}/v2/{repo}/manifests/{newest_tag}"
+    ok, digest, err = fetcher.head_digest(
+        manifest_url, headers={**auth_headers, "Accept": accept})
+    if not ok:
+        return [unverifiable(row_id, pinned_digest, err)]
+    # The upstream column shows the newest tag name, not the raw digest,
+    # so a human reading the report knows what to move the pin to --
+    # whichever way this compares.
+    return [Row(row_id, pinned_digest, newest_tag, "current" if digest == pinned_digest else "behind")]
 
 
 # ---------------------------------------------------------------------------

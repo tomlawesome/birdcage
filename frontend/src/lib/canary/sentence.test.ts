@@ -234,3 +234,32 @@ describe('selfTestHeading', () => {
     expect(selfTestHeading(input).verdict).toEqual({ text: 'never run', cls: 'r' })
   })
 })
+
+// Issue #54: the canary page's own words for an agent behind birdcage,
+// and for the upgrade window an accepted upgrade token opens.
+describe('issue #54 scenes', () => {
+  it('agent out of date: points at the facts column for the upgrade command', () => {
+    const { hero, sub } = text('agentOutOfDate')
+    expect(hero).toBe("canary-iot's agent has fallen behind.")
+    expect(sub).toContain('It is running 0.1.0; birdcage is on 0.1.1.')
+    expect(sub).toContain('Get its upgrade command as shown below.')
+  })
+
+  it('upgrade in progress: says when the old agent has to be gone by, in the hero, sub and crumb', () => {
+    const input = sceneInput('upgradeInProgress')
+    const s = canarySentence(input)
+    expect(plainText(s.hero)).toBe('canary-iot is being upgraded.')
+    expect(plainText(s.sub)).toBe(
+      'The old agent has until 09:18 to go offline. Until then, the old and new builds both reporting on this ' +
+        'credential is expected, not a credential conflict; after it, detection is back to normal.',
+    )
+    expect(plainText(canaryCrumb(input))).toBe('the cage › canary-iot · sun 20 sep · upgrade in progress until 09:18')
+  })
+
+  it('upgrade in progress without a window end still reads', () => {
+    const input = sceneInput('upgradeInProgress')
+    delete input.page.canary.upgrade_window_until
+    expect(plainText(canarySentence(input).sub)).toContain('The old agent has a few minutes to go offline.')
+    expect(plainText(canaryCrumb(input))).toContain('· upgrade in progress')
+  })
+})

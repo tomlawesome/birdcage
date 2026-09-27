@@ -94,9 +94,22 @@ type selfTestRunSummary struct {
 // /api/canaries already sends for it, so the page and the tile can never
 // disagree about a status; the rest is what only this page asks for.
 type canaryPageResponse struct {
-	Canary       canaryWithSelfTest   `json:"canary"`
+	Canary       canaryPageCanary     `json:"canary"`
 	Facts        canaryFacts          `json:"facts"`
 	SelfTestRuns []selfTestRunSummary `json:"self_test_runs"`
+}
+
+// canaryPageCanary is the page's canary object: /api/canaries' own
+// shape plus issue #54's upgrade_available, which only this page
+// carries. Always present on this route: true when the canary is
+// agent_out_of_date and this server can print an upgrade command
+// (handler.upgradeAvailable), so a reader can tell "nothing to run" from
+// "a backend too old to say". The command itself is never on the page:
+// each one carries a freshly minted single-use token, and the dashboard
+// API mints nothing while it is read-only (#8).
+type canaryPageCanary struct {
+	canaryWithSelfTest
+	UpgradeAvailable bool `json:"upgrade_available"`
 }
 
 // handleCanary serves GET /api/canary?id=<id>&range=<Range>: everything
@@ -123,7 +136,7 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.now().UTC()
-	canaries, err := store.ListCanaries(r.Context(), h.db, now, window)
+	canaries, err := store.ListCanaries(r.Context(), h.db, now, window, h.birdcageVersion)
 	if err != nil {
 		log.Printf("api: list canaries: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -141,7 +154,7 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := canaryWithSelfTest{Canary: *found}
+	out := canaryPageCanary{canaryWithSelfTest: canaryWithSelfTest{Canary: *found}}
 	results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, found.ID)
 	if err != nil {
 		// Best-effort, exactly as handleCanaries treats it: the
@@ -166,6 +179,8 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 			FailedServices: run.FailedServices,
 		}
 	}
+
+	out.UpgradeAvailable = h.upgradeAvailable(*found)
 
 	facts, err := h.canaryFacts(r, *found, now)
 	if err != nil {

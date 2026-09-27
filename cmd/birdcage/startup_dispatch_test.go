@@ -28,6 +28,7 @@ func TestRunSubcommandCanaryDispatch(t *testing.T) {
 		{"revoke", []string{"birdcage", "agent", "revoke"}},
 		{"enrol", []string{"birdcage", "agent", "enrol"}},
 		{"settings", []string{"birdcage", "agent", "settings"}},
+		{"upgrade-command", []string{"birdcage", "agent", "upgrade-command"}},
 		{"unknown", []string{"birdcage", "agent", "bogus"}},
 		{"alias add", []string{"birdcage", "canary", "add"}},
 		{"alias mint", []string{"birdcage", "canary", "mint"}},
@@ -35,6 +36,7 @@ func TestRunSubcommandCanaryDispatch(t *testing.T) {
 		{"alias revoke", []string{"birdcage", "canary", "revoke"}},
 		{"alias enrol", []string{"birdcage", "canary", "enrol"}},
 		{"alias settings", []string{"birdcage", "canary", "settings"}},
+		{"alias upgrade-command", []string{"birdcage", "canary", "upgrade-command"}},
 		{"alias unknown", []string{"birdcage", "canary", "bogus"}},
 	}
 	for _, c := range cases {

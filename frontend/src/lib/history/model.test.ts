@@ -170,6 +170,11 @@ describe('tierFor -- which colour a state carries', () => {
   it('renewal_stalled stays on the warning tier, ranked with rotation_stalled', () =>
     expect(tierFor('renewal_stalled')).toBe('warn'))
 
+  // Issue #54: coloured like rotation/renewal stalled -- an old build
+  // is a lapsed protection, not a fault in progress.
+  it('agent_out_of_date takes the warning tier', () => expect(tierFor('agent_out_of_date')).toBe('warn'))
+  it('upgrade_in_progress takes the warning tier', () => expect(tierFor('upgrade_in_progress')).toBe('warn'))
+
   // ADR-0012 decision 10 (issue #116): db_stale is coloured like the
   // nearest existing warning state, even though it ranks with the
   // critical states in STATE_ORDER.
@@ -234,6 +239,26 @@ describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
       'renewal stalled once, 1 m',
     ))
 
+  // Issue #54.
+  it('agent_out_of_date reads "agent out of date"', () =>
+    expect(summaryLine([entry({ state: 'agent_out_of_date', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'agent out of date once, 1 m',
+    ))
+
+  it('upgrade_in_progress reads "upgrade in progress"', () =>
+    expect(summaryLine([entry({ state: 'upgrade_in_progress', count: 1, longest_s: 60, total_s: 60 })])).toBe(
+      'upgrade in progress once, 1 m',
+    ))
+
+  it('ordering: upgrade_in_progress sits after renewal_stalled, before agent_out_of_date', () => {
+    const line = summaryLine([
+      entry({ state: 'agent_out_of_date', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'upgrade_in_progress', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe('renewal stalled once, 1 m · upgrade in progress once, 1 m · agent out of date once, 1 m')
+  })
+
   it('ordering: credential_conflict sits with token_conflict, renewal_stalled sits with rotation_stalled', () => {
     const line = summaryLine([
       entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 }),
@@ -241,6 +266,17 @@ describe('STATE_LABEL via summaryLine -- issue #46/#47 new states', () => {
       entry({ state: 'silent', count: 1, longest_s: 60, total_s: 60 }),
     ])
     expect(line).toBe('credential conflict once, 1 m · silent once, 1 m · renewal stalled once, 1 m')
+  })
+
+  // Issue #54: agent_out_of_date ranks between renewal_stalled and
+  // pending, so it reads after renewal_stalled and before pending.
+  it('ordering: agent_out_of_date sits after renewal_stalled, before pending', () => {
+    const line = summaryLine([
+      entry({ state: 'pending', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'agent_out_of_date', count: 1, longest_s: 60, total_s: 60 }),
+      entry({ state: 'renewal_stalled', count: 1, longest_s: 60, total_s: 60 }),
+    ])
+    expect(line).toBe('renewal stalled once, 1 m · agent out of date once, 1 m · pending once, 1 m')
   })
 })
 

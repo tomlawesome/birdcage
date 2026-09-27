@@ -86,10 +86,15 @@ type LastHit struct {
 // not just against this one canary -- the same inputs GET /api/visitors
 // classifies from, so the two endpoints never disagree about a source's
 // kind.
-func ListTrace(ctx context.Context, database *db.DB, now time.Time, rangeStr string, rangeWindow time.Duration, internalRanges []*net.IPNet) (Trace, error) {
+//
+// birdcageVersion is passed straight through to ListCanaries (issue
+// #54): TraceCanary.Status comes from the same Canary.Status ListCanaries
+// derives, so a canary behind on its agent version says "agent_out_of_date"
+// here exactly as it does on GET /api/canaries.
+func ListTrace(ctx context.Context, database *db.DB, now time.Time, rangeStr string, rangeWindow time.Duration, internalRanges []*net.IPNet, birdcageVersion string) (Trace, error) {
 	now = now.UTC()
 
-	canaries, err := ListCanaries(ctx, database, now, rangeWindow)
+	canaries, err := ListCanaries(ctx, database, now, rangeWindow, birdcageVersion)
 	if err != nil {
 		return Trace{}, fmt.Errorf("list canaries: %w", err)
 	}

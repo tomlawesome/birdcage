@@ -3,8 +3,10 @@
 # CLI command, run against the live stack and checked on what they
 # actually answered, not just their exit status.
 #
-# Runs after enrol-and-hit.sh, refusals.sh and lifecycle.sh in the same
-# job, on the canary those scripts already enrolled and hit -- this file
+# Runs after enrol-and-hit.sh, refusals.sh, upgrade.sh (#54, which
+# replaces the canary's containers and hands the same canary back ok) and
+# lifecycle.sh in the same job, on the canary those scripts already enrolled
+# and hit -- this file
 # never enrols its own honeypot. lifecycle.sh deliberately leaves that
 # canary's real credential working (see its own header) so the SSE check
 # below can cause a live hit.
@@ -12,6 +14,7 @@
 #   eval "$(scripts/e2e/stack.sh up)"
 #   scripts/e2e/enrol-and-hit.sh
 #   scripts/e2e/refusals.sh
+#   scripts/e2e/upgrade.sh
 #   scripts/e2e/lifecycle.sh
 #   scripts/e2e/surface.sh
 set -eu

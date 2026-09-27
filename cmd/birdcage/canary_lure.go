@@ -1,14 +1,12 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 
-	"github.com/tomlawesome/birdcage/internal/term"
+	"github.com/tomlawesome/birdcage/internal/runcmd"
 )
 
 // The SMB lure's own enrolment inputs (issue #87 decisions 7 and 10).
@@ -19,33 +17,18 @@ import (
 // the canary read the lure's audit file, and the lure's own run command.
 // Nothing here is sent to the server or stored -- see this file's comment
 // on lureState for what that does and does not deliver.
+// The volume name, in-container path, image env/default and container
+// name below all now live in internal/runcmd (issue #54, so the upgrade
+// command can build the identical lines) -- these are the same values
+// under their original names, kept here so nothing else in this file or
+// its tests has to change.
 const (
-	// smbAuditVolume is the volume the lure writes its audit file to and
-	// the canary mounts read-only. Named, not anonymous, because the
-	// operator has to create it themselves with tmpfs options before
-	// either container starts: a container that reaches an uncreated
-	// named volume first gets a plain on-disk one, silently losing the
-	// size cap that makes filling it a crash of the lure rather than of
-	// the host (#87 decision 6).
-	smbAuditVolume = "smb-audit"
-
-	// smbAuditPath is where the audit file appears inside both
-	// containers. Fixed: the lure's own default, and the value the
-	// canary's MOCKINGBIRD_SMB_AUDIT_PATH is set to.
-	smbAuditPath = "/audit/smb.log"
-
-	// smbAuditSize caps the audit volume. Small on purpose -- it holds
-	// one text log that the canary reads continuously.
-	smbAuditSize = "16m"
-
-	// envSMBLureImage overrides the lure image name this command prints,
-	// the same way MOCKINGBIRD_IMAGE overrides the agent's.
-	envSMBLureImage = "SMB_LURE_IMAGE"
-
-	// defaultSMBLureImage is what it prints otherwise. Like the agent's
-	// image, birdcage does not publish this anywhere yet, so an operator
-	// builds and tags it by hand.
-	defaultSMBLureImage = "smb-lure:latest"
+	smbAuditVolume       = runcmd.SMBAuditVolume
+	smbAuditPath         = runcmd.SMBAuditPath
+	smbAuditSize         = runcmd.SMBAuditSize
+	envSMBLureImage      = runcmd.EnvSMBLureImage
+	defaultSMBLureImage  = runcmd.DefaultSMBLureImage
+	smbLureContainerName = runcmd.SMBLureContainerName
 )
 
 // The address holder's own enrolment inputs (issue #126).
@@ -68,17 +51,9 @@ const (
 // since a lure-less canary otherwise had nothing else ever joining its
 // own namespace.
 const (
-	// holderContainerName is the name `birdcage canary enrol` gives the
-	// holder container, and so the name the canary's and the lure's own
-	// `--network container:` flags join.
-	holderContainerName = "holder"
-
-	// envHolderImage overrides the holder image name this command
-	// prints, the same way SMB_LURE_IMAGE overrides the lure's.
-	envHolderImage = "HOLDER_IMAGE"
-
-	// defaultHolderImage is what it prints otherwise.
-	defaultHolderImage = "holder:latest"
+	holderContainerName = runcmd.HolderContainerName
+	envHolderImage      = runcmd.EnvHolderImage
+	defaultHolderImage  = runcmd.DefaultHolderImage
 )
 
 // OpenCanary's own enrolment inputs (issue #132).
@@ -91,16 +66,9 @@ const (
 // the agent and the SMB lure do, and always -- there is no flag to turn
 // it off, because a honeypot canary with no honeypot is not a honeypot.
 const (
-	// openCanaryContainerName is the name `birdcage agent enrol` gives
-	// this container.
-	openCanaryContainerName = "opencanary"
-
-	// envOpenCanaryImage overrides the image name this command prints,
-	// the same way HOLDER_IMAGE overrides the holder's.
-	envOpenCanaryImage = "OPENCANARY_IMAGE"
-
-	// defaultOpenCanaryImage is what it prints otherwise.
-	defaultOpenCanaryImage = "opencanary:latest"
+	openCanaryContainerName = runcmd.OpenCanaryContainerName
+	envOpenCanaryImage      = runcmd.EnvOpenCanaryImage
+	defaultOpenCanaryImage  = runcmd.DefaultOpenCanaryImage
 )
 
 // Defaults for the lure's identity, matching build/smb-lure/entrypoint.sh
@@ -125,7 +93,7 @@ var (
 // smbShareCount is how many share names the lure serves: three fixed
 // directories baked into the image, whose names an operator may change
 // but whose number they may not.
-const smbShareCount = 3
+const smbShareCount = runcmd.SMBShareCount
 
 // lureState is which lures this enrolment is deploying.
 //
@@ -223,20 +191,10 @@ func parseSMBSettings(workgroup, shares string) (smbSettings, error) {
 }
 
 // smbLureImage is the image name to print.
-func smbLureImage() string {
-	if image := os.Getenv(envSMBLureImage); image != "" {
-		return image
-	}
-	return defaultSMBLureImage
-}
+func smbLureImage() string { return runcmd.SMBLureImage() }
 
 // holderImage is the image name to print for the address holder.
-func holderImage() string {
-	if image := os.Getenv(envHolderImage); image != "" {
-		return image
-	}
-	return defaultHolderImage
-}
+func holderImage() string { return runcmd.HolderImage() }
 
 // printHolderRunCommand writes the commands an operator runs before the
 // canary, OpenCanary or the lure: the audit volume (only when the lure is
@@ -260,43 +218,17 @@ func holderImage() string {
 // Every line of this output also appears verbatim in docs/enrolment.md
 // and build/smb-lure/README.md, and TestSMBLureRunCommandMatchesTheDocs
 // is what keeps the copies from drifting.
+//
+// The actual line-building now lives in internal/runcmd.WriteHolderRun
+// (issue #54), so `birdcage agent enrol` and the canary page's upgrade
+// command build it identically; this stays as the thin wrapper the
+// existing tests in this package call directly.
 func printHolderRunCommand(w io.Writer, image string, smbLure bool) error {
-	var lines []string
-	if smbLure {
-		lines = append(lines,
-			"docker volume create --driver local \\",
-			fmt.Sprintf("  --opt type=tmpfs --opt device=tmpfs --opt o=size=%s,mode=0755 \\", smbAuditSize),
-			fmt.Sprintf("  %s", smbAuditVolume),
-			"",
-		)
-	}
-	lines = append(lines,
-		fmt.Sprintf("docker run -d --name %s --restart unless-stopped \\", holderContainerName),
-		"  --read-only \\",
-		"  --cap-drop ALL \\",
-		"  --security-opt no-new-privileges \\",
-		"  --pids-limit 16 \\",
-		"  --memory 32m \\",
-	)
-	if smbLure {
-		lines = append(lines, fmt.Sprintf("  -v %s:/audit:ro \\", smbAuditVolume))
-	}
-	lines = append(lines, fmt.Sprintf("  %s", term.Escape(image)))
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runcmd.WriteHolderRun(w, runcmd.HolderConfig{Image: image, SMBLure: smbLure})
 }
 
 // openCanaryImage is the image name to print for OpenCanary.
-func openCanaryImage() string {
-	if image := os.Getenv(envOpenCanaryImage); image != "" {
-		return image
-	}
-	return defaultOpenCanaryImage
-}
+func openCanaryImage() string { return runcmd.OpenCanaryImage() }
 
 // printOpenCanaryRunCommand writes the `docker run` command for
 // OpenCanary's own container (issue #132): joined to the holder's
@@ -329,26 +261,11 @@ func openCanaryImage() string {
 // printHolderRunCommand and printSMBLureRunCommand already have, for the
 // same reason: a hardening flag silently dropped from one copy is
 // OpenCanary running without it.
+//
+// Moved to internal/runcmd.WriteOpenCanaryRun (issue #54); this stays as
+// the thin wrapper this package's tests call directly.
 func printOpenCanaryRunCommand(w io.Writer, image string) error {
-	lines := []string{
-		fmt.Sprintf("docker run -d --name %s --restart unless-stopped --init \\", openCanaryContainerName),
-		fmt.Sprintf("  --network container:%s \\", holderContainerName),
-		"  --sysctl net.ipv4.ip_unprivileged_port_start=0 \\",
-		"  --read-only \\",
-		"  --cap-drop ALL \\",
-		"  --security-opt no-new-privileges \\",
-		"  --pids-limit 32 \\",
-		"  --memory 128m \\",
-		"  --tmpfs /var/tmp:size=8m \\",
-		"  -v mockingbird-log:/var/log/opencanary \\",
-		fmt.Sprintf("  %s", term.Escape(image)),
-	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runcmd.WriteOpenCanaryRun(w, runcmd.OpenCanaryConfig{Image: image})
 }
 
 // printSMBLureRunCommand writes the `docker run` command an operator
@@ -369,35 +286,9 @@ func printOpenCanaryRunCommand(w io.Writer, image string) error {
 // they reach the terminal, matching this file's rule for every other
 // caller-supplied value -- even though parseSMBSettings has already
 // refused anything outside a narrow character set.
+//
+// Moved to internal/runcmd.WriteSMBLureRun (issue #54); this stays as
+// the thin wrapper this package's tests call directly.
 func printSMBLureRunCommand(w io.Writer, image string, settings smbSettings) error {
-	if len(settings.shares) != smbShareCount {
-		return errors.New("printSMBLureRunCommand: settings were not validated by parseSMBSettings")
-	}
-	lines := []string{
-		"docker run -d --name smb-lure --restart unless-stopped \\",
-		fmt.Sprintf("  --network container:%s \\", holderContainerName),
-		"  --read-only \\",
-		"  --cap-drop ALL \\",
-		"  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \\",
-		"  --security-opt no-new-privileges \\",
-		"  --pids-limit 128 \\",
-		"  --memory 192m \\",
-		"  --ulimit core=0 \\",
-		"  --tmpfs /run:size=8m \\",
-		"  --tmpfs /var/lib/samba:size=8m \\",
-		"  --tmpfs /var/cache/samba:size=8m \\",
-		"  --tmpfs /var/log:size=8m \\",
-		fmt.Sprintf("  -v %s:/audit \\", smbAuditVolume),
-		fmt.Sprintf("  -e SMB_WORKGROUP=%s \\", term.Escape(settings.workgroup)),
-		fmt.Sprintf("  -e SMB_SHARE_PUBLIC=%s \\", term.Escape(settings.shares[0])),
-		fmt.Sprintf("  -e SMB_SHARE_BACKUP=%s \\", term.Escape(settings.shares[1])),
-		fmt.Sprintf("  -e SMB_SHARE_SCANS=%s \\", term.Escape(settings.shares[2])),
-		fmt.Sprintf("  %s", term.Escape(image)),
-	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runcmd.WriteSMBLureRun(w, runcmd.SMBLureConfig{Image: image, Workgroup: settings.workgroup, Shares: settings.shares})
 }

@@ -108,6 +108,77 @@ func TestHandleCanariesRejectsUnknownRange(t *testing.T) {
 	}
 }
 
+// TestHandleCanariesBirdcageVersionAndAgentOutOfDate is issue #54's own
+// two API surfaces: GET /api/canaries carries birdcage_version (the
+// version the handler itself was constructed with, not anything read
+// off the canary), and a canary whose agent last reported an older
+// release shows agent_out_of_date in active_states and as its status.
+func TestHandleCanariesBirdcageVersionAndAgentOutOfDate(t *testing.T) {
+	database := openTempDB(t)
+	enrolledAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertCanary(t, database, store.Canary{
+		ID: "canary-lan", Name: "canary-lan", Lane: "lan",
+		HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+	})
+	beatAt := enrolledAt.Add(time.Minute)
+	if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, "canary-lan", beatAt, store.AgentHeartbeat{
+		QueueDepth: 1, LogReadOK: true, LastEventID: "abc", AgentVersion: "1.0.0+aaaaaaaa",
+	}); err != nil {
+		t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+	}
+
+	h := newHandlerWithVersion(database, fixedNow(beatAt.Add(30*time.Second)), "1.2.3+bbbbbbbb")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/canaries", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp canariesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if len(resp.Canaries) != 1 {
+		t.Fatalf("got %d canaries, want 1: %+v", len(resp.Canaries), resp.Canaries)
+	}
+	c := resp.Canaries[0]
+	if c.BirdcageVersion != "1.2.3+bbbbbbbb" {
+		t.Errorf("BirdcageVersion = %q, want %q", c.BirdcageVersion, "1.2.3+bbbbbbbb")
+	}
+	if c.Status != string(store.StateAgentOutOfDate) {
+		t.Errorf("Status = %q, want %q", c.Status, store.StateAgentOutOfDate)
+	}
+	found := false
+	for _, s := range c.ActiveStates {
+		if s == string(store.StateAgentOutOfDate) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ActiveStates = %v, want it to contain %q", c.ActiveStates, store.StateAgentOutOfDate)
+	}
+
+	// The exact JSON key names GET /api/canaries carries -- birdcage_version
+	// as a plain string, never omitted (unlike agent_version, which is
+	// omitempty because it can be unknown).
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw response: %v", err)
+	}
+	var canariesRaw []map[string]json.RawMessage
+	if err := json.Unmarshal(raw["canaries"], &canariesRaw); err != nil {
+		t.Fatalf("decode raw canaries: %v", err)
+	}
+	var birdcageVersionRaw string
+	if err := json.Unmarshal(canariesRaw[0]["birdcage_version"], &birdcageVersionRaw); err != nil {
+		t.Fatalf(`decode "birdcage_version" key: %v`, err)
+	}
+	if birdcageVersionRaw != "1.2.3+bbbbbbbb" {
+		t.Errorf(`"birdcage_version" = %q, want %q`, birdcageVersionRaw, "1.2.3+bbbbbbbb")
+	}
+}
+
 // TestDashboardHeartbeatRouteRemoved is issue #135: POST /api/heartbeat
 // used to let anyone who could reach the dashboard mark any known canary
 // alive with no credential at all -- this test used to be
@@ -139,7 +210,7 @@ func TestDashboardHeartbeatRouteRemoved(t *testing.T) {
 		}
 	}
 
-	canaries, err := store.ListCanaries(context.Background(), database, checkAt, 14*24*time.Hour)
+	canaries, err := store.ListCanaries(context.Background(), database, checkAt, 14*24*time.Hour, "")
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}

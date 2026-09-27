@@ -17,6 +17,7 @@ import { formatClock, formatClockShort } from './time'
 import { canariesPhrase, minutesPhrase, rangeNoun, servicesNarrative, triedNarrative } from './narrative'
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { wordOrNumber } from './words'
+import { shortVersion } from './version'
 import type { Segment } from './types'
 
 export interface SentenceResult {
@@ -396,6 +397,53 @@ function rule2RenewalStalled(c: Canary, canaries: Canary[], now: string, lastHit
   }
 }
 
+/** Agent out of date (issue #54): birdcage's own comparison of the
+ * agent's build against its own stamped version, ranked between
+ * renewal_stalled and pending -- degraded, the same tier as the two
+ * stalled states above, since nothing is missed by an old build, but a
+ * protection has quietly lapsed. Unlike rotation/renewal stalled there
+ * is no "since" the API sends; the next step is on the canary page,
+ * which names the command that prints the upgrade command. */
+function rule2AgentOutOfDate(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s agent has fallen behind.`, bold: true }],
+    sub: [
+      { text: 'It is running ' },
+      { text: shortVersion(c.agent_version ?? '?'), bold: true },
+      { text: '; birdcage is on ' },
+      { text: shortVersion(c.birdcage_version ?? '?'), bold: true },
+      {
+        text:
+          '. Nothing is being missed by the old build, but a protection has quietly lapsed. ',
+      },
+      { text: 'Its own page says how to get the upgrade command.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
+/** Upgrade in progress (issue #54, owner 2026-09-27): an upgrade token
+ * was accepted, and until the window ends the old agent may still
+ * heartbeat beside the new one without being called a credential
+ * conflict. Degraded tier, like the state it ends; it clears by itself,
+ * so there is nothing to do but let the old agent go. */
+function rule2UpgradeInProgress(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  const until = c.upgrade_window_until ? formatClockShort(c.upgrade_window_until) : null
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name} is being upgraded.`, bold: true }],
+    sub: [
+      {
+        text: until
+          ? `The old agent has until ${until} to go offline; until then, both builds reporting on one credential is expected.`
+          : 'The old agent has a few minutes to go offline; until then, both builds reporting on one credential is expected.',
+      },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** No fixture or shot covers this state; the issue gives only an example
  * shape ("One address swept all four on {day}; {ip} keeps knocking on
  * {canary} :{port}."), so this builds one line per visitor kind present
@@ -457,8 +505,13 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
   renewal_stalled: 8,
-  pending: 9,
-  ok: 10,
+  // Issue #54: the upgrade window straight before agent_out_of_date,
+  // and agent_out_of_date between it and pending -- see status.ts's own
+  // RANK for the same additions.
+  upgrade_in_progress: 9,
+  agent_out_of_date: 10,
+  pending: 11,
+  ok: 12,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -548,6 +601,10 @@ export function computeSentence(
         return rule2RotationStalled(worst, canaries, now, lastHit)
       case 'renewal_stalled':
         return rule2RenewalStalled(worst, canaries, now, lastHit)
+      case 'upgrade_in_progress':
+        return rule2UpgradeInProgress(worst, canaries, now, lastHit)
+      case 'agent_out_of_date':
+        return rule2AgentOutOfDate(worst, canaries, now, lastHit)
     }
   }
 

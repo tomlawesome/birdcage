@@ -27,7 +27,7 @@ func insertCanary(t *testing.T, database *db.DB, c Canary) {
 
 func listCanaries(t *testing.T, database *db.DB, now time.Time, rangeWindow time.Duration) []Canary {
 	t.Helper()
-	canaries, err := ListCanaries(context.Background(), database, now, rangeWindow)
+	canaries, err := ListCanaries(context.Background(), database, now, rangeWindow, "")
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}
