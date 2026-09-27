@@ -900,6 +900,13 @@ enrolment used: holder, Mockingbird, OpenCanary, the SMB lure. A
 scanner has none of this: Nightjar is a single standalone container, so
 its upgrade command is just pull, remove, re-run.
 
+**Anything you added to the enrolment lines by hand, add again.** The
+upgrade command reprints what `birdcage agent enrol` printed, nothing
+more. If you edited those lines when you first ran them -- a
+`--network` or `--ip` on the holder to give the canary its own address
+on your network, say -- make the same edit to the holder's line here,
+or the canary comes back on a different address.
+
 **A canary enrolled before this shipped may have an SMB lure birdcage
 never recorded.** Issue #54 is the first thing that ever wrote a
 canary's lure decision anywhere durable; before it, `--lure`/
