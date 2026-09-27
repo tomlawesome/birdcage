@@ -26,7 +26,8 @@ HTTP API (`cmd/birdcage`). See:
 - [docs/opencanary.md](docs/opencanary.md) — what we use of OpenCanary,
   what we route round and why; nothing goes upstream.
 - [docs/configuration.md](docs/configuration.md) — `DATABASE_URL`
-  (SQLite/Postgres) and backup/restore for both.
+  (SQLite/Postgres 18, the supported version; 17 is expected to work but not
+  promised) and backup/restore for both.
 - [docs/adr/](docs/adr/) — the decisions behind the stack, storage, and
   branching model.
 - [docs/testing.md](docs/testing.md) — the test layers, the coverage

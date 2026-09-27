@@ -63,15 +63,19 @@ variables:
   # unchanged from before this issue; only the source moved.
   GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27
   NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:22-trixie
-  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-alpine
+  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
+  # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
+  # not the newest Python: lint:licences-python audits the pip packages
+  # exactly as that image installs them, and zope.interface==7.2 (pinned by
+  # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-slim-trixie
   ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/alpine:3.24
   DOCKER_CLI_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/docker:29-cli
-  POSTGRES17_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:17-alpine
-  # scripts/e2e/stack.sh's own Postgres backend builds a TLS-enabled image
-  # FROM this one -- a different tag from POSTGRES17_IMAGE above (test:go's
-  # service), kept separate rather than unified so neither tag bump moves
-  # the other.
+  # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
+  # now the one Postgres pin in this file, used by both test:go's service
+  # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
+  # separate call sites (one env var, one script default) rather than
+  # unified, so a future major-version bump is one line here.
   POSTGRES18_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:18-alpine
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
@@ -452,7 +456,7 @@ test:go:
   <<: [*gate, *git_safe]
   needs: []
   services:
-    - name: $POSTGRES17_IMAGE
+    - name: $POSTGRES18_IMAGE
       alias: postgres
       entrypoint: ["sh", "-c"]
       command:
@@ -642,7 +646,7 @@ test:smoke:postgres:
     - job: test:frontend
       artifacts: true
   services:
-    - name: $POSTGRES17_IMAGE
+    - name: $POSTGRES18_IMAGE
       alias: postgres
       entrypoint: ["sh", "-c"]
       command:
