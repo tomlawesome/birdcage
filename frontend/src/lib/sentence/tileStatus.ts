@@ -17,6 +17,7 @@ import { portForService } from './ports'
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { stageLabel } from './stage'
 import type { Segment } from './types'
+import { shortVersion } from './version'
 
 export interface TileHit {
   at: string
@@ -54,6 +55,11 @@ export interface TileCanaryInput {
   renewal_stalled_escalated?: boolean
   certificate_expired?: boolean
   credential_conflict?: CredentialConflict
+  // Issue #54: the running build and birdcage's own stamped version --
+  // the tile's "runs 0.1.0, current 0.1.1", both dropped to
+  // MAJOR.MINOR.PATCH before they're shown.
+  agent_version?: string
+  birdcage_version?: string
   // issue #46: the most recently completed self-test round, carried the
   // same independent way -- present whether or not it is what made
   // `status` self_test_failed, since a passing run still earns its own
@@ -295,6 +301,19 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
       return [
         {
           text: `⏳ renewal stalled ${durationExact(canary.renewal_stalled_for_s ?? 0)} · ${what} — check the agent can reach ingest`,
+          cls: 'wn',
+        },
+      ]
+    }
+    case 'agent_out_of_date': {
+      // Issue #54: same degraded tier as rotation/renewal stalled --
+      // nothing is missed by an old build, but the next step lives on
+      // the canary page (facts.ts), not on the tile itself.
+      const running = shortVersion(canary.agent_version ?? '?')
+      const current = shortVersion(canary.birdcage_version ?? '?')
+      return [
+        {
+          text: `⏳ agent behind: runs ${running}, current ${current} — run the upgrade command on the canary page`,
           cls: 'wn',
         },
       ]

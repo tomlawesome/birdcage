@@ -8,6 +8,7 @@
 // ordering over an API response, not database logic).
 import type { Canary, CanaryStatus, Range, Visitor } from '../types'
 import { durationCoarse } from './duration'
+import { shortVersion } from './version'
 
 export type StatusInfo =
   | { kind: 'quiet'; okCount: number; total: number; visitorCount: number; range: Range }
@@ -52,8 +53,11 @@ const RANK: Record<CanaryStatus, number> = {
   rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
   renewal_stalled: 8,
-  pending: 9,
-  ok: 10,
+  // Issue #54: ranked between renewal_stalled and pending, exactly
+  // where the API contract puts it.
+  agent_out_of_date: 9,
+  pending: 10,
+  ok: 11,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {
@@ -98,6 +102,8 @@ function label(c: Canary): string {
       return `${c.name} rotation stalled ${durationCoarse(c.rotation_stalled_for_s ?? 0)}`
     case 'renewal_stalled':
       return `${c.name} renewal stalled ${durationCoarse(c.renewal_stalled_for_s ?? 0)}`
+    case 'agent_out_of_date':
+      return `${c.name} agent behind: runs ${shortVersion(c.agent_version ?? '?')}, current ${shortVersion(c.birdcage_version ?? '?')}`
     default:
       return c.name
   }
@@ -135,7 +141,7 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
   ) {
     return { kind: 'critical', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
-  if (worst?.status === 'rotation_stalled' || worst?.status === 'renewal_stalled') {
+  if (worst?.status === 'rotation_stalled' || worst?.status === 'renewal_stalled' || worst?.status === 'agent_out_of_date') {
     return { kind: 'degraded', okCount, total, visitorCount, range, canaryName: worst.name, label: label(worst) }
   }
   if (visitorCount > 0) {

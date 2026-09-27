@@ -155,6 +155,26 @@ describe('computeTileStatus: issue #45 states', () => {
     expect(fresh.lines[0][0].cls).toBe('wn')
   })
 
+  // Issue #54: birdcage's own comparison of the agent's build against
+  // its own stamped version -- same degraded ('wn') tier as rotation and
+  // renewal stalled, and the commit suffix is dropped from both
+  // versions before they reach the tile.
+  it('agent_out_of_date: names the running and current versions, dropping the commit', () => {
+    const result = computeTileStatus(
+      { ...base, status: 'agent_out_of_date', agent_version: '0.1.0+2ea21b94', birdcage_version: '0.1.1+edc3691a' },
+      '2026-01-01T00:00:00Z',
+    )
+    expect(result.lines).toHaveLength(1)
+    const text = plainText(result.lines[0])
+    expect(text).toBe('⏳ agent behind: runs 0.1.0, current 0.1.1 — run the upgrade command on the canary page')
+    expect(result.lines[0][0].cls).toBe('wn')
+  })
+
+  it('agent_out_of_date: falls back to "?" when a version is missing', () => {
+    const result = computeTileStatus({ ...base, status: 'agent_out_of_date' }, '2026-01-01T00:00:00Z')
+    expect(plainText(result.lines[0])).toContain('runs ?, current ?')
+  })
+
   it('silent still takes the original branch, unchanged', () => {
     const result = computeTileStatus({ ...base, status: 'silent', silent_for_s: 372 }, '2026-01-01T00:06:12Z')
     expect(plainText(result.lines[0])).toContain('silent')

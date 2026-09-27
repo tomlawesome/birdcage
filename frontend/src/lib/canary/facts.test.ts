@@ -83,3 +83,49 @@ describe('factRows', () => {
     expect(factRows(input).some((r) => r.value.includes('confirmed'))).toBe(false)
   })
 })
+
+// Issue #54: birdcage's own comparison of the agent's build against its
+// own stamped version, shown as a standing fact whenever
+// agent_out_of_date is active. The backend is the single source of
+// truth for "active" -- `status` or `active_states` -- never a version
+// comparison the frontend re-derives itself.
+describe('factRows: agent_out_of_date (issue #54)', () => {
+  it('names the running and current versions, dropping the commit suffix from both', () => {
+    const rows = factRows(sceneInput('agentOutOfDate'))
+    // The plain "agent" fact still names the full build, commit and
+    // all (unchanged, pre-#54 behaviour) -- only the new "upgrade" row
+    // is required to drop it.
+    expect(rows.find((r) => r.label === 'upgrade')?.value).toBe('runs 0.1.0 · current 0.1.1')
+  })
+
+  it('renders upgrade_command as its own copyable code row', () => {
+    const input = sceneInput('agentOutOfDate')
+    const row = factRows(input).find((r) => r.label === 'run this')
+    expect(row?.code).toBe(input.page.canary.upgrade_command)
+    expect(row?.value).toBe('')
+  })
+
+  it('falls back to a docs pointer when upgrade_command is empty while the state is active', () => {
+    const input = sceneInput('agentOutOfDate')
+    input.page.canary.upgrade_command = ''
+    const row = factRows(input).find((r) => r.label === 'run this')
+    expect(row?.code).toBeUndefined()
+    expect(row?.value).toBe('not available yet — see docs/enrolment.md, "Upgrading a canary"')
+  })
+
+  it('shows the rows when active_states names it, even though a worse state holds `status`', () => {
+    const input = sceneInput('agentOutOfDate')
+    input.page.canary.status = 'silent'
+    input.page.canary.active_states = ['silent', 'agent_out_of_date']
+    const rows = factRows(input)
+    expect(rows.find((r) => r.label === 'upgrade')?.value).toBe('runs 0.1.0 · current 0.1.1')
+    expect(rows.find((r) => r.label === 'run this')?.code).toBe(input.page.canary.upgrade_command)
+  })
+
+  it('says nothing when neither `status` nor `active_states` names it, even if the versions differ', () => {
+    const input = sceneInput('agentOutOfDate')
+    input.page.canary.status = 'ok'
+    input.page.canary.active_states = ['ok']
+    expect(factRows(input).some((r) => r.label === 'upgrade' || r.label === 'run this')).toBe(false)
+  })
+})
