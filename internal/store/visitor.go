@@ -310,13 +310,42 @@ func displayCred(s string) string {
 	return s
 }
 
+// logHeader reads key (already lowercase -- twisted.protocols.sip.Message
+// .addHeader lowercases every header name before storing it) from
+// logdata's HEADERS object, returning its first value. Unlike every other
+// field triedFor reads, HEADERS is not a JSON string but an object mapping
+// header name to a list of values (sip.py:17's request.headers, one list
+// per header to allow repeats), so it needs its own decode rather than
+// logString's.
+func logHeader(logdata map[string]json.RawMessage, key string) (string, bool) {
+	raw, ok := logdata["HEADERS"]
+	if !ok {
+		return "", false
+	}
+	var headers map[string][]string
+	if err := json.Unmarshal(raw, &headers); err != nil {
+		return "", false
+	}
+	values, ok := headers[key]
+	if !ok || len(values) == 0 {
+		return "", false
+	}
+	return values[0], true
+}
+
 // triedFor extracts issue #35's one-line "what was tried" summary for a
 // single hit, from service (alerts.service, already resolved by
-// internal/ingest) and raw (alerts.raw). Field names (USERNAME, PASSWORD,
-// PATH, SHARENAME) match upstream OpenCanary's own logdata keys, verified
-// against the modules' source (thinkst/opencanary: ssh.py, ftp.py,
-// mysql.py, telnet.py, http.py, samba.py all use these exact uppercase
-// keys) rather than assumed.
+// internal/ingest) and raw (alerts.raw). Field names match upstream
+// OpenCanary 0.9.10's own logdata keys, verified against the modules'
+// source rather than assumed: ssh.py, ftp.py, mysql.py, telnet.py,
+// http.py, samba.py (USERNAME, PASSWORD, PATH, SHARENAME, all uppercase);
+// rdp.py:27 (USERNAME), tftp.py:33 (FILENAME, OPCODE, MODE), sip.py:17
+// (HEADERS), redis.py:698 (CMD, ARGS); and mssql.py:194's loginData dict
+// (UserName, Password, AppName -- mixed case, the one service here whose
+// keys an ssh-shaped case would silently never match). Credentials are
+// shown exactly as ssh/ftp show theirs -- in the clear, via displayCred --
+// never redacted further and never less: this is a honeypot summarizing
+// what an attacker themselves sent, not a secret birdcage is holding.
 func triedFor(service, raw string) string {
 	logdata := extractLogData(raw)
 	switch service {
@@ -341,6 +370,73 @@ func triedFor(service, raw string) string {
 			return share
 		}
 		return "smb"
+	case "rdp":
+		// rdp.py:27 logs only a USERNAME, pulled from the X.224 Connection
+		// Request's routing token by regex -- no password field exists to
+		// show alongside it. displayCred rather than a bare return: a
+		// client that sent the mstshash= cookie with nothing after the '='
+		// (regex matches, captures "") must still show as "(empty)", not
+		// a blank Tried entry.
+		if username, ok := logString(logdata, "USERNAME"); ok {
+			return displayCred(username)
+		}
+		return service
+	case "tftp":
+		// tftp.py:33 logs FILENAME, OPCODE ("READ"/"WRITE") and MODE
+		// ("octet"/"netascii"); FILENAME is the one field every request
+		// carries (a read or write with no filename never reaches this
+		// line -- Tftp.datagramReceived's own split would already have
+		// bailed), so it plays PATH's role here.
+		filename, ok := logString(logdata, "FILENAME")
+		if !ok {
+			return service
+		}
+		tried := filename
+		if opcode, _ := logString(logdata, "OPCODE"); opcode != "" {
+			tried = opcode + " " + tried
+		}
+		if mode, _ := logString(logdata, "MODE"); mode != "" {
+			tried += " (" + mode + ")"
+		}
+		return tried
+	case "sip":
+		// sip.py:17 logs the whole parsed header set; the From header is
+		// the one field that answers "who tried this" -- a caller identity
+		// the request itself supplies, the SIP analogue of a username.
+		if from, ok := logHeader(logdata, "from"); ok && from != "" {
+			return from
+		}
+		return service
+	case "redis":
+		// redis.py:698's _logAlert logs the rejected command and its
+		// arguments verbatim (already truncated and UTF-8-sanitized by
+		// that function) -- CMD/ARGS plays USERNAME/PASSWORD's exact role
+		// for a protocol whose one authentication command is AUTH
+		// <password>, so it gets the same "cmd / (empty)" treatment as a
+		// blank credential rather than a new display rule.
+		if cmd, ok := logString(logdata, "CMD"); ok {
+			args, _ := logString(logdata, "ARGS")
+			return cmd + " " + displayCred(args)
+		}
+		return service
+	case "mssql":
+		// mssql.py:194's loginData dict is logdata verbatim, mixed case
+		// throughout (UserName, Password, AppName) -- see this function's
+		// own doc comment on why a copy of the ssh branch above would
+		// silently match nothing. AppName (the client's own declared
+		// program name, e.g. "Microsoft SQL Server Management Studio")
+		// prefixes the credential pair the way http's PATH prefixes
+		// USERNAME/PASSWORD, since it is the same kind of context field.
+		username, ok := logString(logdata, "UserName")
+		if !ok {
+			return service
+		}
+		password, _ := logString(logdata, "Password")
+		cred := username + " / " + displayCred(password)
+		if appName, _ := logString(logdata, "AppName"); appName != "" {
+			return appName + " " + cred
+		}
+		return cred
 	case poisonerService:
 		// The protocol, which is what a poisoner rise is labelled with on
 		// the band -- in the place a credential label goes, since that is

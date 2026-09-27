@@ -290,6 +290,185 @@ func TestTriedForSMB(t *testing.T) {
 	}
 }
 
+// TestTriedForRDP's fixture logdata shape is rdp.py:27's
+// self.factory.log(logdata={"USERNAME": username}, ...) in the pinned
+// opencanary==0.9.10 wheel: the regex-captured mstshash= cookie value from
+// a real RDP client's X.224 Connection Request, and nothing else -- this
+// module has no password field to log.
+func TestTriedForRDP(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "username from the mstshash cookie",
+			raw:  datagram(`{"logdata": {"USERNAME": "Administrator"}, "logtype": 14001}`),
+			want: "Administrator",
+		},
+		{
+			name: "empty username shown as (empty), not a blank entry",
+			raw:  datagram(`{"logdata": {"USERNAME": ""}, "logtype": 14001}`),
+			want: "(empty)",
+		},
+		{
+			name: "no USERNAME at all falls back to the service name",
+			raw:  datagram(`{"logdata": {}, "logtype": 14001}`),
+			want: "rdp",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := triedFor("rdp", tt.raw); got != tt.want {
+				t.Errorf("triedFor(rdp, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTriedForTFTP's fixture logdata shape is tftp.py:33's
+// logdata = {"FILENAME": filename, "OPCODE": opcode, "MODE": mode} in the
+// pinned opencanary==0.9.10 wheel. FILENAME and MODE arrive as Python
+// bytes there, but OpenCanary logs via simplejson.dumps, which decodes
+// bytes to a plain JSON string (confirmed against the pinned wheel's own
+// simplejson dependency) -- so the raw line carries ordinary strings, not
+// a base64 or list-of-ints encoding.
+func TestTriedForTFTP(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "filename, opcode and mode all present",
+			raw:  datagram(`{"logdata": {"FILENAME": "boot.img", "OPCODE": "READ", "MODE": "octet"}, "logtype": 10001}`),
+			want: "READ boot.img (octet)",
+		},
+		{
+			name: "no FILENAME at all falls back to the service name",
+			raw:  datagram(`{"logdata": {"OPCODE": "READ"}, "logtype": 10001}`),
+			want: "tftp",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := triedFor("tftp", tt.raw); got != tt.want {
+				t.Errorf("triedFor(tftp, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTriedForSIP's fixture logdata shape is sip.py:17's
+// logdata = {"HEADERS": request.headers} in the pinned opencanary==0.9.10
+// wheel. request.headers' own shape -- a dict of lowercased header name to
+// a list of string values -- comes from the twisted.protocols.sip parser
+// OpenCanary depends on (Message.addHeader lowercases every name and
+// appends to a list), not from this module; confirmed by feeding a real
+// sipvicious/friendly-scanner OPTIONS probe through that parser directly
+// rather than assumed.
+func TestTriedForSIP(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "from header present",
+			raw: datagram(`{"logdata": {"HEADERS": {"from": ["sipvicious<sip:100@192.0.2.50>;tag=6194256813024"], ` +
+				`"to": ["sip:100@10.0.0.5"], "via": ["SIP/2.0/UDP 192.0.2.50:5061;branch=z9hG4bK-313432-1"], ` +
+				`"user-agent": ["friendly-scanner"]}}, "logtype": 15001}`),
+			want: "sipvicious<sip:100@192.0.2.50>;tag=6194256813024",
+		},
+		{
+			name: "no from header at all falls back to the service name",
+			raw:  datagram(`{"logdata": {"HEADERS": {"to": ["sip:100@10.0.0.5"]}}, "logtype": 15001}`),
+			want: "sip",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := triedFor("sip", tt.raw); got != tt.want {
+				t.Errorf("triedFor(sip, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTriedForRedis's fixture logdata shape is redis.py:698's
+// logdata = {"CMD": ..., "ARGS": ...} in the pinned opencanary==0.9.10
+// wheel, logged by _logAlert whenever a command is rejected -- AUTH with
+// no password configured is the common real-world scan pattern, and the
+// attempted password rides in ARGS exactly the way ssh's PASSWORD does.
+func TestTriedForRedis(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "AUTH command with an attempted password",
+			raw:  datagram(`{"logdata": {"CMD": "AUTH", "ARGS": "hunter2"}, "logtype": 17001}`),
+			want: "AUTH hunter2",
+		},
+		{
+			name: "empty ARGS shown as (empty)",
+			raw:  datagram(`{"logdata": {"CMD": "AUTH", "ARGS": ""}, "logtype": 17001}`),
+			want: "AUTH (empty)",
+		},
+		{
+			name: "no CMD at all falls back to the service name",
+			raw:  datagram(`{"logdata": {}, "logtype": 17001}`),
+			want: "redis",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := triedFor("redis", tt.raw); got != tt.want {
+				t.Errorf("triedFor(redis, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTriedForMSSQL's fixture logdata shape is mssql.py:194's loginData
+// dict (the field loop building HostName/UserName/Password/AppName/
+// ServerName/Language/Database/CltIntName, minus NTLM) in the pinned
+// opencanary==0.9.10 wheel, logged verbatim -- mixed case throughout,
+// unlike every other service triedFor reads.
+func TestTriedForMSSQL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "username, password and app name all present",
+			raw: datagram(`{"logdata": {"HostName": "WORKSTATION1", "UserName": "sa", "Password": "sa123", ` +
+				`"AppName": "Microsoft SQL Server Management Studio", "ServerName": "10.0.0.5", ` +
+				`"Language": "", "Database": "", "CltIntName": "ODBC"}, "logtype": 9001}`),
+			want: "Microsoft SQL Server Management Studio sa / sa123",
+		},
+		{
+			name: "no AppName falls back to just the credential pair",
+			raw:  datagram(`{"logdata": {"UserName": "sa", "Password": ""}, "logtype": 9001}`),
+			want: "sa / (empty)",
+		},
+		{
+			name: "no UserName at all falls back to the service name",
+			raw:  datagram(`{"logdata": {}, "logtype": 9001}`),
+			want: "mssql",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := triedFor("mssql", tt.raw); got != tt.want {
+				t.Errorf("triedFor(mssql, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTriedForUnenumeratedServiceIsJustTheServiceName(t *testing.T) {
 	for _, service := range []string{"portscan", "tcpbanner", "unknown", "base"} {
 		raw := datagram(`{"logdata": {"whatever": "value"}, "logtype": 1004}`)
