@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -594,6 +595,109 @@ func TestListCanariesSurfacesOpenCanaryDown(t *testing.T) {
 		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
 		if c.Status == string(StateOpenCanaryDown) {
 			t.Errorf("Status = %q after OpenCanary reported up, want cleared", c.Status)
+		}
+	})
+}
+
+// TestApplyAgentOutOfDateHealth is issue #54's own table: nil/empty/dev
+// on either side never triggers (unknown is never behind), an agent
+// strictly behind birdcage's release core does, and an agent equal to or
+// newer than birdcage does not. agentBehindBirdcage itself carries the
+// exhaustive version-parsing table (version_test.go); this proves the
+// health-state wiring on top of it.
+func TestApplyAgentOutOfDateHealth(t *testing.T) {
+	cases := []struct {
+		name            string
+		agentVersion    *string
+		birdcageVersion string
+		want            bool
+	}{
+		{"nil agent version never triggers", nil, "1.2.3", false},
+		{"empty agent version never triggers", strPtr(""), "1.2.3", false},
+		{"dev agent version never triggers", strPtr("dev"), "1.2.3", false},
+		{"dev birdcage version never triggers", strPtr("1.0.0"), "dev", false},
+		{"behind triggers", strPtr("1.0.0"), "1.2.3", true},
+		{"equal never triggers", strPtr("1.2.3"), "1.2.3", false},
+		{"newer never triggers", strPtr("1.3.0"), "1.2.3", false},
+		{"behind ignoring build metadata", strPtr("1.0.0+aaaaaaaa"), "1.2.3+bbbbbbbb", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentVersion: tc.agentVersion}
+			applyAgentOutOfDateHealth(&c, tc.birdcageVersion)
+			if got := hasActive(c, StateAgentOutOfDate); got != tc.want {
+				t.Errorf("agent_out_of_date active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// strPtr is this file's own string-pointer fixture helper, matching
+// boolPtr/int64Ptr above.
+func strPtr(s string) *string { return &s }
+
+// TestAgentOutOfDateRanksBetweenRenewalStalledAndPending: issue #54's own
+// slot, the one healthStateRank reserved for it since #45's proposed
+// precedence -- checked both on the rank table directly and through
+// addActiveStates, the same way TestDBStaleRanksBetweenTestFailedAndThrottled
+// does for db_stale.
+func TestAgentOutOfDateRanksBetweenRenewalStalledAndPending(t *testing.T) {
+	if healthStateRank[StateRenewalStalled] >= healthStateRank[StateAgentOutOfDate] || healthStateRank[StateAgentOutOfDate] >= healthStateRank[StatePending] {
+		t.Fatalf("ranks: renewal_stalled %d, agent_out_of_date %d, pending %d",
+			healthStateRank[StateRenewalStalled], healthStateRank[StateAgentOutOfDate], healthStateRank[StatePending])
+	}
+
+	c := Canary{ActiveStates: []string{string(StateRenewalStalled), string(StatePending)}, Status: string(StateRenewalStalled)}
+	addActiveStates(&c, StateAgentOutOfDate)
+	if c.Status != string(StateRenewalStalled) || strings.Join(c.ActiveStates, ",") != "renewal_stalled,agent_out_of_date,pending" {
+		t.Errorf("status %s active %v, want renewal_stalled still worst, agent_out_of_date between it and pending", c.Status, c.ActiveStates)
+	}
+}
+
+// TestListCanariesAgentOutOfDate is the end-to-end path: a heartbeat
+// carrying an old release version makes ListCanaries emit
+// agent_out_of_date, and BirdcageVersion (the birdcage_version JSON
+// field) is copied onto every canary from the birdcageVersion ListCanaries
+// was called with -- never from the agent's own report, and never left
+// empty just because this canary happens to be up to date.
+func TestListCanariesAgentOutOfDate(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt})
+
+		now := enrolledAt.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abc", AgentVersion: "1.0.0+aaaaaaaa",
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		canaries, err := ListCanaries(context.Background(), database, now, rangeDurations[DefaultRange], "1.2.3+bbbbbbbb")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanary(t, canaries, "canary-a")
+		if c.BirdcageVersion != "1.2.3+bbbbbbbb" {
+			t.Errorf("BirdcageVersion = %q, want %q", c.BirdcageVersion, "1.2.3+bbbbbbbb")
+		}
+		if c.Status != string(StateAgentOutOfDate) {
+			t.Errorf("Status = %q, want %q", c.Status, StateAgentOutOfDate)
+		}
+
+		// A heartbeat reporting the current version clears it.
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abd", AgentVersion: "1.2.3+cccccccc",
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		canaries, err = ListCanaries(context.Background(), database, later, rangeDurations[DefaultRange], "1.2.3+bbbbbbbb")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c = findCanary(t, canaries, "canary-a")
+		if c.Status == string(StateAgentOutOfDate) {
+			t.Errorf("Status = %q after the agent updated, want cleared", c.Status)
 		}
 	})
 }

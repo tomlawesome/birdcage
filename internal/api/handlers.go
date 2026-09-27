@@ -142,7 +142,7 @@ func (h *handler) handleCanaries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canaries, err := store.ListCanaries(r.Context(), h.db, h.now(), window)
+	canaries, err := store.ListCanaries(r.Context(), h.db, h.now(), window, h.birdcageVersion)
 	if err != nil {
 		log.Printf("api: list canaries: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -360,7 +360,7 @@ func (h *handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 		rangeParam = store.DefaultRange
 	}
 
-	trace, err := store.ListTrace(r.Context(), h.db, h.now(), rangeParam, window, h.internalRanges)
+	trace, err := store.ListTrace(r.Context(), h.db, h.now(), rangeParam, window, h.internalRanges, h.birdcageVersion)
 	if err != nil {
 		log.Printf("api: list trace: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

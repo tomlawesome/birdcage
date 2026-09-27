@@ -66,7 +66,7 @@ func TestCanaryAddInsertsAndPrintsEscapedID(t *testing.T) {
 		t.Fatalf("openCanaryDB: %v", err)
 	}
 	defer closeCanaryDB(database)
-	canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), time.Hour)
+	canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), time.Hour, "")
 	if err != nil {
 		t.Fatalf("store.ListCanaries: %v", err)
 	}

@@ -123,7 +123,7 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.now().UTC()
-	canaries, err := store.ListCanaries(r.Context(), h.db, now, window)
+	canaries, err := store.ListCanaries(r.Context(), h.db, now, window, h.birdcageVersion)
 	if err != nil {
 		log.Printf("api: list canaries: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

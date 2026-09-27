@@ -70,7 +70,7 @@ func TestHandleHeartbeatIdentityIsAlwaysTheTokens(t *testing.T) {
 			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
 		}
 
-		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestHandleHeartbeatStoresOpenCanaryUp(t *testing.T) {
 			t.Errorf("agent_opencanary_up = %v, want 0 (explicitly reported down)", openCanaryUp)
 		}
 
-		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -229,7 +229,7 @@ func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
 				dropped, rejected, collisions, positionFound, openCanaryUp)
 		}
 
-		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -407,7 +407,7 @@ func TestHandleHeartbeatOverLimitReturns429AndIsRecorded(t *testing.T) {
 // an internal signal for internal/selftestsched, not a dashboard field).
 func canaryLastSeenAddr(t *testing.T, database *db.DB, canaryID string) *string {
 	t.Helper()
-	canaries, err := store.ListCanaries(context.Background(), database, time.Now(), time.Hour)
+	canaries, err := store.ListCanaries(context.Background(), database, time.Now(), time.Hour, "")
 	if err != nil {
 		t.Fatalf("ListCanaries: %v", err)
 	}

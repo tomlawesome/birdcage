@@ -38,6 +38,12 @@ type handler struct {
 	// had nothing to say. The credential itself never reaches this
 	// package -- only the fact that there is one.
 	mailConfigured bool
+	// birdcageVersion is birdcage's own stamped version (issue #54),
+	// cmd/birdcage/version.go's package-level var, passed in rather than
+	// read from a global this package cannot see. Threaded into every
+	// store.ListCanaries/ListTrace call so a canary's agent_out_of_date
+	// state, and the birdcage_version JSON field, agree everywhere.
+	birdcageVersion string
 }
 
 // NewHandler wires the dashboard API behind the requireAuth seam #8
@@ -49,35 +55,44 @@ type handler struct {
 // production (issue #32's own ingest endpoint, once it lands, will).
 // Use NewHandlerWithHub instead when a caller needs to publish to the
 // same hub GET /api/stream serves from.
-func NewHandler(database *db.DB, internalRanges []*net.IPNet) http.Handler {
-	return NewHandlerWithHub(database, internalRanges, stream.NewHub(), false)
+func NewHandler(database *db.DB, internalRanges []*net.IPNet, birdcageVersion string) http.Handler {
+	return NewHandlerWithHub(database, internalRanges, stream.NewHub(), false, birdcageVersion)
 }
 
 // NewHandlerWithHub is NewHandler with an explicit stream.Hub, for a
 // caller (issue #32's future ingest endpoint, or a test) that needs to
 // publish alerts to the exact hub GET /api/stream is subscribed to.
 // mailConfigured is issue #55's boot-time answer to "is there anywhere
-// for an alert to go" -- see handler.mailConfigured.
-func NewHandlerWithHub(database *db.DB, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool) http.Handler {
-	return newHandlerWithHub(database, time.Now, internalRanges, hub, mailConfigured)
+// for an alert to go" -- see handler.mailConfigured. birdcageVersion
+// (issue #54) is handler.birdcageVersion.
+func NewHandlerWithHub(database *db.DB, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool, birdcageVersion string) http.Handler {
+	return newHandlerWithHub(database, time.Now, internalRanges, hub, mailConfigured, birdcageVersion)
 }
 
-// newHandler is newHandlerWithHub with a hub of its own and mail off --
-// every existing test in this package builds a handler with this, and
-// none of them care about streaming or mail, so they're untouched by
-// issues #44 and #55.
+// newHandler is newHandlerWithHub with a hub of its own, mail off and no
+// birdcage version -- every existing test in this package builds a
+// handler with this, and none of them care about streaming, mail or the
+// agent-out-of-date field, so they're untouched by issues #44, #55 and
+// #54.
 func newHandler(database *db.DB, now func() time.Time, internalRanges []*net.IPNet) http.Handler {
-	return newHandlerWithHub(database, now, internalRanges, stream.NewHub(), false)
+	return newHandlerWithHub(database, now, internalRanges, stream.NewHub(), false, "")
 }
 
 // newHandlerWithMail is newHandler with issue #55's flag, for the tests
 // that exercise GET /api/mail in both of its states.
 func newHandlerWithMail(database *db.DB, now func() time.Time, mailConfigured bool) http.Handler {
-	return newHandlerWithHub(database, now, nil, stream.NewHub(), mailConfigured)
+	return newHandlerWithHub(database, now, nil, stream.NewHub(), mailConfigured, "")
 }
 
-func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool) http.Handler {
-	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub, mailConfigured: mailConfigured}
+// newHandlerWithVersion is newHandler with issue #54's birdcageVersion
+// set, for the tests that exercise the birdcage_version field and the
+// agent_out_of_date state it drives.
+func newHandlerWithVersion(database *db.DB, now func() time.Time, birdcageVersion string) http.Handler {
+	return newHandlerWithHub(database, now, nil, stream.NewHub(), false, birdcageVersion)
+}
+
+func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool, birdcageVersion string) http.Handler {
+	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub, mailConfigured: mailConfigured, birdcageVersion: birdcageVersion}
 	protected := requireAuth(dashboardRoutes(h))
 
 	// Each known route is registered individually (rather than mounting

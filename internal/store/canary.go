@@ -87,6 +87,17 @@ type Canary struct {
 	// here only now.
 	AgentVersion *string `json:"agent_version,omitempty"`
 
+	// BirdcageVersion is birdcage's own stamped version (issue #54),
+	// passed into ListCanaries by its caller -- cmd/birdcage/version.go's
+	// package-level var, unreachable from this package -- and copied
+	// onto every canary rather than read once at the top level, so GET
+	// /api/canaries and GET /api/canary can say "runs X, current is Y"
+	// on the same tile the frontend already reads AgentVersion from,
+	// with no second round trip. Always set (never omitted): unlike
+	// AgentVersion this is never unknown, so there is no nil case to
+	// represent.
+	BirdcageVersion string `json:"birdcage_version"`
+
 	// PoisonerNames is the bait names this canary last reported asking for
 	// (canaries.poisoner_names, written by RecordCanaryAgentHeartbeat, #86
 	// slice D), comma-separated. nil for a canary that has reported none --
@@ -724,7 +735,13 @@ func ParseRange(s string) (time.Duration, error) {
 // and token-conflict, keeping whichever is worst), state detail, and
 // hits (alerts rows for that canary's instance_id received within
 // rangeWindow of now).
-func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration) ([]Canary, error) {
+//
+// birdcageVersion is birdcage's own stamped version (issue #54),
+// threaded in by the caller rather than read from a global: it both
+// drives applyAgentOutOfDateHealth below and is copied onto every
+// returned Canary as BirdcageVersion, the JSON field the dashboard reads
+// "current is Y" from.
+func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWindow time.Duration, birdcageVersion string) ([]Canary, error) {
 	now = now.UTC()
 
 	rows, err := database.QueryContext(ctx, `
@@ -810,6 +827,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			c.RegisteredAt = &t
 		}
 		applyStatus(&c, now)
+		c.BirdcageVersion = birdcageVersion
 		canaries = append(canaries, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -865,6 +883,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 		applyHealthState(&canaries[i], notDelivering(canaries[i]), throttledSince, rotationStalled, rotationEscalated, rotationSinceS, tokenConflictSince, testFailed, pending, now)
 		applyHitsMergedHealth(&canaries[i])
 		applyOpenCanaryHealth(&canaries[i])
+		applyAgentOutOfDateHealth(&canaries[i], birdcageVersion)
 
 		cert, err := certificateSignal(ctx, database, canaries[i].ID, now)
 		if err != nil {

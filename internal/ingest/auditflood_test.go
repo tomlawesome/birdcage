@@ -145,7 +145,7 @@ func TestFloodedRateLimitStillReadsThrottled(t *testing.T) {
 			t.Fatalf("audit_log rows over a %d-rejection, 6-minute flood = %d, want roughly one per coalescing interval (>0 and well under %d)", rejections, rows, rejections)
 		}
 
-		canaries, err := store.ListCanaries(ctx, database, now, 24*time.Hour)
+		canaries, err := store.ListCanaries(ctx, database, now, 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -216,7 +216,7 @@ func TestFloodedTokenConflictStillReadsTokenConflict(t *testing.T) {
 			t.Fatal("no ingest.token_conflict rows recorded for a 30-minute flood")
 		}
 
-		canaries, err := store.ListCanaries(ctx, database, now, 24*time.Hour)
+		canaries, err := store.ListCanaries(ctx, database, now, 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}

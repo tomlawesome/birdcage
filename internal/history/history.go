@@ -91,20 +91,24 @@ type TokenConflictHook func(ctx context.Context, tx *db.Tx, canaryID, canaryName
 // Tick on a ticker.
 type Recorder struct {
 	db              *db.DB
+	birdcageVersion string
 	onTokenConflict TokenConflictHook
 }
 
 // New returns a Recorder writing to database, with no hook -- the
 // recorder as it behaved before issue #55, and what every caller that
-// does not send mail wants.
-func New(database *db.DB) *Recorder {
-	return &Recorder{db: database}
+// does not send mail wants. birdcageVersion (issue #54) is birdcage's
+// own stamped version, threaded through to store.ListCanaries so a
+// reconciled tick can see agent_out_of_date exactly as GET /api/canaries
+// does.
+func New(database *db.DB, birdcageVersion string) *Recorder {
+	return &Recorder{db: database, birdcageVersion: birdcageVersion}
 }
 
 // NewWithTokenConflictHook is New plus issue #55's hook. A nil hook is
 // the same as New.
-func NewWithTokenConflictHook(database *db.DB, hook TokenConflictHook) *Recorder {
-	return &Recorder{db: database, onTokenConflict: hook}
+func NewWithTokenConflictHook(database *db.DB, birdcageVersion string, hook TokenConflictHook) *Recorder {
+	return &Recorder{db: database, birdcageVersion: birdcageVersion, onTokenConflict: hook}
 }
 
 // Start is called once at boot, before the tick loop. It reads the last
@@ -187,7 +191,7 @@ func (r *Recorder) Tick(ctx context.Context, now time.Time) error {
 // leaves its alert count looking at the empty [now, now] range instead
 // of scanning a real one.
 func (r *Recorder) activeStates(ctx context.Context, now time.Time) ([]store.Canary, error) {
-	canaries, err := store.ListCanaries(ctx, r.db, now, 0)
+	canaries, err := store.ListCanaries(ctx, r.db, now, 0, r.birdcageVersion)
 	if err != nil {
 		return nil, fmt.Errorf("derive canary states: %w", err)
 	}
