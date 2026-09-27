@@ -64,7 +64,13 @@
 # gate: scripts/licence-check-python.sh).
 FROM python:3.13-slim-trixie AS honeypot
 COPY build/opencanary/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --require-hashes --target /opt/opencanary -r /tmp/requirements.txt
+# --no-deps: the lock is the full resolved closure (uv pip compile above),
+# so nothing is missing. Needed because ntlmlib still declares ordereddict
+# in install_requires even though it's a Python-2-only fallback the image's
+# Python 3.13 never takes; without --no-deps, --require-hashes would make
+# pip resolve that declared dependency and fail on its absence from the
+# lock (#101).
+RUN pip install --no-cache-dir --require-hashes --no-deps --target /opt/opencanary -r /tmp/requirements.txt
 # Directories the runtime user must own, made here because distroless has
 # no mkdir: this image's own log (mounted from the mockingbird-log
 # volume the agent also mounts, read-only, on its side) and /var/tmp,

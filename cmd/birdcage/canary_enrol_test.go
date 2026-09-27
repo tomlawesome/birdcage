@@ -34,6 +34,7 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 		why  string
 	}{
 		{"--cap-add NET_RAW", "issue #65: without it the agent cannot open its capture socket and port-scan detection is off"},
+		{"--security-opt no-new-privileges", "issue #137: nothing in the container can gain privileges through a setuid or file-capability binary beyond what the runtime started it with"},
 		{"-v mockingbird-state:/var/lib/mockingbird", "credentials and the acknowledged log position must outlive the container"},
 		{"-v mockingbird-log:/var/log/opencanary:ro", "issue #132: OpenCanary is the volume's writer now, in its own container; this one only tails it"},
 		{"--restart unless-stopped", "a canary that stops reporting is a security event (SECURITY.md)"},
@@ -47,9 +48,11 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 		}
 	}
 
-	// Issue #132: OpenCanary's own container now binds every privileged
-	// port and spawns nothing this agent needs to reap, so neither of
-	// these belongs on this container's own command any more.
+	// Issue #132: the sysctl moved to OpenCanary's own command, and this
+	// agent spawns nothing it needs to reap. --init is now also harmful
+	// (#137): under --security-opt no-new-privileges, an init in front of
+	// the agent strips its NET_RAW file capability and turns port-scan
+	// detection off.
 	for _, forbidden := range []string{"--sysctl", "--init"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("printed command carries %q, which moved to OpenCanary's own command\ngot:\n%s", forbidden, got)

@@ -128,6 +128,12 @@ allow-npm-licenses:
 # carries "License-Expression: MIT" in its own METADATA -- unlike
 # 78.1.1, it matches the allow-python-licenses MIT entry above directly,
 # so its individual exception below was deleted rather than re-pinned.
+#
+# ordereddict==1.1's individual exception below was deleted for a
+# different reason: the package itself is gone. It was a transitive pin
+# from ntlmlib's Python-2 OrderedDict fallback, which this image's
+# Python 3.13 never takes; #101 dropped it from the lock instead of
+# carrying the exception forward.
 allow-python-licenses:
   - MIT
   # attrs, charset-normalizer, urllib3 (License-Expression); constantly,
@@ -199,10 +205,3 @@ allow-python-package-licenses:
   # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
   # GPLv3 dependency in the image is the owner's call, not this policy
   # file's; the owner has accepted it (#95).
-  - ordereddict@1.1 MIT
-  # Same shape as setuptools: PyPI's web API reports an MIT classifier,
-  # but the sdist itself does not carry it -- its PKG-INFO literally says
-  # "License: UNKNOWN" (this checker's other free-text placeholder, "no
-  # licence field" the same as an absent one) and setup.py declares no
-  # licence or classifiers at all. The sdist does bundle a LICENSE file,
-  # read directly: MIT, "Copyright (c) 2009 Raymond Hettinger".

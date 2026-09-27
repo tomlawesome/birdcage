@@ -72,6 +72,7 @@ docker run -d --name holder --restart unless-stopped \
 
 docker run -d --name mockingbird --restart unless-stopped \
   --cap-add NET_RAW \
+  --security-opt no-new-privileges \
   -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary:ro \
   --network container:holder \
   -v smb-audit:/audit:ro \
@@ -721,31 +722,24 @@ one alert per packet.
 - **Anything outside the container's own network.** The socket sees the
   container's interfaces and nothing else.
 
-### If you also use `--security-opt no-new-privileges`
+### no-new-privileges and `--init`
 
-Since issue #132 you can have both, as long as you do not also add
-`--init` to the agent's container.
+The printed command runs the agent with `--security-opt
+no-new-privileges` (issue #137): nothing in its container can gain
+privileges through a setuid or file-capability program. It does not
+cost port-scan detection, as long as you do not add `--init` to the
+agent's container.
 
 The agent binary carries `NET_RAW` as a file capability: that is how a
 process running as an ordinary user gets the capability without the
 container ever being root. `no-new-privileges` stops a program from
-gaining capabilities its parent did not already have. When the agent is
-the container's first process, its parent is Docker's own container
-runtime, which already holds `NET_RAW` because of `--cap-add NET_RAW`, so
-the agent keeps it. When `--init` puts a small init process in front of
-the agent, that init runs as uid 65532 with no capabilities at all, and
-the agent started from it gets none either.
-
-- **`--cap-add NET_RAW` with `no-new-privileges`, no `--init`** --
-  port-scan detection is on. The agent still holds `NET_RAW` and nothing
-  else, still runs as uid 65532, and still has no shell.
-- **`--cap-add NET_RAW` with `no-new-privileges` and `--init`** --
-  port-scan detection is off, and the agent logs one line saying so at
-  startup.
-
-The printed command does not add `no-new-privileges` to the agent's
-container. Before #132 it could not: the agent then ran under `--init` to
-supervise OpenCanary, and the two did not mix.
+gaining capabilities its parent did not already have. The agent is the
+container's first process, so its parent is Docker's own container
+runtime, which already holds `NET_RAW` because of `--cap-add NET_RAW`,
+and the agent keeps it. Put `--init` in front of the agent and that init
+runs as uid 65532 with no capabilities at all, so the agent started from
+it gets none either: port-scan detection is off, and the agent logs one
+line saying so at startup.
 
 ## Catching a poisoner on your segment
 

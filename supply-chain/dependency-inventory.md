@@ -246,7 +246,7 @@ review's brief:
 | 169 | `markupsafe` | 3.0.3 | 3.0.3 | BSD-3-Clause | transitive | Pallets project | very high (mainstream, widely deployed) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
 | 170 | `ntlmlib` | 0.72 | 0.72 | Apache-2.0 | transitive | OpenCanary project's own vendored fork lineage | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
 | 171 | `opencanary` | 0.9.9 | 0.9.9 | BSD | direct | Thinkst Applied Research | high (the standard choice for its niche) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | Predates the rule -- not individually recorded |
-| 172 | `ordereddict` | 1.1 | 1.1 | MIT | transitive | backport of stdlib's collections.OrderedDict (independent packaging) | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
+| 172 | `ordereddict` | 1.1 | 1.1 | MIT | transitive | backport of stdlib's collections.OrderedDict (independent packaging) | small utility (popularity tracks its direct parent) | Removed by #101 -- ntlmlib's Python-2 `OrderedDict` fallback import never ran on this image's Python 3.13, so the lock drops the pin instead of shipping dead weight | n/a -- transitive |
 | 173 | `packaging` | 26.3 | 26.3 | Apache-2.0 OR BSD-2-Clause | transitive | Python Packaging Authority (PyPA) | very high (mainstream, widely deployed) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
 | 174 | `passlib` | 1.7.1 | 1.7.4 | BSD | transitive | independent (Eli Collins, effectively unmaintained) | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
 | 175 | `pyasn1` | 0.6.4 | 0.6.4 | BSD-2-Clause | transitive | pyasn1 community | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
@@ -360,14 +360,26 @@ in the mockingbird image; nothing reads an Alpine package's licence. So row
 is not enforced by CI. Worth closing if a third apk-pinned shipped package
 ever appears.
 
+### K. CI-only security scanners added by #51 and #28
+
+Two new `lint`-stage jobs (`docs/ci-hops.md`), neither linked into
+birdcage nor shipped in any image -- the same footing as `golangci-lint`
+(row 201). Owner approval for both is recorded on their issues,
+2026-09-27.
+
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-27) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+|---|---|---|---|---|---|---|---|---|---|
+| 228 | `golang.org/x/vuln` (govulncheck) | v1.8.0, `go install .../govulncheck@v1.8.0` in `lint:govulncheck`, verified by the Go checksum database like every other module download | v1.8.0 -- current (`proxy.golang.org/golang.org/x/vuln/@latest`, verified 2026-09-27) | BSD-3-Clause | direct | Go team (golang.org/x) | high (the standard Go vulnerability scanner, maintained by the language team) | CI-only -- installed and run in `lint:govulncheck`, never imported by any package birdcage builds | Approved -- #51, owner, 2026-09-27 |
+| 229 | `gitleaks` (gitleaks project) | v8.30.1, checksum-pinned (archive and extracted-binary SHA-256) in `scripts/ensure-gitleaks.sh`, verified against the release's own `gitleaks_8.30.1_checksums.txt` and against a fresh download of the archive itself (matched) | v8.30.1 -- current (GitHub releases API, verified 2026-09-27) | MIT | direct | gitleaks project (Zachary Rice and contributors) | high (the standard OSS secret-scanning tool; this project's own pre-commit gate already uses it) | CI-only -- installed and run in `lint:gitleaks`, never linked or shipped. The released binary, not the commercially-licensed `gitleaks-action` | Approved -- #28, owner, 2026-09-27 |
+
 ## Summary, by approval status
 
-227 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
-3 in section F, 2 in section J).
+229 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
+3 in section F, 2 in section J, 2 in section K).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 7 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87) |
+| Approved, with issue number | 9 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 49 (every other **direct** dependency, including `debian:trixie-slim`, row 224) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 223) |

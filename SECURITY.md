@@ -353,6 +353,32 @@ only at the point that text is displayed, per surface:
   or refused stream falls back to the dashboard's existing 30s poll,
   which every route above already relies on.
 
+## CI security scanning
+
+Two scanners run in the `lint` stage of `.gitlab-ci.yml`, on every merge
+request and on `dev`. Neither is linked into birdcage or shipped in any
+image -- both are CI-only tools (AGENTS.md, "Approved third-party
+modules").
+
+- **`lint:govulncheck`** (issue #51) runs `govulncheck ./...` against the
+  Go toolchain version `go.mod` names, checking the module graph and the
+  standard library against the Go vulnerability database. It fails the
+  pipeline on a vulnerability reachable from birdcage's own code; an
+  unreachable one is reported in the job log but does not fail it --
+  govulncheck's own default, which is what keeps the signal to
+  vulnerabilities birdcage's binaries can actually hit rather than every
+  advisory anywhere in the dependency graph.
+- **`lint:gitleaks`** (issue #28) scans the full git history -- not just
+  the working tree -- for generic secrets (private keys, connection
+  strings, bespoke tokens) using the released `gitleaks` binary,
+  checksum-verified before use. It detects rather than prevents: a
+  failure means rotate the credential, not amend the commit. Output is
+  always redacted, since this repository is public and an unredacted log
+  would republish the secret it just found. It sits behind, not instead
+  of, this host's own pre-commit secret gate and GitHub's push
+  protection on known provider tokens (see issue #28 for why those two
+  do not already cover this).
+
 ## Recommended deployment hardening
 
 - Install birdcage's CA certificate (`BIRDCAGE_CA_DIR/ca.pem`) in your
