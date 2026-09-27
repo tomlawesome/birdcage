@@ -338,8 +338,10 @@ lint:gitleaks:
 # do with the change in front of it, would make every pipeline pay for a
 # round trip to half a dozen registries, and would go red for a reason
 # nobody in the merge request can fix by editing their own diff. A
-# schedule (project Settings > CI/CD > Schedules, owner sets up once)
-# with the variable SCHEDULED_JOB=staleness is what runs it; the
+# pipeline schedule whose description is exactly `staleness` is what
+# runs it (schedule 14, weekly on `dev`; GitLab exposes the description
+# as $CI_PIPELINE_SCHEDULE_DESCRIPTION, so no schedule variable has to
+# be set by hand -- the endpoint for those is owner-only, #139); the
 # `when: never` fallback keeps every other trigger, including an
 # unrelated schedule, from running it by accident. `scripts/ci-e2e-
 # guard.py` carries the matching rule (docs/ci-hops.md's own guard,
@@ -351,7 +353,7 @@ audit:staleness:
   image: $PYTHON_ALPINE_IMAGE
   needs: []
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULED_JOB == "staleness"
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION == "staleness"
     - when: never
   before_script:
     - pip install --quiet pyyaml

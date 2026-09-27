@@ -242,9 +242,10 @@ never" needs a rule edit that the guard names, rather than a plausible
 ## Scheduled: the staleness audit
 
 `audit:staleness` (#139) is not a hop at all -- it never runs on a merge
-request, on `dev`, `preview` or `main`, only on a GitLab CI schedule
-(project Settings > CI/CD > Schedules) carrying the variable
-`SCHEDULED_JOB=staleness`. It runs `scripts/staleness-check.py`, which
+request, on `dev`, `preview` or `main`, only from the GitLab pipeline schedule
+whose description is `staleness` (schedule 14, Mondays 06:00 UTC on `dev`;
+the job matches it through `$CI_PIPELINE_SCHEDULE_DESCRIPTION`, so
+nothing has to be set on the schedule by hand). It runs `scripts/staleness-check.py`, which
 reads every pinned Go module, npm package, pip package, container tag,
 apk package and checksum-pinned tool this repository names and compares
 each against its real upstream -- the live figure that
