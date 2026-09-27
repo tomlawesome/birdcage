@@ -41,7 +41,12 @@ trap 'rm -rf "$work"' EXIT
 
 # --require-hashes: the same integrity check the Dockerfile's honeypot
 # stage runs, so a package swapped on PyPI fails this gate the same way
-# it would fail the image build.
-pip install --no-cache-dir --require-hashes --target "$work" -r "$REQUIREMENTS_FILE"
+# it would fail the image build. --no-deps: same reason as the
+# Dockerfile -- the lock is the full resolved closure, so nothing is
+# missing, but ntlmlib still declares the Python-2-only ordereddict in
+# install_requires even though nothing in this image's Python 3.13 ever
+# imports it; without --no-deps, --require-hashes would make pip resolve
+# that declared dependency and fail on its absence from the lock (#101).
+pip install --no-cache-dir --require-hashes --no-deps --target "$work" -r "$REQUIREMENTS_FILE"
 
 python3 "$SCRIPT_DIR/licence-check-python.py" "$work" "$POLICY_FILE"

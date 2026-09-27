@@ -110,10 +110,12 @@ the OpenCanary image (#95; moved out of mockingbird by #132). A package whose ow
 outside `supply-chain/licence-policy.yml`'s allow-list, or names none at
 all, fails the gate unless it has a named, version-pinned exception under
 that file's `allow-python-package-licenses:` key -- `hpfeeds@3.0.0`
-(GPLv3, owner-accepted for shipping), `setuptools@78.1.1` and
-`ordereddict@1.1` (undeclared, read from their own bundled MIT LICENSE
-files) are the three currently recorded. A version bump drops the
-exception and the gate fires again on the new version.
+(GPLv3, owner-accepted for shipping) is the only one currently recorded;
+`setuptools@78.1.1` and `ordereddict@1.1` were reviewed the same way and
+later dropped, the first because a version bump made it match the
+allow-list directly, the second because #101 removed the package
+itself. A version bump drops the exception and the gate fires again on
+the new version.
 
 ## Live testing is not optional
 
