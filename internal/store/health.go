@@ -8,11 +8,12 @@
 //
 // Scope note: of the issue's eight states, silent (already built,
 // #34/#38), throttled, not-delivering, rotation-stalled, token conflict,
-// -- as of #46 -- self-test-failed and -- as of #47 -- pending are
-// computed here. Agent-out-of-date (#48) still reads data that doesn't
-// exist in this schema yet -- its slot in healthStateRank remains
-// reserved, not emitted, so wiring it in later stays an insertion, not a
-// renumbering.
+// -- as of #46 -- self-test-failed, -- as of #47 -- pending and -- as of
+// #54 -- agent-out-of-date are computed here. Agent-out-of-date's slot in
+// healthStateRank was reserved between rotation-stalled and pending
+// since #45 first proposed the precedence; #54 fills it, which is why
+// filling it stays an insertion rather than a renumbering of anything
+// else.
 package store
 
 import (
@@ -89,28 +90,35 @@ const (
 	// completed. Ranked immediately after rotation-stalled. At the
 	// certificate's expiry it gives way to not-delivering.
 	StateRenewalStalled HealthState = "renewal_stalled"
+	// StateAgentOutOfDate (issue #54) is a canary whose agent last
+	// reported a release version (agentBehindBirdcage, version.go)
+	// strictly older than birdcage's own -- both must parse as plain
+	// MAJOR.MINOR.PATCH, build metadata ignored; "dev", empty or
+	// unparseable on either side is unknown, never behind. Ranked
+	// immediately after renewal-stalled and before pending, exactly the
+	// slot the issue's own precedence list gives it ("... rotation
+	// stalled, agent out of date, pending") and healthStateRank already
+	// reserved for it. Degraded-tier, the same treatment as
+	// rotation-stalled and renewal-stalled: this package draws no
+	// separate severity axis, so "degraded" is expressed only by where a
+	// state sits in this rank, never by a field of its own.
+	StateAgentOutOfDate HealthState = "agent_out_of_date"
 	// StatePending (issue #47 steps 7-9) is a canary provisioned through
 	// POST /enrol/provision whose first self-test round trip has not yet
 	// passed -- store.Canary.RegisteredAt nil. Ranked last of the fault
-	// states, after rotation-stalled and before ok, exactly the slot the
+	// states, after agent-out-of-date and before ok, exactly the slot the
 	// issue's own precedence list gives it ("... rotation stalled, agent
-	// out of date, pending") once agent-out-of-date (still unbuilt, #48)
-	// is removed -- the same "relative order preserved, gap not filled"
-	// reasoning healthStateRank's own doc comment already gives for
-	// self-test-failed's slot.
+	// out of date, pending").
 	StatePending HealthState = "pending"
 	StateOK      HealthState = "ok"
 )
 
 // healthStateRank orders HealthState worst-first: issue #45's own
 // proposed precedence ("token conflict, silent, not delivering, self-test
-// failed, throttled, rotation stalled, agent out of date, pending") with
-// the one state this slice still doesn't build (agent-out-of-date, #48)
-// removed. Removing it doesn't change the relative order of what's left
-// -- agent-out-of-date sat between rotation-stalled and pending, and that
-// gap isn't filled by anything built here. The issue itself calls this
-// order "proposed, not yet ratified"; it is implemented as specified and
-// flagged as contested, not silently finalized.
+// failed, throttled, rotation stalled, agent out of date, pending"). The
+// issue itself calls this order "proposed, not yet ratified"; it is
+// implemented as specified and flagged as contested, not silently
+// finalized.
 //
 // Issue #130 adds two states, each beside its twin: credential-conflict
 // straight after token-conflict (both are "two holders of one
@@ -119,8 +127,10 @@ const (
 //
 // hits_merged (owner-ratified 2026-09-25) is inserted straight after
 // not-delivering, per that design -- it slots between the built states
-// rather than into the still-reserved agent-out-of-date gap noted above,
-// which remains between rotation-stalled and pending.
+// rather than into agent-out-of-date's own reserved gap, which -- as of
+// #54 -- is filled rather than skipped: agent-out-of-date now sits
+// between renewal-stalled and pending, exactly where it always sat as a
+// gap.
 //
 // opencanary_down (issue #132, this change's own unratified placement --
 // see StateOpenCanaryDown's doc comment) sits beside not-delivering,
@@ -137,8 +147,9 @@ var healthStateRank = map[HealthState]int{
 	StateThrottled:          8,
 	StateRotationStalled:    9,
 	StateRenewalStalled:     10,
-	StatePending:            11,
-	StateOK:                 12,
+	StateAgentOutOfDate:     11,
+	StatePending:            12,
+	StateOK:                 13,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -241,6 +252,28 @@ func applyOpenCanaryHealth(c *Canary) {
 		return
 	}
 	addActiveStates(c, StateOpenCanaryDown)
+}
+
+// applyAgentOutOfDateHealth adds StateAgentOutOfDate when c's agent last
+// reported a version agentBehindBirdcage (version.go) says is strictly
+// older than birdcageVersion's own release core. c.AgentVersion is nil
+// until the agent's first heartbeat (issue #48's self-report) --
+// agentBehindBirdcage's own empty-string handling already treats that,
+// and every other unparseable case, as unknown rather than behind, so
+// this function needs no nil check of its own beyond dereferencing.
+// birdcageVersion is threaded in by ListCanaries' own caller (issue
+// #54: "birdcage's own version must be passed in, not read from a
+// global") rather than read from cmd/birdcage's package-level version
+// var, which this package cannot see and must not depend on.
+func applyAgentOutOfDateHealth(c *Canary, birdcageVersion string) {
+	agentVersion := ""
+	if c.AgentVersion != nil {
+		agentVersion = *c.AgentVersion
+	}
+	if !agentBehindBirdcage(agentVersion, birdcageVersion) {
+		return
+	}
+	addActiveStates(c, StateAgentOutOfDate)
 }
 
 // addActiveStates merges states into c.ActiveStates, re-sorts by

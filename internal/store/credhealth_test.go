@@ -197,7 +197,7 @@ func TestListCanariesCredentialStatesAndJSON(t *testing.T) {
 		nb := now.Add(-100 * time.Hour)
 		insertCertRow(t, database, "stalled", "fp-stalled", nb, nb.Add(7*24*time.Hour), &nb)
 
-		canaries, err := ListCanaries(ctx, database, now.Add(10*time.Second), time.Hour)
+		canaries, err := ListCanaries(ctx, database, now.Add(10*time.Second), time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -235,7 +235,7 @@ func TestListCanariesCredentialStatesAndJSON(t *testing.T) {
 		}
 
 		// Absent, not null, while the state does not hold.
-		later, err := ListCanaries(ctx, database, now.Add(credentialConflictWindow), time.Hour)
+		later, err := ListCanaries(ctx, database, now.Add(credentialConflictWindow), time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}

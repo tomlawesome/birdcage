@@ -203,7 +203,7 @@ func TestIngestMuxCannotReachDashboardRoutes(t *testing.T) {
 func TestDashboardMuxCannotReachIngestRoute(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
-		dashboard := api.NewHandler(database, nil)
+		dashboard := api.NewHandler(database, nil, "")
 
 		for _, path := range []string{"/ingest/events", "/ingest/rotate", "/ingest/heartbeat", "/ingest/commands"} {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))

@@ -23,7 +23,7 @@ func TestListTraceBeatsWithinLast15MinutesOnly(t *testing.T) {
 			}
 		}
 
-		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestListTrace221HitsFromOneSourceArriveWhole(t *testing.T) {
 			insertAlertRaw(t, database, "canary-iot", "198.51.100.7", 445, "smb", `{}`, at.Format(time.RFC3339))
 		}
 
-		trace, err := ListTrace(context.Background(), database, now, "90d", rangeDurations["90d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "90d", rangeDurations["90d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -85,7 +85,7 @@ func TestListTraceCapsAt2000NewestHitsPerCanary(t *testing.T) {
 			insertAlertRaw(t, database, "canary-guest", "203.0.113.42", 23, "telnet", `{}`, at.Format(time.RFC3339))
 		}
 
-		trace, err := ListTrace(context.Background(), database, now, "90d", rangeDurations["90d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "90d", rangeDurations["90d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -117,7 +117,7 @@ func TestListTraceStatusAndLastHeartbeatFromListCanaries(t *testing.T) {
 		}
 
 		now := beatAt.Add(9 * time.Second)
-		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -146,7 +146,7 @@ func TestListTraceHitKindMatchesVisitorClassification(t *testing.T) {
 			`{"logdata": {"USERNAME": "root"}}`, "2026-09-12T21:57:22Z")
 
 		now := mustParse(t, "2026-09-12T22:04:31Z")
-		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -166,7 +166,7 @@ func TestListTraceHitKindMatchesVisitorClassification(t *testing.T) {
 func TestListTraceLastHitNilWhenNoAlerts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := mustParse(t, "2026-09-12T22:04:31Z")
-		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestListTraceLastHitIgnoresRange(t *testing.T) {
 		now := mustParse(t, "2026-09-05T22:04:31Z")
 		// range=15m contains none of the alert above -- last_hit must
 		// still find it, proving it is not scoped to the range.
-		trace, err := ListTrace(context.Background(), database, now, "15m", rangeDurations["15m"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "15m", rangeDurations["15m"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestListTraceLastHitClassifiesAgainstFullHistoryNotJustRange(t *testing.T) 
 		now := mustParse(t, "2026-09-01T10:05:00Z")
 		// range=15m sees only the newest hit by itself -- classified
 		// alone that would be touch, not repeat.
-		trace, err := ListTrace(context.Background(), database, now, "15m", rangeDurations["15m"], nil)
+		trace, err := ListTrace(context.Background(), database, now, "15m", rangeDurations["15m"], nil, "")
 		if err != nil {
 			t.Fatalf("ListTrace: %v", err)
 		}

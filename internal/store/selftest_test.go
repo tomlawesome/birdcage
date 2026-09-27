@@ -270,7 +270,7 @@ func TestSweepExpiredSelfTestRunsMarksFailedAndCanaryReportsSelfTestFailed(t *te
 			t.Fatalf("RecordHeartbeat: %v", err)
 		}
 
-		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour)
+		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}
@@ -321,7 +321,7 @@ func TestSelfTestFullyMatchedRunPassesAndHealthIsOK(t *testing.T) {
 			t.Fatalf("RecordHeartbeat: %v", err)
 		}
 
-		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour)
+		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour, "")
 		if err != nil {
 			t.Fatalf("ListCanaries: %v", err)
 		}

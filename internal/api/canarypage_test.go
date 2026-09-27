@@ -128,6 +128,44 @@ func TestHandleCanaryReturnsCanaryFactsAndRuns(t *testing.T) {
 	}
 }
 
+// TestHandleCanaryBirdcageVersion is issue #54's single-canary-page half
+// of the birdcage_version field: GET /api/canary carries it on
+// resp.Canary exactly as GET /api/canaries does, since both read the
+// same store.Canary through the same ListCanaries call.
+func TestHandleCanaryBirdcageVersion(t *testing.T) {
+	database := openTempDB(t)
+	ctx := context.Background()
+	enrolledAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	insertCanary(t, database, store.Canary{
+		ID: "canary-a", Name: "canary-a", Lane: "lan",
+		Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+	})
+	beatAt := enrolledAt.Add(time.Minute)
+	if err := store.RecordCanaryAgentHeartbeat(ctx, database, "canary-a", beatAt, store.AgentHeartbeat{
+		QueueDepth: 1, LogReadOK: true, LastEventID: "abc", AgentVersion: "1.0.0",
+	}); err != nil {
+		t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+	}
+
+	h := newHandlerWithVersion(database, fixedNow(beatAt.Add(time.Second)), "1.2.3")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/canary?id=canary-a", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp canaryPageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.Canary.BirdcageVersion != "1.2.3" {
+		t.Errorf("canary.birdcage_version = %q, want %q", resp.Canary.BirdcageVersion, "1.2.3")
+	}
+	if resp.Canary.Status != string(store.StateAgentOutOfDate) {
+		t.Errorf("canary.status = %q, want %q (agent 1.0.0 behind birdcage 1.2.3)", resp.Canary.Status, store.StateAgentOutOfDate)
+	}
+}
+
 // TestHandleCanaryRejectsBadRequests: no id is a 400 (there is no
 // default canary), an unknown id is a 404 (a page about a canary that
 // does not exist has nothing to draw), and an unrecognized range is the

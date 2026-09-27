@@ -288,7 +288,7 @@ func main() {
 	}
 
 	historyLog := logging.New("history")
-	stateRecorder := history.NewWithTokenConflictHook(database, conflictHook)
+	stateRecorder := history.NewWithTokenConflictHook(database, version, conflictHook)
 	if err := stateRecorder.Start(ctx, time.Now().UTC()); err != nil {
 		historyLog.Error(fmt.Sprintf("start canary state recorder: %v", err))
 	}
@@ -315,7 +315,7 @@ func main() {
 	if cfg.internalRangesEnv != "" {
 		configLog.Info(fmt.Sprintf("%s=%s", envInternalRanges, cfg.internalRangesEnv))
 	}
-	apiHandler := api.NewHandlerWithHub(database, cfg.internalRanges, hub, mailEnabled)
+	apiHandler := api.NewHandlerWithHub(database, cfg.internalRanges, hub, mailEnabled, version)
 
 	dashboardServer, unixPath, err := buildDashboardServer(cfg, birdcageCA, apiHandler, configLog, httpLog)
 	if err != nil {

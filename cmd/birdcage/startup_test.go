@@ -450,7 +450,7 @@ func TestOpenStartupDatabaseUnopenablePathErrors(t *testing.T) {
 
 func TestRunHistoryLoopReturnsOnCancel(t *testing.T) {
 	database := openTestDB(t)
-	recorder := history.NewWithTokenConflictHook(database, nil)
+	recorder := history.NewWithTokenConflictHook(database, "", nil)
 	if err := recorder.Start(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatalf("recorder.Start: %v", err)
 	}
