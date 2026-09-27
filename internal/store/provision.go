@@ -192,6 +192,14 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		// canary add`, cmd/seed-story) leaves Pending false and keeps
 		// registering immediately.
 		Pending: true,
+		// Issue #54: the session's own SMB lure identity (mirroring
+		// BaitNames/SegmentProfile below, which canary_settings seeds
+		// from the same session) becomes this canary's permanent record
+		// of it -- the upgrade command's only way to know later whether
+		// this canary ever got a lure at all.
+		SMBLure:      found.SMBLure,
+		SMBWorkgroup: found.SMBWorkgroup,
+		SMBShares:    found.SMBShares,
 	}); err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("insert canary: %w", err)
 	}

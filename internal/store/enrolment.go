@@ -78,6 +78,19 @@ type EnrolmentSession struct {
 	// operator passed neither flag.
 	BaitNames      string
 	SegmentProfile string
+
+	// SMBLure, SMBWorkgroup and SMBShares are issue #54's own addition:
+	// `birdcage agent enrol --lure/--smb-workgroup/--smb-shares`'s values
+	// (cmd/birdcage/canary_lure.go), carried on the session until
+	// store.Provision copies them onto the new agents row -- unlike
+	// BaitNames/SegmentProfile above, these are never pushed to a running
+	// agent, so there is no canary_settings seeding step for them. SMBLure
+	// is nil when the operator's kind has no lure at all (a scanner);
+	// SMBWorkgroup/SMBShares are empty exactly when SMBLure is nil or
+	// false. SMBShares is comma-joined, the same form BaitNames uses.
+	SMBLure      *bool
+	SMBWorkgroup string
+	SMBShares    string
 }
 
 // ErrEnrolmentSessionNotFound is returned when a token hash or session
@@ -109,7 +122,14 @@ var ErrEnrolmentSessionNotFound = errors.New("store: enrolment session not found
 // cmd/birdcage/canary.go's runCanaryEnrol already runs before minting),
 // carried on the session for a later Provision call to seed
 // canary_settings with. Empty means the operator passed neither flag.
-func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, kind agentkind.Kind, baitNames, segmentProfile string, now time.Time) (raw string, session EnrolmentSession, err error) {
+//
+// smbLure, smbWorkgroup and smbShares are issue #54's own addition, the
+// caller's already-validated --lure/--smb-workgroup/--smb-shares values
+// (parseSMBSettings), carried on the session for a later Provision call
+// to copy onto the new agents row. smbLure nil means this kind has no
+// lure at all (a scanner); smbWorkgroup/smbShares must be empty whenever
+// smbLure is nil or false.
+func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane string, kind agentkind.Kind, baitNames, segmentProfile string, smbLure *bool, smbWorkgroup, smbShares string, now time.Time) (raw string, session EnrolmentSession, err error) {
 	if now.IsZero() {
 		return "", EnrolmentSession{}, fmt.Errorf("store: MintEnrolmentSession: now is zero; callers must set it")
 	}
@@ -131,18 +151,32 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 	createdAt := now.UTC()
 	deadline := createdAt.Add(enrolmentFirstContactWindow)
 
-	var storedBaitNames, storedSegmentProfile any
+	var storedBaitNames, storedSegmentProfile, storedSMBWorkgroup, storedSMBShares any
 	if baitNames != "" {
 		storedBaitNames = baitNames
 	}
 	if segmentProfile != "" {
 		storedSegmentProfile = segmentProfile
 	}
+	var storedSMBLure any
+	if smbLure != nil {
+		if *smbLure {
+			storedSMBLure = 1
+		} else {
+			storedSMBLure = 0
+		}
+	}
+	if smbWorkgroup != "" {
+		storedSMBWorkgroup = smbWorkgroup
+	}
+	if smbShares != "" {
+		storedSMBShares = smbShares
+	}
 	_, err = database.ExecContext(ctx, `
-		INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, state, bait_names, segment_profile)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO enrolment_sessions (id, token_hash, agent_name, lane, kind, created_at, first_contact_deadline, state, bait_names, segment_profile, smb_lure, smb_workgroup, smb_shares)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, HashToken(raw), name, lane, string(kind), createdAt.Format(receivedAtLayout), deadline.Format(receivedAtLayout), string(EnrolmentStateMinted),
-		storedBaitNames, storedSegmentProfile)
+		storedBaitNames, storedSegmentProfile, storedSMBLure, storedSMBWorkgroup, storedSMBShares)
 	if err != nil {
 		return "", EnrolmentSession{}, fmt.Errorf("insert enrolment session: %w", err)
 	}
@@ -156,6 +190,9 @@ func MintEnrolmentSession(ctx context.Context, database db.Conn, name, lane stri
 		State:                EnrolmentStateMinted,
 		BaitNames:            baitNames,
 		SegmentProfile:       segmentProfile,
+		SMBLure:              smbLure,
+		SMBWorkgroup:         smbWorkgroup,
+		SMBShares:            smbShares,
 	}, nil
 }
 
@@ -329,7 +366,7 @@ func FirstContact(ctx context.Context, database *db.DB, tokenHash string, now ti
 // by mistake.
 func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSession, error) {
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile, smb_lure, smb_workgroup, smb_shares
 		FROM enrolment_sessions
 		ORDER BY created_at`)
 	if err != nil {
@@ -355,7 +392,7 @@ func ListEnrolmentSessions(ctx context.Context, database *db.DB) ([]EnrolmentSes
 // row via conn, so FirstContact can run it inside its own transaction.
 func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile, smb_lure, smb_workgroup, smb_shares
 		FROM enrolment_sessions
 		WHERE token_hash = ?`, tokenHash)
 	return scanEnrolmentSession(row)
@@ -373,7 +410,7 @@ func scanEnrolmentSessionByHash(ctx context.Context, conn db.Conn, tokenHash str
 // case wants.
 func scanEnrolmentSessionBySecretHash(ctx context.Context, conn db.Conn, secretHash string) (EnrolmentSession, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile
+		SELECT id, agent_name, lane, kind, created_at, first_contact_deadline, burned_at, window_deadline, state, agent_id, bait_names, segment_profile, smb_lure, smb_workgroup, smb_shares
 		FROM enrolment_sessions
 		WHERE enrolment_secret_hash = ? AND state = ?`, secretHash, string(EnrolmentStateContacted))
 	return scanEnrolmentSession(row)
@@ -394,8 +431,11 @@ func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 		canaryID              *string
 		baitNames             *string
 		segmentProfile        *string
+		smbLure               *int
+		smbWorkgroup          *string
+		smbShares             *string
 	)
-	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &kind, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID, &baitNames, &segmentProfile); err != nil {
+	if err := row.Scan(&s.ID, &s.Name, &s.Lane, &kind, &createdAt, &firstContactDeadline, &burnedAt, &windowDeadl, &state, &canaryID, &baitNames, &segmentProfile, &smbLure, &smbWorkgroup, &smbShares); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return EnrolmentSession{}, ErrEnrolmentSessionNotFound
 		}
@@ -414,6 +454,16 @@ func scanEnrolmentSession(row rowScanner) (EnrolmentSession, error) {
 	}
 	if segmentProfile != nil {
 		s.SegmentProfile = *segmentProfile
+	}
+	if smbLure != nil {
+		enabled := *smbLure != 0
+		s.SMBLure = &enabled
+	}
+	if smbWorkgroup != nil {
+		s.SMBWorkgroup = *smbWorkgroup
+	}
+	if smbShares != nil {
+		s.SMBShares = *smbShares
 	}
 
 	var err error

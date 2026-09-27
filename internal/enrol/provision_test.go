@@ -70,7 +70,7 @@ func provisionRequestBodyWithCSR(secret, csrPEM string) *bytes.Buffer {
 // raw enrolment secret POST /enrol/provision consumes.
 func contactedSecret(t *testing.T, database *db.DB, mintedAt, contactAt time.Time) string {
 	t.Helper()
-	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", mintedAt)
+	raw, _, err := store.MintEnrolmentSession(context.Background(), database, "canary-a", "lane-a", agentkind.Honeypot, "", "", nil, "", "", mintedAt)
 	if err != nil {
 		t.Fatalf("MintEnrolmentSession: %v", err)
 	}

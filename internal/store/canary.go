@@ -58,6 +58,20 @@ type Canary struct {
 	// immediately, unchanged.
 	Pending bool `json:"-"`
 
+	// SMBLure, SMBWorkgroup and SMBShares are issue #54's own addition:
+	// this canary's enrolment-time SMB lure identity, copied by
+	// store.Provision from the enrolment session that carried it
+	// (EnrolmentSession's own doc comment). Like Pending above, these are
+	// InsertCanary's own write-time instruction, not values ListCanaries
+	// reads back -- GetCanaryUpgradeFacts (canary_upgrade.go) is the read
+	// path, for internal/runcmd.Upgrade. SMBLure nil means this kind has
+	// no lure at all (a scanner) or this canary predates issue #54, which
+	// InsertCanary and GetCanaryUpgradeFacts must never tell apart by
+	// guessing -- both read back as "unknown".
+	SMBLure      *bool  `json:"-"`
+	SMBWorkgroup string `json:"-"`
+	SMBShares    string `json:"-"`
+
 	// AgentLogReadOK is the agent's own last self-reported log-read
 	// status (#32 slice 5a, canaries.agent_log_read_ok). nil means no
 	// self-report has ever arrived, distinct from an explicit false --
@@ -451,10 +465,32 @@ func InsertCanary(ctx context.Context, database db.Conn, c Canary) error {
 		s := c.EnrolledAt.UTC().Format(receivedAtLayout)
 		registeredAt = &s
 	}
+	// smb_lure/smb_workgroup/smb_shares follow c.SMBLure's own nil-means-
+	// unknown convention (its doc comment above): every existing caller
+	// leaves these at their zero value (nil, "", "") and so keeps writing
+	// NULL for all three, byte-for-byte what this INSERT did before the
+	// columns existed -- the same "unknown", not "off", a canary that
+	// predates issue #54 gets.
+	var storedSMBLure any
+	if c.SMBLure != nil {
+		if *c.SMBLure {
+			storedSMBLure = 1
+		} else {
+			storedSMBLure = 0
+		}
+	}
+	var storedSMBWorkgroup, storedSMBShares any
+	if c.SMBWorkgroup != "" {
+		storedSMBWorkgroup = c.SMBWorkgroup
+	}
+	if c.SMBShares != "" {
+		storedSMBShares = c.SMBShares
+	}
 	_, err := database.ExecContext(ctx, `
-		INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt)
+		INSERT INTO agents (id, name, lane, kind, ports, heartbeat_interval_s, enrolled_at, registered_at, smb_lure, smb_workgroup, smb_shares)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Lane, string(c.Kind), c.Ports, interval, c.EnrolledAt.UTC().Format(receivedAtLayout), registeredAt,
+		storedSMBLure, storedSMBWorkgroup, storedSMBShares)
 	if err != nil {
 		return fmt.Errorf("insert canary: %w", err)
 	}
