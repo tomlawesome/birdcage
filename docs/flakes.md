@@ -145,3 +145,19 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   sharing the host) · same symptom, "allow() call 3001 = true, want false
   (burst exhausted)". Second sighting; still not diagnosed, still not
   touched.
+
+## e2e:agent-credentials:postgres -- step 3 (certificate_expired)
+
+- 2026-09-27 · 7773730 (!84, frontend-only: trace label placement) ·
+  pipeline 1733 job 25050 · "not_delivering with certificate_expired never
+  became true ... within 300s (E2E_CLIENT_CERT_TTL=4m)". Passed on retry
+  (job 25216) against the same commit. The runner was carrying three
+  pipelines at once; not diagnosed. First sighting.
+
+## e2e:enrol-and-hit:postgres -- lifecycle.sh step 6 (rotation)
+
+- 2026-09-27 · 7773730 (!84, frontend-only: trace label placement) ·
+  pipeline 1733 job 25048 · "the old-token request could not be sent".
+  Passed on retry (job 25217) against the same commit, under the same
+  three-pipeline load. Not diagnosed. First sighting. Distinct from #146,
+  which fails lifecycle.sh step 1.
