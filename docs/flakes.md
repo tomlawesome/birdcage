@@ -139,3 +139,9 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   rate limiter's burst, so it looks timing-sensitive under `-race`'s added
   scheduling overhead -- but that is a guess from one sighting, not a
   diagnosis. First sighting; nothing changed on the strength of it.
+- 2026-09-27 · 072b072 (unrelated change: #138, internal/store test speed)
+  · local `go test -race ./...` in a `golang:1.27` container reproducing
+  `test:go` (real Postgres, non-root uid 1001, several other containers
+  sharing the host) · same symptom, "allow() call 3001 = true, want false
+  (burst exhausted)". Second sighting; still not diagnosed, still not
+  touched.
