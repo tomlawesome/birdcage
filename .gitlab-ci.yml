@@ -432,6 +432,10 @@ test:go:
       install -d -o tester -g tester /tmp/gotest
       # tester has to read the certificate the URL below names.
       chmod 0644 /tmp/postgres-ca.pem
+    # -timeout=20m: room above internal/store's ~100s post-#138 runtime
+    # (was ~500-550s, hitting go test's 10m per-package default under a
+    # busy runner) plus every other package, so a genuinely hung test
+    # still fails the job instead of running forever.
     - >-
       su tester -c "cd '$CI_PROJECT_DIR' &&
       HOME=/home/tester
@@ -439,7 +443,7 @@ test:go:
       GOMODCACHE=/tmp/gotest/mod
       GOFLAGS='$GOFLAGS'
       BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
-      go test ./... -race -coverprofile=/tmp/gotest/coverage.out"
+      go test ./... -race -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
     # Read back as root: the profile is tester-owned but world-readable,
     # and nothing below writes to it.
     - go tool cover -func=/tmp/gotest/coverage.out | tail -1
