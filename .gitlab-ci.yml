@@ -62,7 +62,7 @@ variables:
   # needs its own `docker login` first -- see the jobs that do. Versions
   # unchanged from before this issue; only the source moved.
   GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27
-  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:22-trixie
+  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
   PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
@@ -399,7 +399,7 @@ test:frontend:
     # installed node_modules and this is the only job that has one --
     # a separate job would pay a second `npm ci` on every merge request
     # to check the same tree. It runs before the tests so a licence
-    # problem is reported without waiting for them. node:22-trixie ships
+    # problem is reported without waiting for them. node:26-trixie ships
     # python3 (3.13.5, verified), which the checker needs.
     - ../scripts/licence-check-npm.sh
     - npm run check
