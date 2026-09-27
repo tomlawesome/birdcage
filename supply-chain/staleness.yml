@@ -12,7 +12,50 @@
 # just from wherever this file happened to be edited) is the only reason
 # to add one of those, with an honest reason and, for `accepted:`, a
 # review-by date.
-accepted: []
+accepted:
+  # OpenCanary 0.9.10 names each of these with an exact `==` in its own
+  # Requires-Dist (checked in its wheel's METADATA, 2026-09-27), so the
+  # lock cannot move them: only a newer OpenCanary release can. #140.
+  - pin: "pypi:bcrypt"
+    held-at: "3.2.0"
+    reason: "opencanary==0.9.10 pins bcrypt==3.2.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:passlib"
+    held-at: "1.7.1"
+    reason: "opencanary==0.9.10 pins passlib==1.7.1 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:redis"
+    held-at: "7.4.0"
+    reason: "opencanary==0.9.10 pins redis==7.4.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:requests"
+    held-at: "2.33.0"
+    reason: "opencanary==0.9.10 pins requests==2.33.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:service-identity"
+    held-at: "21.1.0"
+    reason: "opencanary==0.9.10 pins service-identity==21.1.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:setuptools"
+    held-at: "83.0.0"
+    reason: "opencanary==0.9.10 pins setuptools==83.0.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:simplejson"
+    held-at: "3.16.0"
+    reason: "opencanary==0.9.10 pins simplejson==3.16.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:urllib3"
+    held-at: "2.7.0"
+    reason: "opencanary==0.9.10 pins urllib3==2.7.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:zope-interface"
+    held-at: "7.2"
+    reason: "opencanary==0.9.10 pins zope-interface==7.2 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:hpfeeds"
+    held-at: "3.0.0"
+    reason: "opencanary==0.9.10 pins hpfeeds==3.0.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
 unchecked: []
 
 alpine-branch:
