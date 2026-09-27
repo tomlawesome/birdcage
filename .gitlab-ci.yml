@@ -143,8 +143,8 @@ lint:go:
       unformatted=$(gofmt -l $files)
       [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
     # Built from source with the image's Go: the prebuilt binary is built
-    # with an older Go and refuses go.mod's `go 1.27.0` directive.
-    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+    # with an older Go and refuses go.mod's `go 1.27.1` directive.
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     - golangci-lint run ./...
 
 # Ported from licence.yml; the script is host independent by design.
@@ -266,11 +266,11 @@ lint:agent-deps:
 # govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
 # CI-only tool, never linked into birdcage (AGENTS.md, "Approved third-
 # party modules"). Installed from source and run against this project's
-# own `go 1.27.0` (go.mod) -- the Go checksum database verifies the
+# own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
 # module download the same way it does for golangci-lint above.
 #
 # GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
-# go.mod names a lower floor than 1.27.0, and GOTOOLCHAIN=auto's default
+# go.mod names a lower floor than 1.27.1, and GOTOOLCHAIN=auto's default
 # module-aware toolchain selection picks a toolchain that satisfies
 # *that* floor, not this project's -- observed directly: it built
 # govulncheck with go1.26.8, which then refused to analyse this
@@ -531,7 +531,7 @@ test:smoke:
   variables:
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -555,7 +555,7 @@ test:smoke:safari:
   variables:
     BIRDCAGE_BROWSER: safari
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -577,7 +577,7 @@ test:smoke:edge:
   variables:
     BIRDCAGE_BROWSER: edge
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -626,7 +626,7 @@ test:smoke:postgres:
     POSTGRES_PASSWORD: birdcage-ci
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage

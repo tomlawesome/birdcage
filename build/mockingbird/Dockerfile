@@ -45,7 +45,7 @@
 # --- agent ------------------------------------------------------------------
 # The agent's dependency closure is fenced (scripts/agent-deps-check.sh,
 # CI job lint:agent-deps): no server package can be linked in here.
-FROM golang:1.27.0-alpine AS agent
+FROM golang:1.27.1-alpine AS agent
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
