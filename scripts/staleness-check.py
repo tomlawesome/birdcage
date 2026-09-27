@@ -707,7 +707,7 @@ def docker_hub_tag_exists(fetcher, repo, tag):
     return None, err
 
 
-def docker_hub_walk(fetcher, repo, fixed, start_last, suffix, cap=300):
+def docker_hub_walk(fetcher, repo, fixed, start_last, suffix, cap=300, gap=3):
     """The highest value V such that fixed+(V,) (with suffix) exists,
     starting from a value already confirmed to exist and probing
     upward one release at a time.
@@ -721,21 +721,36 @@ def docker_hub_walk(fetcher, repo, fixed, start_last, suffix, cap=300):
     used here has no such wall, and probing "does the next release
     exist yet" is also just a better fit for what this check actually
     needs: not the whole list, only whether anything is newer than the
-    pin. Software version numbers in every family this check covers
-    increment by exactly one at the level being walked (no skipped
-    majors, minors or patches), so this never has to guess how far to
-    look -- it stops at the first gap.
+    pin.
+
+    The walk tolerates `gap` consecutive missing numbers before it
+    stops, because a family's numbers are not always contiguous: the
+    version increments by one, but a tag only exists where that version
+    and that suffix overlapped in time. `node:23-trixie` never existed
+    (Node 23 reached end of life before Debian trixie shipped) while
+    `node:24-trixie`, `25-trixie` and `26-trixie` all do, so a walk
+    that stopped at the first miss reported `node:22-trixie` as current
+    -- found on the first live run of this check, 2026-09-27, and the
+    reason this paragraph exists. Every extra probe is one cheap HEAD-
+    sized GET, so the tolerance costs `gap` requests per row, once.
     """
+    best = start_last
     v = start_last
+    misses = 0
     for _ in range(cap):
-        tag = format_nums(fixed + (v + 1,), suffix)
+        v += 1
+        tag = format_nums(fixed + (v,), suffix)
         exists, err = docker_hub_tag_exists(fetcher, repo, tag)
         if exists is None:
             return None, err
-        if not exists:
-            return fixed + (v,), None
-        v += 1
-    return fixed + (v,), None
+        if exists:
+            best = v
+            misses = 0
+            continue
+        misses += 1
+        if misses > gap:
+            break
+    return fixed + (best,), None
 
 
 def gcr_tag_list(fetcher, repo):
@@ -1027,7 +1042,7 @@ def check_actions(root, fetcher):
             text,
         ):
             uses_path, sha, comment_version = m.group(1), m.group(2), m.group(3)
-            row_id = f"action:{uses_path}"
+            row_id = f"action:{uses_path}#{name}"
             owner_repo = "/".join(uses_path.split("/")[:2])
             if owner_repo not in seen_repo:
                 seen_repo[owner_repo] = github_newest_semver_tag(fetcher, owner_repo)

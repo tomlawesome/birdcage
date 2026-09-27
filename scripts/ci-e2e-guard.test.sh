@@ -278,6 +278,22 @@ audit:staleness:
     - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
   script: [true]"
 
+expect 1 "an audit: job gated on anything but schedule equality is caught" "stages: [e2e]
+$anchors
+e2e:enrol:
+  stage: e2e
+  <<: *gate
+  script: [true]
+e2e:enrol:postgres:
+  stage: e2e
+  <<: *higher_bar
+  script: [true]
+audit:staleness:
+  stage: lint
+  rules:
+    - if: \$CI_PIPELINE_SOURCE != \"schedule\"
+  script: [true]"
+
 expect 1 "an audit: job whose only rule is when: never is caught" "stages: [e2e]
 $anchors
 e2e:enrol:

@@ -57,6 +57,7 @@ Usage: scripts/ci-e2e-guard.py [path-to-.gitlab-ci.yml]
 Exit codes: 0 fine; 1 a rule above is broken; 2 the file could not be
 read (fail red, never quietly green).
 """
+import re
 import sys
 
 STAGE = "e2e"
@@ -121,6 +122,9 @@ def rules_reach_merge_requests(body):
     return False
 
 
+SCHEDULE_ONLY = re.compile(r'\$CI_PIPELINE_SOURCE\s*==\s*["\']schedule["\']')
+
+
 def audit_jobs(doc):
     """Every top-level job whose name starts with `audit:`."""
     return {
@@ -144,7 +148,10 @@ def audit_rules_are_schedule_only(rules):
         if rule.get("when") == "never":
             continue
         cond = str(rule.get("if", ""))
-        if "CI_PIPELINE_SOURCE" not in cond or "schedule" not in cond:
+        # The literal equality, not merely the two words: a `!=` or an
+        # `||` containing them would read as schedule-gated while
+        # matching everything else.
+        if not SCHEDULE_ONLY.search(cond) or "||" in cond:
             return False
         saw_schedule_branch = True
     return saw_schedule_branch

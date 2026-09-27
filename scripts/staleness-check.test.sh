@@ -60,7 +60,10 @@ expect() {
   printf '%s\n' "$upstream_json" > "$work/upstream.json"
   printf '%s\n' "$staleness_yml" > "$root/supply-chain/staleness.yml"
   out="$(python3 "$check" --root "$root" --upstream "$work/upstream.json" "$@" 2>&1)" || got=$?
-  if [ "$got" = "$want" ]; then
+  # must_contain, when set by the caller, is a row the table has to show
+  # verbatim -- the exit code alone cannot tell "behind at 3.22" from
+  # "behind at 3.21".
+  if [ "$got" = "$want" ] && { [ -z "${must_contain:-}" ] || printf '%s' "$out" | grep -qF -- "$must_contain"; }; then
     echo "ok   $name"; pass=$((pass + 1))
   else
     echo "FAIL $name: exit $got, want $want"; echo "$out" | sed 's/^/       /'
@@ -75,19 +78,38 @@ expect() {
 # search hits in exactly the two repositories (node, python) with that
 # many tags; see docker_hub_walk's docstring. So each scenario below is
 # every probe that walk makes: the pin itself (3.20, confirmed to
-# exist), 3.21 (the only one that differs between "current" and
-# "behind"), 3.22 (only reached if 3.21 exists, to confirm the walk
-# stops there), and 4.0 (the one-level-looser probe for the informational
-# "newer line" note, always made, always a miss here).
+# exist), then one number at a time upward until three consecutive
+# misses (the walk's gap tolerance -- a family's numbers are not always
+# contiguous, see the docstring), and 4.0 (the one-level-looser probe for
+# the informational "newer line" note, always made, always a miss here).
 alpine_current='{
   "https://hub.docker.com/v2/repositories/library/alpine/tags/3.20": "{}",
   "https://hub.docker.com/v2/repositories/library/alpine/tags/3.21": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.22": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.23": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.24": {"status": 404},
   "https://hub.docker.com/v2/repositories/library/alpine/tags/4.0": {"status": 404}
 }'
 alpine_behind='{
   "https://hub.docker.com/v2/repositories/library/alpine/tags/3.20": "{}",
   "https://hub.docker.com/v2/repositories/library/alpine/tags/3.21": "{}",
   "https://hub.docker.com/v2/repositories/library/alpine/tags/3.22": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.23": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.24": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.25": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/4.0": {"status": 404}
+}'
+
+# 3.21 never existed but 3.22 does: the shape that made the first live run
+# call node:22-trixie current (no node:23-trixie, but 24, 25 and 26).
+alpine_gap='{
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.20": "{}",
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.22": "{}",
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.21": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.23": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.24": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.25": {"status": 404},
+  "https://hub.docker.com/v2/repositories/library/alpine/tags/3.26": {"status": 404},
   "https://hub.docker.com/v2/repositories/library/alpine/tags/4.0": {"status": 404}
 }'
 
@@ -116,6 +138,10 @@ expect 0 "all current" "$(upstream_json "$alpine_current")" "$no_config"
 
 expect 1 "one deliberately stale pin (image:alpine:3.20 behind)" \
   "$(upstream_json "$alpine_behind")" "$no_config"
+
+must_contain='| image:alpine:3.20 | 3.20 | 3.22 | behind |' \
+  expect 1 "a gap in the tag family does not hide the newer tag beyond it" \
+  "$(upstream_json "$alpine_gap")" "$no_config"
 
 accepted_far="accepted:
   - pin: \"image:alpine:3.20\"
