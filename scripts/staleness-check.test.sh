@@ -50,7 +50,15 @@ EOF
 cat > "$root/.gitlab-ci.yml" <<'EOF'
 variables:
   GOLANG_IMAGE: golang:1.21
+  E2E_POISONER_FIXTURE_DIGEST: registry.example.test/group/poisoner@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 EOF
+
+# The fixture:poisoner pin above, in one place so every scenario's
+# default upstream_json() response (current, matching the pin at its
+# only tag) and the dedicated fixture-tag scenarios further down agree
+# on the URLs.
+fixture_repo_url="https://registry.example.test/v2/group/poisoner"
+fixture_pin_digest="sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
 # expect <want-exit> <name> <upstream-json> <staleness-yml> [--today VALUE]
 expect() {
@@ -113,19 +121,31 @@ alpine_gap='{
   "https://hub.docker.com/v2/repositories/library/alpine/tags/4.0": {"status": 404}
 }'
 
-# upstream_json <alpine-probes-json> [drop-pypi (1 to omit it)]
+# upstream_json <alpine-probes-json> [drop-pypi (1 to omit it)] [fixture-override-json]
+#
+# The fixture-tag scenarios (fixture:poisoner, below) pass their own
+# tags/list and/or manifest response as the third argument, which wins
+# over the default (a single version tag matching the pin, i.e.
+# "current") -- so every other scenario in this suite, which never
+# touches that third argument, keeps seeing a current fixture row and
+# is unaffected by it.
 upstream_json() {
-  local alpine_probes="$1" drop_pypi="${2:-0}"
-  python3 - "$alpine_probes" "$drop_pypi" <<'PYEOF'
+  local alpine_probes="$1" drop_pypi="${2:-0}" fixture_override="${3:-}"
+  [ -n "$fixture_override" ] || fixture_override='{}'
+  python3 - "$alpine_probes" "$drop_pypi" "$fixture_override" \
+    "$fixture_repo_url" "$fixture_pin_digest" <<'PYEOF'
 import json, sys
-alpine_probes, drop_pypi = sys.argv[1], sys.argv[2]
+alpine_probes, drop_pypi, fixture_override, repo_url, pin_digest = sys.argv[1:6]
 merged = {
     "https://go.dev/dl/?mode=json": json.dumps([{"version": "go1.21.0", "stable": True}]),
     "https://registry.npmjs.org/widget/latest": json.dumps({"version": "1.0.0"}),
+    f"{repo_url}/tags/list": {"tags": ["v1.0.0"]},
+    f"{repo_url}/manifests/v1.0.0": pin_digest,
 }
 if drop_pypi != "1":
     merged["https://pypi.org/pypi/gadget/json"] = json.dumps({"info": {"version": "2.0.0"}})
 merged.update(json.loads(alpine_probes))
+merged.update(json.loads(fixture_override))
 print(json.dumps(merged))
 PYEOF
 }
@@ -172,6 +192,48 @@ alpine-branch: {}"
 
 expect 0 "an unchecked entry covers the unreachable pin" \
   "$missing_url_upstream" "$unchecked_config"
+
+# fixture:poisoner (#147): the private fixtures project publishes the
+# poisoner fixture only under a version tag, never `latest`, so this
+# check lists tags/list, picks the newest v-tag and HEADs its manifest.
+
+# Several tags, only some of them version-shaped (v1.0.0, v1.2.0):
+# "latest" and "dev" are ignored, v1.2.0 wins as newest, and its
+# manifest digest matches the pin.
+fixture_current="{
+  \"$fixture_repo_url/tags/list\": {\"tags\": [\"v1.0.0\", \"v1.2.0\", \"latest\", \"dev\"]},
+  \"$fixture_repo_url/manifests/v1.2.0\": \"$fixture_pin_digest\"
+}"
+
+must_contain='| fixture:poisoner | '"$fixture_pin_digest"' | v1.2.0 | current |' \
+  expect 0 "fixture pin matches the newest version tag's digest -- current" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_current")" "$no_config"
+
+# Same single v1.0.0 tag as the suite's default, but its manifest
+# digest has moved on from the pin.
+fixture_behind="{
+  \"$fixture_repo_url/manifests/v1.0.0\": \"sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321\"
+}"
+
+must_contain='| fixture:poisoner | '"$fixture_pin_digest"' | v1.0.0 | behind |' \
+  expect 1 "fixture pin no longer matches the newest tag's digest -- behind" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_behind")" "$no_config"
+
+# No tag in the repository parses as a version at all.
+fixture_no_version_tags="{
+  \"$fixture_repo_url/tags/list\": {\"tags\": [\"latest\", \"dev\"]}
+}"
+
+expect 1 "no version tag among the fixture repository's tags -- unverifiable" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_no_version_tags")" "$no_config"
+
+# tags/list itself 404s.
+fixture_tags_404="{
+  \"$fixture_repo_url/tags/list\": {\"status\": 404}
+}"
+
+expect 1 "fixture tags/list 404s -- unverifiable" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_tags_404")" "$no_config"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
