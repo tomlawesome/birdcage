@@ -353,6 +353,21 @@ only at the point that text is displayed, per surface:
   or refused stream falls back to the dashboard's existing 30s poll,
   which every route above already relies on.
 
+## CI security scanning
+
+A scanner runs in the `lint` stage of `.gitlab-ci.yml`, on every merge
+request and on `dev`. It is not linked into birdcage or shipped in any
+image -- a CI-only tool (AGENTS.md, "Approved third-party modules").
+
+- **`lint:govulncheck`** (issue #51) runs `govulncheck ./...` against the
+  Go toolchain version `go.mod` names, checking the module graph and the
+  standard library against the Go vulnerability database. It fails the
+  pipeline on a vulnerability reachable from birdcage's own code; an
+  unreachable one is reported in the job log but does not fail it --
+  govulncheck's own default, which is what keeps the signal to
+  vulnerabilities birdcage's binaries can actually hit rather than every
+  advisory anywhere in the dependency graph.
+
 ## Recommended deployment hardening
 
 - Install birdcage's CA certificate (`BIRDCAGE_CA_DIR/ca.pem`) in your

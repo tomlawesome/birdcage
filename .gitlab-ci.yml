@@ -263,6 +263,36 @@ lint:agent-deps:
     - scripts/agent-deps-check.sh ./cmd/mockingbird
     - scripts/agent-deps-check.sh ./cmd/nightjar
 
+# govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
+# CI-only tool, never linked into birdcage (AGENTS.md, "Approved third-
+# party modules"). Installed from source and run against this project's
+# own `go 1.27.0` (go.mod) -- the Go checksum database verifies the
+# module download the same way it does for golangci-lint above.
+#
+# GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
+# go.mod names a lower floor than 1.27.0, and GOTOOLCHAIN=auto's default
+# module-aware toolchain selection picks a toolchain that satisfies
+# *that* floor, not this project's -- observed directly: it built
+# govulncheck with go1.26.8, which then refused to analyse this
+# project's go1.27-only source ("package requires newer Go version
+# go1.27") on every commit, clean or not. GOTOOLCHAIN=local pins both
+# steps to $GOLANG_IMAGE's own go, which already satisfies govulncheck's
+# floor and matches go.mod exactly -- confirmed against the real
+# golang:1.27 image.
+#
+# A reachable vulnerability fails the job; an unreachable one is printed
+# only -- govulncheck's own default. Proved locally, not assumed: a
+# throwaway module pinning golang.org/x/text@v0.3.6 and calling
+# language.Parse (GO-2021-0113, a known reachable out-of-bounds read)
+# exits 3; this project's own tree, run the same way, exits 0.
+lint:govulncheck:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: *gate
+  script:
+    - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+    - GOTOOLCHAIN=local govulncheck ./...
+
 # ---------------------------------------------------------------------------
 # TEST
 # ---------------------------------------------------------------------------

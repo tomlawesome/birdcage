@@ -90,6 +90,7 @@ of it by this issue.
 | `lint:ci` | Guards this arrangement. Cheapest job in the pipeline. |
 | `lint:agent-deps` | ADR-0008 decision 4 -- no server package may reach the agent image. Broken by an ordinary import. |
 | `lint:scripts` | Every `scripts/*.test.sh`. Ten of them ran nowhere until #100; they test the release path, which has the least other coverage. |
+| `lint:govulncheck` | #51: a known-vulnerable dependency or stdlib CVE can land on any branch and stay until someone reads an advisory by hand; catching it at the same hop as every other lint job is what makes that not happen. |
 | `test:frontend` | Unit tests and the two pixel gates. Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
 | `test:smoke` | The real binary driven by a browser, in Firefox (#83) -- the owner's browser, so it is the bar every change has to clear. #81 widened its journeys past the hero sentence and four tiles: every section rendering with no console error, the range picker actually re-querying, a live event over the real ingest path reaching the page by SSE, the status strip including the mail item, and a killed birdcage read as a message rather than a blank page. |

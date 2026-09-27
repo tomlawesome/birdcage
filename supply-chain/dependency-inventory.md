@@ -360,14 +360,24 @@ in the mockingbird image; nothing reads an Alpine package's licence. So row
 is not enforced by CI. Worth closing if a third apk-pinned shipped package
 ever appears.
 
+### K. CI-only security scanners added by #51 and #28
+
+A new `lint`-stage job (`docs/ci-hops.md`), not linked into birdcage nor
+shipped in any image -- the same footing as `golangci-lint` (row 201).
+Owner approval recorded on its issue, 2026-09-27.
+
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-27) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+|---|---|---|---|---|---|---|---|---|---|
+| 228 | `golang.org/x/vuln` (govulncheck) | v1.8.0, `go install .../govulncheck@v1.8.0` in `lint:govulncheck`, verified by the Go checksum database like every other module download | v1.8.0 -- current (`proxy.golang.org/golang.org/x/vuln/@latest`, verified 2026-09-27) | BSD-3-Clause | direct | Go team (golang.org/x) | high (the standard Go vulnerability scanner, maintained by the language team) | CI-only -- installed and run in `lint:govulncheck`, never imported by any package birdcage builds | Approved -- #51, owner, 2026-09-27 |
+
 ## Summary, by approval status
 
-227 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
-3 in section F, 2 in section J).
+228 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
+3 in section F, 2 in section J, 1 in section K).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 7 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87) |
+| Approved, with issue number | 8 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 49 (every other **direct** dependency, including `debian:trixie-slim`, row 224) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 223) |
