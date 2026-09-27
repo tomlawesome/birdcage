@@ -238,3 +238,39 @@ the arrangement cannot decay quietly:
 Rule 1 is what makes this durable. "Runs later" decaying into "runs
 never" needs a rule edit that the guard names, rather than a plausible
 `if:` nobody reads twice.
+
+## Scheduled: the staleness audit
+
+`audit:staleness` (#139) is not a hop at all -- it never runs on a merge
+request, on `dev`, `preview` or `main`, only on a GitLab CI schedule
+(project Settings > CI/CD > Schedules) carrying the variable
+`SCHEDULED_JOB=staleness`. It runs `scripts/staleness-check.py`, which
+reads every pinned Go module, npm package, pip package, container tag,
+apk package and checksum-pinned tool this repository names and compares
+each against its real upstream -- the live figure that
+`supply-chain/dependency-inventory.md`'s own "Latest upstream" column is
+only ever a dated snapshot of.
+
+It cannot block a merge, on purpose: a check that only reads the outside
+world proves nothing about the change in front of a reviewer, would make
+every ordinary pipeline pay for a round trip to half a dozen registries,
+and would go red for a reason nobody in that merge request can fix by
+editing their own diff. `scripts/ci-e2e-guard.py` enforces the shape --
+any `audit:`-prefixed job must sit outside the `e2e` stage and must be
+unreachable from anywhere but a schedule -- the same way it already
+enforces the hop shape above.
+
+Reading the result: the job's `staleness-report.md` artifact (kept 90
+days) is a Markdown table, one row per pin, each with its pinned value,
+the latest one found upstream, a status (`current`, `behind`,
+`floating`, `accepted` or `unverifiable`), and a note. `behind` and
+`unverifiable` both fail the job -- a pin the check could not reach is
+not a pass by default, because a check that cannot check must not pass.
+
+A lag the owner wants to accept on purpose -- a version held back for a
+documented reason, or an upstream this project's own CI runner genuinely
+cannot reach -- is recorded in `supply-chain/staleness.yml`, under
+`accepted:` (with a reason and a review-by date, after which it fails
+again) or `unchecked:` (for a pin this check has no route to at all).
+Nothing is accepted there speculatively: an entry exists only for a lag
+the report actually found and the owner actually chose to hold.

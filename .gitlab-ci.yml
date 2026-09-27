@@ -324,6 +324,40 @@ lint:gitleaks:
     - scripts/gitleaks-scan.test.sh
     - scripts/gitleaks-scan.sh .
 
+# #139: nothing else in this file ever checks a pin against its own
+# upstream -- every version above is trusted to still be current for as
+# long as nobody happens to look. scripts/staleness-check.py is that
+# look: every Go module, npm package, pip package, container tag, apk
+# pin and checksum-pinned tool this file and the Dockerfiles name,
+# compared against its real registry. Never on a merge request or on
+# push to dev -- a check that only reads the outside world has nothing to
+# do with the change in front of it, would make every pipeline pay for a
+# round trip to half a dozen registries, and would go red for a reason
+# nobody in the merge request can fix by editing their own diff. A
+# schedule (project Settings > CI/CD > Schedules, owner sets up once)
+# with the variable SCHEDULED_JOB=staleness is what runs it; the
+# `when: never` fallback keeps every other trigger, including an
+# unrelated schedule, from running it by accident. `scripts/ci-e2e-
+# guard.py` carries the matching rule (docs/ci-hops.md's own guard,
+# extended by this issue): any `audit:`-prefixed job must be
+# schedule-only and outside the `e2e` stage, so this arrangement cannot
+# quietly grow a second copy that runs on every branch.
+audit:staleness:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULED_JOB == "staleness"
+    - when: never
+  before_script:
+    - pip install --quiet pyyaml
+  script:
+    - python3 scripts/staleness-check.py --report staleness-report.md
+  artifacts:
+    paths: [staleness-report.md]
+    when: always
+    expire_in: 90 days
+
 # ---------------------------------------------------------------------------
 # TEST
 # ---------------------------------------------------------------------------
