@@ -779,47 +779,15 @@ build:images:
     # Build images from earlier pipelines are pruned here rather than in an
     # after_script somewhere: a later job cannot know whether the pipeline
     # still needs them, and a cancelled pipeline never reaches its cleanup
-    # at all. Matching on the name and excluding this pipeline's own tag
-    # used to be enough (#112): every other pipeline's tag was assumed
-    # dead. On this shared daemon that assumption is false whenever
-    # another pipeline is still running, so a tag only goes now if it is
-    # also OLD -- older than any pipeline still on this host could be,
-    # so it cannot be a tag someone is mid-use of. 6 hours is that
-    # cutoff: this project sets no per-job or per-pipeline `timeout:`, so
-    # the GitLab default (1h per job) applies, and 6h leaves a wide
-    # margin over that for a job a runner picked up late, clock skew
-    # between runners, or a future job whose timeout is raised, without
-    # ever getting close to how long a genuinely abandoned tag sits
-    # around before the next pipeline's prune finds it anyway. Age comes
-    # from `docker image inspect`'s own Created timestamp, not
-    # CI_PIPELINE_ID or a file mtime -- these Dockerfiles set no
-    # SOURCE_DATE_EPOCH or other reproducible-build stamp (grep
-    # build/*/Dockerfile), so Created is the real wall-clock build time,
-    # not a fixed value every rebuild of the same commit would share.
-    # docker:29-cli is Alpine/busybox, so GNU `date -d` (which parses
-    # RFC3339 directly) is not available; busybox `date -D` instead
-    # takes the input format explicitly, so the fractional seconds
-    # RFC3339Nano always includes are stripped first since busybox's
-    # parser has no token for them -- tested directly against
-    # `docker:29-cli` (see #112's write-up in docs/ci-hops.md). A
-    # missing or unparseable image just gets skipped rather than
-    # counted as young, and `|| true` on the removal itself (as
-    # before) means a prune failure never fails this build.
-    - |
-      set -eu
-      max_age_seconds=$((6 * 3600))
-      now_epoch="$(date -u +%s)"
-      for repo in birdcage-build mockingbird-build nightjar-build smb-lure-build holder-build opencanary-build; do
-        docker image ls --format '{{.Repository}}:{{.Tag}}' "$repo" \
-          | grep -v ":${CI_PIPELINE_ID}$" \
-          | while IFS= read -r tag; do
-              created="$(docker image inspect --format '{{.Created}}' "$tag" 2>/dev/null)" || continue
-              created_epoch="$(date -u -D '%Y-%m-%dT%H:%M:%S' -d "${created%%.*}" +%s 2>/dev/null)" || continue
-              age=$((now_epoch - created_epoch))
-              [ "$age" -gt "$max_age_seconds" ] || continue
-              docker image rm --force "$tag" >/dev/null 2>&1 || true
-            done || true
-      done
+    # at all. #145: the prune used to list only the local repo name, so it
+    # removed the local "<name>-build:<pipeline id>" tag and left the
+    # registry-named "${CI_REGISTRY_IMAGE}/<name>-build:ci-<pipeline id>"
+    # tag on the same image, which kept the image alive for good. On the
+    # runner host on 2026-09-27, 268 of 305 images were this project's
+    # build images this left behind. scripts/ci-prune-build-images.sh has
+    # the fixed loop and its own header for the age rule, the busybox
+    # `date -D` parsing, and the failure posture.
+    - scripts/ci-prune-build-images.sh
     - |
       set -eu
       stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"
