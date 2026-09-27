@@ -300,6 +300,11 @@ floors:
                              # covered.
   internal/agent/snmp: 82
   internal/agent/tailer: 77
+  internal/agent/upgradetoken: 79 # New package (#54): the agent-side
+                              # upgrade-token subcommand the printed upgrade
+                              # command runs once, in a throwaway container
+                              # of the new image. 79.3% measured by test:go
+                              # in pipeline 1766, 2026-09-27.
   internal/api: 84
   internal/audit: 94
   internal/ca: 76
@@ -321,6 +326,10 @@ floors:
                              # migration names always exist for a defined
                              # Engine, so nothing reaches them without fault
                              # injection this package doesn't have a seam for.
+  internal/driftsched: 72    # New package (#54): the daily email listing
+                             # every agent behind birdcage's version.
+                             # 72.7% measured by test:go in pipeline 1766,
+                             # 2026-09-27.
   internal/enrol: 96         # 96.0% measured with -race and Postgres,
                              # 2026-09-24 (#130): handleHello/handleProvision's
                              # trailing-data and storage-error branches,
@@ -353,6 +362,10 @@ floors:
   internal/neverblock: 100    # 100.0% measured, 2026-09-26 (#33), against
                               # both SQLite and a real Postgres.
   internal/opencanary: 100
+  internal/runcmd: 75         # New package (#54): builds the docker lines
+                              # printed for enrolment and for the one-paste
+                              # upgrade command. 75.1% measured by test:go
+                              # in pipeline 1766, 2026-09-27.
   internal/scan: 100          # 100.0% measured, 2026-09-22 (#108, slice 1
                               # commit 2). The Grype subprocess wrapper and
                               # its failure classification -- every branch
