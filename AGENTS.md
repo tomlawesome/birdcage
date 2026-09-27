@@ -106,7 +106,7 @@ stamp.
 Licence gating by ecosystem: `scripts/licence-check.sh` covers Go modules,
 `scripts/licence-check-npm.sh` covers npm (#92), and
 `scripts/licence-check-python.sh` covers the pip packages installed into
-the mockingbird image (#95). A package whose own metadata names a licence
+the OpenCanary image (#95; moved out of mockingbird by #132). A package whose own metadata names a licence
 outside `supply-chain/licence-policy.yml`'s allow-list, or names none at
 all, fails the gate unless it has a named, version-pinned exception under
 that file's `allow-python-package-licenses:` key -- `hpfeeds@3.0.0`

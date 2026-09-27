@@ -48,10 +48,13 @@ birdcage agent enrol --name office-nas --lane front-door
 ```
 
 This prints a `docker run` command and one line underneath it saying how
-long the token is valid. With the SMB lure on (the default), it prints
-three blocks: the address holder first (see ["The SMB
-lure"](#the-smb-lure) below for what it is and why it comes first), then
-the canary, then the lure. It looks like this (values differ every time):
+long the token is valid. Since issue #132, OpenCanary is always its own
+container, so there are always at least three blocks: the address holder
+first (see ["The address holder"](#the-address-holder) below for what it
+is and why it comes first), then the canary (the Mockingbird agent), then
+OpenCanary itself. With the SMB lure on (the default) a fourth block
+follows for the lure (see ["The SMB lure"](#the-smb-lure) below). It
+looks like this (values differ every time):
 
 ```
 docker volume create --driver local \
@@ -67,10 +70,9 @@ docker run -d --name holder --restart unless-stopped \
   -v smb-audit:/audit:ro \
   holder:latest
 
-docker run -d --name mockingbird --restart unless-stopped --init \
-  --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+docker run -d --name mockingbird --restart unless-stopped \
   --cap-add NET_RAW \
-  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \
+  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary:ro \
   --network container:holder \
   -v smb-audit:/audit:ro \
   -e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log \
@@ -78,9 +80,21 @@ docker run -d --name mockingbird --restart unless-stopped --init \
   -e MOCKINGBIRD_CA_PIN=<64 hex characters -- the CA's SHA-256 pin> \
   -e MOCKINGBIRD_DEPLOY_TOKEN=<64 hex characters -- shown once, single-use> \
   mockingbird:latest
+
+docker run -d --name opencanary --restart unless-stopped --init \
+  --network container:holder \
+  --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 32 \
+  --memory 128m \
+  --tmpfs /var/tmp:size=8m \
+  -v mockingbird-log:/var/log/opencanary \
+  opencanary:latest
 ```
 
-followed by a third block for the SMB lure (see ["The SMB
+followed by a fourth block for the SMB lure (see ["The SMB
 lure"](#the-smb-lure) below), and then the line saying how long the token
 is valid:
 
@@ -90,41 +104,95 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 
 `--cap-add NET_RAW` is what lets the canary notice being scanned: the
 agent opens one raw socket inside the container's own network namespace
-(the holder's, when the SMB lure is on -- see below) to see connection
-attempts aimed at ports none of its emulated services answer on, which
-is the only way it can report a port sweep (OpenCanary's own port-scan
-module needs firewall rules and a root process, and this container has
-neither). Leave the flag off and everything else still works -- every
-hit on an emulated service is still reported -- but a sweep of closed
-ports goes unseen, and the agent says so in one line at startup:
-`port-scan detection is OFF`.
+(the holder's -- every honeypot canary joins it now, issue #132) to see
+connection attempts aimed at ports none of its emulated services answer
+on, which is the only way it can report a port sweep (OpenCanary's own
+port-scan module needs firewall rules and a root process, and this
+container has neither). Leave the flag off and everything else still
+works -- every hit on an emulated service is still reported -- but a
+sweep of closed ports goes unseen, and the agent says so in one line at
+startup: `port-scan detection is OFF`.
 
-The two `-v` flags are not optional. `mockingbird-state` holds the
-canary's credentials and its place in the log; `mockingbird-log` holds
-OpenCanary's log, which is the event store the agent replays from. Named
-volumes survive `docker rm` and an image upgrade; the anonymous volumes
-Docker would otherwise create do not. Lose the state volume and the
-canary cannot start -- it refuses loudly rather than coming back healthy
-with no credentials -- and has to be enrolled again. Lose the log volume
-and any hits not yet delivered are gone.
+The two `-v` flags on the agent's own command are not optional.
+`mockingbird-state` holds the canary's credentials and its place in the
+log, and never anything else -- OpenCanary's own container never mounts
+it, in either direction (see ["OpenCanary"](#opencanary) below).
+`mockingbird-log` holds OpenCanary's log, which is the event store the
+agent replays from; the agent only reads it (`:ro`), and OpenCanary's own
+command above mounts the same volume read-write, since it is the writer.
+Named volumes survive `docker rm` and an image upgrade; the anonymous
+volumes Docker would otherwise create do not. Lose the state volume and
+the canary cannot start -- it refuses loudly rather than coming back
+healthy with no credentials -- and has to be enrolled again. Lose the log
+volume and any hits not yet delivered are gone.
+
+### The address holder
+
+The holder (issue #126) does nothing at all -- it just sits there holding
+a network address, so the canary, OpenCanary and the lure (if deployed)
+can each be restarted independently without taking any of the others'
+listening sockets down. It is what all of their own `--network
+container:` flags join, in place of joining each other directly. Issue
+#132 made it unconditional: before that, it was printed only when the SMB
+lure was being deployed, since a lure-less canary had nothing else ever
+joining its own namespace; now OpenCanary always does.
+
+Run it **first**, before the canary, OpenCanary or the lure: all of them
+join its network namespace, so it has to exist before they do. With the
+SMB lure on it also holds the lure's audit volume (below); without the
+lure it prints with no volume at all:
+
+```
+docker run -d --name holder --restart unless-stopped \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 16 \
+  --memory 32m \
+  holder:latest
+```
+
+It never needs restarting, upgrading only when a new birdcage release
+says so, and answers nothing on the network itself -- the canary,
+OpenCanary and the lure are what actually listen, on the address it
+holds.
+
+### OpenCanary
+
+Before issue #132, OpenCanary ran as the agent's own child process inside
+the Mockingbird container (issue #69). The owner's decision on #132,
+recorded in the ADR-0008 amendment
+(`docs/adr/0013-opencanary-own-container.md`): *"direct attack surfaces
+are sensibly segregated into containers."* OpenCanary is now its own
+image (`build/opencanary`) and its own container, with no access
+whatsoever to `/var/lib/mockingbird` -- the agent's bearer token and its
+mTLS client key -- in either direction. It joins the address holder's
+network namespace exactly the way the agent does, and its own log volume
+is the only thing it shares with the agent.
+
+Restarting OpenCanary alone -- `docker restart opencanary` -- leaves the
+agent's heartbeat and the SMB lure (if deployed) running and reporting,
+the same guarantee the holder already gives the canary and the lure
+(below). What restarting OpenCanary does *not* leave alone is the agent's
+own opinion of it: OpenCanary no longer being this agent's own child
+process, the agent can no longer notice it die by watching a process
+exit (#69's own mechanism, superseded). Instead the agent dials
+OpenCanary's own configured ports once per heartbeat and reports what it
+finds; a dead OpenCanary shows up on the canary's tile within one
+heartbeat interval as `opencanary_down`, and clears on the next heartbeat
+that finds it answering again.
+
+`build/opencanary/README.md` has the per-flag hardening evidence, the
+same way `build/smb-lure/README.md` has it for the lure below.
 
 ### The SMB lure
 
 A canary that offers a file share is the most ordinary thing on an office
 network, and it is the thing an intruder looks for first. So `birdcage
-canary enrol` also prints two more containers: the address holder, and a
-real Samba serving read-only guest shares on the canary's own address.
-
-#### The address holder
-
-The holder (issue #126) does nothing at all -- it just sits there holding
-a network address and the audit volume, so the canary and the lure can
-each be restarted independently without taking the other one's listening
-socket down. It is what the canary's and the lure's own `--network
-container:` flags join, in place of joining each other directly.
-
-Run it **first**, before either the canary or the lure: both of the
-others join its network namespace, so it has to exist before they do.
+canary enrol` also prints a real Samba, serving read-only guest shares on
+the canary's own address, when the lure is on (the default). With it on,
+the address holder above also carries the audit volume both this
+container and the canary read from:
 
 ```
 docker volume create --driver local \
@@ -140,10 +208,6 @@ docker run -d --name holder --restart unless-stopped \
   -v smb-audit:/audit:ro \
   holder:latest
 ```
-
-It never needs restarting, upgrading only when a new birdcage release
-says so, and answers nothing on the network itself -- the canary and the
-lure are what actually listen, on the address it holds.
 
 #### The lure itself
 
@@ -245,7 +309,7 @@ way a compromised Samba cannot get around.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--lure smb=off` | on | Deploy no SMB lure, and no address holder either -- with nothing else to join its namespace, the canary keeps its own. The enrol output then prints no holder block, no lure block and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
+| `--lure smb=off` | on | Deploy no SMB lure. The holder and OpenCanary still print -- issue #132 made the holder unconditional -- but with no audit volume: the enrol output prints no `docker volume create`, no lure block, no `-v smb-audit:/audit:ro` on the holder or the canary, and no `MOCKINGBIRD_SMB_AUDIT_PATH`, and smb stays **untested** on this canary's ledger. |
 | `--smb-workgroup` | `WORKGROUP` | The workgroup the share announces. Use whatever the rest of your network uses; a share in a workgroup of its own is the one thing on the segment that looks odd. |
 | `--smb-shares` | `public,backup,scans` | The three share names, in that order: documents, configuration backups, scanner output. Names only -- what is on each share is part of the image. |
 
@@ -659,17 +723,29 @@ one alert per packet.
 
 ### If you also use `--security-opt no-new-privileges`
 
-You cannot have both. `no-new-privileges` tells the kernel to ignore
-file capabilities, and the file capability on the agent binary is
-exactly how a process running as an ordinary user gets `NET_RAW` without
-the container ever being root. Docker does not hand the capability to a
-non-root process any other way. Pick one:
+Since issue #132 you can have both, as long as you do not also add
+`--init` to the agent's container.
 
-- **Keep `--cap-add NET_RAW`, drop `no-new-privileges`** -- the default,
-  and what the printed command does. The container still drops every
-  other capability, still runs as uid 65532, and still has no shell.
-- **Keep `no-new-privileges`, drop `--cap-add NET_RAW`** -- port-scan
-  detection is off, and the agent logs one line saying so at startup.
+The agent binary carries `NET_RAW` as a file capability: that is how a
+process running as an ordinary user gets the capability without the
+container ever being root. `no-new-privileges` stops a program from
+gaining capabilities its parent did not already have. When the agent is
+the container's first process, its parent is Docker's own container
+runtime, which already holds `NET_RAW` because of `--cap-add NET_RAW`, so
+the agent keeps it. When `--init` puts a small init process in front of
+the agent, that init runs as uid 65532 with no capabilities at all, and
+the agent started from it gets none either.
+
+- **`--cap-add NET_RAW` with `no-new-privileges`, no `--init`** --
+  port-scan detection is on. The agent still holds `NET_RAW` and nothing
+  else, still runs as uid 65532, and still has no shell.
+- **`--cap-add NET_RAW` with `no-new-privileges` and `--init`** --
+  port-scan detection is off, and the agent logs one line saying so at
+  startup.
+
+The printed command does not add `no-new-privileges` to the agent's
+container. Before #132 it could not: the agent then ran under `--init` to
+supervise OpenCanary, and the two did not mix.
 
 ## Catching a poisoner on your segment
 

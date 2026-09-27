@@ -34,12 +34,20 @@ export type Lane = 'lan' | 'srv' | 'iot' | 'guest'
  * 'hits_merged' (issue #45, owner-ratified 2026-09-25) is a honeypot
  * agent whose heartbeat reports a nonzero cumulative event-id collision
  * count -- two log lines folded into one hit. Ranked straight after
- * 'not_delivering', ahead of 'self_test_failed'. */
+ * 'not_delivering', ahead of 'self_test_failed'.
+ *
+ * 'opencanary_down' (issue #132) is a honeypot whose agent's own
+ * per-heartbeat port probe found OpenCanary -- now a separate container,
+ * no longer supervised as the agent's own child process (#69,
+ * superseded) -- not answering. Ranked beside 'not_delivering', ahead of
+ * 'hits_merged'; this placement is the change's own implementation
+ * choice, not a ratified precedence (docs/adr/0013-opencanary-own-container.md). */
 export type CanaryStatus =
   | 'token_conflict'
   | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
+  | 'opencanary_down'
   | 'hits_merged'
   | 'self_test_failed'
   | 'db_stale'
@@ -269,6 +277,7 @@ export type HistoryState =
   | 'credential_conflict'
   | 'silent'
   | 'not_delivering'
+  | 'opencanary_down'
   | 'hits_merged'
   | 'self_test_failed'
   | 'db_stale'

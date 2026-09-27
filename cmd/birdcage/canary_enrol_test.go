@@ -33,19 +33,26 @@ func TestEnrolRunCommandCarriesEveryRequiredFlag(t *testing.T) {
 		flag string
 		why  string
 	}{
-		{"--init", "the agent supervises OpenCanary; Docker's init reaps orphans"},
-		{"--sysctl net.ipv4.ip_unprivileged_port_start=0", "nothing in the container is ever root, so the privileged-port floor is lowered instead"},
 		{"--cap-add NET_RAW", "issue #65: without it the agent cannot open its capture socket and port-scan detection is off"},
 		{"-v mockingbird-state:/var/lib/mockingbird", "credentials and the acknowledged log position must outlive the container"},
-		{"-v mockingbird-log:/var/log/opencanary", "OpenCanary's log is the durable event store the agent replays from"},
+		{"-v mockingbird-log:/var/log/opencanary:ro", "issue #132: OpenCanary is the volume's writer now, in its own container; this one only tails it"},
 		{"--restart unless-stopped", "a canary that stops reporting is a security event (SECURITY.md)"},
 		{"-v smb-audit:/audit:ro", "issue #87 decision 6: the lure's audit volume is shared one-way, so this container may only read it"},
 		{"-e MOCKINGBIRD_SMB_AUDIT_PATH=/audit/smb.log", "issue #87: without it the agent's smb road does not run at all"},
-		{"--network container:holder", "issue #126: this container's own network namespace is the address holder's, so restarting it never takes the lure's listening socket down with it"},
+		{"--network container:holder", "issue #126: this container's own network namespace is the address holder's, so restarting it never takes OpenCanary's or the lure's listening socket down with it"},
 	}
 	for _, r := range required {
 		if !strings.Contains(got, r.flag) {
 			t.Errorf("printed command is missing %q -- %s\ngot:\n%s", r.flag, r.why, got)
+		}
+	}
+
+	// Issue #132: OpenCanary's own container now binds every privileged
+	// port and spawns nothing this agent needs to reap, so neither of
+	// these belongs on this container's own command any more.
+	for _, forbidden := range []string{"--sysctl", "--init"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("printed command carries %q, which moved to OpenCanary's own command\ngot:\n%s", forbidden, got)
 		}
 	}
 

@@ -185,6 +185,18 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
         },
       ]
     }
+    case 'opencanary_down':
+      // Issue #132: OpenCanary moved into its own container, so the
+      // agent can no longer notice it die by watching a child process
+      // exit (#69, superseded) -- it dials OpenCanary's own configured
+      // ports once per heartbeat instead, and this is what a failed
+      // dial looks like on the tile.
+      return [
+        {
+          text: `⚠ OpenCanary not answering · the agent's own port probe found it down`,
+          cls: 'al',
+        },
+      ]
     case 'self_test_failed':
       // ADR-0012 (issue #116): a scanner's failed run names the `scan`
       // target and the last stage reached, from `last_run` -- there is

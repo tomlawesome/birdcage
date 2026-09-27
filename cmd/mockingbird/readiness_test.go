@@ -198,6 +198,114 @@ func TestRunReadinessCheckSurvivesAnUnreadableConf(t *testing.T) {
 	}
 }
 
+// TestOpenCanaryProbeReportsUpWhenEverythingAnswers is issue #132's own
+// reproduction of what replaces #69: with OpenCanary no longer this
+// agent's own child process, nothing tells the agent it died except this
+// probe. Before it existed there was no way for a heartbeat to say
+// anything about OpenCanary's liveness at all; this test fails against
+// that absence (Probe returning nil, not a true *bool).
+func TestOpenCanaryProbeReportsUpWhenEverythingAnswers(t *testing.T) {
+	t.Parallel()
+
+	a := listenAndAccept(t)
+	b := listenAndAccept(t)
+	conf := writeConf(t, map[string]int{"ftp": a, "ssh": b})
+
+	log, _ := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	got := probe.Probe(context.Background())
+	if got == nil || !*got {
+		t.Fatalf("Probe() = %v, want a true *bool", got)
+	}
+}
+
+// TestOpenCanaryProbeReportsDownWhenAModuleDoesNotAnswer is the state
+// #132's own health state (StateOpenCanaryDown) is built on: one
+// configured module not answering is enough to call OpenCanary down,
+// the same all-or-nothing rule the boot-time readiness check uses for
+// its own "believes it is ready" line.
+func TestOpenCanaryProbeReportsDownWhenAModuleDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+
+	up := listenAndAccept(t)
+	down := closedLoopbackPort(t)
+	conf := writeConf(t, map[string]int{"ftp": up, "https": down})
+
+	log, buf := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	got := probe.Probe(context.Background())
+	if got == nil || *got {
+		t.Fatalf("Probe() = %v, want a false *bool", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "https") {
+		t.Errorf("expected a WARN naming https on the first down probe, got log:\n%s", out)
+	}
+}
+
+// TestOpenCanaryProbeLogsOnlyOnTransition proves the WARN fires once per
+// failure, not once per heartbeat -- a canary stuck reporting
+// opencanary_down for hours must not also flood its own container log
+// once per tick.
+func TestOpenCanaryProbeLogsOnlyOnTransition(t *testing.T) {
+	t.Parallel()
+
+	down := closedLoopbackPort(t)
+	conf := writeConf(t, map[string]int{"https": down})
+
+	log, buf := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	probe.Probe(context.Background())
+	firstLen := buf.Len()
+	probe.Probe(context.Background())
+	if buf.Len() != firstLen {
+		t.Errorf("a second consecutive down probe logged more output; got:\n%s", buf.String())
+	}
+}
+
+// TestOpenCanaryProbeReportsNoOpinionWithNoPorts matches
+// TestRunReadinessCheckSurvivesAnUnreadableConf's own contract: an
+// unreadable or empty configuration is "no opinion", never a false
+// claiming OpenCanary is down -- that distinction is exactly what keeps
+// canaries.agent_opencanary_up NULL instead of wrongly raising
+// StateOpenCanaryDown (internal/store/health.go's openCanaryDown).
+func TestOpenCanaryProbeReportsNoOpinionWithNoPorts(t *testing.T) {
+	t.Parallel()
+
+	log, _ := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(filepath.Join(t.TempDir(), "absent.conf")), log)
+	if got := probe.Probe(context.Background()); got != nil {
+		t.Errorf("Probe() = %v, want nil (no opinion)", *got)
+	}
+}
+
+// TestOpenCanaryProbeIgnoresUDPOnlyModules is issue #132's own
+// reproduction of a real false alarm: internal/agent/readiness.Dial only
+// ever dials "tcp" (its own doc comment), so a UDP-only module like sip
+// or tftp always looks down to a TCP probe, whether or not OpenCanary is
+// actually running. Reproduced directly (2026-09-26) against the real
+// image: with sip and tftp counted, every heartbeat reported OpenCanary
+// down permanently. This test fails without udpOnlyModules' exclusion --
+// every TCP module answering, with sip and tftp both configured and
+// silent, must still read up.
+func TestOpenCanaryProbeIgnoresUDPOnlyModules(t *testing.T) {
+	t.Parallel()
+
+	up := listenAndAccept(t)
+	sipPort := closedLoopbackPort(t)
+	tftpPort := closedLoopbackPort(t)
+	conf := writeConf(t, map[string]int{"ftp": up, "sip": sipPort, "tftp": tftpPort})
+
+	log, buf := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	got := probe.Probe(context.Background())
+	if got == nil || !*got {
+		t.Fatalf("Probe() = %v, want a true *bool -- sip/tftp not answering over TCP must not count against it", got)
+	}
+	if out := buf.String(); strings.Contains(out, "level=WARN") {
+		t.Errorf("expected no WARN with only UDP-only modules silent, got log:\n%s", out)
+	}
+}
+
 // TestDefaultReadinessConfigMatchesShippedDefaults pins the values #65's
 // own doc comment on defaultReadinessConfig documents -- a 10s window,
 // a 250ms poll, a 500ms dial timeout and 127.0.0.1 -- so a change to any

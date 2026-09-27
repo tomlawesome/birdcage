@@ -464,27 +464,41 @@ func runCanaryEnrol(args []string) error {
 		if image == "" {
 			image = profile.DefaultImage
 		}
-		// The holder (issue #126) is printed first, and only when the lure
-		// is being deployed: it is what the canary's and the lure's own
-		// `--network container:` flags join below, so it has to exist
-		// before either of them starts. With no lure, nothing else ever
-		// joins the canary's own namespace, so there is nothing for a
-		// holder to protect.
-		if lures.smb {
-			if err := printHolderRunCommand(os.Stdout, holderImage()); err != nil {
-				return fmt.Errorf("print holder run command: %w", err)
-			}
-			if _, err := fmt.Println(); err != nil {
-				return fmt.Errorf("print holder run command: %w", err)
-			}
+		// The holder (issue #126, made unconditional by #132) is always
+		// printed first: OpenCanary is now always a separate container
+		// (below) that joins it, whether or not the SMB lure is also
+		// deployed, so there is always something else for it to protect
+		// -- unlike before #132, when a lure-less canary had nothing
+		// else ever joining its own namespace and printed no holder at
+		// all.
+		if err := printHolderRunCommand(os.Stdout, holderImage(), lures.smb); err != nil {
+			return fmt.Errorf("print holder run command: %w", err)
 		}
+		if _, err := fmt.Println(); err != nil {
+			return fmt.Errorf("print holder run command: %w", err)
+		}
+		// The agent (Mockingbird) is printed second, before OpenCanary:
+		// its receiver has to be listening before OpenCanary makes its
+		// first webhook attempt, the same ordering #48's process-
+		// composition note already required within one container, now
+		// required between two (build/opencanary/README.md has the
+		// reproduction of what happens started the other way round).
 		if err := printEnrolRunCommand(os.Stdout, advertiseHost, enrolPort, birdcageCA.Pin(), raw, image, lures.smb, bait, string(segment)); err != nil {
 			return fmt.Errorf("print docker run command: %w", err)
 		}
-		// The lure is a third command -- printed after the holder and the
-		// canary, because it joins the holder's network namespace (not
-		// the canary's own, since #126) and cannot start before the
-		// holder exists.
+		// OpenCanary (issue #132) is printed third: its own image and
+		// container, joining the holder the same way the agent just did,
+		// with no access whatsoever to the agent's own state volume.
+		if _, err := fmt.Println(); err != nil {
+			return fmt.Errorf("print opencanary run command: %w", err)
+		}
+		if err := printOpenCanaryRunCommand(os.Stdout, openCanaryImage()); err != nil {
+			return fmt.Errorf("print opencanary run command: %w", err)
+		}
+		// The lure, if deployed, is a fourth command -- printed last,
+		// because it joins the holder's network namespace (not the
+		// canary's own, since #126) and cannot start before the holder
+		// exists, but has no ordering relationship with OpenCanary.
 		if lures.smb {
 			if _, err := fmt.Println(); err != nil {
 				return fmt.Errorf("print smb lure run command: %w", err)
@@ -546,12 +560,16 @@ func runCanaryEnrol(args []string) error {
 // operator-supplied value is escaped at the point it reaches the
 // terminal, and a rule with an exception is a rule somebody forgets.
 func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, image string, smbLure bool, baitNames, segmentProfile string) error {
-	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped --init \\\n"); err != nil {
+	if _, err := fmt.Fprintf(w, "docker run -d --name mockingbird --restart unless-stopped \\\n"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "  --sysctl net.ipv4.ip_unprivileged_port_start=0 \\\n"); err != nil {
-		return err
-	}
+	// No --sysctl and no --init here since issue #132: this container
+	// binds no privileged port any more -- OpenCanary does, in its own
+	// container printed next, which carries the sysctl instead -- and
+	// spawns no child process to reap or forward signals to (#69,
+	// superseded; build/mockingbird/Dockerfile's own comment has the
+	// reasoning).
+	//
 	// --cap-add NET_RAW (#65): the agent watches for port scans with one
 	// raw socket in the container's own network namespace, because
 	// OpenCanary's own portscan module needs iptables-legacy and root,
@@ -564,20 +582,22 @@ func printEnrolRunCommand(w io.Writer, advertiseHost, enrolPort, pin, token, ima
 	if _, err := fmt.Fprintf(w, "  --cap-add NET_RAW \\\n"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary \\\n"); err != nil {
+	// mockingbird-log is now READ-ONLY here (issue #132): OpenCanary
+	// writes it from its own container, printed after this one, and this
+	// agent only tails it -- the same shared-volume, one-writer-one-reader
+	// shape the SMB lure's audit file already uses below.
+	if _, err := fmt.Fprintf(w, "  -v mockingbird-state:/var/lib/mockingbird -v mockingbird-log:/var/log/opencanary:ro \\\n"); err != nil {
 		return err
 	}
-	// The address holder (issue #126), joined only when the lure is being
-	// deployed: with no lure, nothing else ever joins this container's
-	// own network namespace, so there is nothing to protect by joining a
-	// holder instead. When the lure is on, this container's own network
-	// namespace is the holder's -- printHolderRunCommand's own comment has
-	// the reasoning -- so a restart of this container never takes the
-	// lure's listening socket down with it.
-	if smbLure {
-		if _, err := fmt.Fprintf(w, "  --network container:%s \\\n", holderContainerName); err != nil {
-			return err
-		}
+	// The address holder (issue #126, unconditional since #132): every
+	// honeypot canary now has OpenCanary joining this same namespace
+	// (printOpenCanaryRunCommand, printed after this container), so this
+	// container's own network namespace is always the holder's, whether
+	// or not the SMB lure is also deployed -- a restart of this
+	// container never takes OpenCanary's, or the lure's, listening
+	// sockets down with it.
+	if _, err := fmt.Fprintf(w, "  --network container:%s \\\n", holderContainerName); err != nil {
+		return err
 	}
 	// The SMB lure's audit volume (#87), mounted READ-ONLY and only when
 	// the lure is being deployed. Read-only is the whole of decision 6:

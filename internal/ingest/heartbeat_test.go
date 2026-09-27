@@ -159,6 +159,44 @@ func TestHandleHeartbeatStoresExtendedSelfReportFields(t *testing.T) {
 	})
 }
 
+// TestHandleHeartbeatStoresOpenCanaryUp is issue #132's own storage
+// path: the agent's per-heartbeat port probe of OpenCanary, now a
+// separate container, lands in canaries.agent_opencanary_up exactly the
+// way position_found lands in agent_position_found above.
+func TestHandleHeartbeatStoresOpenCanaryUp(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3",` +
+			`"opencanary_up":false}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var openCanaryUp *int64
+		row := database.QueryRow(`SELECT agent_opencanary_up FROM agents WHERE id = ?`, "canary-a")
+		if err := row.Scan(&openCanaryUp); err != nil {
+			t.Fatalf("scan agent_opencanary_up: %v", err)
+		}
+		if openCanaryUp == nil || *openCanaryUp != 0 {
+			t.Errorf("agent_opencanary_up = %v, want 0 (explicitly reported down)", openCanaryUp)
+		}
+
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanaryByID(t, canaries, "canary-a")
+		if c.Status != string(store.StateOpenCanaryDown) {
+			t.Errorf("Status = %q, want %q", c.Status, store.StateOpenCanaryDown)
+		}
+	})
+}
+
 // TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes is #48's
 // central compatibility rule: an agent built before this change (or
 // mid-rollout) sends only the original four fields. That body is a
@@ -179,16 +217,16 @@ func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
 			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
 		}
 
-		var dropped, rejected, collisions, positionFound *int64
+		var dropped, rejected, collisions, positionFound, openCanaryUp *int64
 		row := database.QueryRow(
-			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found FROM agents WHERE id = ?`,
+			`SELECT agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, agent_opencanary_up FROM agents WHERE id = ?`,
 			"canary-a")
-		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound); err != nil {
+		if err := row.Scan(&dropped, &rejected, &collisions, &positionFound, &openCanaryUp); err != nil {
 			t.Fatalf("scan extended self-report columns: %v", err)
 		}
-		if dropped != nil || rejected != nil || collisions != nil || positionFound != nil {
-			t.Errorf("extended self-report columns = (%v, %v, %v, %v), want all NULL for an old-shape heartbeat, not fabricated zeroes",
-				dropped, rejected, collisions, positionFound)
+		if dropped != nil || rejected != nil || collisions != nil || positionFound != nil || openCanaryUp != nil {
+			t.Errorf("extended self-report columns = (%v, %v, %v, %v, %v), want all NULL for an old-shape heartbeat, not fabricated zeroes",
+				dropped, rejected, collisions, positionFound, openCanaryUp)
 		}
 
 		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour)
@@ -196,9 +234,9 @@ func TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes(t *testing.T) {
 			t.Fatalf("ListCanaries: %v", err)
 		}
 		c := findCanaryByID(t, canaries, "canary-a")
-		if c.AgentDropped != nil || c.AgentRejected != nil || c.AgentEventIDCollisions != nil || c.AgentPositionFound != nil {
-			t.Errorf("Canary extended self-report fields = (%v, %v, %v, %v), want all nil for an old-shape heartbeat",
-				c.AgentDropped, c.AgentRejected, c.AgentEventIDCollisions, c.AgentPositionFound)
+		if c.AgentDropped != nil || c.AgentRejected != nil || c.AgentEventIDCollisions != nil || c.AgentPositionFound != nil || c.AgentOpenCanaryUp != nil {
+			t.Errorf("Canary extended self-report fields = (%v, %v, %v, %v, %v), want all nil for an old-shape heartbeat",
+				c.AgentDropped, c.AgentRejected, c.AgentEventIDCollisions, c.AgentPositionFound, c.AgentOpenCanaryUp)
 		}
 	})
 }

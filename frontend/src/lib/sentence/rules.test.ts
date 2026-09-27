@@ -215,6 +215,22 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
   })
 
+  // Issue #132: opencanary_down gets rule 2's own copy, distinct from
+  // not_delivering's -- the agent itself is still heartbeating, only
+  // the honeypot it watches has stopped answering.
+  it('opencanary down: hero and sub', () => {
+    const bad = canary('canary-iot', 'opencanary_down')
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's OpenCanary is not answering.")
+    expect(plainText(s.sub)).toBe(
+      "The agent's own heartbeat is still arriving, but its port probe found nothing answering on OpenCanary’s " +
+        'side — the honeypot itself has stopped, even though the box it runs on has not. Check OpenCanary on the ' +
+        'box. The other three are fine.',
+    )
+    expect(s.sub.find((seg) => seg.text === 'Check OpenCanary on the box.')?.bold).toBe(true)
+  })
+
   // Issue #45, owner-ratified 2026-09-25: hits_merged gets rule 2's own
   // copy, naming the collision count and the check-the-box next step.
   it('hits merged: hero and sub', () => {

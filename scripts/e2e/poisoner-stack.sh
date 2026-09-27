@@ -45,6 +45,14 @@ LOG_VOL="${E2E_PREFIX}-poisoner-log"
 CANARY="${E2E_PREFIX}-poisoner-canary"
 CANARY_NAME="${E2E_POISONER_NAME:-e2e-poisoner}"
 CANARY_LANE="${E2E_POISONER_LANE:-e2e-poisoner}"
+# The address holder and OpenCanary's own container this canary joins
+# (#132), same shape as stack.sh's own HOLDER/OPENCANARY.
+HOLDER="${E2E_PREFIX}-poisoner-holder"
+OPENCANARY="${E2E_PREFIX}-poisoner-opencanary"
+# Filled in by `up`, read off the already-running base holder
+# (E2E_HOLDER) the same way MOCKINGBIRD_IMAGE below is read off the base
+# canary.
+HOLDER_IMAGE=""
 FIXTURE="${E2E_PREFIX}-poisoner-fixture"
 # Never built here and never removed by `down`: the pulled fixture is
 # left for the next run, the same as the two images stack.sh pulls.
@@ -74,13 +82,15 @@ helper() { "$E2E_STACK" helper "$@"; }
 # the work volume -- the same shape portscan-stack.sh's own enrol uses,
 # including reading MOCKINGBIRD_IMAGE off the already-running base canary
 # so this always starts the image stack.sh built, plus #86's
-# --bait-names flag.
+# --bait-names flag. OPENCANARY_IMAGE is E2E_OPENCANARY_IMAGE_REF,
+# stack.sh's own `up` export of the exact tag it built or was handed
+# (#132).
 enrol() { # enrol <name> <lane> <work-file>
   local name="$1" lane="$2" work_file="$3" image output
   image="$(docker inspect --format '{{.Config.Image}}' "$E2E_CANARY")" \
     || die "could not read the image $E2E_CANARY is running"
 
-  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" "$E2E_BIRDCAGE" \
+  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$image" --env "OPENCANARY_IMAGE=$E2E_OPENCANARY_IMAGE_REF" "$E2E_BIRDCAGE" \
     /birdcage canary enrol --name "$name" --lane "$lane" --bait-names "$BAIT_NAMES")" \
     || die "birdcage canary enrol ($name) failed"
 
@@ -95,48 +105,67 @@ enrol() { # enrol <name> <lane> <work-file>
     || die "could not store the enrolment output for $name"
 }
 
+# start_holder brings up this canary's own address holder (#126, #132),
+# the same shape stack.sh's own start_holder uses. --network-alias names
+# the canary itself: since #132 the canary joins this holder's namespace
+# rather than owning one, so it gets no Docker embedded-DNS entry of its
+# own (stack.sh's own comment on this has the reproduction).
+start_holder() {
+  docker run --detach --name "$HOLDER" \
+    --network "$E2E_NET" \
+    --network-alias "$CANARY" \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 16 \
+    --memory 32m \
+    "$HOLDER_IMAGE" >/dev/null || die "starting $HOLDER failed"
+}
+
 # run takes the printed `docker run` command and edits it: stack.sh's own
-# three substitutions (name, both volumes, network) plus this journey's
-# pacing, inserted after the --sysctl flag the printed command already
-# carries, so nothing else about it -- the capability, the CA pin, the
-# deploy token, the bait names the enrol flag put there, the image -- is
-# touched. Only the canary's own `docker run` block is taken, matched by
-# its `--name mockingbird` line rather than any `docker run`: enrolment
-# now prints the address holder's block first, then the canary's, then the
-# SMB lure's (#126, amending #87's own two-block shape), and matching the
-# first `docker run` line unconditionally would capture the holder's block
-# instead. And, as stack.sh does, the lure's audit mount, its variable and
-# the canary's own `--network container:holder` are deleted: this stack
-# deploys no lure and no holder, and left in, the audit mount creates an
-# unprefixed `smb-audit` volume that no `down` removes, and the holder
-# network flag would fail this container's start outright.
-run() { # run <work-file> <container> <state-vol> <log-vol>
-  local work_file="$1" container="$2" state_vol="$3" log_vol="$4"
+# substitutions (name, both volumes, joining this canary's own holder
+# rather than the literal name `holder`) plus this journey's pacing,
+# inserted after the `--cap-add NET_RAW` flag the printed command always
+# carries, so nothing else about it -- the CA pin, the deploy token, the
+# bait names the enrol flag put there, the image -- is touched. No
+# --sysctl on this container's own line any more (#132): that moved to
+# OpenCanary's own command, run_opencanary below runs unedited on that
+# front, so the pacing anchors on --cap-add NET_RAW instead, which stays
+# on every canary's line regardless. Only the canary's own `docker run`
+# block is taken, matched by its `--name mockingbird` line rather than
+# any `docker run`: enrolment prints the address holder's block first,
+# then the canary's, then OpenCanary's, then optionally the SMB lure's,
+# and matching the first `docker run` line unconditionally would capture
+# the holder's block instead. And, as stack.sh does, the lure's audit
+# mount and its variable are deleted: this stack deploys no lure, and
+# left in, the audit mount creates an unprefixed `smb-audit` volume that
+# no `down` removes.
+run() { # run <work-file> <container> <holder> <state-vol> <log-vol>
+  local work_file="$1" container="$2" holder="$3" state_vol="$4" log_vol="$5"
   local command pacing
   command="$(helper "sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
     || die "could not read the printed docker run command for $container"
 
-  pacing="--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\\\n  -e MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR \\\\\\n  -e MOCKINGBIRD_POISONER_CEILING=$POISONER_CEILING \\\\\\n  -e MOCKINGBIRD_POISONER_HOURS=$POISONER_HOURS \\\\"
+  pacing="--cap-add NET_RAW \\\\\\n  -e MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR \\\\\\n  -e MOCKINGBIRD_POISONER_CEILING=$POISONER_CEILING \\\\\\n  -e MOCKINGBIRD_POISONER_HOURS=$POISONER_HOURS \\\\"
 
   command="$(printf '%s\n' "$command" | sed \
-    -e "s|^docker run -d |docker run -d --network $E2E_NET |" \
     -e "s|--name mockingbird |--name $container |" \
     -e "s|-v mockingbird-state:|-v $state_vol:|" \
     -e "s|-v mockingbird-log:|-v $log_vol:|" \
-    -e '/--network container:holder/d' \
+    -e "s|--network container:holder|--network container:$holder|" \
     -e '/-v smb-audit:/d' \
     -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d' \
-    -e "s|--sysctl net.ipv4.ip_unprivileged_port_start=0 \\\\|$pacing|")"
+    -e "s|--cap-add NET_RAW \\\\|$pacing|")"
 
   case "$command" in
     docker\ run\ *"$container"*) ;;
     *) die "the printed docker run command for $container did not look the way this harness expects; got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
   esac
   local want
-  for want in "--sysctl net.ipv4.ip_unprivileged_port_start=0" \
-              "MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR" \
+  for want in "MOCKINGBIRD_POISONER_FLOOR=$POISONER_FLOOR" \
               "MOCKINGBIRD_POISONER_CEILING=$POISONER_CEILING" \
-              "MOCKINGBIRD_POISONER_NAMES="; do
+              "MOCKINGBIRD_POISONER_NAMES=" \
+              "container:$holder"; do
     case "$command" in
       *"$want"*) ;;
       *) die "the docker run command for $container is missing $want after editing -- got: $(printf '%s' "$command" | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')" ;;
@@ -157,6 +186,44 @@ run() { # run <work-file> <container> <state-vol> <log-vol>
 
   log "running ($container): $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed -e 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/' -e 's/MOCKINGBIRD_POISONER_NAMES=[^ ]*/MOCKINGBIRD_POISONER_NAMES=<names>/')"
   eval "$command" >/dev/null || die "the docker run command for $container failed to start"
+}
+
+# run_opencanary is run's own twin for OpenCanary's printed block (#132):
+# this canary gets its own OpenCanary container too, joining this
+# canary's own holder rather than the literal name `holder`, and sharing
+# this canary's own log volume read-write (the agent mounts the same
+# volume read-only on its side, already substituted above by run). Run
+# after run(), so the agent's webhook receiver is already listening
+# before OpenCanary's first attempt to reach it (stack.sh's own
+# run_opencanary_command has the reproduction of what happens the other
+# way round).
+run_opencanary() { # run_opencanary <work-file> <container> <holder> <log-vol>
+  local work_file="$1" container="$2" holder="$3" log_vol="$4"
+  local command
+  command="$(helper "sed -n '/^docker run -d --name opencanary /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/$work_file")" \
+    || die "could not read OpenCanary's printed docker run command for $container"
+
+  command="$(printf '%s\n' "$command" | sed \
+    -e "s|--name opencanary |--name $container |" \
+    -e "s|--network container:holder|--network container:$holder|" \
+    -e "s|-v mockingbird-log:|-v $log_vol:|")"
+
+  case "$command" in
+    docker\ run\ *"$container"*"$E2E_OPENCANARY_IMAGE_REF"*) ;;
+    *) die "OpenCanary's printed docker run command for $container did not look the way this harness expects; got: $command" ;;
+  esac
+
+  # Second use of the opencanary build tag in this job, the same #112
+  # concurrent-prune risk run()'s own comment names for mockingbird --
+  # stack.sh's own `up` already used this tag once, to start the base
+  # stack's own OpenCanary container.
+  if [ -n "${OPENCANARY_BUILD_IMAGE:-}" ] && [ -n "${OPENCANARY_BUILD_DIGEST:-}" ]; then
+    "$REPO_ROOT/scripts/ci-ensure-image.sh" "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST" >&2 \
+      || die "could not ensure $OPENCANARY_BUILD_IMAGE is present before starting $container"
+  fi
+
+  log "running opencanary ($container): $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ')"
+  eval "$command" >/dev/null || die "the OpenCanary docker run command for $container failed to start"
 }
 
 # wait_for_provision polls --status for one session by name, the same way
@@ -225,10 +292,14 @@ ensure_fixture() {
 up() {
   command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
   [ -n "${E2E_STACK:-}" ] && [ -n "${E2E_NET:-}" ] && [ -n "${E2E_BIRDCAGE:-}" ] && [ -n "${E2E_CANARY:-}" ] \
-    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
+    && [ -n "${E2E_HOLDER:-}" ] && [ -n "${E2E_OPENCANARY_IMAGE_REF:-}" ] \
+    || die "E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY/E2E_HOLDER/E2E_OPENCANARY_IMAGE_REF unset -- run: eval \"\$(scripts/e2e/stack.sh up)\" first"
   down >/dev/null 2>&1 || true
 
   ensure_fixture
+
+  HOLDER_IMAGE="$(docker inspect --format '{{.Config.Image}}' "$E2E_HOLDER")" \
+    || die "could not read the image $E2E_HOLDER is running"
 
   local vol
   for vol in "$STATE_VOL" "$LOG_VOL"; do
@@ -243,14 +314,18 @@ up() {
     "$FIXTURE_IMAGE" >/dev/null || die "starting $FIXTURE failed"
   wait_for_line "$FIXTURE" "Listening for events..."
 
+  start_holder
   enrol "$CANARY_NAME" "$CANARY_LANE" poisoner-enrol-output.txt
-  run poisoner-enrol-output.txt "$CANARY" "$STATE_VOL" "$LOG_VOL"
+  run poisoner-enrol-output.txt "$CANARY" "$HOLDER" "$STATE_VOL" "$LOG_VOL"
+  run_opencanary poisoner-enrol-output.txt "$OPENCANARY" "$HOLDER" "$LOG_VOL"
   CANARY_ID="$(wait_for_provision "$CANARY_NAME" "$CANARY")"
   wait_for_line "$CANARY" "poisoner detection active"
 
   cat <<EOF
 export POISONER_CANARY=$CANARY
 export POISONER_CANARY_ID=$CANARY_ID
+export POISONER_HOLDER=$HOLDER
+export POISONER_OPENCANARY=$OPENCANARY
 export POISONER_FIXTURE=$FIXTURE
 EOF
 }
@@ -258,6 +333,8 @@ EOF
 down() {
   docker rm --force "$FIXTURE" >/dev/null 2>&1 || true
   docker rm --force "$CANARY" >/dev/null 2>&1 || true
+  docker rm --force "$OPENCANARY" >/dev/null 2>&1 || true
+  docker rm --force "$HOLDER" >/dev/null 2>&1 || true
   local vol
   for vol in "$STATE_VOL" "$LOG_VOL"; do
     docker volume rm --force "$vol" >/dev/null 2>&1 || true

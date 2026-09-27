@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Gate the licences of the pip packages installed for the mockingbird image.
+"""Gate the licences of the pip packages installed for the OpenCanary image.
 
 Companion to scripts/licence-check.sh (Go modules linked into the
 Birdcage binary) and scripts/licence-check-npm.py (the npm tree under
-frontend/node_modules). This one covers build/mockingbird/requirements.txt
--- pip packages installed straight into the distroless mockingbird image
-(build/mockingbird/Dockerfile's "honeypot" stage), the one ecosystem that
-had no licence gate at all before #95.
+frontend/node_modules). This one covers build/opencanary/requirements.txt
+-- pip packages installed straight into the distroless OpenCanary image
+(build/opencanary/Dockerfile's "honeypot" stage; moved out of mockingbird
+by issue #132, unchanged otherwise), the one ecosystem that had no
+licence gate at all before #95.
 
 requirements.txt itself carries no licence information -- pip-compile's
 output is a name, a version and a set of hashes, nothing else -- so there

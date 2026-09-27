@@ -37,19 +37,23 @@ const RANK: Record<CanaryStatus, number> = {
   credential_conflict: 0,
   silent: 1,
   not_delivering: 2,
+  // Issue #132: ranked beside not_delivering, ahead of hits_merged --
+  // this change's own implementation choice, not a ratified precedence
+  // (docs/adr/0013-opencanary-own-container.md).
+  opencanary_down: 3,
   // Issue #45, owner-ratified 2026-09-25: ranked straight after
   // not_delivering, ahead of self_test_failed.
-  hits_merged: 3,
-  self_test_failed: 4,
+  hits_merged: 4,
+  self_test_failed: 5,
   // ADR-0012 decision 10 (#116): ranked between self_test_failed and
   // throttled, exactly where the ADR puts it.
-  db_stale: 5,
-  throttled: 6,
-  rotation_stalled: 7,
+  db_stale: 6,
+  throttled: 7,
+  rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
-  renewal_stalled: 7,
-  pending: 8,
-  ok: 9,
+  renewal_stalled: 8,
+  pending: 9,
+  ok: 10,
 }
 
 function worstOf(canaries: Canary[]): Canary | null {
@@ -72,6 +76,8 @@ function label(c: Canary): string {
       return `${c.name} credential conflict — revoke the node`
     case 'not_delivering':
       return `${c.name} not delivering`
+    case 'opencanary_down':
+      return `${c.name} OpenCanary not answering`
     case 'hits_merged':
       return `${c.name} hits merged`
     case 'self_test_failed': {
@@ -121,6 +127,7 @@ export function computeStatus(canaries: Canary[], visitors: Visitor[], range: Ra
     worst?.status === 'token_conflict' ||
     worst?.status === 'credential_conflict' ||
     worst?.status === 'not_delivering' ||
+    worst?.status === 'opencanary_down' ||
     worst?.status === 'hits_merged' ||
     worst?.status === 'self_test_failed' ||
     worst?.status === 'db_stale' ||

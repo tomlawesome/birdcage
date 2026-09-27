@@ -199,6 +199,34 @@ describe('the status pill: issue #45 hits_merged', () => {
   })
 })
 
+// Issue #132: opencanary_down joins the critical kind, ranked beside
+// not_delivering and ahead of hits_merged.
+describe('the status pill: issue #132 opencanary_down', () => {
+  it('a lone opencanary_down canary reads as critical, naming the canary', () => {
+    const canaries = [canary('a', 'opencanary_down'), canary('b', 'ok')]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') {
+      expect(s.canaryName).toBe('a')
+      expect(s.label).toBe('a OpenCanary not answering')
+    }
+  })
+
+  it('not_delivering outranks opencanary_down, which outranks hits_merged', () => {
+    const canaries = [
+      canary('a', 'hits_merged', { event_id_collisions: 1 }),
+      canary('b', 'opencanary_down'),
+      canary('c', 'not_delivering'),
+    ]
+    const s = computeStatus(canaries, [], '14d')
+    expect(s.kind).toBe('critical')
+    if (s.kind === 'critical') expect(s.canaryName).toBe('c')
+
+    const s2 = computeStatus([canaries[0], canaries[1]], [], '14d')
+    if (s2.kind === 'critical') expect(s2.canaryName).toBe('b')
+  })
+})
+
 // ADR-0012 decision 10 (issue #116): db_stale joins the critical kind,
 // ranked between self_test_failed and throttled.
 describe('the status pill: ADR-0012 db_stale', () => {

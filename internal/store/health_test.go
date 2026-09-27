@@ -30,6 +30,77 @@ func TestNotDeliveringBoundary(t *testing.T) {
 	}
 }
 
+// TestOpenCanaryDownNilNeverTriggers: issue #132's own nil/zero rule,
+// identical to notDelivering's -- no heartbeat has ever carried this
+// field (a pre-#132 agent, or a canary that has never reported) must
+// read as "nothing to say yet", never as OpenCanary being down.
+func TestOpenCanaryDownNilNeverTriggers(t *testing.T) {
+	if openCanaryDown(Canary{AgentOpenCanaryUp: nil}) {
+		t.Error("openCanaryDown(nil AgentOpenCanaryUp) = true, want false")
+	}
+}
+
+func TestOpenCanaryDownBoundary(t *testing.T) {
+	if openCanaryDown(Canary{AgentOpenCanaryUp: boolPtr(true)}) {
+		t.Error("openCanaryDown(up) = true, want false")
+	}
+	if !openCanaryDown(Canary{AgentOpenCanaryUp: boolPtr(false)}) {
+		t.Error("openCanaryDown(down) = false, want true")
+	}
+}
+
+// TestApplyOpenCanaryHealth: the same nil/zero/true table
+// TestApplyHitsMergedHealth uses, for issue #132's own state.
+func TestApplyOpenCanaryHealth(t *testing.T) {
+	cases := []struct {
+		name string
+		up   *bool
+		want bool
+	}{
+		{"nil never triggers", nil, false},
+		{"up never triggers", boolPtr(true), false},
+		{"down triggers", boolPtr(false), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentOpenCanaryUp: tc.up}
+			applyOpenCanaryHealth(&c)
+			if got := hasActive(c, StateOpenCanaryDown); got != tc.want {
+				t.Errorf("opencanary_down active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// TestOpenCanaryDownRanksAfterNotDeliveringBeforeHitsMerged: this
+// change's own unratified placement (StateOpenCanaryDown's doc comment)
+// -- beside not_delivering, ahead of hits_merged -- checked both on the
+// rank table and through addActiveStates, the same way
+// TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed does for its
+// own neighbours.
+func TestOpenCanaryDownRanksAfterNotDeliveringBeforeHitsMerged(t *testing.T) {
+	if healthStateRank[StateNotDelivering] >= healthStateRank[StateOpenCanaryDown] {
+		t.Fatalf("ranks: not_delivering %d, opencanary_down %d, want not_delivering first", healthStateRank[StateNotDelivering], healthStateRank[StateOpenCanaryDown])
+	}
+	if healthStateRank[StateOpenCanaryDown] >= healthStateRank[StateHitsMerged] {
+		t.Fatalf("ranks: opencanary_down %d, hits_merged %d, want opencanary_down first", healthStateRank[StateOpenCanaryDown], healthStateRank[StateHitsMerged])
+	}
+
+	// not_delivering wins over opencanary_down.
+	c := Canary{ActiveStates: []string{string(StateNotDelivering)}, Status: string(StateNotDelivering)}
+	addActiveStates(&c, StateOpenCanaryDown)
+	if c.Status != string(StateNotDelivering) {
+		t.Errorf("status %s, want not_delivering to keep winning over opencanary_down (states %v)", c.Status, c.ActiveStates)
+	}
+
+	// opencanary_down wins over hits_merged.
+	c2 := Canary{ActiveStates: []string{string(StateHitsMerged)}, Status: string(StateHitsMerged)}
+	addActiveStates(&c2, StateOpenCanaryDown)
+	if c2.Status != string(StateOpenCanaryDown) {
+		t.Errorf("status %s, want opencanary_down to win over hits_merged (states %v)", c2.Status, c2.ActiveStates)
+	}
+}
+
 func recordAudit(t *testing.T, database *db.DB, action, target string, at time.Time) {
 	t.Helper()
 	if _, err := audit.Append(context.Background(), database, audit.Entry{
@@ -479,6 +550,50 @@ func TestListCanariesSurfacesHitsMerged(t *testing.T) {
 		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
 		if c.Status == string(StateHitsMerged) {
 			t.Errorf("Status = %q after count returned to 0, want cleared", c.Status)
+		}
+	})
+}
+
+// TestListCanariesSurfacesOpenCanaryDown checks issue #132's own
+// self-report path end-to-end through RecordCanaryAgentHeartbeat and
+// ListCanaries, including that it clears once a later heartbeat's probe
+// reports OpenCanary answering again -- the "restarting OpenCanary alone
+// still raises, and then clears, an alert" behaviour the issue's e2e
+// proof exercises against a real container.
+func TestListCanariesSurfacesOpenCanaryDown(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		down := false
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abc", OpenCanaryUp: &down,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != string(StateOpenCanaryDown) {
+			t.Errorf("Status = %q, want %q", c.Status, StateOpenCanaryDown)
+		}
+		if c.AgentOpenCanaryUp == nil || *c.AgentOpenCanaryUp {
+			t.Errorf("AgentOpenCanaryUp = %v, want false", c.AgentOpenCanaryUp)
+		}
+
+		// A later heartbeat reporting OpenCanary up again clears it.
+		up := true
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abd", OpenCanaryUp: &up,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status == string(StateOpenCanaryDown) {
+			t.Errorf("Status = %q after OpenCanary reported up, want cleared", c.Status)
 		}
 	})
 }

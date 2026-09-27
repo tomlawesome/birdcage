@@ -56,6 +56,13 @@ E2E_PREFIX="${E2E_PREFIX:-birdcage-e2e}"
 NET="$E2E_PREFIX-net"
 BIRDCAGE="$E2E_PREFIX-birdcage"
 CANARY="$E2E_PREFIX-canary"
+# The address holder (#126) and OpenCanary's own container (#132): since
+# #132, OpenCanary is always a separate container joining the holder,
+# whether or not the SMB lure is also deployed -- so this base stack
+# needs both now, not only scripts/e2e/smb-lure-stack.sh's own second
+# canary.
+HOLDER="$E2E_PREFIX-holder"
+OPENCANARY="$E2E_PREFIX-opencanary"
 HELPER_IMAGE="$E2E_PREFIX-helper"
 DATA_VOL="$E2E_PREFIX-data"
 TLS_VOL="$E2E_PREFIX-tls"
@@ -78,6 +85,12 @@ LOG_VOL="$E2E_PREFIX-log"
 # is the only way to debug a red job with no pipeline to hand it images.
 BIRDCAGE_IMAGE="${E2E_BIRDCAGE_IMAGE:-$E2E_PREFIX-birdcage-image}"
 MOCKINGBIRD_IMAGE="${E2E_MOCKINGBIRD_IMAGE:-$E2E_PREFIX-mockingbird-image}"
+# OpenCanary's own image (#132) and the address holder's (#126), same
+# override convention as the two above: E2E_OPENCANARY_IMAGE/
+# E2E_HOLDER_IMAGE are what CI points at build:images' own tags; unset,
+# a workstation builds both here.
+OPENCANARY_IMAGE="${E2E_OPENCANARY_IMAGE:-$E2E_PREFIX-opencanary-image}"
+HOLDER_IMAGE="${E2E_HOLDER_IMAGE:-$E2E_PREFIX-holder-image}"
 # Always this harness's own build, never overridable the way the two
 # images above are: the certificate baked into it is generated fresh
 # every run (build_postgres_tls_image below), so there is never a
@@ -444,10 +457,11 @@ enrol_canary() {
     || die "setting release_address failed"
 
   local output
-  # MOCKINGBIRD_IMAGE is the product's own documented override for the
-  # image the printed command names, so using it means the printed
-  # command needs no editing on that line at all.
-  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$MOCKINGBIRD_IMAGE" "$BIRDCAGE" \
+  # MOCKINGBIRD_IMAGE and OPENCANARY_IMAGE are the product's own
+  # documented overrides for the images the printed commands name, so
+  # using them means neither printed command needs editing on that line
+  # at all.
+  output="$(docker exec --env "MOCKINGBIRD_IMAGE=$MOCKINGBIRD_IMAGE" --env "OPENCANARY_IMAGE=$OPENCANARY_IMAGE" "$BIRDCAGE" \
     /birdcage canary enrol --name "$CANARY_NAME" --lane "$CANARY_LANE")" \
     || die "birdcage canary enrol failed"
 
@@ -458,14 +472,48 @@ enrol_canary() {
 }
 
 # ---------------------------------------------------------------------
-# run_printed_command -- take the `docker run` command birdcage printed
-# and run it verbatim except for what this test environment forces.
-# This is the point of journey 1: if what we print does not work, this
-# is what finds out, so the command is edited by rule rather than
-# rewritten.
+# start_holder -- the address holder (#126), unconditional since #132:
+# OpenCanary is now always a separate container joining it, whether or
+# not the SMB lure is also deployed, so this base stack needs one even
+# though it deploys no lure. Attached to $NET directly -- the one thing
+# that differs from the printed command, which has no --network at all
+# because an operator's holder sits on whatever network they choose --
+# the canary and OpenCanary below both join *this* container's namespace
+# instead of owning one, which is how they reach $BIRDCAGE at all.
 #
-# Exactly three edits, all of them collisions with the test
-# environment rather than disagreements with the product:
+# No audit volume: this stack deploys no SMB lure, so there is nothing
+# for the holder to hold besides the network address (matches
+# printHolderRunCommand's own smbLure=false shape).
+# ---------------------------------------------------------------------
+start_holder() {
+  # --network-alias "$CANARY": since #132 the canary (and OpenCanary)
+  # join this container's namespace rather than owning one, so neither
+  # gets its own Docker embedded-DNS entry -- the same finding
+  # smb-lure-stack.sh's own start_holder/wait_for_lure comments already
+  # made for the lure and the canary before this change. Every existing
+  # journey resolves $CANARY by name (curl, nc, smbclient against it),
+  # so the holder answers to that name too, on this network alone,
+  # rather than every journey needing to learn a second name.
+  docker run --detach --name "$HOLDER" \
+    --network "$NET" \
+    --network-alias "$CANARY" \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 16 \
+    --memory 32m \
+    "$HOLDER_IMAGE" >/dev/null || die "starting $HOLDER failed"
+}
+
+# ---------------------------------------------------------------------
+# run_printed_command -- take the agent's (Mockingbird's) `docker run`
+# command birdcage printed and run it verbatim except for what this test
+# environment forces. This is the point of journey 1: if what we print
+# does not work, this is what finds out, so the command is edited by
+# rule rather than rewritten.
+#
+# The edits, all of them collisions with the test environment rather
+# than disagreements with the product:
 #
 #   1. --name mockingbird -> --name $CANARY. A fixed name cannot be
 #      used by a harness that must not collide with a second run, or
@@ -473,38 +521,42 @@ enrol_canary() {
 #   2. the two named volumes -> the prefixed ones, for the same reason,
 #      and so `down` can delete them without touching a real canary's
 #      state.
-#   3. --network $NET is added. The printed command has no --network
-#      because an operator's canary is on a real network; here both
-#      containers have to be on the harness's private one for the
-#      canary to resolve $BIRDCAGE at all.
+#   3. --network container:holder -> --network container:$HOLDER. Since
+#      #132 this line is unconditional in the printed command (OpenCanary
+#      always joins the same namespace), so this is a substitution, not
+#      a deletion: start_holder above already gave this harness its own
+#      holder, under its own prefixed name, and this container has to
+#      join *that* one rather than a literal `holder` nothing on this
+#      daemon has.
 #
-# Everything else -- -d, --restart, --init, the sysctl, --cap-add
-# NET_RAW, all three -e flags, the image -- runs exactly as printed.
-# Note what is *not* added: --security-opt no-new-privileges, which the
-# printed command deliberately omits, because it would make the kernel
-# ignore the agent's file capability and turn port-scan detection off
+# Everything else -- -d, --restart, --cap-add NET_RAW, both -e flags on
+# the log/state volumes' line, the three -e flags carrying the URL/pin/
+# token, the image -- runs exactly as printed. Note what is *not* added:
+# --security-opt no-new-privileges, which the printed command
+# deliberately omits, because it would make the kernel ignore the
+# agent's file capability and turn port-scan detection off
 # (docs/enrolment.md, and the trap comment in test:image:mockingbird).
+# Note also what is *not* present any more since #132: no --sysctl and
+# no --init on this container's own line -- both moved to OpenCanary's
+# command below, which run_opencanary_command runs unedited on that
+# front.
 # ---------------------------------------------------------------------
-# Three of these edits are deletions, not substitutions: this stack
-# deploys no SMB lure and no address holder (#126), so its canary must not
-# carry the lure's audit mount, MOCKINGBIRD_SMB_AUDIT_PATH, or a
-# `--network container:holder` joining a holder that was never started.
-# Left in, `-v smb-audit:` has Docker create a volume of that literal name
-# -- unprefixed, shared by every stack on the host, and removed by
-# nobody's `down`. Found by finding one sitting there after a run, which
-# is also why this harness names everything else from E2E_PREFIX. Left
-# in, `--network container:holder` would fail this container's start
-# outright -- there is no container named `holder` on this daemon at all
-# -- rather than silently doing the wrong thing.
+# The two remaining edits below are deletions: this stack deploys no SMB
+# lure, so its canary must not carry the lure's audit mount or
+# MOCKINGBIRD_SMB_AUDIT_PATH. Left in, `-v smb-audit:` has Docker create
+# a volume of that literal name -- unprefixed, shared by every stack on
+# the host, and removed by nobody's `down`. Found by finding one sitting
+# there after a run, which is also why this harness names everything
+# else from E2E_PREFIX.
 #
 # The sed range's start pattern names the canary's own line
 # (`--name mockingbird`) rather than matching any `docker run`, and takes
 # only that one block before quitting. Since #126 the enrolment output
-# carries three blocks -- the address holder's, then the canary's, then
-# the SMB lure's -- and matching the first `docker run` line unconditionally
-# would now capture the holder's block instead. Before #126 it was two
-# (the canary's, then the lure's); a range that did not quit even then
-# would print both and eval a concatenation of two commands. Found by
+# carries multiple blocks -- the address holder's, then the canary's,
+# then (since #132) OpenCanary's, then optionally the SMB lure's -- and
+# matching the first `docker run` line unconditionally would now capture
+# the holder's block instead. A range that did not quit even then would
+# print more than one block and eval a concatenation of them. Found by
 # running this, not by reading it: the first stack.sh run after the lure
 # landed failed with docker's own usage message and nothing pointing at
 # why.
@@ -512,11 +564,10 @@ run_printed_command() {
   local command
   command="$(helper "
 sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/enrol-output.txt \
-  | sed -e 's|^docker run -d |docker run -d --network $NET |' \
-        -e 's|--name mockingbird |--name $CANARY |' \
+  | sed -e 's|--name mockingbird |--name $CANARY |' \
         -e 's|-v mockingbird-state:|-v $STATE_VOL:|' \
         -e 's|-v mockingbird-log:|-v $LOG_VOL:|' \
-        -e '/--network container:holder/d' \
+        -e 's|--network container:holder|--network container:$HOLDER|' \
         -e '/-v smb-audit:/d' \
         -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d'
 ")" || die "could not read the printed docker run command"
@@ -528,6 +579,40 @@ sed -n '/^docker run -d --name mockingbird /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work
 
   log "running the printed command: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ' | sed 's/MOCKINGBIRD_DEPLOY_TOKEN=[^ ]*/MOCKINGBIRD_DEPLOY_TOKEN=<redacted>/')"
   eval "$command" >/dev/null || die "the printed docker run command failed to start the canary"
+}
+
+# ---------------------------------------------------------------------
+# run_opencanary_command -- OpenCanary's own printed `docker run`
+# command (#132), run the same way run_printed_command runs the agent's:
+# verbatim except for the name, the shared log volume's prefixed name,
+# and joining this harness's own holder rather than the literal name
+# `holder`. Everything else -- --init, the sysctl, every hardening flag
+# -- runs exactly as printed, which is the point: if OpenCanary does not
+# actually start under these flags, this is what finds out.
+#
+# Run after run_printed_command, so the agent's receiver is already
+# listening before OpenCanary makes its first webhook attempt
+# (build/opencanary/README.md has the reproduction of what happens the
+# other way round) -- though --restart unless-stopped, carried through
+# unedited, means a start the wrong way round self-heals rather than
+# wedging the journey.
+# ---------------------------------------------------------------------
+run_opencanary_command() {
+  local command
+  command="$(helper "
+sed -n '/^docker run -d --name opencanary /,/[^\\\\]\$/{p;/[^\\\\]\$/q;}' /work/enrol-output.txt \
+  | sed -e 's|--name opencanary |--name $OPENCANARY |' \
+        -e 's|--network container:holder|--network container:$HOLDER|' \
+        -e 's|-v mockingbird-log:|-v $LOG_VOL:|'
+")" || die "could not read OpenCanary's printed docker run command"
+
+  case "$command" in
+    docker\ run\ *"$OPENCANARY"*"$OPENCANARY_IMAGE"*) ;;
+    *) die "OpenCanary's printed docker run command did not look the way this harness expects; got: $command" ;;
+  esac
+
+  log "running OpenCanary's printed command: $(printf '%s' "$command" | tr -d '\\' | tr -s ' \n' ' ')"
+  eval "$command" >/dev/null || die "OpenCanary's printed docker run command failed to start"
 }
 
 # wait_for_enrolment blocks until the session reaches "provisioned" --
@@ -550,6 +635,8 @@ wait_for_enrolment() {
   done
   log "the canary never contacted birdcage; its log follows"
   docker logs "$CANARY" >&2 || true
+  log "opencanary log follows"
+  docker logs "$OPENCANARY" >&2 || true
   log "birdcage log follows"
   docker logs "$BIRDCAGE" >&2 || true
   die "enrolment never completed"
@@ -561,6 +648,8 @@ up() {
 
   build_image "$BIRDCAGE_IMAGE" build/birdcage/Dockerfile "${E2E_BIRDCAGE_IMAGE:+E2E_BIRDCAGE_IMAGE}"
   build_image "$MOCKINGBIRD_IMAGE" build/mockingbird/Dockerfile "${E2E_MOCKINGBIRD_IMAGE:+E2E_MOCKINGBIRD_IMAGE}"
+  build_image "$OPENCANARY_IMAGE" build/opencanary/Dockerfile "${E2E_OPENCANARY_IMAGE:+E2E_OPENCANARY_IMAGE}"
+  build_image "$HOLDER_IMAGE" build/holder/Dockerfile "${E2E_HOLDER_IMAGE:+E2E_HOLDER_IMAGE}"
   build_helper_image
 
   docker network create "$NET" >/dev/null || die "creating network $NET failed"
@@ -577,8 +666,10 @@ up() {
   fi
   start_birdcage
   copy_birdcage_ca
+  start_holder
   enrol_canary
   run_printed_command
+  run_opencanary_command
   wait_for_enrolment
 
   # The environment every journey consumes. Nothing secret is printed:
@@ -591,6 +682,9 @@ export E2E_STACK=$REPO_ROOT/scripts/e2e/stack.sh
 export E2E_NET=$NET
 export E2E_BIRDCAGE=$BIRDCAGE
 export E2E_CANARY=$CANARY
+export E2E_HOLDER=$HOLDER
+export E2E_OPENCANARY=$OPENCANARY
+export E2E_OPENCANARY_IMAGE_REF=$OPENCANARY_IMAGE
 export E2E_BACKEND=$E2E_BACKEND
 export E2E_DASHBOARD_MODE=$E2E_DASHBOARD_MODE
 export E2E_CLIENT_CERT_TTL=$E2E_CLIENT_CERT_TTL
@@ -605,6 +699,8 @@ EOF
 
 down() {
   docker rm --force "$CANARY" >/dev/null 2>&1 || true
+  docker rm --force "$OPENCANARY" >/dev/null 2>&1 || true
+  docker rm --force "$HOLDER" >/dev/null 2>&1 || true
   docker rm --force "$BIRDCAGE" >/dev/null 2>&1 || true
   docker rm --force "$PG" >/dev/null 2>&1 || true
   local vol
@@ -616,7 +712,7 @@ down() {
   # Only ever an image tag this harness named itself -- see
   # BIRDCAGE_IMAGE's comment above.
   local image
-  for image in "$BIRDCAGE_IMAGE" "$MOCKINGBIRD_IMAGE"; do
+  for image in "$BIRDCAGE_IMAGE" "$MOCKINGBIRD_IMAGE" "$OPENCANARY_IMAGE" "$HOLDER_IMAGE"; do
     case "$image" in
       "$E2E_PREFIX"*) docker image rm --force "$image" >/dev/null 2>&1 || true ;;
     esac

@@ -238,4 +238,25 @@ step "the canary and the lure are stopped for over a minute; the audit file keep
   || fail "the audit file did not survive a 65s outage of the canary and the lure" "$SMB_LURE_CANARY" "$SMB_LURE"
 ok "the audit file's earlier lines survived a 65s outage of both the canary and the lure"
 
+step "OpenCanary restarts ALONE, and the agent and the lure both keep reporting (issue #132)"
+# OpenCanary is a third joiner of the holder's namespace, never its
+# owner (like the lure above), so restarting it must not touch the
+# canary's own network namespace or the lure's listening socket --
+# proved the same way the lure's own "restarts ALONE" step above proves
+# it did not touch the canary. What is new here, since #132, is that
+# OpenCanary is also what the smb road's own events come from
+# (OpenCanary's smb module logs the audit-triggered activity the agent
+# tails) -- so this also proves the canary's reporting pipeline survives
+# losing and regaining the one container it depends on to have anything
+# to report at all.
+before="$(alerts_naming "$SMB_LURE_BAIT_TWO")" || fail "could not count the alerts naming $SMB_LURE_BAIT_TWO before restarting OpenCanary" "$E2E_BIRDCAGE"
+"$SMB_LURE_STACK" restart-opencanary || fail "restarting OpenCanary alone failed" "$SMB_LURE_OPENCANARY"
+ok "OpenCanary restarted alone; the lure's share still answers"
+out="$(smb_get "$SMB_LURE_BAIT_TWO")" || fail "smbclient could not get $SMB_LURE_BAIT_TWO after OpenCanary restarted: $out" "$SMB_LURE"
+sleep "$SETTLE_SECONDS"
+after="$(alerts_naming "$SMB_LURE_BAIT_TWO")" || fail "could not recount the alerts naming $SMB_LURE_BAIT_TWO" "$E2E_BIRDCAGE"
+want=$((before + 1))
+[ "$after" = "$want" ] || fail "$after alerts name $SMB_LURE_BAIT_TWO after OpenCanary's restart, want $want -- the canary's own reporting was disturbed by a container it does not own" "$SMB_LURE_CANARY" "$SMB_LURE_OPENCANARY" "$E2E_BIRDCAGE"
+ok "the canary and the lure kept reporting through OpenCanary's own restart ($before -> $after)"
+
 finish

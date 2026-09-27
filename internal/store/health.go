@@ -44,6 +44,19 @@ const (
 	StateCredentialConflict HealthState = "credential_conflict"
 	StateSilent             HealthState = "silent"
 	StateNotDelivering      HealthState = "not_delivering"
+	// StateOpenCanaryDown (issue #132) is a honeypot whose agent's own
+	// per-heartbeat port probe (internal/agent/readiness) reports that
+	// OpenCanary -- now a separate container the agent no longer
+	// supervises as a child process, #69 superseded -- is not answering
+	// on any of its configured ports. Ranked beside StateNotDelivering:
+	// both mean the canary cannot actually see a visitor right now, one
+	// because its own delivery pipe is broken and this one because the
+	// thing being watched is gone. Placement here is this change's own
+	// implementation choice, not a ratified precedence -- flagged as
+	// contested per docs/security-by-design.md, the same footing
+	// StateHitsMerged and StateDBStale below were added on before their
+	// own later ratification.
+	StateOpenCanaryDown HealthState = "opencanary_down"
 	// StateHitsMerged (issue #45, owner-ratified 2026-09-25) is a
 	// honeypot agent whose heartbeat reports a nonzero cumulative
 	// event-id collision count (AgentEventIDCollisions) -- two log lines
@@ -108,19 +121,24 @@ const (
 // not-delivering, per that design -- it slots between the built states
 // rather than into the still-reserved agent-out-of-date gap noted above,
 // which remains between rotation-stalled and pending.
+//
+// opencanary_down (issue #132, this change's own unratified placement --
+// see StateOpenCanaryDown's doc comment) sits beside not-delivering,
+// ahead of hits_merged.
 var healthStateRank = map[HealthState]int{
 	StateTokenConflict:      0,
 	StateCredentialConflict: 1,
 	StateSilent:             2,
 	StateNotDelivering:      3,
-	StateHitsMerged:         4,
-	StateTestFailed:         5,
-	StateDBStale:            6,
-	StateThrottled:          7,
-	StateRotationStalled:    8,
-	StateRenewalStalled:     9,
-	StatePending:            10,
-	StateOK:                 11,
+	StateOpenCanaryDown:     4,
+	StateHitsMerged:         5,
+	StateTestFailed:         6,
+	StateDBStale:            7,
+	StateThrottled:          8,
+	StateRotationStalled:    9,
+	StateRenewalStalled:     10,
+	StatePending:            11,
+	StateOK:                 12,
 }
 
 // Recency windows and thresholds this slice introduces. None of these
@@ -200,6 +218,29 @@ func applyHitsMergedHealth(c *Canary) {
 		return
 	}
 	addActiveStates(c, StateHitsMerged)
+}
+
+// openCanaryDown reports whether c's own agent self-report says OpenCanary
+// -- its own port probe, once per heartbeat -- is not answering.
+// AgentOpenCanaryUp is nil until the agent's first heartbeat carrying the
+// field (issue #132) -- nil must never read as down, only an explicit
+// false does; a canary whose agent has never reported this yet (an agent
+// built before #132, or one that has never sent a heartbeat) has nothing
+// to say yet. Mirrors notDelivering's own nil/zero rule exactly.
+func openCanaryDown(c Canary) bool {
+	return c.AgentOpenCanaryUp != nil && !*c.AgentOpenCanaryUp
+}
+
+// applyOpenCanaryHealth adds StateOpenCanaryDown when openCanaryDown
+// reports true. Clears the moment a later heartbeat's probe succeeds
+// again -- nothing here remembers a past failure once the agent reports
+// OpenCanary answering, the same immediate-clear rule applyHitsMergedHealth
+// uses.
+func applyOpenCanaryHealth(c *Canary) {
+	if !openCanaryDown(*c) {
+		return
+	}
+	addActiveStates(c, StateOpenCanaryDown)
 }
 
 // addActiveStates merges states into c.ActiveStates, re-sorts by

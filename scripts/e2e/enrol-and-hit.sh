@@ -140,4 +140,59 @@ case "$base_alerts" in
   *) fail "GET /api/alerts?service=base returned rows -- OpenCanary start-up lines must never be stored: $base_alerts" "$E2E_BIRDCAGE" ;;
 esac
 
+step "OpenCanary cannot read the agent's own state (issue #132)"
+# The whole point of the split (ADR-0008 amendment, decision 2): no
+# volume in either direction between the two containers, so OpenCanary
+# never has a path to the agent's bearer token or its mTLS key even to
+# try. `docker cp` reads the container's real filesystem without
+# needing a shell inside it -- which the distroless image does not have
+# -- so a failed copy is a live proof, not a config-file inspection.
+# Checked against the agent's own container first, so a failure above
+# means "the path is wrong", not "the isolation held".
+helper_cp_probe() { docker cp "$1:/var/lib/mockingbird/token" - >/dev/null 2>&1; }
+helper_cp_probe "$E2E_CANARY" \
+  || fail "the agent's own container has no /var/lib/mockingbird/token either -- this check is testing the wrong path" "$E2E_CANARY"
+ok "sanity check: the agent's own container does carry its token"
+if helper_cp_probe "$E2E_OPENCANARY"; then
+  fail "docker cp read /var/lib/mockingbird/token out of OpenCanary's own container -- it must never have this volume" "$E2E_OPENCANARY"
+fi
+ok "docker cp could not read the agent's state out of OpenCanary's container"
+
+step "a dead OpenCanary raises an alert, and the agent keeps reporting (issue #132)"
+# The agent's very first heartbeat fires before OpenCanary's own
+# container necessarily exists yet (two containers started in sequence
+# by this harness, not one process starting both) -- honestly reporting
+# log_read_ok=false for that one heartbeat, since the log file OpenCanary
+# has not started yet genuinely cannot be read (config.go's own
+# comment: "the file may not exist yet on a freshly enrolled box").
+# That clears itself on the next heartbeat once OpenCanary has written
+# to it -- waited out here first, so the assertions below test what
+# stopping OpenCanary does, not this ordinary start-up transient.
+poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"not_delivering\") | not'" \
+  || fail "not_delivering never cleared from its own start-up transient" "$E2E_CANARY" "$E2E_BIRDCAGE"
+ok "the start-up not_delivering transient cleared"
+
+# #69's own signal (a dead child process) no longer exists -- OpenCanary
+# is a separate container now -- so this is the replacement: the agent's
+# own per-heartbeat port probe. Stopping OpenCanary's container is a
+# closer proof than restarting it: a restart might land between two
+# heartbeats and never show as down at all, where stopping it leaves it
+# down until this step explicitly starts it again.
+docker stop --time 5 "$E2E_OPENCANARY" >/dev/null || fail "stopping $E2E_OPENCANARY failed" "$E2E_OPENCANARY"
+poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .active_states // [] | index(\"opencanary_down\")'" \
+  || fail "the canary never reported opencanary_down after OpenCanary stopped" "$E2E_CANARY" "$E2E_BIRDCAGE"
+ok "opencanary_down appeared in active_states"
+# The agent itself must still be heartbeating throughout -- a dead
+# OpenCanary must never look like a dead agent (that is not_delivering's
+# job, a different signal, for a different failure).
+canary_json3="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")"
+case "$canary_json3" in
+  *'"active_states":['*'"not_delivering"'*) fail "the agent itself reads not_delivering while only OpenCanary is down: $canary_json3" "$E2E_CANARY" ;;
+  *) ok "the agent is not reporting not_delivering: $canary_json3" ;;
+esac
+docker start "$E2E_OPENCANARY" >/dev/null || fail "starting $E2E_OPENCANARY back up failed" "$E2E_OPENCANARY"
+poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"opencanary_down\") | not'" \
+  || fail "opencanary_down never cleared after OpenCanary came back up" "$E2E_CANARY" "$E2E_OPENCANARY" "$E2E_BIRDCAGE"
+ok "opencanary_down cleared once OpenCanary answered again"
+
 finish

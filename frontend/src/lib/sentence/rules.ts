@@ -216,6 +216,28 @@ function rule2NotDelivering(c: Canary, canaries: Canary[], now: string, lastHit:
   }
 }
 
+/** OpenCanary down (issue #132): the agent's own per-heartbeat port
+ * probe (replacing #69's child-process supervision, now that OpenCanary
+ * runs in its own container) found none of its configured ports
+ * answering. Deliberately narrower than not_delivering's wording -- the
+ * agent itself is still heartbeating and reachable; what has stopped is
+ * the honeypot it watches. */
+function rule2OpenCanaryDown(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  return {
+    rule: 2,
+    hero: [...quietBut(now, lastHit), { text: `${c.name}'s OpenCanary is not answering.`, bold: true }],
+    sub: [
+      {
+        text:
+          "The agent's own heartbeat is still arriving, but its port probe found nothing answering on " +
+          'OpenCanary’s side — the honeypot itself has stopped, even though the box it runs on has not. ',
+      },
+      { text: 'Check OpenCanary on the box.', bold: true },
+      ...othersFine(canaries, c),
+    ],
+  }
+}
+
 /** Hits merged (#45, owner-ratified 2026-09-25): the honeypot agent's own
  * heartbeat reports a nonzero cumulative event-id collision count -- two
  * log lines birdcage received under the same event id, folded into one
@@ -421,19 +443,22 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
   credential_conflict: 0,
   silent: 1,
   not_delivering: 2,
+  // Issue #132: ranked beside not_delivering, ahead of hits_merged --
+  // see status.ts's own RANK for the same addition.
+  opencanary_down: 3,
   // Issue #45, owner-ratified 2026-09-25: ranked straight after
   // not_delivering, ahead of self_test_failed.
-  hits_merged: 3,
-  self_test_failed: 4,
+  hits_merged: 4,
+  self_test_failed: 5,
   // ADR-0012 decision 10 (#116): ranked between self_test_failed and
   // throttled, exactly where the ADR puts it.
-  db_stale: 5,
-  throttled: 6,
-  rotation_stalled: 7,
+  db_stale: 6,
+  throttled: 7,
+  rotation_stalled: 8,
   // ADR-0012 Part B: ranked with rotation_stalled, its certificate twin.
-  renewal_stalled: 7,
-  pending: 8,
-  ok: 9,
+  renewal_stalled: 8,
+  pending: 9,
+  ok: 10,
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
@@ -509,6 +534,8 @@ export function computeSentence(
         return rule2(worst, canaries, now, lastHit)
       case 'not_delivering':
         return rule2NotDelivering(worst, canaries, now, lastHit)
+      case 'opencanary_down':
+        return rule2OpenCanaryDown(worst, canaries, now, lastHit)
       case 'hits_merged':
         return rule2HitsMerged(worst, canaries, now, lastHit)
       case 'self_test_failed':

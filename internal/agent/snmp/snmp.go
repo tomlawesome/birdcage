@@ -5,7 +5,7 @@
 // # Why this is here rather than in OpenCanary
 //
 // OpenCanary ships its own snmp module (opencanary/modules/snmp.py),
-// and it stays disabled (build/mockingbird/opencanary.conf,
+// and it stays disabled (build/opencanary/opencanary.conf,
 // "snmp.enabled": false). That module decodes SNMP with scapy, and #85
 // already ruled scapy out of the Mockingbird image's dependency closure
 // -- the same reasoning #86's llmnr decision applied. An SNMP v1/v2c

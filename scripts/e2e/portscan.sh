@@ -29,7 +29,7 @@ set -eu
   exit 2
 }
 
-# Ports nothing in build/mockingbird/opencanary.conf enables (the
+# Ports nothing in build/opencanary/opencanary.conf enables (the
 # highest listed there is 9418) and nothing else on this stack's
 # network answers on either -- birdcage's own three listeners are
 # 8080/8443/8444. sweep_low..sweep_low+4 is exactly

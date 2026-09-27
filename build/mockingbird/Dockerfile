@@ -1,39 +1,46 @@
-# The Mockingbird image: OpenCanary plus the mockingbird agent, and
-# nothing else (ADR-0008). This is the container built to be attacked,
-# so the runtime layer has no shell, no package manager, no compiler and
-# no root: distroless python3, everything owned by and running as the
-# nonroot user (65532), and the honeypot's low ports reached with a
-# per-container sysctl rather than a privileged start. Build from the
-# repository root:
+# The Mockingbird image: the agent alone (issue #132 split OpenCanary out
+# into its own image, build/opencanary -- ADR-0008 amendment,
+# docs/adr/0013-opencanary-own-container.md). This is still a container
+# built to be attacked -- the receiver, the event roads and OpenCanary's
+# own webhook all still face the network -- so the runtime layer keeps
+# the same shape as before the split: distroless, no shell, no package
+# manager, no compiler, everything owned by and running as the nonroot
+# user (65532). What changed is what it no longer carries: no Python
+# runtime, no OpenCanary code, and critically, no access to
+# OpenCanary's own container or its log except through the one volume
+# named below. Build from the repository root:
 #
 #     docker build -f build/mockingbird/Dockerfile -t mockingbird .
 #
-# Run shape (the enrolment command #47 mints carries the real values):
+# Run shape (the enrolment command #47 mints carries the real values; the
+# holder and OpenCanary run alongside it -- see
+# cmd/birdcage/canary_lure.go's printHolderRunCommand and
+# printOpenCanaryRunCommand, and docs/enrolment.md):
 #
-#     docker run --init --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+#     docker run -d --name mockingbird --restart unless-stopped \
+#       --network container:holder \
+#       --cap-add NET_RAW \
 #       -v mockingbird-state:/var/lib/mockingbird \
-#       -v mockingbird-log:/var/log/opencanary \
+#       -v mockingbird-log:/var/log/opencanary:ro \
 #       -e MOCKINGBIRD_BIRDCAGE_URL=https://birdcage.example:8443 mockingbird
 #
-# --sysctl: OpenCanary listens on 21, 22, 23, 80 and friends. Upstream
-# starts as root and has twistd drop to nobody after binding; here
-# nothing is ever root, so the namespace's privileged-port floor is
-# lowered instead. The sysctl is per network namespace (kernel
-# ip-sysctl docs) and Docker allows net.* sysctls per container off
-# host networking, which macvlan is. Forget it and every module fails
-# to bind, which the self-test (#46) reports rather than hides.
-# --init: the agent supervises OpenCanary as its child and forwards
-# signals; Docker's init handles orphan reaping, which the agent
-# deliberately does not.
-
-# --- honeypot ---------------------------------------------------------------
-# Installed into a plain directory, not a venv, so the runtime stage can
-# copy it onto Debian's own Python 3.13 and point PYTHONPATH at it.
-# requirements.txt is uv-compiled from requirements.in with hashes for
-# every wheel and sdist, so a swapped artefact on PyPI fails the build.
-FROM python:3.13-slim-trixie AS honeypot
-COPY build/mockingbird/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --require-hashes --target /opt/opencanary -r /tmp/requirements.txt
+# This container's own hardening flags are unchanged by this split (no
+# --security-opt no-new-privileges in the printed command; see
+# docs/enrolment.md, "If you also use --security-opt no-new-privileges",
+# for why the two now mix as long as --init is absent). What did change:
+# no more --sysctl and no more --init. The sysctl moved to OpenCanary's
+# own line; the agent's own privileged ports (137, 161, 5353, 5355) still
+# bind because Docker already sets net.ipv4.ip_unprivileged_port_start=0
+# in the holder's namespace, which this container joins. --init went
+# because the agent spawns no child process to reap or forward signals
+# to any more (OpenCanary is no longer
+# this agent's child -- #69, superseded; see cmd/mockingbird/main.go's
+# package doc comment for what replaces its liveness signal). The log
+# volume is now read-only here: OpenCanary writes it from its own
+# container, this one only tails it, and MOCKINGBIRD_LOG_PATH names the
+# same file OpenCanary is told to write (build/opencanary/Dockerfile's
+# own ENV) -- the same shared-volume, one-writer-one-reader shape the SMB
+# lure's audit file already uses.
 
 # --- agent ------------------------------------------------------------------
 # The agent's dependency closure is fenced (scripts/agent-deps-check.sh,
@@ -68,48 +75,54 @@ RUN apk add --no-cache libcap \
     && setcap cap_net_raw+ep /out/mockingbird \
     && getcap /out/mockingbird
 # Directories the runtime user must own, made here because distroless
-# has no mkdir: the agent's state (token, certificates, acknowledged log
-# position -- #68 says these outlive the container, so both are volume
-# mount points and a fresh named volume inherits this ownership), the
-# OpenCanary log, and /var/tmp where OpenCanary's SSH module writes its
-# host key (the path is hard-coded upstream, ssh.py SSH_PATH).
-RUN mkdir -p /var/lib/mockingbird /var/log/opencanary /var/tmp
+# has no mkdir: the agent's own state (token, certificates, acknowledged
+# log position -- #68 says these outlive the container, so this is a
+# volume mount point and a fresh named volume inherits this ownership),
+# and a matching /var/log/opencanary mount point -- empty here, and
+# mounted read-only at runtime, but still created with the same
+# ownership as build/opencanary/Dockerfile's own copy of the same path,
+# so the shared named volume initialises identically whichever of the
+# two containers happens to mount it first.
+RUN mkdir -p /var/lib/mockingbird /var/log/opencanary
 
 # --- runtime ----------------------------------------------------------------
 FROM gcr.io/distroless/python3-debian13:nonroot
-COPY --from=honeypot /opt/opencanary /opt/opencanary
 COPY --from=agent /out/mockingbird /mockingbird
 COPY --from=agent --chown=65532:65532 /var/lib/mockingbird /var/lib/mockingbird
 COPY --from=agent --chown=65532:65532 /var/log/opencanary /var/log/opencanary
-COPY --from=agent --chown=65532:65532 /var/tmp /var/tmp
-COPY build/mockingbird/opencanary.conf /etc/opencanaryd/opencanary.conf
-COPY build/mockingbird/run-twistd.py /opt/opencanary/bin/run-twistd.py
-# 65532 (distroless's nonroot), not 1000 as the Birdcage image uses: this
+# This agent's own copy of OpenCanary's configuration -- the same file,
+# from the same source, that build/opencanary/Dockerfile bakes into
+# OpenCanary's own image. Not shared over a volume: it is a static,
+# non-secret build artifact both images need to read locally, not
+# runtime state -- the port-scan road (#65), the snmp road's node id
+# (#88), the poisoner road's bait naming (#86) and this agent's own
+# OpenCanary liveness probe (#132, readiness.go) all read it to learn
+# which services and ports are configured. It governs nothing here: only
+# OpenCanary's own copy decides what it actually emulates, and the two
+# must be kept identical by hand -- one file in the repository, copied
+# into two images, exactly like build/opencanary/entrypoint.py's own
+# "unchanged" pins carry the honeypot's pip dependencies into one image
+# rather than the other now owning them both.
+COPY build/opencanary/opencanary.conf /etc/opencanaryd/opencanary.conf
+# 65532 (distroless's nonroot), not 1000 as the birdcage image uses: this
 # container is meant to be broken into, and 1000 is the operator's own
 # uid on most hosts, so a uid that maps to nobody outside the container
 # is the safer one here. Nothing the operator owns is ever mounted in.
 USER 65532:65532
-ENV PYTHONPATH=/opt/opencanary \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MOCKINGBIRD_STATE_DIR=/var/lib/mockingbird \
+ENV MOCKINGBIRD_STATE_DIR=/var/lib/mockingbird \
     MOCKINGBIRD_LOG_PATH=/var/log/opencanary/opencanary.log \
     MOCKINGBIRD_LISTEN=127.0.0.1:9919
 VOLUME ["/var/lib/mockingbird", "/var/log/opencanary"]
-# The services opencanary.conf enables by default, plus 161/udp for the
-# agent's own SNMP road (#88) -- a plain Go UDP listener, no OpenCanary
-# module behind it (opencanary.conf keeps "snmp.enabled": false; see
-# internal/agent/snmp's package doc for why) -- and 137, 5353 and 5355/udp
-# for the poisoner road (#86), which listens on all three to count how
-# much the segment's own hosts ask for names. Those three sockets are shut
-# for writing the moment they open, so the kernel refuses any send from
-# them: the canary cannot answer another machine's lookup even if
-# something in this image tried to. There is no EXPOSE for the agent's
-# receiver: it is loopback-only by design.
-EXPOSE 21/tcp 22/tcp 23/tcp 69/udp 80/tcp 137/udp 161/udp 1433/tcp 3306/tcp 3389/tcp 5060/udp 5353/udp 5355/udp 6379/tcp
-# The agent is PID 1's child (see --init above) and runs OpenCanary as
-# its own child from these arguments: twistd in the foreground, on the
-# .tac file pip installed beside it, with no pidfile (see run-twistd.py
-# for why twistd is started this way).
+# 161, 137, 5353 and 5355/udp are this agent's own roads, not an
+# OpenCanary module: 161/udp is the plain Go UDP listener behind the
+# SNMP road (#88; opencanary.conf keeps "snmp.enabled": false -- see
+# internal/agent/snmp's package doc for why), and 137/5353/5355 are the
+# poisoner road's own receive-only sockets (#86), counting the segment's
+# own name lookups. Those three are shut for writing the moment they
+# open, so the kernel refuses any send from them: the canary cannot
+# answer another machine's lookup even if something in this image tried
+# to. OpenCanary's own service ports (21, 22, 23, 80 and the rest) moved
+# to build/opencanary/Dockerfile's own EXPOSE with it. There is no EXPOSE
+# for the agent's receiver: it is loopback-only by design.
+EXPOSE 137/udp 161/udp 5353/udp 5355/udp
 ENTRYPOINT ["/mockingbird"]
-CMD ["/usr/bin/python3", "/opt/opencanary/bin/run-twistd.py", "-noy", "/opt/opencanary/bin/opencanary.tac", "--pidfile="]

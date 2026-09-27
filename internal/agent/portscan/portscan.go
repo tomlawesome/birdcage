@@ -5,7 +5,7 @@
 // # Why this is here rather than in OpenCanary
 //
 // OpenCanary ships a portscan module, and it stays disabled
-// (build/mockingbird/opencanary.conf, "portscan.enabled": false). It
+// (build/opencanary/opencanary.conf, "portscan.enabled": false). It
 // works by watching /var/log/kern.log for iptables LOG lines, which
 // means iptables-legacy rules and a root process to install them --
 // both of which the Mockingbird image deliberately does not have

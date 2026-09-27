@@ -1,0 +1,14 @@
+-- Issue #132: OpenCanary moves out of the agent's own container into one
+-- of its own, so the agent can no longer tell OpenCanary is dead by
+-- noticing its child process exit (#69, superseded). Instead the agent
+-- probes OpenCanary's own configured ports on the shared network
+-- namespace once per heartbeat (internal/agent/readiness, previously a
+-- boot-only check) and reports the result.
+--
+-- Nullable, and stored as INTEGER (0/1) rather than a native boolean
+-- type, matching agent_log_read_ok and agent_position_found's own
+-- convention exactly: nil/NULL means "no heartbeat has reported this
+-- yet" (a pre-#132 agent, or a canary that has never sent one), which
+-- must never be confused with an explicit false. See
+-- internal/store/health.go's openCanaryDown for the read side.
+ALTER TABLE agents ADD COLUMN agent_opencanary_up INTEGER;

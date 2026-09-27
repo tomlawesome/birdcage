@@ -197,7 +197,7 @@ func (in *Intake) SubmitPortscanEvent(message []byte) error {
 // SubmitSNMPEvent is the fourth road into the queue (#88): an SNMP
 // v1/v2c request internal/agent/snmp read and decoded itself, rather
 // than one OpenCanary reported -- its own snmp module stays disabled
-// (build/mockingbird/opencanary.conf, "snmp.enabled": false) because it
+// (build/opencanary/opencanary.conf, "snmp.enabled": false) because it
 // needs scapy, which #85 keeps out of this image.
 //
 // Same id scheme as the webhook and port-scan roads -- SHA-256 of the

@@ -44,6 +44,7 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 		c, _ := newIngestServer(t, database, agentkind.Honeypot)
 		token := mintToken(t, database, "canary-a")
 
+		openCanaryUp := false
 		_, err := c.SendHeartbeat(ctx(), token, SelfReport{
 			QueueDepth:        7,
 			LogReadOK:         true,
@@ -53,24 +54,25 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 			Rejected:          1,
 			EventIDCollisions: 0,
 			PositionFound:     true,
+			OpenCanaryUp:      &openCanaryUp,
 		})
 		if err != nil {
 			t.Fatalf("SendHeartbeat: %v", err)
 		}
 
 		var (
-			version                                      string
-			queueDepth                                   int
-			logReadOK                                    int
-			lastEvent                                    string
-			dropped, rejected, collisions, positionFound *int64
+			version                                                   string
+			queueDepth                                                int
+			logReadOK                                                 int
+			lastEvent                                                 string
+			dropped, rejected, collisions, positionFound, canaryUpCol *int64
 		)
 		row := database.QueryRow(
 			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id,
-				agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found
+				agent_dropped, agent_rejected, agent_event_id_collisions, agent_position_found, agent_opencanary_up
 			FROM agents WHERE id = ?`,
 			"canary-a")
-		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent, &dropped, &rejected, &collisions, &positionFound); err != nil {
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent, &dropped, &rejected, &collisions, &positionFound, &canaryUpCol); err != nil {
 			t.Fatalf("scan self-report columns: %v", err)
 		}
 		if version != "1.2.3" || queueDepth != 7 || logReadOK != 1 || lastEvent != validID1 {
@@ -88,6 +90,9 @@ func TestSendHeartbeatStoresSelfReport(t *testing.T) {
 		}
 		if positionFound == nil || *positionFound != 1 {
 			t.Errorf("agent_position_found = %v, want 1 (true)", positionFound)
+		}
+		if canaryUpCol == nil || *canaryUpCol != 0 {
+			t.Errorf("agent_opencanary_up = %v, want 0 (explicitly reported down)", canaryUpCol)
 		}
 	})
 }
