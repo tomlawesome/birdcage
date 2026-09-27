@@ -7,12 +7,11 @@
 # thing must pass" case (frontend/node_modules is already installed and
 # already clean), running this checker against a real pip install would
 # need network access on every test run. build/opencanary/requirements.txt
-# really does pull in a GPL package (hpfeeds) and two with no declared
-# licence at all (setuptools, ordereddict) -- all three pass for real, but
-# only via named exceptions in allow-python-package-licenses:, not because
-# their own metadata says something acceptable. Proving the gate fires,
-# and that a recorded exception overrides it, is exactly what these
-# fixtures do, without needing that real install on every run.
+# really does pull in a GPL package (hpfeeds) -- it passes for real, but
+# only via a named exception in allow-python-package-licenses:, not because
+# its own metadata says something acceptable. Proving the gate fires, and
+# that a recorded exception overrides it, is exactly what these fixtures
+# do, without needing that real install on every run.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"

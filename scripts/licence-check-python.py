@@ -50,11 +50,9 @@ knows where to read the actual text. That is a better error message
 only: this script never reads or interprets what such a file says.
 
 Some real installed packages' own metadata is not something this
-project can accept as-is (hpfeeds' bundled LICENSE is GPLv3; setuptools
-and ordereddict declare no licence field at all, though both ship an MIT
-LICENSE file once actually read by hand). Rather than adding their
-licence to the allow-list above -- which would accept it for every
-package, not just the one reviewed -- supply-chain/licence-policy.yml
+project can accept as-is (hpfeeds' bundled LICENSE is GPLv3). Rather
+than adding their licence to the allow-list above -- which would accept
+it for every package, not just the one reviewed -- supply-chain/licence-policy.yml
 also has an allow-python-package-licenses: list of named, version-pinned
 exceptions ("<name>@<version> <SPDX-id>"), read by
 read_package_allow_list below. A package matching one exactly passes as
@@ -255,9 +253,10 @@ def find_bundled_licence_files(dist_info, header_lines):
     of these files says: no text matching, no fuzzy comparison, nothing
     that might look like it is inferring a licence. Whoever records the
     next allow-python-package-licenses exception still has to open the
-    file and read it themselves, exactly as the hpfeeds, setuptools and
-    ordereddict entries already in the policy file were each read by
-    hand (see that file's comments for what was found).
+    file and read it themselves, exactly as the hpfeeds entry already in
+    the policy file was (see that file's comments for what was found,
+    and for setuptools and ordereddict, each reviewed the same way and
+    later removed as exceptions stopped being needed).
 
     Two sources, matching how packages actually ship one:
       - License-File: headers in METADATA (PEP 639), each naming a path
