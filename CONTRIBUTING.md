@@ -43,28 +43,30 @@ Never commit credentials (CrowdSec, RouterOS service account, or anything
 else) to the repository, including in test fixtures or example configs.
 See [SECURITY.md](SECURITY.md).
 
-## Security tooling (set this up alongside the first real code, not deferred further)
+## Security tooling
 
-There's no `.github/workflows/` or `.github/dependabot.yml` yet -- CodeQL
-and Dependabot would have nothing to scan against docs alone, so adding
-them now would be dead weight. **Whoever lands the first implementation
-PR (any wave-1 issue) should set these up as part of that PR**, not push
-it further down the road:
+The gate in `.gitlab-ci.yml` runs on every merge request and on `dev`:
+Go build/vet/lint (`lint:go`), licence gates for Go, npm and Python
+dependencies (`lint:licences`, `lint:licences-python`, and the npm
+check that runs inside `test:frontend`), the full `scripts/*.test.sh`
+suite (`lint:scripts`), a guard on this CI shape itself (`lint:ci`), a
+Go vulnerability scan (`lint:govulncheck`), a secret scan
+(`lint:gitleaks`), and the `e2e` stage's live checks against the real
+stack. `preview` and `main` carry a higher bar than `dev`, not the same
+one -- see [docs/ci-hops.md](docs/ci-hops.md) for which check sits at
+which hop and why.
 
-- **CodeQL**: Go + JS/TS matrix, PRs into `preview`/`main` (not `dev`) +
-  a weekly full scan -- mirror `tomlawesome/mikroview`'s
-  `.github/workflows/codeql.yml`. Check
-  `gh api repos/tomlawesome/birdcage/code-scanning/default-setup` first
-  and disable it via `gh api --method PATCH .../default-setup -f
-  state=not-configured` if GitHub's own default setup is already
-  enabled -- it conflicts with a custom/advanced workflow otherwise.
-- **Dependabot**: `gomod`, `npm` (once the frontend exists), `docker`,
-  `github-actions` ecosystems, weekly, targeting `dev`.
-- Given birdcage holds live credentials and can take automated action
-  (a materially higher blast radius than mikroview's read-only model --
-  see SECURITY.md), consider requiring these checks on `dev` too, not
-  just `preview`/`main` -- `tomlawesome/threadbeam` does this and it's
-  a reasonable bar to match here.
+The GitHub mirror (`tomlawesome/birdcage`) is read-only and keeps only
+CodeQL, dependency review and Dependabot -- no issues, no pull requests
+there.
+
+Secret scanning is a local gitleaks pre-commit gate plus the
+`lint:gitleaks` job, since GitHub's non-provider secret-scanning
+patterns aren't available on this plan.
+
+A change to any of this lands with its live check in the same merge
+request, not a follow-up issue (AGENTS.md, "Live testing is not
+optional").
 
 ## Security by design
 
