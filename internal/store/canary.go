@@ -238,7 +238,6 @@ var wellKnownPortNames = map[string]string{
 	"3306":  "mysql",
 	"3389":  "rdp",
 	"5060":  "sip",
-	"5432":  "postgresql",
 	"5900":  "vnc",
 	"6379":  "redis",
 	"8080":  "http",

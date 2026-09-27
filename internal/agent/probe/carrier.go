@@ -30,7 +30,6 @@ var carriers = map[string]carrierFunc{
 	"sip":      probeSIP,
 	"mysql":    probeMySQL,
 	"mssql":    probeMSSQL,
-	"postgres": probePostgres,
 	"redis":    probeRedis,
 	"rdp":      probeRDP,
 	"ssh":      probeSSH,

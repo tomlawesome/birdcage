@@ -42,25 +42,6 @@ func acceptOneAndCapture(t *testing.T, exchange func(net.Conn) []byte) (port int
 	return port, ch
 }
 
-func TestProbePostgres_PlantsMarkerAsStartupUser(t *testing.T) {
-	port, resultCh := acceptOneAndCapture(t, func(c net.Conn) []byte {
-		buf := make([]byte, 4096)
-		n, _ := c.Read(buf)
-		return buf[:n]
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := probePostgres(ctx, "127.0.0.1", port, "marker-pg"); err != nil {
-		t.Fatalf("probePostgres: %v", err)
-	}
-
-	pkt := recvOrFail(t, resultCh)
-	if !bytes.Contains(pkt, []byte("user\x00marker-pg\x00")) {
-		t.Errorf("startup packet % x does not carry the marker as the user parameter", pkt)
-	}
-}
-
 func TestProbeRedis_PlantsMarkerAsAUTHArgument(t *testing.T) {
 	port, resultCh := acceptOneAndCapture(t, func(c net.Conn) []byte {
 		buf := make([]byte, 4096)
