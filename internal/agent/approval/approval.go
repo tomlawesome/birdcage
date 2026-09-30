@@ -111,9 +111,10 @@ type Rules struct {
 	// admin_approval_address.
 	PinnedFrom string
 	// PinnedSigningDomain is the domain the administrator's provider
-	// actually signs their mail with -- the DKIM d= value -- pinned on
-	// the agent at enrolment beside PinnedFrom (owner decision 25,
-	// 2026-09-19).
+	// actually signs their mail with -- the DKIM d= value (owner
+	// decision 25, 2026-09-19). Today it is the settings row
+	// admin_approval_signing_domain, set by hand (#156); pinning it on
+	// the agent at enrolment comes with agent-side checking (#120).
 	//
 	// It is pinned rather than derived from PinnedFrom's domain because
 	// the two often differ: a provider handling mail for
@@ -121,9 +122,10 @@ type Rules struct {
 	// whether one domain is a legitimate parent of another needs the
 	// Public Suffix List -- thousands of entries, continuously
 	// changing, and dropping any of them makes the check accept more
-	// rather than less. Setup learns the real value from the test
-	// approval the administrator sends and has them confirm it, so
-	// there is nothing to guess here.
+	// rather than less. So nothing is guessed: the operator reads the
+	// real value off a reply with `birdcage approval check`. Learning it
+	// automatically from a test approval is deferred (owner,
+	// 2026-09-30).
 	//
 	// Empty means PinnedFrom's own domain, which is the common case
 	// where a provider signs with exactly the address's domain.
