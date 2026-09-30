@@ -98,7 +98,7 @@ func TestHandleHelloRateLimitedRefusesAndAudits(t *testing.T) {
 		if rec.Code != http.StatusTooManyRequests {
 			t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusTooManyRequests, rec.Body.String())
 		}
-		if n := countHelloRateLimitedRows(t, database); n != 1 {
+		if n := countAuditRows(t, database, "enrolment.hello_rate_limited"); n != 1 {
 			t.Fatalf("enrolment.hello_rate_limited audit rows after one refusal = %d, want 1", n)
 		}
 
@@ -109,17 +109,49 @@ func TestHandleHelloRateLimitedRefusesAndAudits(t *testing.T) {
 		if rec2.Code != http.StatusTooManyRequests {
 			t.Fatalf("second status = %d, want %d", rec2.Code, http.StatusTooManyRequests)
 		}
-		if n := countHelloRateLimitedRows(t, database); n != 1 {
+		if n := countAuditRows(t, database, "enrolment.hello_rate_limited"); n != 1 {
 			t.Fatalf("enrolment.hello_rate_limited audit rows after a second refusal inside the cooldown = %d, want still 1", n)
 		}
 	})
 }
 
-func countHelloRateLimitedRows(t *testing.T, database *db.DB) int {
+// TestHandleProvisionRateLimitedRefusesAndAudits: POST /enrol/provision
+// sits behind the same per-address bucket as /enrol/hello -- the same
+// unauthenticated caller reaches both, and provision costs more per junk
+// request (CSR parse and signature check). With the address's bucket
+// exhausted it refuses with 429 before touching the CSR or the secret,
+// and audits once per cooldown under its own action.
+func TestHandleProvisionRateLimitedRefusesAndAudits(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		h := newTestHandler(database, newTestCA(t), func() time.Time { return now })
+		h.limiters.byAddr["192.0.2.1"] = rate.NewLimiter(0, 0) // httptest.NewRequest's default RemoteAddr host
+
+		rec := httptest.NewRecorder()
+		h.handleProvision(rec, httptest.NewRequest(http.MethodPost, "/enrol/provision", provisionRequestBody("whatever")))
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusTooManyRequests, rec.Body.String())
+		}
+		if n := countAuditRows(t, database, "enrolment.provision_rate_limited"); n != 1 {
+			t.Fatalf("enrolment.provision_rate_limited audit rows after one refusal = %d, want 1", n)
+		}
+
+		rec2 := httptest.NewRecorder()
+		h.handleProvision(rec2, httptest.NewRequest(http.MethodPost, "/enrol/provision", provisionRequestBody("whatever")))
+		if rec2.Code != http.StatusTooManyRequests {
+			t.Fatalf("second status = %d, want %d", rec2.Code, http.StatusTooManyRequests)
+		}
+		if n := countAuditRows(t, database, "enrolment.provision_rate_limited"); n != 1 {
+			t.Fatalf("enrolment.provision_rate_limited audit rows after a second refusal inside the cooldown = %d, want still 1", n)
+		}
+	})
+}
+
+func countAuditRows(t *testing.T, database *db.DB, action string) int {
 	t.Helper()
 	var n int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'enrolment.hello_rate_limited'`).Scan(&n); err != nil {
-		t.Fatalf("count enrolment.hello_rate_limited audit rows: %v", err)
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = ?`, action).Scan(&n); err != nil {
+		t.Fatalf("count %s audit rows: %v", action, err)
 	}
 	return n
 }

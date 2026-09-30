@@ -1,5 +1,11 @@
-// ratelimit.go is POST /enrol/hello's per-source-address cap (issue #47:
-// "Rate-limit /enrol/hello by source IP"). This endpoint authenticates
+// ratelimit.go is the enrolment listener's per-source-address cap (issue
+// #47: "Rate-limit /enrol/hello by source IP"), applied to both of its
+// routes: POST /enrol/hello and, since the v0.1.0 audit, POST
+// /enrol/provision, which is reachable by the same unauthenticated
+// caller and costs more per junk request (a CSR parse and signature
+// check before the secret is even looked up). One bucket per address
+// covers both routes: a real canary makes one of each per enrolment, and
+// a flood of either comes from the same address. This endpoint authenticates
 // nothing before store.FirstContact resolves the presented token --
 // unlike internal/ingest's requests/min cap, there is no canary identity
 // yet to key on (enrol.go's own NewHandler doc comment, unchanged until
@@ -26,7 +32,38 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/tomlawesome/birdcage/internal/audit"
 )
+
+// limitBySource applies the per-source-address cap to one request on
+// route, before anything else in the handler: no token or secret has
+// been looked at yet, so a flood costs a map lookup and a token-bucket
+// check -- the same "pre-auth cost of a junk request is deliberately
+// tiny" stance internal/ingest's requireBearerToken takes. A refused
+// request gets a 429 and, at most once per helloAuditCooldown per
+// address, a warning and an audit row under action. Reports whether the
+// handler may proceed.
+func (h *handler) limitBySource(w http.ResponseWriter, r *http.Request, route, action string) bool {
+	addr := sourceAddr(r)
+	if h.limiters.allow(addr) {
+		return true
+	}
+	if h.limiters.shouldAudit(addr, h.now().UTC()) {
+		h.logger.Warn("enrol: source address rate limit exceeded", "route", route, "remote", r.RemoteAddr)
+		if _, err := audit.Append(r.Context(), h.db, audit.Entry{
+			Action:      action,
+			Target:      addr,
+			Reason:      route + " requests/min limit exceeded for this source address",
+			TriggeredBy: r.RemoteAddr,
+			CreatedAt:   h.now().UTC(),
+		}); err != nil {
+			h.logger.Error("enrol: record rate limit", "route", route, "err", err)
+		}
+	}
+	writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+	return false
+}
 
 // helloRequestsPerMinute is the per-source-address cap -- see this file's
 // own package doc comment for why it borrows internal/ingest's figure.

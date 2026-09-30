@@ -132,26 +132,9 @@ var refusedBody = []byte(`{"error":"refused"}` + "\n")
 
 // handleHello serves POST /enrol/hello.
 func (h *handler) handleHello(w http.ResponseWriter, r *http.Request) {
-	// Issue #47: rate-limited by source address before anything else --
-	// no token has been looked at yet, so this costs a flood nothing but
-	// a map lookup and a token-bucket check, the same "pre-auth cost of a
-	// junk request is deliberately tiny" stance internal/ingest's own
-	// requireBearerToken takes on its hash lookup.
-	addr := sourceAddr(r)
-	if !h.limiters.allow(addr) {
-		if h.limiters.shouldAudit(addr, h.now().UTC()) {
-			h.logger.Warn("enrol: source address rate limit exceeded", "remote", r.RemoteAddr)
-			if _, err := audit.Append(r.Context(), h.db, audit.Entry{
-				Action:      "enrolment.hello_rate_limited",
-				Target:      addr,
-				Reason:      "POST /enrol/hello requests/min limit exceeded for this source address",
-				TriggeredBy: r.RemoteAddr,
-				CreatedAt:   h.now().UTC(),
-			}); err != nil {
-				h.logger.Error("enrol: record hello rate limit", "err", err)
-			}
-		}
-		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+	// Issue #47: rate-limited by source address before anything else
+	// (ratelimit.go's limitBySource says why it comes first).
+	if !h.limitBySource(w, r, "POST /enrol/hello", "enrolment.hello_rate_limited") {
 		return
 	}
 
