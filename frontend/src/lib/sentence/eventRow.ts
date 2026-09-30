@@ -212,7 +212,7 @@ function capitalize(s: string): string {
 // The server keeps reporting silence in active_states even once a worse
 // state (token/credential conflict) wins the headline status -- checking
 // status alone drops the dropped-out row exactly when it matters most.
-function isSilent(c: Canary): boolean {
+export function isSilent(c: Canary): boolean {
   return c.status === 'silent' || (c.active_states?.includes('silent') ?? false)
 }
 
