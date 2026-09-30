@@ -91,6 +91,17 @@ pg_restore --clean --if-exists --dbname="postgres://user:pass@host:5432/dbname" 
   birdcage-backup-20260101.dump
 ```
 
+**Check the target before running this.** `--clean --if-exists` drops
+anything already in the target database that isn't in the dump, with no
+confirmation prompt -- if the connection string above is copied unchanged
+from the backup example, this wipes whatever birdcage has written since
+that backup was taken. Confirm the connection string points at the
+intended restore target, not the live database, before running it:
+
+```
+psql "postgres://user:pass@host:5432/dbname" -c 'select current_database();'
+```
+
 Stop birdcage before restoring so it isn't writing to the database mid-restore.
 
 ## Dashboard TLS
