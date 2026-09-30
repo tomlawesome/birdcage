@@ -80,6 +80,10 @@ variables:
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
   DEBIAN_TRIXIE_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/debian:trixie-slim
+  # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
+  # and what test:release-scripts installs to run their tests there.
+  # python3: scripts/verify-validation-evidence.sh judges evidence in it.
+  RELEASE_APK_PACKAGES: bash curl python3
 
 .gate: &gate
   rules:
@@ -257,6 +261,44 @@ lint:scripts:
         exit 1
       fi
       echo "all $found script suites passed"
+
+# The release scripts' own tests, run on the image the release jobs use,
+# with exactly the packages they install (RELEASE_APK_PACKAGES). lint:scripts
+# runs every suite on a Python image, which is how #158 slipped through:
+# the scripts passed there and then met no python3 at release:preview.
+# git is for release-candidate.test.sh's scratch repository; release:promote
+# installs it itself. A new release script's test belongs in this list.
+test:release-scripts:
+  stage: lint
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs: []
+  before_script:
+    - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
+  script:
+    - |
+      set -eu
+      failed=""
+      for suite in \
+        scripts/verify-validation-evidence.test.sh \
+        scripts/publish-channel.test.sh \
+        scripts/promote-release.test.sh \
+        scripts/publish-image.test.sh \
+        scripts/attest-tested-image.test.sh \
+        scripts/mirror-image.test.sh \
+        scripts/release-version.test.sh \
+        scripts/release-candidate.test.sh \
+        scripts/image-tag-policy.test.sh \
+        scripts/policy-version.test.sh \
+        scripts/ci-ensure-image.test.sh \
+        scripts/ensure-cosign.test.sh; do
+        echo "--- $suite"
+        if bash "$suite"; then :; else failed="$failed $suite"; fi
+      done
+      if [ -n "$failed" ]; then
+        echo "failed on the release image:$failed"
+        exit 1
+      fi
 
 lint:agent-deps:
   stage: lint
@@ -2386,13 +2428,16 @@ e2e:scanner:postgres:
 # bytes that ship, not a second build of the same source.
 # ---------------------------------------------------------------------------
 
-# Every release job needs the same two things: a shell the scripts are
+# Every release job needs the same two things: the tools the scripts are
 # written for, and the registry credential. Nothing here is a key. The
 # credential is the job token GitLab already gives every job -- no CI/CD
 # variable to set, no owner setup, and it is scoped to this project only.
+# The tools are RELEASE_APK_PACKAGES, which test:release-scripts installs
+# too, so a tool missing here fails a merge request, not a release (#158:
+# python3 was missing and the first real run stopped at release:preview).
 .registry_login: &registry_login
   before_script:
-    - apk add --no-cache bash curl >/dev/null
+    - apk add --no-cache $RELEASE_APK_PACKAGES >/dev/null
     - test -n "$CI_REGISTRY_PASSWORD" || { echo "CI_REGISTRY_PASSWORD is not set -- the job token should always carry this"; exit 1; }
     - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
     - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin

@@ -167,3 +167,11 @@ loop only starts after the first cycle's drop is logged. No sleep left.
 - 2026-09-30 · 0c3e368 · pipeline 1845 / build:images · the job's own image
   pull from GitLab's dependency proxy failed "502 Bad Gateway" after 5s,
   before any script ran; the job does not touch the code this batch changed.
+
+## Go toolchain download drops mid-stream (test:smoke, test:smoke:safari)
+
+- 2026-09-30 · 30e9bd0 · pipeline 1858 / test:smoke:safari · `curl -fsSL
+  https://go.dev/dl/go1.27.1...` ended "HTTP/2 stream 1 was not closed
+  cleanly: INTERNAL_ERROR" after about 5s; tar hit EOF. The retry passed.
+- 2026-09-30 · 6cacc31 · pipeline 1860 / test:smoke · the same download,
+  same error. The retry passed.
