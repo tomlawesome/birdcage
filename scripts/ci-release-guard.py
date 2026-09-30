@@ -17,6 +17,10 @@ What it refuses, and why each one matters:
     fenced by the runner, not by this file, so a signing job without the
     tag would run on an ordinary runner and either fail confusingly or
     succeed somewhere it should not;
+  - any other job carrying the `birdcage-signing` tag -- the tag is what
+    puts a job on the runner that mounts the key, so a second job wearing
+    it, in any stage, could read the key with every other rule still
+    green;
   - that signing job also calling a publish/promote script or a raw
     `docker push` / `docker buildx imagetools create` -- it signs, it does
     not ship;
@@ -218,6 +222,16 @@ def check(path):
             problems.append(
                 f"{signer}: signs the image with {SIGN} but also runs "
                 f"`{DOCKER_IMAGETOOLS}`. It signs; it does not ship.")
+
+    for name, body in sorted(jobs.items()):
+        if name in signers:
+            continue
+        tags = body.get("tags")
+        if isinstance(tags, list) and SIGNING_TAG in tags:
+            problems.append(
+                f"{name}: carries the `{SIGNING_TAG}` tag but does not "
+                f"call {SIGN}. That tag is what puts a job on the runner "
+                f"that mounts the key, so only the signer may carry it.")
 
     for name, body in sorted(jobs.items()):
         if calls(body, SIGN) and calls(body, VERIFY):
