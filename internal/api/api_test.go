@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,6 +240,23 @@ func TestDashboardRoutesAllReadOnly(t *testing.T) {
 	for _, spec := range dashboardRouteSpecs(h) {
 		if spec.method != http.MethodGet {
 			t.Errorf("dashboardRoutes registers %s %s -- only GET routes may be registered here until #8 lands", spec.method, spec.path)
+		}
+	}
+}
+
+// TestSecurityDocListsEveryDashboardRoute: SECURITY.md's "Network
+// exposure" table is what an operator firewalls or proxies from, so
+// every route dashboardRouteSpecs registers needs a row there. The table
+// once drifted to 8 of the 12 routes, leaving /api/scans -- the fleet's
+// vulnerability findings -- unlisted.
+func TestSecurityDocListsEveryDashboardRoute(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "SECURITY.md"))
+	if err != nil {
+		t.Fatalf("read SECURITY.md: %v", err)
+	}
+	for _, spec := range dashboardRouteSpecs(&handler{}) {
+		if !strings.Contains(string(doc), "| `"+spec.path+"`") {
+			t.Errorf("SECURITY.md's dashboard route table has no row for %s %s", spec.method, spec.path)
 		}
 	}
 }
