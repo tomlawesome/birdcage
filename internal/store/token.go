@@ -323,6 +323,14 @@ func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string)
 	return n > 0, nil
 }
 
+// tokenConn is db.Conn plus QueryContext, like certConn (clientcert.go):
+// both *db.DB and *db.Tx satisfy it, so CompleteCanaryTokenFirstUse can
+// run the revoke sweep inside its own transaction.
+type tokenConn interface {
+	db.Conn
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // RevokeCanaryTokensSupersededBy revokes every live token for
 // tok.CanaryID that was minted BEFORE tok, and reports how many rows it
 // changed. This is issue #32 slice 5's central rotation rule (owner,
@@ -353,8 +361,8 @@ func CanaryHasActiveToken(ctx context.Context, database *db.DB, canaryID string)
 // Uses the same COALESCE-on-revoked_at shape as RevokeCanaryToken, so a
 // row this call revokes keeps whatever revocation timestamp it already
 // had if it was somehow revoked a moment earlier.
-func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok CanaryToken, at time.Time) (int64, error) {
-	rows, err := database.QueryContext(ctx,
+func RevokeCanaryTokensSupersededBy(ctx context.Context, conn tokenConn, tok CanaryToken, at time.Time) (int64, error) {
+	rows, err := conn.QueryContext(ctx,
 		`SELECT id, created_at FROM agent_tokens
 		 WHERE agent_id = ? AND id != ? AND revoked_at IS NULL`,
 		tok.CanaryID, tok.ID)
@@ -387,7 +395,7 @@ func RevokeCanaryTokensSupersededBy(ctx context.Context, database *db.DB, tok Ca
 
 	var revoked int64
 	for _, id := range older {
-		res, err := database.ExecContext(ctx,
+		res, err := conn.ExecContext(ctx,
 			`UPDATE agent_tokens SET revoked_at = COALESCE(revoked_at, ?)
 			 WHERE id = ? AND revoked_at IS NULL`,
 			at.UTC().Format(receivedAtLayout), id)
@@ -450,4 +458,66 @@ func RecordCanaryTokenUse(ctx context.Context, database *db.DB, id string, at ti
 		return ErrTokenNotFound
 	}
 	return nil
+}
+
+// CompleteCanaryTokenFirstUse claims tok's first use and, only for the
+// caller that wins that claim, revokes every older live token for its
+// canary -- both in one transaction, the token twin of
+// RecordClientCertFirstUse. Before this, "is this a first use" was a
+// plain read taken before RecordCanaryTokenUse's own separate write, and
+// the revoke sweep after it was a second, independent write: a transient
+// error in the sweep left last_used_at already committed, so no later
+// request could ever retry it, and two requests racing the same
+// freshly-rotated token could both read "not yet used" and both run the
+// sweep, the second finding every row already revoked and wrongly
+// concluding it was the canary's first-ever token. Guarding the claim on
+// "last_used_at IS NULL" closes both: a failure after the claim rolls
+// the claim back too, so the next request finds last_used_at still NULL
+// and retries honestly, and only one of two racing claims can ever see
+// RowsAffected > 0 for it.
+//
+// won is false, with nothing else changed, when this call did not win
+// the claim; the caller must still record its own last use itself
+// (RecordCanaryTokenUse), since only a winning claim already did.
+func CompleteCanaryTokenFirstUse(ctx context.Context, database *db.DB, tok CanaryToken, at time.Time) (won bool, revoked int64, err error) {
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		return false, 0, fmt.Errorf("begin token first-use transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		_ = tx.Rollback() // best-effort; the error already returned above stands regardless
+	}()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE agent_tokens SET last_used_at = ? WHERE id = ? AND last_used_at IS NULL`,
+		at.UTC().Format(receivedAtLayout), tok.ID)
+	if err != nil {
+		return false, 0, fmt.Errorf("claim token first use: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, 0, fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		if cerr := tx.Commit(); cerr != nil {
+			return false, 0, fmt.Errorf("commit token first-use transaction: %w", cerr)
+		}
+		committed = true
+		return false, 0, nil
+	}
+
+	revoked, err = RevokeCanaryTokensSupersededBy(ctx, tx, tok, at)
+	if err != nil {
+		return false, 0, err
+	}
+
+	if cerr := tx.Commit(); cerr != nil {
+		return false, 0, fmt.Errorf("commit token first-use transaction: %w", cerr)
+	}
+	committed = true
+	return true, revoked, nil
 }
