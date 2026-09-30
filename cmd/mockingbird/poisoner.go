@@ -149,10 +149,10 @@ func poisonerSettings() (poisoner.Config, []string) {
 		}
 	}
 
-	if gap, ok := poisonerDuration(envPoisonerFloor, &warnings); ok {
+	if gap, ok := poisonerDuration(envPoisonerFloor, 0, &warnings); ok {
 		cfg.Pace.FloorGap = gap
 	}
-	if gap, ok := poisonerDuration(envPoisonerCeiling, &warnings); ok {
+	if gap, ok := poisonerDuration(envPoisonerCeiling, poisoner.MinCeilingGap, &warnings); ok {
 		cfg.Pace.CeilingGap = gap
 	}
 
@@ -170,8 +170,12 @@ func poisonerSettings() (poisoner.Config, []string) {
 }
 
 // poisonerDuration reads one duration variable, reporting an unusable
-// value rather than failing startup over it.
-func poisonerDuration(name string, warnings *[]string) (time.Duration, bool) {
+// value rather than failing startup over it. min, when positive, is an
+// extra floor beyond "positive at all" -- envPoisonerCeiling's own
+// poisoner.MinCeilingGap, refused below it by name and value so a typo
+// like 30ms never reaches cfg.Pace.CeilingGap; envPoisonerFloor passes 0,
+// which never rejects anything a positive duration wouldn't already.
+func poisonerDuration(name string, min time.Duration, warnings *[]string) (time.Duration, bool) {
 	raw := os.Getenv(name)
 	if raw == "" {
 		return 0, false
@@ -180,6 +184,11 @@ func poisonerDuration(name string, warnings *[]string) (time.Duration, bool) {
 	if err != nil || d <= 0 {
 		*warnings = append(*warnings, fmt.Sprintf(
 			"%s is not a positive duration such as \"2h\", so the default is in use", name))
+		return 0, false
+	}
+	if min > 0 && d < min {
+		*warnings = append(*warnings, fmt.Sprintf(
+			"%s=%s is below the %s floor, so the default is in use", name, d, min))
 		return 0, false
 	}
 	return d, true

@@ -43,6 +43,17 @@ const (
 	minTalkingHosts = 3
 )
 
+// MinCeilingGap is the least a ceiling may ever be, however it reaches
+// PaceSettings -- an operator-set value or a pushed one, not just the
+// provisional default above. Below a second, "pacing" stops meaning
+// anything: the gap between bursts collapses into a continuous
+// LLMNR/NBT-NS/mDNS broadcast, which is the opposite of a canary that
+// only answers when asked. Unlike DefaultFloorGap/DefaultCeilingGap this
+// is not a guess #121 exists to replace -- it may still move once #121's
+// measured cadences say what "too fast" actually looks like, but it is a
+// safety floor, not a provisional pacing number.
+const MinCeilingGap = time.Second
+
 // Burst size. Issue #86 decision 33: "two to five lookups within a
 // minute (a user opening an old share retries)".
 const (
@@ -225,15 +236,23 @@ func DefaultPaceSettings() PaceSettings {
 	}
 }
 
-// normalise fills in any zero field from the defaults and makes sure the
-// ceiling is not looser than the floor, which would otherwise make the two
-// clamps in matchedGap fight.
+// normalise fills in any zero field from the defaults, holds the ceiling
+// to MinCeilingGap, and makes sure the ceiling is not looser than the
+// floor, which would otherwise make the two clamps in matchedGap fight.
 func (s PaceSettings) normalise() PaceSettings {
 	if s.FloorGap <= 0 {
 		s.FloorGap = DefaultFloorGap
 	}
 	if s.CeilingGap <= 0 {
 		s.CeilingGap = DefaultCeilingGap
+	}
+	if s.CeilingGap < MinCeilingGap {
+		// Belt-and-braces: cmd/mockingbird's two entry points already
+		// refuse a sub-floor ceiling before it gets this far, but
+		// normalise runs on every PaceSettings, however constructed, so
+		// this is the one place a broadcaster-speed ceiling can never
+		// survive.
+		s.CeilingGap = MinCeilingGap
 	}
 	if s.CeilingGap > s.FloorGap {
 		// An operator who set a ceiling looser than the floor asked for
