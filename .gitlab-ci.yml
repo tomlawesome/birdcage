@@ -2662,7 +2662,7 @@ release:promote:
   # on `main` is red should not be one click away.
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
-    # Every parent has to be reachable for the fallback above.
+    # Every parent has to be reachable for scripts/release-candidate.sh.
     GIT_DEPTH: 0
   <<: *registry_login
   script:
@@ -2670,22 +2670,9 @@ release:promote:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - |
       set -eu
-      # HEAD plus every parent (`git rev-list --parents -n1` lists the
-      # commit itself first, then each parent) -- an octopus merge has
-      # more than one, not only a second.
-      candidates="$(git rev-list --parents -n1 HEAD)"
-      for candidate in $candidates; do
-        if docker buildx imagetools inspect \
-             "${BIRDCAGE_RELEASE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
-          echo "$candidate" > .release-commit
-          break
-        fi
-      done
-      if [ ! -s .release-commit ]; then
-        echo "no validated build was published for any of: $candidates"
-        echo "A release can only promote a digest that went through preview."
-        exit 1
-      fi
+      # HEAD, or the merged-in parent -- never the first parent, which is
+      # main's previous tip (#154; scripts/release-candidate.sh says why).
+      sh scripts/release-candidate.sh "$BIRDCAGE_RELEASE_REPO" > .release-commit
       echo "promoting the build of $(cat .release-commit)"
     - |
       set -eu
