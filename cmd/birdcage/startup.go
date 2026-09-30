@@ -392,6 +392,43 @@ func checkStartupDatabase(cfg startupConfig) error {
 	return startcheck.PostgresRequiresVerifyFull(cfg.databaseURL)
 }
 
+// checkStartupCAContinuity refuses to start when cfg.caDir (or its key
+// file) is missing but the store already shows an enrolled canary --
+// owner rule (issue #149): birdcage never mints a replacement CA just to
+// get going again, since every certificate that CA vouches for (a
+// canary's client certificate, an operator's already-trusted dashboard
+// pin) would silently stop verifying against a new one. Runs before
+// loadStartupCA, which otherwise cannot tell "fresh install" apart from
+// "the CA directory was lost" and mints in both cases.
+//
+// database must already be open, so this needs to run after
+// openStartupDatabase rather than in loadStartupCA's usual position; see
+// main()'s call site. A genuinely fresh install (no canaries yet) has no
+// state to lose and falls through so loadStartupCA may still mint.
+func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *db.DB, caLog *slog.Logger) error {
+	if !cfg.caNeeded {
+		return nil
+	}
+	missing, err := ca.CAMissing(cfg.caDir)
+	if err != nil {
+		return &startupError{caLog, fmt.Sprintf("check CA directory (%s=%q): %v", envCADir, cfg.caDir, err)}
+	}
+	if missing == "" {
+		return nil
+	}
+	enrolled, err := store.AnyCanariesEnrolled(ctx, database)
+	if err != nil {
+		return &startupError{caLog, fmt.Sprintf("check for enrolled canaries before minting a new CA: %v", err)}
+	}
+	if !enrolled {
+		return nil
+	}
+	return &startupError{caLog, fmt.Sprintf(
+		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, never regenerated",
+		missing,
+	)}
+}
+
 // loadStartupCA loads birdcage's own CA when cfg.caNeeded, and logs
 // today's "no CA needed" line otherwise. An unloadable or
 // wrongly-permissioned CA directory fails startup loudly before either

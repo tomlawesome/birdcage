@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -136,6 +137,27 @@ func TestApprovalCheckExplainsWhyAMessageFails(t *testing.T) {
 	}
 }
 
+// TestApprovalCheckReportsThePinnedSigningDomain proves `birdcage
+// approval check` reads admin_approval_signing_domain the same way
+// approvalHandler does: both the printed line and the rejection reason
+// name the pinned domain, not the admin address's own.
+func TestApprovalCheckReportsThePinnedSigningDomain(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	pinAdminAddress(t) // admin@example.net
+	setAdminApprovalSigningDomain(t, "mail.example.net")
+
+	path := writeEML(t, string(withFakeSignature([]byte(unsignedReply), "fake.invalid")))
+	out, err := captureStdout(t, func() error { return runApprovalCheck([]string{path}) })
+	if err != nil {
+		t.Fatalf("runApprovalCheck: %v", err)
+	}
+	for _, want := range []string{"pinned signing domain: mail.example.net", "no DKIM signature was made by mail.example.net"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output does not mention %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestApprovalCheckRefusesAnOversizedFile(t *testing.T) {
 	t.Setenv(envDBPath, testDBPath(t))
 	pinAdminAddress(t)
@@ -194,6 +216,32 @@ func setAdminApprovalAddress(t *testing.T, address string) {
 	}); err != nil {
 		t.Fatalf("set %s: %v", store.SettingAdminApprovalAddress, err)
 	}
+}
+
+// setAdminApprovalSigningDomain sets issue #156's admin_approval_signing_domain
+// setting, the same way an operator's `birdcage settings set` would.
+func setAdminApprovalSigningDomain(t *testing.T, domain string) {
+	t.Helper()
+	if _, err := captureStdout(t, func() error {
+		return runSettingsSet([]string{string(store.SettingAdminApprovalSigningDomain), domain})
+	}); err != nil {
+		t.Fatalf("set %s: %v", store.SettingAdminApprovalSigningDomain, err)
+	}
+}
+
+// withFakeSignature inserts a syntactically well-formed but
+// cryptographically fake DKIM-Signature header naming d=domain, just
+// before raw's header/body blank line. It is not a real signature and
+// verifying one against it would always fail -- but
+// internal/agent/approval.verifySignature filters candidate signatures
+// by d= before it ever performs a DNS lookup or a cryptographic check
+// (this package's own comment above explains why a real accepted
+// signature isn't a fixture here), so a rejection naming the wrong
+// signing domain is enough to prove which domain a caller actually
+// asked to be checked against, with no DNS access needed.
+func withFakeSignature(raw []byte, domain string) []byte {
+	sig := "DKIM-Signature: v=1; a=rsa-sha256; d=" + domain + "; s=sel; h=from:to:subject:date:message-id; bh=x; b=x\r\n"
+	return bytes.Replace(raw, []byte("\r\n\r\n"), []byte("\r\n"+sig+"\r\n"), 1)
 }
 
 // TestApprovalHandlerRejectsWrongAddress is approvalHandler's first
@@ -276,6 +324,73 @@ func TestApprovalHandlerRejectsAndRecordsAnUnsignedMessageFromTheRightAddress(t 
 	// rejection was actually about.
 	if rec.FromAddress != "Birdcage Admin <admin@example.net>" {
 		t.Errorf("FromAddress = %q, want the raw From header the message carried", rec.FromAddress)
+	}
+}
+
+// TestApprovalHandlerUsesDefaultSigningDomainWhenUnset proves that with
+// admin_approval_signing_domain unset, approvalHandler checks a
+// signature against the pinned admin address's own domain -- today's
+// behaviour, per Rules.PinnedSigningDomain's own doc comment.
+func TestApprovalHandlerUsesDefaultSigningDomainWhenUnset(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	setAdminApprovalAddress(t, "admin@example.net")
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := withFakeSignature(approvalReply("Birdcage Admin <admin@example.net>",
+		"Re: [birdcage u-default-domain] upgrade mockingbird", "<default-domain-1@example.net>"), "fake.invalid")
+
+	if err := handler(context.Background(), raw); err != nil {
+		t.Fatalf("approvalHandler: %v", err)
+	}
+	rec, err := store.ApprovalByReference(context.Background(), database, "u-default-domain")
+	if err != nil {
+		t.Fatalf("store.ApprovalByReference: %v", err)
+	}
+	if rec == nil || rec.RejectReason == nil {
+		t.Fatal("no rejection was recorded for the fake-signed message")
+	}
+	if !strings.Contains(*rec.RejectReason, "no DKIM signature was made by example.net") {
+		t.Errorf("RejectReason = %q, want it to name example.net (the pinned address's own domain)", *rec.RejectReason)
+	}
+}
+
+// TestApprovalHandlerUsesThePinnedSigningDomainSetting is issue #156's
+// core wiring proof: with admin_approval_signing_domain set to a domain
+// other than the pinned admin address's own, approvalHandler checks a
+// signature against the *setting's* value, not the address's domain --
+// otherwise this would report "no DKIM signature was made by
+// mail.example.net" instead.
+func TestApprovalHandlerUsesThePinnedSigningDomainSetting(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	setAdminApprovalAddress(t, "admin@mail.example.net")
+	setAdminApprovalSigningDomain(t, "example.net")
+
+	handler := approvalHandler(database, logging.New("approval-test"))
+	raw := withFakeSignature(approvalReply("Birdcage Admin <admin@mail.example.net>",
+		"Re: [birdcage u-pinned-domain] upgrade mockingbird", "<pinned-domain-1@example.net>"), "fake.invalid")
+
+	if err := handler(context.Background(), raw); err != nil {
+		t.Fatalf("approvalHandler: %v", err)
+	}
+	rec, err := store.ApprovalByReference(context.Background(), database, "u-pinned-domain")
+	if err != nil {
+		t.Fatalf("store.ApprovalByReference: %v", err)
+	}
+	if rec == nil || rec.RejectReason == nil {
+		t.Fatal("no rejection was recorded for the fake-signed message")
+	}
+	if !strings.Contains(*rec.RejectReason, "no DKIM signature was made by example.net") {
+		t.Errorf("RejectReason = %q, want it to name the pinned signing domain example.net, not mail.example.net", *rec.RejectReason)
 	}
 }
 

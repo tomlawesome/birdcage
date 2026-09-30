@@ -155,6 +155,31 @@ func checkDir(dir string) error {
 	return nil
 }
 
+// CAMissing reports, without minting anything, whether dir or its
+// ca-key.pem is absent -- the exact absence Load treats as "generate a
+// fresh CA". Exposed so a caller (cmd/birdcage's startup check, issue
+// #149) can refuse before calling Load when other state (already-
+// enrolled canaries) shows this would not be a fresh install: Load
+// itself has no way to ask "are you about to mint?" short of doing it.
+// missing is "" when dir and the key file both already exist -- Load
+// will load, not mint.
+func CAMissing(dir string) (missing string, err error) {
+	if _, statErr := os.Stat(dir); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return fmt.Sprintf("the CA directory %s is missing", dir), nil
+		}
+		return "", fmt.Errorf("ca: %s: %w", dir, statErr)
+	}
+	keyPath := filepath.Join(dir, caKeyFileName)
+	if _, statErr := os.Stat(keyPath); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return fmt.Sprintf("the CA key file %s is missing", keyPath), nil
+		}
+		return "", fmt.Errorf("ca: %s: %w", keyPath, statErr)
+	}
+	return "", nil
+}
+
 func parseCA(keyPEM, certPEM []byte) (*CA, error) {
 	keyBlock, _ := pem.Decode(keyPEM)
 	if keyBlock == nil {
