@@ -37,13 +37,11 @@ func ensureEnrolled(stateDir, birdcageURL, caPin, deployToken string) error {
 // it actually reads back: the CA certificate, its mTLS identity, its
 // bearer token, and the ingest listener's own address.
 //
-// ingestURLFileName comes first, before any of enrolStateFiles: it is
-// outside the "already enrolled" presence test (config.go's own comment
-// on enrolStateFiles), so writeState's restart-safety promise -- a crash
-// partway through is reported as incomplete enrolment -- only holds if a
-// crash can never land every enrolStateFiles entry while ingest-url is
-// still missing. writeState writes sequentially, so keeping it first
-// guarantees that.
+// Every file here is one of enrolStateFiles (ingest-url joined them in
+// #151), so a crash partway through always leaves one missing and the
+// next boot reports incomplete enrolment: no ordering constraint remains.
+// A file added later outside enrolStateFiles must go first -- see
+// TestWriteEnrolmentStateWritesNonRequiredFilesBeforeRequiredFiles.
 func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []enrolment.StateFile {
 	return []enrolment.StateFile{
 		{Name: ingestURLFileName, Data: []byte(hello.IngestURL)},

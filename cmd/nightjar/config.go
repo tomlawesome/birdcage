@@ -57,14 +57,15 @@ const (
 	// ingestURLFileName is written once, at enrolment, from POST
 	// /enrol/hello's own response -- the ingest listener's address,
 	// which is a different address from envBirdcageURL (the enrolment
-	// listener). loadConfig prefers it once it exists, matching
-	// cmd/mockingbird/config.go's own rule.
+	// listener). loadConfig requires it, matching
+	// cmd/mockingbird/config.go's own rule (#151): a silent fallback to
+	// envBirdcageURL would send every report to the wrong endpoint.
 	ingestURLFileName = "ingest-url"
 )
 
 // enrolStateFiles are the files whose presence means "already enrolled"
 // (internal/agent/enrolment.EnsureEnrolled's own RequiredFiles).
-var enrolStateFiles = []string{caFileName, clientCertFileName, clientKeyFileName, tokenFileName}
+var enrolStateFiles = []string{caFileName, clientCertFileName, clientKeyFileName, tokenFileName, ingestURLFileName}
 
 // hostRoot is where the run command's `-v /:/host:ro` bind lands inside
 // the container -- fixed, not configurable: it is load-bearing for
@@ -135,13 +136,16 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("recover pending certificate renewal: %s", safeErr(err))
 	}
 
-	// BaseURL prefers whatever enrolment itself learned the ingest
-	// listener's address to be, exactly as cmd/mockingbird/config.go's
-	// own loadConfig does -- envBirdcageURL names the enrolment
-	// listener, a different address.
-	if raw, err := os.ReadFile(filepath.Join(cfg.StateDir, ingestURLFileName)); err == nil {
-		cfg.BirdcageURL = strings.TrimSpace(string(raw))
+	// BaseURL is whatever enrolment itself learned the ingest listener's
+	// address to be, exactly as cmd/mockingbird/config.go's own
+	// loadConfig does -- envBirdcageURL names the enrolment listener, a
+	// different address. ingest-url is one of enrolStateFiles, so a
+	// missing file was already refused above; this read fails loudly too.
+	rawIngestURL, err := os.ReadFile(filepath.Join(cfg.StateDir, ingestURLFileName))
+	if err != nil {
+		return Config{}, fmt.Errorf("read %s: %s", ingestURLFileName, safeErr(err))
 	}
+	cfg.BirdcageURL = strings.TrimSpace(string(rawIngestURL))
 
 	cfg.ScanInterval = time.Duration(defaultScanIntervalS) * time.Second
 	if raw := os.Getenv(envScanIntervalS); raw != "" {
@@ -152,7 +156,6 @@ func loadConfig() (Config, error) {
 		cfg.ScanInterval = time.Duration(n) * time.Second
 	}
 
-	var err error
 	if cfg.CACert, err = os.ReadFile(filepath.Join(cfg.StateDir, caFileName)); err != nil {
 		return Config{}, fmt.Errorf("read %s: %s", caFileName, safeErr(err))
 	}

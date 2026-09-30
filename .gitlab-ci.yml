@@ -1213,6 +1213,7 @@ test:image:nightjar:
       openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
       -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      echo https://127.0.0.1:1 > /s/ingest-url &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
     # No published port, no --cap-add, no --sysctl (#108 section 4): the
     # printed run command's exact flag set, mask list included, so this

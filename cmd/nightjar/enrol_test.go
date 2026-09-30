@@ -63,13 +63,13 @@ func TestWriteEnrolmentStateWritesOnlyWhatNightjarReadsBack(t *testing.T) {
 // through leaves whichever files landed durably on disk and the rest
 // simply absent, which the next boot's EnsureEnrolled reports as
 // incomplete enrolment state" -- actually holds for this agent kind.
-// EnsureEnrolled only checks enrolStateFiles (ca.pem, client.pem,
-// client-key.pem, token), a strict subset of what writeEnrolmentState
-// writes; the promise only holds if ingest-url is written before every
-// required file, since writeState writes sequentially and a crash lands
-// a prefix of the list. If a required file were ever written before
-// ingest-url, a crash between them would leave EnsureEnrolled reporting
-// "already enrolled" while ingest-url stays absent forever.
+// EnsureEnrolled only checks enrolStateFiles; since #151 that is every
+// file writeEnrolmentState writes, so today the check is trivially met.
+// It stays as a guard: a file added later outside enrolStateFiles must
+// be written before every required one, since writeState writes
+// sequentially and a crash lands a prefix of the list -- otherwise
+// EnsureEnrolled would report "already enrolled" while that file stays
+// absent forever.
 func TestWriteEnrolmentStateWritesNonRequiredFilesBeforeRequiredFiles(t *testing.T) {
 	hello := enrol.Hello{
 		EnrolmentSecret: "secret",
