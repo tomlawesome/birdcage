@@ -209,6 +209,27 @@ describe('opencanary_down, hits_merged and db_stale on the canary page', () => {
   })
 })
 
+// Backend commit 89c56f7: a scanner's failed run leaves
+// self_test_failed_services empty and fills last_run instead (the one
+// field only a scanner ever carries, ADR-0012 decision 6) -- the same
+// signal tileStatus.ts already uses to tell the two kinds apart.
+describe('self_test_failed, scanner kind (last_run present)', () => {
+  it('names the stalled stage, never the honeypot port/visitor wording', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'self_test_failed'
+    input.page.canary.self_test_failed_services = []
+    input.page.canary.last_run = { verdict: 'fail', last_stage: 'collected', reason: 'grype exited 1', ended_at: input.trace.now }
+    const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
+    expect(hero).toBe('canary-iot failed its self-test.')
+    expect(sub).toContain('Scan target failed — last stage order received (grype exited 1)')
+    expect(sub).toContain('check the scanner')
+    expect(sub).not.toContain('silent port')
+    expect(sub).not.toContain('would go unseen')
+    expect(sub).not.toContain('deaf on')
+  })
+})
+
 describe('canaryCrumb', () => {
   it('ends in the clock when nothing is wrong', () => {
     expect(plainText(canaryCrumb(sceneInput('quiet')))).toBe('the cage › canary-iot · sat 5 sep · 22:04:31')
