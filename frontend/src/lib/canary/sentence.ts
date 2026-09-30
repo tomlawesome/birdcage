@@ -119,6 +119,16 @@ function stateWords(c: Canary): string {
       return 'credential conflict'
     case 'not_delivering':
       return c.certificate_expired ? 'not delivering · certificate expired' : 'not delivering'
+    // Verbatim from status.ts's label() for these three (name prefix and
+    // any action suffix stripped, the same way every other case here is
+    // status.ts's own wording minus the name), so the crumb/footer never
+    // invent a voice of their own.
+    case 'opencanary_down':
+      return 'OpenCanary not answering'
+    case 'hits_merged':
+      return 'hits merged'
+    case 'db_stale':
+      return 'vulnerability database stale'
     case 'throttled':
       return `throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
@@ -535,6 +545,59 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
                 text: 'The old agent has a few minutes to go offline. Until then, the old and new builds both reporting on this credential is expected, not a credential conflict.',
               },
             ],
+      }
+    }
+    // The three cases below use the same wording rules.ts's
+    // rule2OpenCanaryDown / rule2HitsMerged / rule2DbStale already give
+    // the fleet-level hero for these states, so the canary's own page
+    // does not fall through to the 'pending' default and read a broken
+    // honeypot as healthy and unprovisioned.
+    case 'opencanary_down':
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s OpenCanary is not answering.", bold: true }],
+        sub: [
+          {
+            text:
+              "The agent's own heartbeat is still arriving, but its port probe found nothing answering on " +
+              'OpenCanary’s side — the honeypot itself has stopped, even though the box it runs on has not. ',
+          },
+          { text: 'Check OpenCanary on the box.', bold: true },
+        ],
+      }
+    case 'hits_merged': {
+      const n = canary.event_id_collisions ?? 0
+      return {
+        hero: [
+          { text: canary.name, cls: 'c' },
+          { text: ` merged ${wordOrNumber(n)} hit${n === 1 ? '' : 's'}.`, bold: true },
+        ],
+        sub: [
+          {
+            text:
+              'Two log lines carried the same event id, so one hit was folded into another. OpenCanary cannot do ' +
+              'this on a running clock, so something on the box changed: ',
+          },
+          { text: 'check its clock, that only one OpenCanary runs, and that the log rotates by rename.', bold: true },
+        ],
+      }
+    }
+    case 'db_stale': {
+      const hours = Math.max(
+        0,
+        Math.floor((Date.parse(input.trace.now) - Date.parse(canary.db_refresh?.failing_since ?? input.trace.now)) / 3_600_000),
+      )
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s vulnerability database has gone stale.", bold: true }],
+        sub: [
+          { text: 'Its refresh has been failing for ' },
+          { text: `${hours} hours`, bold: true },
+          {
+            text:
+              '. It is still scanning on the last database it could fetch, so a scan on it may be missing anything ' +
+              'found since. ',
+          },
+          { text: 'Check the scanner can reach the vulnerability database mirror.', bold: true },
+        ],
       }
     }
     case 'agent_out_of_date':

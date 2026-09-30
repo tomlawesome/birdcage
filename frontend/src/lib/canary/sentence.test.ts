@@ -152,6 +152,63 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
   })
 })
 
+// issue #132 / #45 / #116: three statuses the fleet-level rules already
+// handle (rule2OpenCanaryDown, rule2HitsMerged, rule2DbStale) had no
+// case on the canary's own page, so they fell through to the 'pending'
+// default instead of naming the actual state.
+describe('opencanary_down, hits_merged and db_stale on the canary page', () => {
+  it('opencanary_down: names the down honeypot, not "pending"', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'opencanary_down'
+    const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
+    expect(hero).toBe("canary-iot's OpenCanary is not answering.")
+    expect(sub).toContain('Check OpenCanary on the box.')
+    expect(sub).not.toContain('pending its first self-test')
+  })
+
+  it('hits_merged: names the merged hit count', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'hits_merged'
+    input.page.canary.event_id_collisions = 2
+    const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
+    expect(hero).toBe('canary-iot merged two hits.')
+    expect(sub).toContain('check its clock, that only one OpenCanary runs, and that the log rotates by rename.')
+  })
+
+  it('db_stale: names the hours the database refresh has been failing', () => {
+    const input = sceneInput('night')
+    for (const v of input.visitors) v.still_arriving = false
+    input.page.canary.status = 'db_stale'
+    input.page.canary.db_refresh = { failing_since: '2026-09-11T16:04:31Z', last_error: 'timeout' }
+    const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
+    expect(hero).toBe("canary-iot's vulnerability database has gone stale.")
+    expect(sub).toContain('30 hours')
+    expect(sub).toContain('Check the scanner can reach the vulnerability database mirror.')
+  })
+
+  it('the crumb and footer name all three via the shared stateWords voice', () => {
+    const opencanaryDown = sceneInput('night')
+    for (const v of opencanaryDown.visitors) v.still_arriving = false
+    opencanaryDown.page.canary.status = 'opencanary_down'
+    expect(plainText(canaryCrumb(opencanaryDown))).toContain('OpenCanary not answering')
+    expect(plainText(canaryFooter(opencanaryDown))).toContain('OpenCanary not answering')
+
+    const hitsMerged = sceneInput('night')
+    for (const v of hitsMerged.visitors) v.still_arriving = false
+    hitsMerged.page.canary.status = 'hits_merged'
+    expect(plainText(canaryCrumb(hitsMerged))).toContain('hits merged')
+    expect(plainText(canaryFooter(hitsMerged))).toContain('hits merged')
+
+    const dbStale = sceneInput('night')
+    for (const v of dbStale.visitors) v.still_arriving = false
+    dbStale.page.canary.status = 'db_stale'
+    expect(plainText(canaryCrumb(dbStale))).toContain('vulnerability database stale')
+    expect(plainText(canaryFooter(dbStale))).toContain('vulnerability database stale')
+  })
+})
+
 describe('canaryCrumb', () => {
   it('ends in the clock when nothing is wrong', () => {
     expect(plainText(canaryCrumb(sceneInput('quiet')))).toBe('the cage › canary-iot · sat 5 sep · 22:04:31')

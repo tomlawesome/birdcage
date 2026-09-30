@@ -569,6 +569,13 @@ export function computeSentence(
   now: string,
   lastHit: LastHit | null = null,
 ): SentenceResult {
+  // A fleet with no canaries enrolled yet has no "worst" and no newest
+  // heartbeat for rule4's reduce to start from -- say so plainly rather
+  // than falling through into rules that all assume at least one canary.
+  if (canaries.length === 0) {
+    return { rule: 4, hero: [{ text: 'No canaries are enrolled yet.' }], sub: [] }
+  }
+
   const arriving = visitors.find((v) => v.kind === 'sweep' && v.still_arriving)
   if (arriving) return rule1(arriving, canaries, visitors, range, now)
 
