@@ -187,6 +187,26 @@ describe('opencanary_down, hits_merged and db_stale on the canary page', () => {
     expect(sub).toContain('30 hours')
     expect(sub).toContain('Check the scanner can reach the vulnerability database mirror.')
   })
+
+  it('the crumb and footer name all three via the shared stateWords voice', () => {
+    const opencanaryDown = sceneInput('night')
+    for (const v of opencanaryDown.visitors) v.still_arriving = false
+    opencanaryDown.page.canary.status = 'opencanary_down'
+    expect(plainText(canaryCrumb(opencanaryDown))).toContain('OpenCanary not answering')
+    expect(plainText(canaryFooter(opencanaryDown))).toContain('OpenCanary not answering')
+
+    const hitsMerged = sceneInput('night')
+    for (const v of hitsMerged.visitors) v.still_arriving = false
+    hitsMerged.page.canary.status = 'hits_merged'
+    expect(plainText(canaryCrumb(hitsMerged))).toContain('hits merged')
+    expect(plainText(canaryFooter(hitsMerged))).toContain('hits merged')
+
+    const dbStale = sceneInput('night')
+    for (const v of dbStale.visitors) v.still_arriving = false
+    dbStale.page.canary.status = 'db_stale'
+    expect(plainText(canaryCrumb(dbStale))).toContain('vulnerability database stale')
+    expect(plainText(canaryFooter(dbStale))).toContain('vulnerability database stale')
+  })
 })
 
 describe('canaryCrumb', () => {

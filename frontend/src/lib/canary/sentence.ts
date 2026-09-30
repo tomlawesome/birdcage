@@ -119,6 +119,16 @@ function stateWords(c: Canary): string {
       return 'credential conflict'
     case 'not_delivering':
       return c.certificate_expired ? 'not delivering · certificate expired' : 'not delivering'
+    // Verbatim from status.ts's label() for these three (name prefix and
+    // any action suffix stripped, the same way every other case here is
+    // status.ts's own wording minus the name), so the crumb/footer never
+    // invent a voice of their own.
+    case 'opencanary_down':
+      return 'OpenCanary not answering'
+    case 'hits_merged':
+      return 'hits merged'
+    case 'db_stale':
+      return 'vulnerability database stale'
     case 'throttled':
       return `throttled ${durationCoarse(c.throttled_for_s ?? 0)}`
     case 'rotation_stalled':
