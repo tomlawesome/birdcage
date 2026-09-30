@@ -459,9 +459,12 @@ no distribution obligation. No other row's licence looked like it creates one.
 - `registry.gitlab.com/gitlab-org/release-cli:latest` -- unpinned `:latest`
   tag, and upstream is in maintenance mode (GitLab's own docs point new work
   at `glab` instead).
-- `.github/workflows/countersign.yml` pins `actions/checkout@v5` -- a
+- `.github/workflows/countersign.yml` pinned `actions/checkout@v5` -- a
   floating major tag two majors behind the `v7.0.1` the other two workflows
-  pin by commit SHA. Inconsistent pinning style as much as a currency gap.
+  pin by commit SHA. Fixed 2026-09-30: it now pins the same `v7.0.1`
+  commit SHA as the other two. It is the one workflow holding `id-token:
+  write` and `packages: write`, so a floating tag there was the worst
+  place for one.
 - Five more CI-only OS packages fetched via `apk`/`apt` inside job scripts
   (`openssl` x2, `curl`, `git` x2, `openssh-client`, `jq`), all unpinned,
   none previously listed.
