@@ -81,6 +81,7 @@ type Tailer struct {
 
 	oversizeLines    atomic.Uint64
 	discardedPartial atomic.Uint64
+	skippedChain     atomic.Uint64
 	logReadOK        atomic.Bool
 	resumeFound      atomic.Bool
 }
@@ -143,6 +144,16 @@ func (t *Tailer) OversizeLines() uint64 { return t.oversizeLines.Load() }
 // stored; this counts how often it happened, for the same future
 // heartbeat self-report.
 func (t *Tailer) DiscardedPartialLines() uint64 { return t.discardedPartial.Load() }
+
+// SkippedChainFiles is the number of rotated siblings the initial
+// catch-up scan (catchUp/readWhole) could not open or fstat at all --
+// vanished, or replaced, between listing and open -- since this Tailer
+// was created. Each one means some history within what
+// MaxRotatedFiles/MaxRotatedBytes should have covered was not actually
+// read, which is also why it clears ResumeResult.PositionFound rather
+// than leaving it silently true; exposed here for the same future
+// heartbeat self-report as OversizeLines and DiscardedPartialLines.
+func (t *Tailer) SkippedChainFiles() uint64 { return t.skippedChain.Load() }
 
 // LogReadOK reports whether this Tailer is reading the log successfully
 // right now -- live status, not a cumulative count like OversizeLines and
