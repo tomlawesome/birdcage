@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -20,9 +21,12 @@ import (
 // A rejected password is the expected, successful outcome: the point
 // of this probe is that OpenCanary's ssh module logs the username from
 // the authentication request it receives, not that this probe obtains
-// a session. Only a failure before or during the transport-level
-// handshake -- one this connection's own deadline (set on conn by
-// dialTCP) can produce as a timeout -- is treated as StatusFailed.
+// a session. golang.org/x/crypto/ssh only reaches that rejection --
+// and so only sends the marker username -- once the transport-level
+// handshake (key exchange) has completed; every error from before or
+// during that handshake (version mismatch, no common algorithm, a
+// reset) never sent it, so those are treated as StatusFailed too, not
+// just a timeout.
 func probeSSH(ctx context.Context, address string, port int, marker string) error {
 	conn, err := dialTCP(ctx, address, port)
 	if err != nil {
@@ -58,9 +62,13 @@ func probeSSH(ctx context.Context, address string, port int, marker string) erro
 		return ctx.Err()
 	}
 
-	// Any other error from NewClientConn -- almost always "unable to
-	// authenticate" -- means the transport and key exchange completed
-	// and the server evaluated (and rejected) the credential this probe
-	// offered. That is the marker landing exactly where it needs to.
-	return nil
+	// "unable to authenticate" is the one error clientAuthenticate
+	// itself produces once every offered method (here, just the
+	// password) has been tried and rejected -- the only path that sent
+	// the marker username. Any other error came from before or during
+	// the handshake, so the username never reached the server.
+	if strings.Contains(err.Error(), "unable to authenticate") {
+		return nil
+	}
+	return err
 }
