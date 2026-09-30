@@ -88,10 +88,10 @@ func TestUpgradeHoneypotWithLureOn(t *testing.T) {
 		"docker pull smb-lure:latest",
 		"",
 		"step='remove the old containers'",
-		"docker rm -f smb-lure",
-		"docker rm -f opencanary",
-		"docker rm -f mockingbird",
-		"docker rm -f holder",
+		"docker rm -f smb-lure || true",
+		"docker rm -f opencanary || true",
+		"docker rm -f mockingbird || true",
+		"docker rm -f holder || true",
 		"",
 		"step='start the address holder'",
 		`docker volume create --driver local \`,
@@ -190,9 +190,9 @@ func TestUpgradeHoneypotWithLureOff(t *testing.T) {
 		"docker pull opencanary:latest",
 		"",
 		"step='remove the old containers'",
-		"docker rm -f opencanary",
-		"docker rm -f mockingbird",
-		"docker rm -f holder",
+		"docker rm -f opencanary || true",
+		"docker rm -f mockingbird || true",
+		"docker rm -f holder || true",
 		"",
 		"step='start the address holder'",
 		`docker run -d --name holder --restart unless-stopped \`,
@@ -267,9 +267,9 @@ func TestUpgradeHoneypotWithUnknownLure(t *testing.T) {
 		"docker pull opencanary:latest",
 		"",
 		"step='remove the old containers'",
-		"docker rm -f opencanary",
-		"docker rm -f mockingbird",
-		"docker rm -f holder",
+		"docker rm -f opencanary || true",
+		"docker rm -f mockingbird || true",
+		"docker rm -f holder || true",
 		"",
 		"step='start the address holder'",
 		`docker run -d --name holder --restart unless-stopped \`,
@@ -368,7 +368,7 @@ func TestUpgradeScanner(t *testing.T) {
 		"docker pull nightjar:latest",
 		"",
 		"step='remove the old container'",
-		"docker rm -f nightjar",
+		"docker rm -f nightjar || true",
 		"",
 		"step='present the upgrade token'",
 		"echo "+testUpgradeToken+` | docker run --rm -i \`,
@@ -619,14 +619,58 @@ func TestUpgradeScriptRunsAsOnePaste(t *testing.T) {
 				t.Errorf("a failed upgrade-token step stopped the upgrade:\n%s\nlog:\n%s", output, log)
 			}
 
-			// Any other failure stops it there.
-			output, log = runPasted(t, shell, script, "rm -f opencanary")
-			if !strings.Contains(output, "birdcage upgrade stopped at: remove the old containers") {
+			// Any other failure stops it there -- removal (below) is the
+			// one step that has to tolerate its own failure.
+			output, log = runPasted(t, shell, script, "run -d --name opencanary")
+			if !strings.Contains(output, "birdcage upgrade stopped at: start opencanary") {
 				t.Errorf("a failed step was not named:\n%s", output)
 			}
-			if strings.Contains(log, "args:rm -f mockingbird") || strings.Contains(output, "birdcage upgrade: done") {
+			if strings.Contains(log, "args:run -d --name smb-lure") || strings.Contains(output, "birdcage upgrade: done") {
 				t.Errorf("steps after the failure ran:\n%s\nlog:\n%s", output, log)
 			}
+		})
+	}
+}
+
+// TestUpgradeRemovalStepIsRetrySafe: the "remove the old containers"
+// step has to tolerate `docker rm -f` failing on a container that is
+// simply not there, not just a real docker error -- the shape a
+// re-paste sees once some of the four were already removed by an
+// earlier, partly-failed run. A script that still stopped here on that
+// kind of failure would abort at the same named step on every retry,
+// with no sign that some containers were already gone.
+func TestUpgradeRemovalStepIsRetrySafe(t *testing.T) {
+	var shells []string
+	for _, sh := range []string{"sh", "dash", "bash"} {
+		if p, err := exec.LookPath(sh); err == nil {
+			shells = append(shells, p)
+		}
+	}
+	if len(shells) == 0 {
+		t.Skip("no POSIX shell on PATH")
+	}
+	var out strings.Builder
+	if err := Upgrade(&out, UpgradeInput{
+		Kind: agentkind.Honeypot, UpgradeToken: testUpgradeToken, AdvertiseHost: "h", EnrolPort: "1", Pin: "p",
+		AgentImage: "mockingbird:latest", HolderImage: "holder:latest", OpenCanaryImage: "opencanary:latest",
+		SMBLureImage: "smb-lure:latest", SMBLure: boolPtr(true), SMBWorkgroup: "W", SMBShares: []string{"a", "b", "c"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	script := out.String()
+
+	for _, shell := range shells {
+		t.Run(filepath.Base(shell), func(t *testing.T) {
+			// smb-lure is the first removal attempted -- failing it
+			// simulates the worst case, where nothing has been removed
+			// yet on this attempt.
+			output, log := runPasted(t, shell, script, "rm -f smb-lure")
+			if !strings.Contains(output, "birdcage upgrade: done") {
+				t.Fatalf("a failed removal of an already-gone container stopped the script:\n%s\nlog:\n%s", output, log)
+			}
+			assertOrder(t, log, "args:rm -f smb-lure", "args:rm -f opencanary", "args:rm -f mockingbird",
+				"args:rm -f holder", "args:run -d --name holder", "args:run -d --name mockingbird",
+				"args:run -d --name opencanary", "args:run -d --name smb-lure")
 		})
 	}
 }

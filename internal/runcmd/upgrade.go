@@ -214,7 +214,12 @@ func upgradeScanner(w io.Writer, in UpgradeInput) error {
 	if err := step(w, "remove the old container"); err != nil {
 		return err
 	}
-	if err := writeLines(w, []string{fmt.Sprintf("docker rm -f %s", NightjarContainerName)}); err != nil {
+	// `|| true`: unlike every other step, this one has to tolerate a
+	// container that is simply not there -- the shape a re-paste after
+	// a partial failure sees -- not just a real docker error, matching
+	// the upgrade-token step's own `|| true` and docker volume create's
+	// documented idempotency (WriteHolderRun's own comment).
+	if err := writeLines(w, []string{fmt.Sprintf("docker rm -f %s || true", NightjarContainerName)}); err != nil {
 		return err
 	}
 	if err := blank(w); err != nil {
@@ -270,14 +275,22 @@ func upgradeHoneypot(w io.Writer, in UpgradeInput) error {
 	// Dependants before the holder -- the reverse of the enrolment
 	// order below, since each one joined the holder's namespace only
 	// once the holder already existed.
+	//
+	// `|| true` on each: unlike every other step, this one has to
+	// tolerate a container that is simply not there -- the shape a
+	// re-paste after a partial failure sees, since whichever of the
+	// four were already removed on the failed attempt are gone by the
+	// time the script runs again -- not just a real docker error,
+	// matching the upgrade-token step's own `|| true` and docker volume
+	// create's documented idempotency (WriteHolderRun's own comment).
 	var rms []string
 	if lureOn {
-		rms = append(rms, fmt.Sprintf("docker rm -f %s", SMBLureContainerName))
+		rms = append(rms, fmt.Sprintf("docker rm -f %s || true", SMBLureContainerName))
 	}
 	rms = append(rms,
-		fmt.Sprintf("docker rm -f %s", OpenCanaryContainerName),
-		fmt.Sprintf("docker rm -f %s", MockingbirdContainerName),
-		fmt.Sprintf("docker rm -f %s", HolderContainerName),
+		fmt.Sprintf("docker rm -f %s || true", OpenCanaryContainerName),
+		fmt.Sprintf("docker rm -f %s || true", MockingbirdContainerName),
+		fmt.Sprintf("docker rm -f %s || true", HolderContainerName),
 	)
 	if err := step(w, "remove the old containers"); err != nil {
 		return err

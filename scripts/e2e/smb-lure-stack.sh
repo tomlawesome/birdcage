@@ -45,7 +45,11 @@ HOLDER_IMAGE_BUILT=0
 
 CLIENT_IMAGE="${E2E_PREFIX}-smbclient-image"
 LURE="${E2E_PREFIX}-lure"
-HOLDER="${E2E_PREFIX}-holder"
+# Scoped like every sibling stack's own holder (poisoner-stack.sh's
+# "poisoner-holder", smb-stack.sh's "smb-holder"): the unscoped name here
+# used to be byte-identical to stack.sh's own base holder, so this file's
+# down()/up() force-removed and replaced the BASE stack's holder container.
+HOLDER="${E2E_PREFIX}-lure-holder"
 AUDIT_VOL="${E2E_PREFIX}-lure-audit"
 
 LURE_CANARY="${E2E_PREFIX}-lure-canary"

@@ -197,7 +197,10 @@ EOF
 
 down() {
   local n
-  for n in 1 2 3; do
+  # scanner.sh runs four legs (leg 4, #108 slice 1's mirror-unreachable
+  # case), not three -- this loop used to stop at 3, leaving leg 4's
+  # container and state volume behind on every run.
+  for n in 1 2 3 4; do
     docker rm --force "${E2E_PREFIX}-scanner-leg$n" >/dev/null 2>&1 || true
     docker volume rm --force "${E2E_PREFIX}-scanner-state-leg$n" >/dev/null 2>&1 || true
   done
