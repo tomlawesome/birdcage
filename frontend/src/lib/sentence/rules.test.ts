@@ -141,6 +141,15 @@ describe('rule 4 -- nothing (quiet fixture)', () => {
   })
 })
 
+describe('rule 4 -- empty fleet, zero canaries enrolled (hand-built)', () => {
+  it('hero: No canaries are enrolled yet, with no sub line, and does not throw', () => {
+    const s = computeSentence([], [], '14d', '2026-09-12T00:00:00Z')
+    expect(s.rule).toBe(4)
+    expect(plainText(s.hero)).toBe('No canaries are enrolled yet.')
+    expect(s.sub).toEqual([])
+  })
+})
+
 // issue #45 -- the health states that widen rule 2's slot. Hand-built
 // like rule 3 and status.test.ts's ranking cases: no fixture covers the
 // new states yet, and building canaries directly isolates the copy and
