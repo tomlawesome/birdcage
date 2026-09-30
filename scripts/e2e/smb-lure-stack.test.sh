@@ -33,7 +33,7 @@ leftovers() {
     docker ps -a --format '{{.Names}}'
     docker volume ls --format '{{.Name}}'
     docker images --format '{{.Repository}}'
-  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|holder|smbclient)" | sort -u
+  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|holder-image|smbclient)" | sort -u
 }
 
 check_clean() { # check_clean <label>
