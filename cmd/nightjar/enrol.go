@@ -36,12 +36,20 @@ func ensureEnrolled(stateDir, birdcageURL, caPin, deployToken string) error {
 // cmd/mockingbird/enrol.go's own writeEnrolmentState it writes only what
 // it actually reads back: the CA certificate, its mTLS identity, its
 // bearer token, and the ingest listener's own address.
+//
+// ingestURLFileName comes first, before any of enrolStateFiles: it is
+// outside the "already enrolled" presence test (config.go's own comment
+// on enrolStateFiles), so writeState's restart-safety promise -- a crash
+// partway through is reported as incomplete enrolment -- only holds if a
+// crash can never land every enrolStateFiles entry while ingest-url is
+// still missing. writeState writes sequentially, so keeping it first
+// guarantees that.
 func writeEnrolmentState(hello enrol.Hello, creds enrol.Credentials, keyPEM []byte) []enrolment.StateFile {
 	return []enrolment.StateFile{
+		{Name: ingestURLFileName, Data: []byte(hello.IngestURL)},
 		{Name: caFileName, Data: hello.CAPEM},
 		{Name: clientCertFileName, Data: creds.ClientCertPEM},
 		{Name: clientKeyFileName, Data: keyPEM},
 		{Name: tokenFileName, Data: []byte(creds.CanaryToken)},
-		{Name: ingestURLFileName, Data: []byte(hello.IngestURL)},
 	}
 }
