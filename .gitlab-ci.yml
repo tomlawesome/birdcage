@@ -237,7 +237,9 @@ lint:scripts:
     # red with four "curl: command not found" -- which this job found by
     # being run in this image before it was committed, on a workstation
     # where curl happens to exist.
-    - apk add --no-cache bash curl >/dev/null
+    # git: scripts/release-candidate.test.sh builds merge shapes in a
+    # scratch repository.
+    - apk add --no-cache bash curl git >/dev/null
     - pip install --quiet pyyaml
   script:
     - |
@@ -971,6 +973,7 @@ test:image:mockingbird:
       openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
       -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      echo https://127.0.0.1:1 > /s/ingest-url &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
     # --cap-add NET_RAW is the capability the port-scan detector needs
     # (#65). It has no effect here because --init and --security-opt
@@ -1212,6 +1215,7 @@ test:image:nightjar:
       openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
       -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      echo https://127.0.0.1:1 > /s/ingest-url &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
     # No published port, no --cap-add, no --sysctl (#108 section 4): the
     # printed run command's exact flag set, mask list included, so this
@@ -2636,10 +2640,11 @@ release:mirror-preview:
 # Which commit's build is being released: the tag names a commit on `main`,
 # and the anchor was pushed for the commit on `preview`. If `main` fast-
 # forwarded they are the same commit; if the merge made a merge commit, the
-# preview head is its second parent. Both candidates are tried and the first
-# with an anchor wins -- and it is not a guess, because the evidence binds
-# the commit: promoting the wrong one fails the verifier rather than
-# shipping. Anything else refuses and says which two it looked at.
+# preview head is one of its parents -- an octopus merge has more than one.
+# HEAD and every parent are tried and the first with an anchor wins -- and
+# it is not a guess, because the evidence binds the commit: promoting the
+# wrong one fails the verifier rather than shipping. Anything else refuses
+# and says which candidates it looked at.
 release:promote:
   stage: release
   image: $DOCKER_CLI_IMAGE
@@ -2660,7 +2665,7 @@ release:promote:
   # on `main` is red should not be one click away.
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
-    # The second parent has to be reachable for the fallback above.
+    # Every parent has to be reachable for scripts/release-candidate.sh.
     GIT_DEPTH: 0
   <<: *registry_login
   script:
@@ -2668,20 +2673,9 @@ release:promote:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - |
       set -eu
-      head="$(git rev-parse HEAD)"
-      second="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
-      for candidate in "$head" $second; do
-        if docker buildx imagetools inspect \
-             "${BIRDCAGE_RELEASE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
-          echo "$candidate" > .release-commit
-          break
-        fi
-      done
-      if [ ! -s .release-commit ]; then
-        echo "no validated build was published for $head${second:+ or $second}."
-        echo "A release can only promote a digest that went through preview."
-        exit 1
-      fi
+      # HEAD, or the merged-in parent -- never the first parent, which is
+      # main's previous tip (#154; scripts/release-candidate.sh says why).
+      sh scripts/release-candidate.sh "$BIRDCAGE_RELEASE_REPO" > .release-commit
       echo "promoting the build of $(cat .release-commit)"
     - |
       set -eu

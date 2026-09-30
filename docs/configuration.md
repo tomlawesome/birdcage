@@ -525,19 +525,19 @@ come from your address's own domain. A provider handling mail for
 `you@mail.example.net` commonly signs it as `example.net`, and both are
 perfectly normal.
 
-So birdcage does not guess. During setup you send one test approval,
-birdcage reads the domain your provider actually signed it with, shows
-it to you, and pins that exact value once you confirm it. Agents compare
-against the pinned value and nothing else.
+Left empty, birdcage expects the signature to come from your address's
+own domain. If your provider signs under a different one, set it:
 
 ```
 birdcage settings set admin_approval_signing_domain example.net
 ```
 
-You should not need to set that by hand -- setup does it -- but it is
-readable and settable like any other setting. Changing it later is an
-approved action in its own right, checked against the old value, so a
-compromised birdcage cannot quietly point approvals somewhere else.
+To find the right value, save one of your replies as a file and run
+`birdcage approval check` on it (above): it names the domain your
+provider actually signed with. The setting widens only which signing
+domain is trusted -- the reply must still come from the administrator
+address and the signature must still cover it. Nothing sets this for
+you, and changing it is an ordinary settings change.
 
 ## Other environment variables
 

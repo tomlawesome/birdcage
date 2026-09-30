@@ -536,11 +536,15 @@ const HEALTH_RANK: Record<CanaryStatus, number> = {
 }
 
 /** Exported for the footer (issue #45): both lines rank the fleet the
- * same way, so the footer cannot call clean what the hero calls broken. */
+ * same way, so the footer cannot call clean what the hero calls broken.
+ * 'pending' is excluded the same way 'ok' is (issue #155): a freshly
+ * enrolled canary still registering is not a fault, so it never wins
+ * "worst" -- the footer names it separately, neutrally, when it is all
+ * that is left. */
 export function worstCanary(canaries: Canary[]): Canary | null {
   let worst: Canary | null = null
   for (const c of canaries) {
-    if (c.status === 'ok') continue
+    if (c.status === 'ok' || c.status === 'pending') continue
     if (!worst || HEALTH_RANK[c.status] < HEALTH_RANK[worst.status]) worst = c
   }
   return worst

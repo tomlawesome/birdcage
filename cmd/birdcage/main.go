@@ -238,15 +238,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if cfg.caNeeded {
-		configLog.Info(fmt.Sprintf("%s=%s", envCADir, cfg.caDir))
-	}
-	birdcageCA, err := loadStartupCA(cfg, caLog)
-	if err != nil {
-		caLog.Error(err.Error())
-		os.Exit(1)
-	}
-
 	// Issue #55/#54: outbound mail and the inbound approval mailbox are
 	// each all-or-nothing and settled here, including their password
 	// files, so a bad config refuses at startup, not inside a failed
@@ -282,6 +273,22 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// checkStartupCAContinuity needs the database open (issue #149), so
+	// the CA block below runs here rather than in its more obvious spot
+	// right after checkStartupFiles.
+	if err := checkStartupCAContinuity(ctx, cfg, database, caLog); err != nil {
+		logStartupError(err)
+		os.Exit(1)
+	}
+	if cfg.caNeeded {
+		configLog.Info(fmt.Sprintf("%s=%s", envCADir, cfg.caDir))
+	}
+	birdcageCA, err := loadStartupCA(cfg, caLog)
+	if err != nil {
+		caLog.Error(err.Error())
+		os.Exit(1)
+	}
 
 	// Issue #56's canary state recorder starts once the schema is in
 	// place (a failed Start is non-fatal, per runHistoryLoop's tick

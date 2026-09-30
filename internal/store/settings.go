@@ -71,6 +71,15 @@ const (
 	// command an operator needs to run first.
 	SettingAdminApprovalAddress SettingKey = "admin_approval_address"
 	SettingReleaseAddress       SettingKey = "release_address"
+	// SettingAdminApprovalSigningDomain is issue #156's pin for the DKIM
+	// d= domain internal/agent/approval checks an approval's signature
+	// against (Rules.PinnedSigningDomain) -- see docs/configuration.md's
+	// "Checking your provider's signatures". Empty (the default) means
+	// the pinned admin address's own domain, the common case where a
+	// provider signs with exactly that; set explicitly only when a
+	// provider signs under a different domain, e.g. a mail-hosting
+	// provider handling you@mail.example.net but signing as example.net.
+	SettingAdminApprovalSigningDomain SettingKey = "admin_approval_signing_domain"
 	// SettingHistoryLastTick is the last time internal/history's state
 	// recorder completed a tick (RFC3339Nano UTC), written by the
 	// recorder itself rather than by an operator -- issue #56. It is
@@ -93,6 +102,7 @@ var orderedSettingKeys = []SettingKey{
 	SettingSelfTestUseRotationSchedule,
 	SettingRotationSchedule,
 	SettingAdminApprovalAddress,
+	SettingAdminApprovalSigningDomain,
 	SettingReleaseAddress,
 	SettingHistoryLastTick,
 }
@@ -131,6 +141,7 @@ var settingDefs = map[SettingKey]settingDef{
 	SettingSelfTestUseRotationSchedule: {validate: validateSettingBool, defaultValue: "true"},
 	SettingRotationSchedule:            {validate: validateSettingScheduleTime, defaultValue: "00:00"},
 	SettingAdminApprovalAddress:        {validate: validateSettingAddress, defaultValue: ""},
+	SettingAdminApprovalSigningDomain:  {validate: validateSettingSigningDomain, defaultValue: ""},
 	SettingReleaseAddress:              {validate: validateSettingAddress, defaultValue: ""},
 	SettingHistoryLastTick:             {validate: validateSettingTimestamp, defaultValue: ""},
 }
@@ -177,6 +188,29 @@ func validateSettingAddress(value string) error {
 	}
 	if controlCharPattern.MatchString(value) {
 		return fmt.Errorf("must not contain control characters")
+	}
+	return nil
+}
+
+// hostnamePattern matches a DNS hostname: one or more dot-separated
+// labels, each starting and ending with a letter or digit and made up of
+// letters, digits and hyphens (RFC 1123's relaxation of RFC 952). No
+// wildcard, no trailing dot, no port -- this is a DKIM d= value, not a
+// URL, and internal/agent/approval compares it byte-for-byte against
+// one.
+var hostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$`)
+
+// validateSettingSigningDomain accepts SettingAdminApprovalSigningDomain:
+// empty (today's behaviour -- internal/agent/approval.Rules falls back to
+// the pinned admin address's own domain) or a DNS hostname. Not IDN-
+// aware: a domain with non-ASCII labels needs its punycode form, the same
+// form a DKIM signature's own d= tag carries.
+func validateSettingSigningDomain(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > 253 || !hostnamePattern.MatchString(value) {
+		return fmt.Errorf("must be empty or a DNS hostname (e.g. %q), got %q", "example.net", value)
 	}
 	return nil
 }

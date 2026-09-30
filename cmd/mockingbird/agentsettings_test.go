@@ -89,6 +89,28 @@ func TestAgentSettingsApplyRejectsUnknownAndInvalidKeys(t *testing.T) {
 	}
 }
 
+// TestAgentSettingsApplyRejectsCeilingBelowMinCeilingGap proves a pushed
+// pace_ceiling below poisoner.MinCeilingGap is rejected the same way
+// every other invalid push is, leaving whatever ceiling was already in
+// force -- a typo here must not turn the canary into a continuous
+// broadcaster.
+func TestAgentSettingsApplyRejectsCeilingBelowMinCeilingGap(t *testing.T) {
+	s := newAgentSettings(poisoner.Config{Profile: poisoner.ProfileWindows, Pace: poisoner.DefaultPaceSettings()})
+	fake := &fakeLiveSettable{}
+
+	s.Apply(map[string]string{"pace_ceiling": "30ms"}, fake, discardLogger())
+
+	if fake.calls != 0 {
+		t.Fatalf("SetLiveSettings was called %d times for a sub-floor ceiling, want 0", fake.calls)
+	}
+	if s.pace.CeilingGap != poisoner.DefaultCeilingGap {
+		t.Errorf("pace ceiling = %v, want the previous value (the default) unchanged", s.pace.CeilingGap)
+	}
+	if s.Hash() != "" {
+		t.Fatalf("Hash() after a rejected push = %q, want empty", s.Hash())
+	}
+}
+
 // TestAgentSettingsApplyKeepsUnpushedKeysInForce proves a push naming
 // only one key never reverts the others to their startup defaults.
 func TestAgentSettingsApplyKeepsUnpushedKeysInForce(t *testing.T) {

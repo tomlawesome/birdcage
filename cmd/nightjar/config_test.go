@@ -60,6 +60,26 @@ func TestLoadConfigMissingCACert(t *testing.T) {
 	}
 }
 
+// TestLoadConfigMissingIngestURL proves a state directory missing
+// ingest-url is a loud, named refusal rather than a silent fallback to
+// envBirdcageURL's enrolment-listener address (#151, as for
+// cmd/mockingbird).
+func TestLoadConfigMissingIngestURL(t *testing.T) {
+	dir := writeStateDir(t)
+	if err := os.Remove(filepath.Join(dir, ingestURLFileName)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove %s: %v", ingestURLFileName, err)
+	}
+	setValidEnv(t, dir)
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("loadConfig succeeded with ingest-url missing")
+	}
+	if !strings.Contains(err.Error(), ingestURLFileName) {
+		t.Fatalf("err = %q, want it to name %s", err, ingestURLFileName)
+	}
+}
+
 // TestLoadConfigUnreadableCertFiles proves loadConfig's own three
 // os.ReadFile checks (CACert, ClientCert, ClientKey -- config.go, after
 // ensureEnrolled has already accepted the state directory as complete),
@@ -103,7 +123,9 @@ func TestLoadConfigSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if cfg.BirdcageURL != "https://birdcage.example:8443" {
+	// From the ingest-url state file (writeStateDir's "placeholder"),
+	// never envBirdcageURL.
+	if cfg.BirdcageURL != "placeholder" {
 		t.Errorf("BirdcageURL = %q", cfg.BirdcageURL)
 	}
 	if cfg.TokenPath != filepath.Join(dir, tokenFileName) {
