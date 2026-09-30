@@ -272,6 +272,32 @@ func upgradeHoneypot(w io.Writer, in UpgradeInput) error {
 		return err
 	}
 
+	// A canary enrolled before issue #54 ever recorded whether it had
+	// the SMB lure (in.SMBLure == nil, the same "legacy" case
+	// writeUnknownSMBLureBlock below handles) might still be running one
+	// -- and the holder recreated two steps from now, sized for lureOn
+	// == false, would come up without the lure's ports, orphaning it.
+	// Check before anything is removed, so a lure that turns out to be
+	// running stops the whole script rather than losing its ports: this
+	// canary needs re-enrolling, which records the answer for next time,
+	// not an automatic guess.
+	if in.SMBLure == nil {
+		if err := step(w, "check for an untracked smb lure"); err != nil {
+			return err
+		}
+		if err := writeLines(w, []string{
+			fmt.Sprintf(`if [ "$(docker inspect -f '{{.State.Running}}' %s 2>/dev/null)" = "true" ]; then`, SMBLureContainerName),
+			`  echo "birdcage upgrade: a running smb-lure container was found on a canary enrolled before issue #54 tracked lures; an automatic upgrade cannot preserve its ports, so nothing has been removed. Re-enrol this canary instead." >&2`,
+			`  exit 1`,
+			`fi`,
+		}); err != nil {
+			return err
+		}
+		if err := blank(w); err != nil {
+			return err
+		}
+	}
+
 	// Dependants before the holder -- the reverse of the enrolment
 	// order below, since each one joined the holder's namespace only
 	// once the holder already existed.

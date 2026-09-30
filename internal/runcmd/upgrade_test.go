@@ -266,6 +266,12 @@ func TestUpgradeHoneypotWithUnknownLure(t *testing.T) {
 		"docker pull holder:latest",
 		"docker pull opencanary:latest",
 		"",
+		"step='check for an untracked smb lure'",
+		`if [ "$(docker inspect -f '{{.State.Running}}' smb-lure 2>/dev/null)" = "true" ]; then`,
+		`  echo "birdcage upgrade: a running smb-lure container was found on a canary enrolled before issue #54 tracked lures; an automatic upgrade cannot preserve its ports, so nothing has been removed. Re-enrol this canary instead." >&2`,
+		"  exit 1",
+		"fi",
+		"",
 		"step='remove the old containers'",
 		"docker rm -f opencanary || true",
 		"docker rm -f mockingbird || true",
@@ -340,11 +346,13 @@ func TestUpgradeHoneypotWithUnknownLure(t *testing.T) {
 	assertNoVolumeRemoval(t, out.String())
 	// Every lure-specific line the operator would have to act on is
 	// commented -- never a bare `docker run -d --name smb-lure` or
-	// `docker rm -f smb-lure` that could be pasted by mistake.
+	// `docker rm -f smb-lure` that could be pasted by mistake. The
+	// read-only `docker inspect` check above is deliberately live
+	// (it creates or removes nothing), so it is exempt.
 	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.Contains(line, "smb-lure") && !strings.HasPrefix(strings.TrimSpace(line), "#") && !strings.Contains(line, "-v smb-lure") {
-			// smb-lure only appears in commented lines or container/image
-			// names inside them; every one of those lines starts with "#".
+		trimmed := strings.TrimSpace(line)
+		live := strings.HasPrefix(trimmed, "docker run") || strings.HasPrefix(trimmed, "docker rm") || strings.HasPrefix(trimmed, "docker pull")
+		if live && strings.Contains(line, "smb-lure") && !strings.HasPrefix(trimmed, "#") {
 			t.Errorf("uncommented line mentions smb-lure: %q", line)
 		}
 	}
@@ -671,6 +679,74 @@ func TestUpgradeRemovalStepIsRetrySafe(t *testing.T) {
 			assertOrder(t, log, "args:rm -f smb-lure", "args:rm -f opencanary", "args:rm -f mockingbird",
 				"args:rm -f holder", "args:run -d --name holder", "args:run -d --name mockingbird",
 				"args:run -d --name opencanary", "args:run -d --name smb-lure")
+		})
+	}
+}
+
+// fakeDockerLureRunning is fakeDocker, except `docker inspect -f
+// '{{.State.Running}}' smb-lure` reports a genuinely running container
+// -- standing in for a legacy canary whose lure the upgrade must not
+// blindly tear down.
+const fakeDockerLureRunning = `#!/bin/sh
+printf 'args:%s\n' "$*" >> "$LOG"
+case "$*" in
+  "inspect -f {{.State.Running}} smb-lure") echo true ;;
+esac
+exit 0
+`
+
+// TestUpgradeHoneypotLegacyRefusesRunningLure proves the "check for an
+// untracked smb lure" step actually stops a legacy canary's paste,
+// before any container is removed, when its smb-lure is genuinely
+// running -- not just that the script text says so.
+func TestUpgradeHoneypotLegacyRefusesRunningLure(t *testing.T) {
+	var shells []string
+	for _, sh := range []string{"sh", "dash", "bash"} {
+		if p, err := exec.LookPath(sh); err == nil {
+			shells = append(shells, p)
+		}
+	}
+	if len(shells) == 0 {
+		t.Skip("no POSIX shell on PATH")
+	}
+	var out strings.Builder
+	if err := Upgrade(&out, UpgradeInput{
+		Kind: agentkind.Honeypot, UpgradeToken: testUpgradeToken, AdvertiseHost: "h", EnrolPort: "1", Pin: "p",
+		AgentImage: "mockingbird:latest", HolderImage: "holder:latest", OpenCanaryImage: "opencanary:latest",
+		SMBLureImage: "smb-lure:latest",
+		// SMBLure left nil: a canary enrolled before issue #54.
+	}); err != nil {
+		t.Fatal(err)
+	}
+	script := out.String()
+
+	for _, shell := range shells {
+		t.Run(filepath.Base(shell), func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fakeDockerLureRunning), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			logPath := filepath.Join(dir, "log")
+			cmd := exec.Command(shell)
+			cmd.Stdin = strings.NewReader(script)
+			cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin", "LOG=" + logPath}
+			raw, _ := cmd.CombinedOutput()
+			output := string(raw)
+			logBytes, _ := os.ReadFile(logPath)
+			log := string(logBytes)
+
+			if !strings.Contains(output, "birdcage upgrade stopped at: check for an untracked smb lure") {
+				t.Fatalf("a running legacy smb-lure did not stop the script:\n%s", output)
+			}
+			if !strings.Contains(output, "Re-enrol") {
+				t.Errorf("the refusal did not tell the operator to re-enrol:\n%s", output)
+			}
+			if strings.Contains(output, "birdcage upgrade: done") {
+				t.Errorf("the script ran to completion despite the running lure:\n%s", output)
+			}
+			if strings.Contains(log, "args:rm") {
+				t.Errorf("a container was removed despite the running lure:\n%s", log)
+			}
 		})
 	}
 }
