@@ -316,6 +316,39 @@ func TestEmitLogsTheAddressAndNothingElse(t *testing.T) {
 	}
 }
 
+// TestCountLogsWhenItsSocketFails proves count no longer exits silently
+// on a non-timeout read error: it logs a line naming the protocol whose
+// counting has stopped, so the operator has something pointing at why
+// pace-matching for that protocol went quiet, instead of nothing at all.
+func TestCountLogsWhenItsSocketFails(t *testing.T) {
+	log, buf := captureLogger()
+	submit, _, _ := collect()
+	d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05", Now: func() time.Time { return base }}, submit, log)
+
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the counting socket: %v", err)
+	}
+	l := listener{proto: ProtocolLLMNR, conn: conn}
+
+	// Close the socket out from under count once its read deadline is
+	// set, so ReadFromUDP returns "use of closed network connection" --
+	// a real, non-timeout error -- rather than count ever timing out.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = conn.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	d.count(ctx, l)
+
+	line := buf.String()
+	if !strings.Contains(line, string(ProtocolLLMNR)) {
+		t.Errorf("log output = %q, want a line naming the protocol whose counting socket stopped", line)
+	}
+}
+
 // TestCollectAnswersCatchesAFakePoisoner is the end-to-end catch, on
 // loopback: a socket that answers a bait query the way Responder does --
 // unicast, back to the querier's own port -- and the Answer that comes out of
@@ -375,6 +408,58 @@ func TestCollectAnswersCatchesAFakePoisoner(t *testing.T) {
 	}
 	if a.LocalPort != ours.LocalAddr().(*net.UDPAddr).Port {
 		t.Errorf("LocalPort = %d, want the query socket's own port", a.LocalPort)
+	}
+}
+
+// TestCollectAnswersReadsASecondSocketEvenWhenTheFirstIsIdle proves the
+// starvation case a dual-stack lookup hits: the first socket in the slice
+// (IPv4, in production) gets no reply for the whole window, while the
+// second (IPv6, in production) gets one almost immediately. Reading
+// sockets one after another against one shared deadline would let the
+// idle first socket consume the entire window and never read the second
+// at all.
+func TestCollectAnswersReadsASecondSocketEvenWhenTheFirstIsIdle(t *testing.T) {
+	idle, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the idle query socket: %v", err)
+	}
+	defer func() { _ = idle.Close() }()
+
+	answered, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the answered query socket: %v", err)
+	}
+	defer func() { _ = answered.Close() }()
+
+	poisonerConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the poisoner's socket: %v", err)
+	}
+	defer func() { _ = poisonerConn.Close() }()
+
+	const id = 0x4d2
+	answer := dnsResponse(id, []byte{
+		0x09, 'f', 's', '-', 'l', 'o', 'n', '-', '0', '2', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}, 1)
+	if _, err := poisonerConn.WriteToUDP(answer, answered.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatalf("the poisoner could not answer: %v", err)
+	}
+
+	record := asked{name: "fs-lon-02", proto: ProtocolLLMNR, ids: map[uint16]struct{}{id: {}}}
+	// idle is listed first, matching openMulticastSockets' IPv4-before-
+	// IPv6 order -- the order that starved the second socket.
+	sockets := []querySocket{{conn: idle}, {conn: answered}}
+	window := 300 * time.Millisecond
+	answers, err := collectAnswers(context.Background(), sockets, record, "", window)
+	if err != nil {
+		t.Fatalf("collectAnswers: %v", err)
+	}
+	if len(answers) != 1 {
+		t.Fatalf("got %d answers, want 1 -- the reply on the second socket must not be starved by the idle first one", len(answers))
+	}
+	if a := answers[0]; a.Source != "127.0.0.1" || a.LocalPort != answered.LocalAddr().(*net.UDPAddr).Port {
+		t.Errorf("answer = %+v, want it attributed to the answered socket", a)
 	}
 }
 

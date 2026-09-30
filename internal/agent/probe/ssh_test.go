@@ -66,6 +66,44 @@ func TestProbeSSH_PlantsMarkerAsUsernameAndTreatsRejectionAsSuccess(t *testing.T
 	}
 }
 
+// TestProbeSSH_HandshakeRejectionBeforeAuthIsFailure covers a peer that
+// tears the connection down during the transport-level handshake, before
+// any username is ever sent (e.g. no common key-exchange algorithm, or a
+// reset right after the version banner). Unlike a rejected password,
+// this must be reported as a failed probe: the marker never reached the
+// server for OpenCanary to log.
+func TestProbeSSH_HandshakeRejectionBeforeAuthIsFailure(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }() // test teardown; nothing left to act on a close error
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Close immediately, before sending an SSH version line, so the
+		// client's version exchange fails and clientAuthenticate is
+		// never reached -- no username is ever transmitted.
+		_ = c.Close()
+	}()
+
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := probeSSH(ctx, "127.0.0.1", port, "marker-ssh"); err == nil {
+		t.Fatal("probeSSH against a peer that resets before the version exchange: want an error, got nil")
+	}
+
+	<-done
+}
+
 func TestProbeSSH_DialFailureIsAnError(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

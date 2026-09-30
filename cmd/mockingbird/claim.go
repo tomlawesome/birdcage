@@ -114,7 +114,19 @@ func (t *claimTracker) observe(id, service, sourceIP string) {
 	defer t.mu.Unlock()
 	for _, w := range t.windows {
 		if w.service == service && w.address == sourceIP {
-			w.candidates = append(w.candidates, id)
+			// The webhook road and the log-tailer road both observe the
+			// same real OpenCanary event with the same id (event/id.go
+			// guarantees it), so count distinct ids, not calls.
+			duplicate := false
+			for _, c := range w.candidates {
+				if c == id {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				w.candidates = append(w.candidates, id)
+			}
 		}
 	}
 }

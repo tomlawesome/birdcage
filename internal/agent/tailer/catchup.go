@@ -72,7 +72,13 @@ func (t *Tailer) catchUp(resumeFrom queue.Position, hasResume bool, emit func(Li
 		if i == 0 {
 			start = chainStart
 		}
-		t.readWhole(c, start, buf, emit)
+		if !t.readWhole(c, start, buf, emit) {
+			// selectChain decided this file's contents belonged to the
+			// recovery window based on a listing that is now stale --
+			// the file itself could not be read, so some of what
+			// PositionFound promises to have read is actually missing.
+			positionFound = false
+		}
 	}
 
 	if liveIdx < 0 {
@@ -192,22 +198,28 @@ func (t *Tailer) selectChain(cands []candidate, liveIdx int, resumeFrom queue.Po
 // the edge of the recovery window) is not fatal to the scan: c is simply
 // skipped, on the same reasoning MaxRotatedFiles/MaxRotatedBytes already
 // accept -- the recovery window has an inherent edge, and a concurrent
-// cleanup race at that edge is within it, not a new failure mode.
-func (t *Tailer) readWhole(c candidate, start int64, buf []byte, emit func(Line)) {
+// cleanup race at that edge is within it, not a new failure mode. It is
+// still counted (SkippedChainFiles) and reported to the caller: c's
+// contents were never read, and catchUp uses that to stop claiming
+// ResumeResult.PositionFound for a scan that did not actually cover it.
+func (t *Tailer) readWhole(c candidate, start int64, buf []byte, emit func(Line)) bool {
 	f, err := openNoFollow(c.path)
 	if err != nil {
-		return
+		t.skippedChain.Add(1)
+		return false
 	}
 	defer func() { _ = f.Close() }()
 
 	inode, err := fileInode(f)
 	if err != nil || inode != c.inode {
-		return
+		t.skippedChain.Add(1)
+		return false
 	}
 
 	lr, err := newLineReader(f, start, t.cfg.MaxLineBytes, buf)
 	if err != nil {
-		return
+		t.skippedChain.Add(1)
+		return false
 	}
 	_ = lr.fill(func(line []byte, pos int64) {
 		emit(Line{Data: line, Pos: queue.Position{Inode: inode, Offset: pos}})
@@ -218,4 +230,5 @@ func (t *Tailer) readWhole(c candidate, start int64, buf []byte, emit func(Line)
 		lr.discardPending()
 		t.discardedPartial.Add(1)
 	}
+	return true
 }

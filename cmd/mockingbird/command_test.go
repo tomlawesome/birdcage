@@ -33,6 +33,24 @@ func TestRunCommandUnknownKindRefused(t *testing.T) {
 	}
 }
 
+// TestRunCommandRecoversFromPanic proves a panic anywhere inside a
+// command's execution (selftest.DecodeParams, probe.Sweep, or the
+// poisoner call reached via runSelfTest) refuses that one command
+// rather than taking down the whole process -- Go terminates the
+// entire process on an unrecovered panic in any goroutine, which would
+// otherwise silence every road (heartbeats, alerts) on this canary
+// until a restart. A nil cmd is the simplest reachable panic (cmd.Kind
+// dereferences it) that does not need a test-only hook in runCommand
+// itself.
+func TestRunCommandRecoversFromPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("runCommand let a panic escape instead of recovering: %v", r)
+		}
+	}()
+	_ = runCommand(context.Background(), nil, nil, nil)
+}
+
 // TestRunCommandSelfTestAccepted proves a well-formed selftest command
 // is accepted regardless of how its targets fare -- the probe engine's
 // per-target failures are logged, not returned as a command-level

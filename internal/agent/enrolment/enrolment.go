@@ -275,11 +275,16 @@ func retryEnrolStep[T any](ctx context.Context, log *slog.Logger, step func(cont
 }
 
 // writeState durably writes every file in files under stateDir, via
-// atomicfile.Write, all mode 0600. Each write is independent: a crash or
-// failure partway through leaves whichever files landed durably on disk
-// and the rest simply absent, which the next boot's EnsureEnrolled
-// reports as incomplete enrolment state rather than silently reusing a
-// half-written credential set.
+// atomicfile.Write, all mode 0600, strictly in files order. Each write
+// is independent: a crash or failure partway through leaves whichever
+// files landed durably on disk and the rest simply absent. That is only
+// reported as incomplete enrolment state by the next boot's
+// EnsureEnrolled when RequiredFiles itself is incomplete -- if a caller's
+// WriteState returns files where RequiredFiles is a strict subset, it
+// must order the rest ahead of every RequiredFiles entry, or a crash
+// could land all of RequiredFiles while a file outside it stays silently
+// absent (see cmd/mockingbird/enrol.go and cmd/nightjar/enrol.go's own
+// writeEnrolmentState for why they order it that way).
 func writeState(stateDir string, files []StateFile) error {
 	for _, f := range files {
 		if err := atomicfile.Write(filepath.Join(stateDir, f.Name), f.Data, 0o600); err != nil {
