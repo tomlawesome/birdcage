@@ -537,6 +537,59 @@ function stateSentence(input: CanaryPageInput, status: Canary['status']): Canary
             ],
       }
     }
+    // The three cases below use the same wording rules.ts's
+    // rule2OpenCanaryDown / rule2HitsMerged / rule2DbStale already give
+    // the fleet-level hero for these states, so the canary's own page
+    // does not fall through to the 'pending' default and read a broken
+    // honeypot as healthy and unprovisioned.
+    case 'opencanary_down':
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s OpenCanary is not answering.", bold: true }],
+        sub: [
+          {
+            text:
+              "The agent's own heartbeat is still arriving, but its port probe found nothing answering on " +
+              'OpenCanary’s side — the honeypot itself has stopped, even though the box it runs on has not. ',
+          },
+          { text: 'Check OpenCanary on the box.', bold: true },
+        ],
+      }
+    case 'hits_merged': {
+      const n = canary.event_id_collisions ?? 0
+      return {
+        hero: [
+          { text: canary.name, cls: 'c' },
+          { text: ` merged ${wordOrNumber(n)} hit${n === 1 ? '' : 's'}.`, bold: true },
+        ],
+        sub: [
+          {
+            text:
+              'Two log lines carried the same event id, so one hit was folded into another. OpenCanary cannot do ' +
+              'this on a running clock, so something on the box changed: ',
+          },
+          { text: 'check its clock, that only one OpenCanary runs, and that the log rotates by rename.', bold: true },
+        ],
+      }
+    }
+    case 'db_stale': {
+      const hours = Math.max(
+        0,
+        Math.floor((Date.parse(input.trace.now) - Date.parse(canary.db_refresh?.failing_since ?? input.trace.now)) / 3_600_000),
+      )
+      return {
+        hero: [{ text: canary.name, cls: 'c' }, { text: "'s vulnerability database has gone stale.", bold: true }],
+        sub: [
+          { text: 'Its refresh has been failing for ' },
+          { text: `${hours} hours`, bold: true },
+          {
+            text:
+              '. It is still scanning on the last database it could fetch, so a scan on it may be missing anything ' +
+              'found since. ',
+          },
+          { text: 'Check the scanner can reach the vulnerability database mirror.', bold: true },
+        ],
+      }
+    }
     case 'agent_out_of_date':
       // Issue #54: birdcage's own comparison of the agent's build
       // against its own stamped version -- same degraded severity as
