@@ -738,13 +738,15 @@ func ParseRange(s string) (time.Duration, error) {
 // depending on its CA: a canary only reaches this table by completing
 // enrolment, which signs its client certificate with the CA key. A
 // single EXISTS query, cheaper than ListCanaries' full scan and needing
-// none of its joins or health computation.
+// none of its joins or health computation. Scanned into a bool:
+// Postgres returns EXISTS as a boolean, SQLite as 0/1, and
+// database/sql converts both.
 func AnyCanariesEnrolled(ctx context.Context, database *db.DB) (bool, error) {
-	var exists int
+	var exists bool
 	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents)`).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check for enrolled canaries: %w", err)
 	}
-	return exists != 0, nil
+	return exists, nil
 }
 
 // ListCanaries returns every registered canary with its ordered health
