@@ -74,3 +74,36 @@ describe('the footer under issue #45 health states', () => {
     expect(plainText(f)).toBe('thirty-five quiet days · two agents need attention — look at canary-srv first')
   })
 })
+
+// Issue #155: a freshly enrolled canary still 'pending' is not a fault,
+// so it must not read as one -- the hero already falls through to its
+// ordinary quiet line for a lone pending canary (rules.test.ts), and the
+// footer has to agree rather than calling it "needs attention".
+describe('the footer and pending canaries (issue #155)', () => {
+  function canary(id: string, status: Canary['status']): Canary {
+    return { id, name: id, lane: 'lan', ports: '', status, last_heartbeat_at: null, hits: 0 }
+  }
+  const lastHit = alerts.trace.last_hit
+  const now = alerts.trace.now
+
+  it('a lone pending canary is named neutrally, not as a fault', () => {
+    const f = computeFooter([canary('canary-iot', 'pending'), canary('canary-lan', 'ok')], [], '14d', now, lastHit)
+    expect(plainText(f)).toBe('thirty-five quiet days · canary-iot is still registering')
+  })
+
+  it('two pending canaries are named together', () => {
+    const f = computeFooter(
+      [canary('canary-iot', 'pending'), canary('canary-lan', 'pending'), canary('canary-srv', 'ok')],
+      [],
+      '14d',
+      now,
+      lastHit,
+    )
+    expect(plainText(f)).toBe('thirty-five quiet days · canary-iot and canary-lan are still registering')
+  })
+
+  it('a real fault wins over a pending canary, which is not named as a fault', () => {
+    const f = computeFooter([canary('canary-iot', 'throttled'), canary('canary-lan', 'pending')], [], '14d', now, lastHit)
+    expect(plainText(f)).toBe('thirty-five quiet days · canary-iot needs attention — quiet is only good news while the cage is sound')
+  })
+})

@@ -47,7 +47,9 @@ export function computeFooter(
   // is the look-now one, in the alarm colour the night footer already
   // uses for its own act-now clause.
   if (worst) {
-    const n = canaries.filter((c) => c.status !== 'ok').length
+    // Issue #155: pending is not a fault, so it does not swell this
+    // count even when a real fault is what earned this branch.
+    const n = canaries.filter((c) => c.status !== 'ok' && c.status !== 'pending').length
     const attention =
       n === 1 ? `${worst.name} needs attention` : `${wordOrNumber(n)} agents need attention`
     // ADR-0012 Part B (#130): credential_conflict is ranked with
@@ -58,6 +60,21 @@ export function computeFooter(
         ? [{ text: ' — ' }, { text: n === 1 ? 'look at the box now' : `look at ${worst.name} first`, cls: 'r' }]
         : [{ text: ' — quiet is only good news while the cage is sound' }]
     return [{ text: `${numberToWords(days)} quiet days · ` }, { text: attention, bold: true }, ...tail]
+  }
+
+  // Issue #155: worstCanary excludes 'pending', so a fleet whose only
+  // non-ok canaries are still registering reaches here with worst still
+  // null. Name them, but neutrally -- registering is not a fault, so
+  // this gets none of the "needs attention" wording above.
+  const registering = canaries.filter((c) => c.status === 'pending')
+  if (registering.length > 0) {
+    const names = registering.map((c) => c.name)
+    const namesPhrase =
+      names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+    return [
+      { text: `${numberToWords(days)} quiet days · ` },
+      { text: `${namesPhrase} ${names.length === 1 ? 'is' : 'are'} still registering`, bold: true },
+    ]
   }
 
   if (visitors.length > 0) {
