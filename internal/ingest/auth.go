@@ -222,23 +222,32 @@ func requireBearerToken(database *db.DB, now func() time.Time, limiters *limiter
 			}
 		}
 
-		// Recovered before RecordCanaryTokenUse below overwrites it: nil
-		// here means this is the token's first use (issue #32 slice 5),
-		// the trigger for completeRotation's revoke-every-older-token
-		// sweep further down.
-		firstUse := tok.LastUsedAt == nil
-
-		if err := store.RecordCanaryTokenUse(r.Context(), database, tok.ID, now().UTC()); err != nil {
+		// CompleteCanaryTokenFirstUse claims first use and runs the
+		// revoke-every-older-token sweep (issue #32 slice 5) atomically,
+		// so a transient failure never strands an already-claimed first
+		// use, and two requests racing the same freshly-rotated token
+		// can never both claim it (F2-12/F4-5 fix).
+		at := now().UTC()
+		won, revoked, err := store.CompleteCanaryTokenFirstUse(r.Context(), database, tok, at)
+		if err != nil {
 			// The credential is valid regardless of whether this
-			// bookkeeping write lands; failing the request over it would
+			// bookkeeping succeeds; failing the request over it would
 			// turn an authenticated agent away because of birdcage's own
 			// storage trouble, exactly what the ack semantics elsewhere
-			// in issue #32 avoid on the write path too.
-			slog.Error("ingest: record token use", "canary", tok.CanaryID, "err", err)
+			// in issue #32 avoid on the write path too. The claim above
+			// is transactional, so this changed nothing -- the next
+			// request retries honestly.
+			slog.Error("ingest: complete canary token first use failed", "canary", tok.CanaryID, "err", err)
 		}
-
-		if firstUse {
-			completeRotation(database, now, tok, r, hook)
+		if !won {
+			// Not this request's first use (or the claim above failed
+			// before running) -- a winning claim already recorded this
+			// use as part of it.
+			if err := store.RecordCanaryTokenUse(r.Context(), database, tok.ID, at); err != nil {
+				slog.Error("ingest: record token use", "canary", tok.CanaryID, "err", err)
+			}
+		} else {
+			completeRotation(r.Context(), database, tok, revoked, at, r, hook)
 		}
 
 		if presented != nil {
@@ -563,12 +572,15 @@ func formatKinds(kinds []agentkind.Kind) string {
 // that canary, not just the one presented". It runs on every route this
 // package's requireBearerToken guards -- not only POST /ingest/rotate --
 // because the rule triggers on the token's first use, whichever route it
-// first authenticates. Revoking zero other tokens means tok is the
-// canary's only token, i.e. this is its first-ever mint rather than a
-// rotation: not itself a rotation, so #45's rotation record stays silent
-// for it -- but item 10 ("every mint, first use and revocation" is
-// audited) still wants the first use itself recorded, which the
-// no-older-tokens branch below now does.
+// first authenticates. Only called once requireBearerToken's call to
+// store.CompleteCanaryTokenFirstUse has already won the first-use claim
+// and run the revoke sweep atomically; revoked is that sweep's own
+// count, reported here rather than recomputed. Revoking zero other
+// tokens means tok is the canary's only token, i.e. this is its
+// first-ever mint rather than a rotation: not itself a rotation, so
+// #45's rotation record stays silent for it -- but item 10 ("every mint,
+// first use and revocation" is audited) still wants the first use itself
+// recorded, which the no-older-tokens branch below now does.
 //
 // r and hook are issue #47 step 8's addition, used only inside that same
 // no-older-tokens branch: revoked == 0 can only mean tok is the canary's
@@ -586,13 +598,7 @@ func formatKinds(kinds []agentkind.Kind) string {
 // call must never affect this request's own response either way -- any
 // error inside it is the hook's own to log, the same contract
 // handleRotate's own RotationSucceeded call already keeps.
-func completeRotation(database *db.DB, now func() time.Time, tok store.CanaryToken, r *http.Request, hook SelfTestRotationHook) {
-	ctx := r.Context()
-	revoked, err := store.RevokeCanaryTokensSupersededBy(ctx, database, tok, now().UTC())
-	if err != nil {
-		slog.Error("ingest: revoke superseded tokens failed", "canary", tok.CanaryID, "err", err)
-		return
-	}
+func completeRotation(ctx context.Context, database *db.DB, tok store.CanaryToken, revoked int64, at time.Time, r *http.Request, hook SelfTestRotationHook) {
 	if revoked == 0 {
 		// No older token existed to supersede: this is the first-ever
 		// use of a canary's first token, not a rotation completing.
@@ -603,13 +609,13 @@ func completeRotation(database *db.DB, now func() time.Time, tok store.CanaryTok
 			Target:      tok.CanaryID,
 			Reason:      "first use of a canary's first token",
 			TriggeredBy: tok.CanaryID,
-			CreatedAt:   now().UTC(),
+			CreatedAt:   at,
 		}); err != nil {
 			slog.Error("ingest: record first token use", "canary", tok.CanaryID, "err", err)
 		}
 		if hook != nil {
 			recordLastSeenAddr(r, database, tok.CanaryID)
-			hook.FirstContact(ctx, tok.CanaryID, now().UTC())
+			hook.FirstContact(ctx, tok.CanaryID, at)
 		}
 		return
 	}
@@ -619,7 +625,7 @@ func completeRotation(database *db.DB, now func() time.Time, tok store.CanaryTok
 		Target:      tok.CanaryID,
 		Reason:      fmt.Sprintf("first use of a new token revoked %d older token(s)", revoked),
 		TriggeredBy: tok.CanaryID,
-		CreatedAt:   now().UTC(),
+		CreatedAt:   at,
 	}); err != nil {
 		slog.Error("ingest: record completed rotation", "canary", tok.CanaryID, "err", err)
 	}

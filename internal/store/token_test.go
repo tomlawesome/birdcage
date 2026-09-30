@@ -399,6 +399,106 @@ func TestRevokeCanaryTokensSupersededByRevokesOlderOnly(t *testing.T) {
 	})
 }
 
+// TestCompleteCanaryTokenFirstUseGuardBlocksSecondClaim reproduces the
+// race two requests presenting the same freshly-rotated token at once
+// would hit: both read tok.LastUsedAt == nil before either writes,
+// under Postgres's read-committed isolation, and (before this guard)
+// both would run the revoke sweep -- the second finding every older
+// token already revoked and wrongly reporting a first-ever token use.
+// SQLite serialises every transaction and so cannot hold two such reads
+// open at once to reproduce the interleaving itself; this replays it
+// sequentially instead, which is exactly the shape the race produces: a
+// first call that wins the claim, and a second against the same token
+// id carrying the state a racer would have read.
+func TestCompleteCanaryTokenFirstUseGuardBlocksSecondClaim(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		if _, _, err := MintCanaryToken(ctx, database, "canary-a", mintedAt); err != nil {
+			t.Fatalf("MintCanaryToken(older): %v", err)
+		}
+		_, tok, err := MintCanaryToken(ctx, database, "canary-a", mintedAt.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintCanaryToken(tok): %v", err)
+		}
+
+		at := mintedAt.Add(2 * time.Hour)
+		won, revoked, err := CompleteCanaryTokenFirstUse(ctx, database, tok, at)
+		if err != nil {
+			t.Fatalf("first CompleteCanaryTokenFirstUse: %v", err)
+		}
+		if !won || revoked != 1 {
+			t.Fatalf("first claim = won %v, revoked %d, want true, 1", won, revoked)
+		}
+
+		won, revoked, err = CompleteCanaryTokenFirstUse(ctx, database, tok, at.Add(time.Second))
+		if err != nil {
+			t.Fatalf("second CompleteCanaryTokenFirstUse: %v", err)
+		}
+		if won || revoked != 0 {
+			t.Errorf("second claim = won %v, revoked %d, want false, 0 (the first call already claimed it)", won, revoked)
+		}
+	})
+}
+
+// TestCompleteCanaryTokenFirstUseRollsBackOnSweepFailure reproduces a
+// transient DB error during rotation completion: before this fix, the
+// first-use decision and the revoke sweep were two separate,
+// non-transactional writes, so a failure in the sweep left last_used_at
+// already committed and no later request could ever retry it, stranding
+// the old, superseded token live forever. Corrupting one row's
+// created_at is a stand-in for any transient failure inside the
+// sweep -- the point under test is what happens to the already-made
+// claim when the write after it fails, not what specifically failed.
+func TestCompleteCanaryTokenFirstUseRollsBackOnSweepFailure(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		_, older, err := MintCanaryToken(ctx, database, "canary-a", mintedAt)
+		if err != nil {
+			t.Fatalf("MintCanaryToken(older): %v", err)
+		}
+		_, tok, err := MintCanaryToken(ctx, database, "canary-a", mintedAt.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintCanaryToken(tok): %v", err)
+		}
+		if _, err := database.Exec(`UPDATE agent_tokens SET created_at = ? WHERE id = ?`, "not-a-timestamp", older.ID); err != nil {
+			t.Fatalf("corrupt older.created_at: %v", err)
+		}
+
+		at := mintedAt.Add(2 * time.Hour)
+		won, revoked, err := CompleteCanaryTokenFirstUse(ctx, database, tok, at)
+		if err == nil {
+			t.Fatal("CompleteCanaryTokenFirstUse: err = nil, want the sweep's parse error")
+		}
+		if won || revoked != 0 {
+			t.Errorf("CompleteCanaryTokenFirstUse on failure = won %v, revoked %d, want false, 0", won, revoked)
+		}
+
+		var lastUsedAt *string
+		if err := database.QueryRow(`SELECT last_used_at FROM agent_tokens WHERE id = ?`, tok.ID).Scan(&lastUsedAt); err != nil {
+			t.Fatalf("scan last_used_at: %v", err)
+		}
+		if lastUsedAt != nil {
+			t.Errorf("last_used_at = %v after a failed sweep, want NULL (the claim must roll back with it, not strand tok half-claimed)", *lastUsedAt)
+		}
+
+		// Repair the row and retry: the claim must still be available,
+		// and this time succeed -- the honest retry a real transient
+		// error would get on the agent's next request.
+		if _, err := database.Exec(`UPDATE agent_tokens SET created_at = ? WHERE id = ?`, mintedAt.Format(receivedAtLayout), older.ID); err != nil {
+			t.Fatalf("repair older.created_at: %v", err)
+		}
+		won, revoked, err = CompleteCanaryTokenFirstUse(ctx, database, tok, at)
+		if err != nil {
+			t.Fatalf("retry CompleteCanaryTokenFirstUse: %v", err)
+		}
+		if !won || revoked != 1 {
+			t.Errorf("retry = won %v, revoked %d, want true, 1", won, revoked)
+		}
+	})
+}
+
 // TestInsertAlertIfNewDedupIsPerCanary: dedup is scoped to one canary,
 // so a canary cannot suppress another canary's alert by storing its
 // event id first (#32 research, 2026-09-15).

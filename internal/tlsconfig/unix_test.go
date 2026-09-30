@@ -111,3 +111,46 @@ func TestUnixListenerRemovesStaleSocket(t *testing.T) {
 	}
 	defer func() { _ = ln2.Close() }() // test teardown; nothing left to act on a close error
 }
+
+// TestUnixListenerRefusesWhenAnotherProcessIsListening is F4-7's fix:
+// a socket path a live listener still owns must be refused, not
+// unlinked and taken over -- the first listener must keep working
+// after the refused call, exactly as it would if a second birdcage
+// process (a stray copy, or a supervisor restart racing the old one's
+// exit) tried to bind the same path.
+func TestUnixListenerRefusesWhenAnotherProcessIsListening(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "http.sock")
+
+	ln1, err := UnixListener(sockPath)
+	if err != nil {
+		t.Fatalf("first UnixListener: %v", err)
+	}
+	defer func() { _ = ln1.Close() }() // test teardown; nothing left to act on a close error
+
+	if _, err := UnixListener(sockPath); err == nil {
+		t.Fatal("second UnixListener while the first is still live: err = nil, want a refusal")
+	}
+
+	// The refused call must not have touched the first listener's
+	// socket: it still accepts, over the same file.
+	if _, statErr := os.Stat(sockPath); statErr != nil {
+		t.Fatalf("stat socket after the refused second listener: %v", statErr)
+	}
+	accepted := make(chan error, 1)
+	go func() {
+		conn, aerr := ln1.Accept()
+		if aerr == nil {
+			_ = conn.Close()
+		}
+		accepted <- aerr
+	}()
+	conn, err := net.DialTimeout("unix", sockPath, time.Second)
+	if err != nil {
+		t.Fatalf("dial the first listener's socket after the refusal: %v", err)
+	}
+	_ = conn.Close()
+	if err := <-accepted; err != nil {
+		t.Fatalf("first listener's Accept after the refused second call: %v", err)
+	}
+}

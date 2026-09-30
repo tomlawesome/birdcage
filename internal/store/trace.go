@@ -176,13 +176,9 @@ func buildLastHit(ctx context.Context, database *db.DB, internalRanges []*net.IP
 		return nil, nil
 	}
 
-	history, err := alertsForSource(ctx, database, newest.SourceIP)
+	hits, err := alertsForSource(ctx, database, newest.SourceIP)
 	if err != nil {
 		return nil, fmt.Errorf("query alert history for %s: %w", newest.SourceIP, err)
-	}
-	hits := make([]hitPoint, 0, len(history))
-	for _, a := range history {
-		hits = append(hits, hitPoint{At: a.ReceivedAt, CanaryID: a.InstanceID, Service: a.Service})
 	}
 
 	return &LastHit{
@@ -222,20 +218,40 @@ func newestAlert(ctx context.Context, database *db.DB) (Alert, bool, error) {
 
 // alertsForSource returns every alert ever received from sourceIP, newest
 // first, with no time bound -- buildLastHit's own use is the only one
-// that needs a source's whole history rather than one range.
-func alertsForSource(ctx context.Context, database *db.DB, sourceIP string) ([]Alert, error) {
+// that needs a source's whole history rather than one range. It reports
+// hitPoint directly, the only shape classifyKind ever reads (when, which
+// canary, which service): id, dest_port, raw and synthetic were being
+// loaded via the shared []Alert scan and thrown away on every poll, raw
+// worst of all -- an unbounded, per-hit copy of the agent's whole log
+// line for a value that was never read.
+func alertsForSource(ctx context.Context, database *db.DB, sourceIP string) ([]hitPoint, error) {
 	// synthetic = 0 (issue #46 item 2): buildLastHit classifies this
 	// source's kind (VisitorKind) from its whole history, which must be
 	// its whole history of *real* hits.
 	rows, err := database.QueryContext(ctx, `
-		SELECT id, instance_id, source_ip, dest_port, service, raw, received_at, synthetic
+		SELECT instance_id, service, received_at
 		FROM alerts WHERE source_ip = ? AND synthetic = 0 ORDER BY id DESC`, sourceIP)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanAlerts(rows, []Alert{})
+	var hits []hitPoint
+	for rows.Next() {
+		var canaryID, service, receivedAt string
+		if err := rows.Scan(&canaryID, &service, &receivedAt); err != nil {
+			return nil, fmt.Errorf("scan alert: %w", err)
+		}
+		t, err := time.Parse(receivedAtLayout, receivedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse received_at %q: %w", receivedAt, err)
+		}
+		hits = append(hits, hitPoint{At: t, CanaryID: canaryID, Service: service})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate alerts: %w", err)
+	}
+	return hits, nil
 }
 
 // beatsByCanary returns each canary's heartbeat timestamps within window
