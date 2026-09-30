@@ -113,11 +113,12 @@ certificate and the dashboard's own certificate chain to the CA key in
 that directory, so a restore that omits it starts birdcage with a fresh,
 unrelated CA and the whole fleet must be re-enrolled.
 
-Birdcage refuses to start unless the restored directory has exactly the
-ownership and modes it created it with: owned by the uid the container
-runs as (1000 in the shipped image), directory mode `0700`, key `0600`,
-certificate `0644`. A restore made as root usually loses these, so set
-them before starting:
+Birdcage refuses to start unless the restored directory is owned by the
+uid the container runs as (1000 in the shipped image) and has mode
+`0700`. It does not check the files inside, so restore them with the
+modes it created them with -- key `0600`, certificate `0644` -- rather
+than leaving the key readable to everyone. A restore made as root usually
+loses all of these, so set them before starting:
 
 ```
 chown -R 1000:1000 /var/lib/birdcage/ca
