@@ -733,6 +733,20 @@ func ParseRange(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// AnyCanariesEnrolled reports whether the agents table has ever gained a
+// row -- issue #149's signal that birdcage already has real state
+// depending on its CA: a canary only reaches this table by completing
+// enrolment, which signs its client certificate with the CA key. A
+// single EXISTS query, cheaper than ListCanaries' full scan and needing
+// none of its joins or health computation.
+func AnyCanariesEnrolled(ctx context.Context, database *db.DB) (bool, error) {
+	var exists int
+	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents)`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check for enrolled canaries: %w", err)
+	}
+	return exists != 0, nil
+}
+
 // ListCanaries returns every registered canary with its ordered health
 // state (issue #45: applyStatus's "ok"/"silent" as before, then
 // applyHealthState folds in throttled, not-delivering, rotation-stalled

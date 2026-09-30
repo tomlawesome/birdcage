@@ -424,6 +424,73 @@ func TestLoadStartupCAUnwritableDir(t *testing.T) {
 	}
 }
 
+// --- checkStartupCAContinuity ---------------------------------------------
+//
+// insertTestCanary (canary_test.go) gives checkStartupCAContinuity's
+// "state exists" signal (store.AnyCanariesEnrolled) a row to find --
+// it only needs one registered canary, not a real enrolment round trip.
+
+// TestCheckStartupCAContinuityNotNeeded proves the check is a no-op when
+// no CA is needed at all (operator certificate, ingest off) -- there is
+// nothing to protect, and no database read is required.
+func TestCheckStartupCAContinuityNotNeeded(t *testing.T) {
+	cfg := startupConfig{caNeeded: false, caDir: filepath.Join(t.TempDir(), "missing")}
+	if err := checkStartupCAContinuity(context.Background(), cfg, nil, discardLog()); err != nil {
+		t.Fatalf("checkStartupCAContinuity(caNeeded=false) = %v, want nil", err)
+	}
+}
+
+// TestCheckStartupCAContinuityFreshInstall proves a missing CA directory
+// is fine when the store has no enrolled canaries yet: loadStartupCA
+// must still be free to mint on a genuinely fresh install.
+func TestCheckStartupCAContinuityFreshInstall(t *testing.T) {
+	database := openTestDB(t)
+	cfg := startupConfig{caNeeded: true, caDir: filepath.Join(t.TempDir(), "ca")}
+	if err := checkStartupCAContinuity(context.Background(), cfg, database, discardLog()); err != nil {
+		t.Fatalf("checkStartupCAContinuity(fresh install) = %v, want nil", err)
+	}
+}
+
+// TestCheckStartupCAContinuityRefusesWhenStateExists is issue #149's core
+// case: a canary has already enrolled (so its client certificate depends
+// on the CA that signed it) and the CA directory is gone. birdcage must
+// refuse rather than mint a replacement nothing yet trusts, and must not
+// write anything trying.
+func TestCheckStartupCAContinuityRefusesWhenStateExists(t *testing.T) {
+	database := openTestDB(t)
+	insertTestCanary(t, database, "canary-ca-continuity-test")
+
+	caDir := filepath.Join(t.TempDir(), "ca")
+	cfg := startupConfig{caNeeded: true, caDir: caDir}
+	err := checkStartupCAContinuity(context.Background(), cfg, database, discardLog())
+	if err == nil {
+		t.Fatal("checkStartupCAContinuity with an enrolled canary and a missing CA dir = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "restored from backup") {
+		t.Errorf("error = %q, want it to say the CA must be restored from backup", err.Error())
+	}
+	if _, statErr := os.Stat(caDir); !os.IsNotExist(statErr) {
+		t.Errorf("checkStartupCAContinuity created %s, want it to leave a missing CA directory untouched", caDir)
+	}
+}
+
+// TestCheckStartupCAContinuityAllowsWhenCAPresent proves an existing,
+// loadable CA never trips the refusal even with canaries enrolled -- the
+// ordinary restart case.
+func TestCheckStartupCAContinuityAllowsWhenCAPresent(t *testing.T) {
+	database := openTestDB(t)
+	insertTestCanary(t, database, "canary-ca-continuity-test")
+
+	caDir := filepath.Join(t.TempDir(), "ca")
+	if _, _, err := ca.Load(caDir, nil); err != nil {
+		t.Fatalf("ca.Load: %v", err)
+	}
+	cfg := startupConfig{caNeeded: true, caDir: caDir}
+	if err := checkStartupCAContinuity(context.Background(), cfg, database, discardLog()); err != nil {
+		t.Fatalf("checkStartupCAContinuity with an existing CA = %v, want nil", err)
+	}
+}
+
 // --- openStartupDatabase -------------------------------------------------
 
 func TestOpenStartupDatabaseOpensAndMigrates(t *testing.T) {
