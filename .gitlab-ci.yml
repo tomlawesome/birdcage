@@ -2636,10 +2636,11 @@ release:mirror-preview:
 # Which commit's build is being released: the tag names a commit on `main`,
 # and the anchor was pushed for the commit on `preview`. If `main` fast-
 # forwarded they are the same commit; if the merge made a merge commit, the
-# preview head is its second parent. Both candidates are tried and the first
-# with an anchor wins -- and it is not a guess, because the evidence binds
-# the commit: promoting the wrong one fails the verifier rather than
-# shipping. Anything else refuses and says which two it looked at.
+# preview head is one of its parents -- an octopus merge has more than one.
+# HEAD and every parent are tried and the first with an anchor wins -- and
+# it is not a guess, because the evidence binds the commit: promoting the
+# wrong one fails the verifier rather than shipping. Anything else refuses
+# and says which candidates it looked at.
 release:promote:
   stage: release
   image: $DOCKER_CLI_IMAGE
@@ -2660,7 +2661,7 @@ release:promote:
   # on `main` is red should not be one click away.
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
-    # The second parent has to be reachable for the fallback above.
+    # Every parent has to be reachable for the fallback above.
     GIT_DEPTH: 0
   <<: *registry_login
   script:
@@ -2668,9 +2669,11 @@ release:promote:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - |
       set -eu
-      head="$(git rev-parse HEAD)"
-      second="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
-      for candidate in "$head" $second; do
+      # HEAD plus every parent (`git rev-list --parents -n1` lists the
+      # commit itself first, then each parent) -- an octopus merge has
+      # more than one, not only a second.
+      candidates="$(git rev-list --parents -n1 HEAD)"
+      for candidate in $candidates; do
         if docker buildx imagetools inspect \
              "${BIRDCAGE_RELEASE_REPO}:sha-${candidate}" >/dev/null 2>&1; then
           echo "$candidate" > .release-commit
@@ -2678,7 +2681,7 @@ release:promote:
         fi
       done
       if [ ! -s .release-commit ]; then
-        echo "no validated build was published for $head${second:+ or $second}."
+        echo "no validated build was published for any of: $candidates"
         echo "A release can only promote a digest that went through preview."
         exit 1
       fi
