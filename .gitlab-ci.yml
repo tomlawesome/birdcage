@@ -619,7 +619,7 @@ test:smoke:
   variables:
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - scripts/ensure-go.sh
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -643,7 +643,7 @@ test:smoke:safari:
   variables:
     BIRDCAGE_BROWSER: safari
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - scripts/ensure-go.sh
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -665,7 +665,7 @@ test:smoke:edge:
   variables:
     BIRDCAGE_BROWSER: edge
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - scripts/ensure-go.sh
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
@@ -714,7 +714,7 @@ test:smoke:postgres:
     POSTGRES_PASSWORD: birdcage-ci
     BIRDCAGE_BROWSER: firefox
   script:
-    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - scripts/ensure-go.sh
     - export PATH="/usr/local/go/bin:$PATH" && go version
     - rm -rf web/dist && cp -r frontend/dist web/dist
     - go build -o birdcage ./cmd/birdcage
