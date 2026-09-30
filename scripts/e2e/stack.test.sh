@@ -57,6 +57,36 @@ echo "== down is safe when nothing is up =="
 check "$?" "0" "down exits 0 with nothing up"
 check_clean "down with nothing up leaves nothing behind"
 
+# No real docker needed: a stub `docker` on PATH proves down() itself --
+# it logs and fails on a real cleanup error but stays quiet and exits 0
+# when an object was simply never there, the same shape "down is safe
+# when nothing is up" above exercises against the real daemon.
+echo "== down logs a real cleanup failure and exits non-zero, without flagging a merely-missing object =="
+fakebin="$(mktemp -d)"
+cat > "$fakebin/docker" <<'SCRIPT'
+#!/usr/bin/env bash
+name="${*: -1}"
+if [ -n "${FAKE_DOCKER_FAIL_NAME:-}" ] && [ "$name" = "$FAKE_DOCKER_FAIL_NAME" ]; then
+  echo "Error: cannot remove: device or resource busy" >&2
+  exit 1
+fi
+echo "Error: No such object: $name" >&2
+exit 1
+SCRIPT
+chmod +x "$fakebin/docker"
+stub_err="$(FAKE_DOCKER_FAIL_NAME="$E2E_PREFIX-canary" PATH="$fakebin:$PATH" "$STACK" down 2>&1 >/dev/null)"
+stub_rc=$?
+rm -rf "$fakebin"
+check "$stub_rc" "1" "down exits non-zero when a real cleanup step fails"
+case "$stub_err" in
+  *"cleanup failed: canary container"*) echo "ok - down logs the failed step" ;;
+  *) echo "FAIL - down did not log the failed step"; fail=1 ;;
+esac
+case "$stub_err" in
+  *"cleanup failed: opencanary container"*) echo "FAIL - down logged a merely-missing object as a failure"; fail=1 ;;
+  *) echo "ok - a merely-missing object is not logged as a failure" ;;
+esac
+
 echo "== down cleans up after a run killed half way =="
 # Exactly the state an interrupted `up` leaves: the network and volumes
 # made, one container started, the rest never reached.
