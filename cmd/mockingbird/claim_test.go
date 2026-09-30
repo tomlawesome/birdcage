@@ -96,6 +96,26 @@ func TestClaimTracker_WindowClosesLateEventUnclaimed(t *testing.T) {
 	}
 }
 
+// TestClaimTracker_SameIDObservedTwiceStillClaims: the webhook road and
+// the log-tailer road both call observe for the same real OpenCanary
+// event, and event/id.go guarantees they compute the same id for it. A
+// duplicate observation of the same id must not be counted as a second,
+// distinct candidate -- the exactly-one rule looks at distinct events,
+// not at how many times observe was called.
+func TestClaimTracker_SameIDObservedTwiceStillClaims(t *testing.T) {
+	tr := newClaimTracker()
+	w := tr.startWindow("ntp", "192.0.2.10", "the-marker")
+
+	tr.observe("ev-1", "ntp", "192.0.2.10") // webhook road
+	tr.observe("ev-1", "ntp", "192.0.2.10") // log-tailer road, same event
+	tr.resolveWindow(w)
+
+	marker, ok := tr.marker("ev-1")
+	if !ok || marker != "the-marker" {
+		t.Fatalf("marker(ev-1) = (%q, %v), want (\"the-marker\", true) when the same id is observed twice", marker, ok)
+	}
+}
+
 // TestClaimTracker_NonMatchingCandidateIgnored: a candidate whose
 // service or address doesn't match the window is never recorded against
 // it -- an unrelated event arriving during the same window must not be
