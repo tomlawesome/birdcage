@@ -316,6 +316,39 @@ func TestEmitLogsTheAddressAndNothingElse(t *testing.T) {
 	}
 }
 
+// TestCountLogsWhenItsSocketFails proves count no longer exits silently
+// on a non-timeout read error: it logs a line naming the protocol whose
+// counting has stopped, so the operator has something pointing at why
+// pace-matching for that protocol went quiet, instead of nothing at all.
+func TestCountLogsWhenItsSocketFails(t *testing.T) {
+	log, buf := captureLogger()
+	submit, _, _ := collect()
+	d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05", Now: func() time.Time { return base }}, submit, log)
+
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the counting socket: %v", err)
+	}
+	l := listener{proto: ProtocolLLMNR, conn: conn}
+
+	// Close the socket out from under count once its read deadline is
+	// set, so ReadFromUDP returns "use of closed network connection" --
+	// a real, non-timeout error -- rather than count ever timing out.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = conn.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	d.count(ctx, l)
+
+	line := buf.String()
+	if !strings.Contains(line, string(ProtocolLLMNR)) {
+		t.Errorf("log output = %q, want a line naming the protocol whose counting socket stopped", line)
+	}
+}
+
 // TestCollectAnswersCatchesAFakePoisoner is the end-to-end catch, on
 // loopback: a socket that answers a bait query the way Responder does --
 // unicast, back to the querier's own port -- and the Answer that comes out of
