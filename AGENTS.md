@@ -87,6 +87,9 @@ CI-only tools, never linked or shipped:
   released binary, checksum-verified by `scripts/ensure-gitleaks.sh`,
   never the commercially-licensed `gitleaks-action`; installed at CI
   time in `lint:gitleaks`.
+- `python3` (Alpine package, Python Software Foundation) -- the release
+  jobs' evidence judge in `scripts/verify-validation-evidence.sh`; owner,
+  2026-09-30, #158. Installed via `RELEASE_APK_PACKAGES`, never shipped.
 
 Frontend (`frontend/package.json`), dev-only, never shipped:
 
