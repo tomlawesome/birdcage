@@ -207,6 +207,17 @@ describe('buildEventRows: Events.svelte\'s merge-and-sort decision (#74)', () =>
     const rows = buildEventRows([silent, canaries[1]], [], '2026-09-12T22:04:00Z')
     expect(rows).toEqual([expect.objectContaining({ key: `dropped-${silent.id}`, cls: 'k-off' })])
   })
+
+  it('a canary silent in active_states still gets its dropped-out row when a worse state is the headline', () => {
+    const conflicted: Canary = {
+      ...canaries[0],
+      status: 'token_conflict',
+      active_states: ['token_conflict', 'silent'],
+      last_heartbeat_at: '2026-09-12T21:30:00Z',
+    }
+    const rows = buildEventRows([conflicted, canaries[1]], [], '2026-09-12T22:04:00Z')
+    expect(rows).toEqual([expect.objectContaining({ key: `dropped-${conflicted.id}`, cls: 'k-off' })])
+  })
 })
 
 describe('computeEventsHeading', () => {
@@ -221,6 +232,15 @@ describe('computeEventsHeading', () => {
     const h = computeEventsHeading(withSilent, [], '14d')
     expect(plainText(h.segments)).toBe('events · 14 days · 1 · no visitors')
     expect(h.showQuietLine).toBe(false)
+  })
+
+  it('counts a canary silent in active_states even when a worse state is the headline', () => {
+    const conflicted: Canary[] = [
+      { ...canaries[0], status: 'token_conflict', active_states: ['token_conflict', 'silent'] },
+      canaries[1],
+    ]
+    const h = computeEventsHeading(conflicted, [], '14d')
+    expect(plainText(h.segments)).toBe('events · 14 days · 1 · no visitors')
   })
 
   it('visitors present: counts them, "newest first", no quiet line', () => {
