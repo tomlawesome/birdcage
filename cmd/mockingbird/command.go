@@ -119,6 +119,13 @@ func runCommandRunner(ctx context.Context, in *Intake, bait baitLookup, run <-ch
 // fail-closed: "a command the agent cannot fully parse is an attack or
 // version skew; both end in refusal").
 func runCommand(ctx context.Context, in *Intake, bait baitLookup, cmd *client.Command) error {
+	// The smallest unit of work this goroutine repeats is one command
+	// (internal/logging.Recover's own doc comment names this package's
+	// "command poll/runner" among the goroutines that need it): a panic
+	// anywhere in dispatch or execution must refuse this one command,
+	// not crash the whole process and take every other road down with
+	// it.
+	defer logging.Recover(commandLog)
 	switch cmd.Kind {
 	case kindSelfTest:
 		return runSelfTest(ctx, in, bait, cmd)

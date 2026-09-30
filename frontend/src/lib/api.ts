@@ -150,6 +150,15 @@ function fixtureScene(): SceneName | null {
   return sceneFromLocation()
 }
 
+/** True when the page is answering from a fixture rather than a server.
+ * The one thing outside this file that must know is App.svelte's event
+ * stream: a fixture has no server to stream from, and an EventSource
+ * opened anyway 502s through vite's proxy and logs a console error --
+ * which the pixel gates treat as a failure. */
+export function inFixtureMode(): boolean {
+  return fixtureScene() !== null
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) {

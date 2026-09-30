@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 )
 
 // unixSocketPerm is the exact mode UnixListener chmods the socket file
@@ -18,13 +19,19 @@ const unixSocketPerm = 0o660
 // unclean shutdown, since a normal one removes it (see main's shutdown
 // path) -- is removed first: net.Listen("unix", ...) otherwise fails
 // with "address already in use" even though nothing is actually
-// listening on it.
+// listening on it. A socket file that is not stale -- another process
+// is still bound to it -- is refused instead of unlinked: see
+// refuseIfLive.
 //
 // Closing the returned listener (directly, or via http.Server.Shutdown)
 // already unlinks path -- net.UnixListener's own Close behavior -- so
 // the caller only needs to remove it again defensively, tolerating
 // "already gone".
 func UnixListener(path string) (net.Listener, error) {
+	if err := refuseIfLive(path); err != nil {
+		return nil, err
+	}
+
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("tlsconfig: remove stale unix socket %s: %w", path, err)
 	}
@@ -52,4 +59,21 @@ func UnixListener(path string) (net.Listener, error) {
 	}
 
 	return ln, nil
+}
+
+// refuseIfLive reports a clear error if something is already accepting
+// connections at path, rather than letting UnixListener's own os.Remove
+// unlink a live socket out from under whatever process still owns it
+// (an overlapping supervisor restart, or a stray second copy). A
+// connect that succeeds means a real listener is bound there right now;
+// anything else -- no file, a stale file nothing is listening on
+// (connection refused) -- means path is safe for UnixListener to remove
+// and reuse.
+func refuseIfLive(path string) error {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return nil
+	}
+	_ = conn.Close() // probe only; nothing left to act on a close error
+	return fmt.Errorf("tlsconfig: unix socket %s: another process is already listening on it", path)
 }

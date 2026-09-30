@@ -211,6 +211,66 @@ func TestTailer_ResumePositionNotFoundFallsBackRatherThanSkipping(t *testing.T) 
 	}
 }
 
+// TestTailer_SkippedChainFileClearsPositionFound proves readWhole's
+// silent skip -- a rotated sibling selectChain located and decided to
+// read, but that turns out unopenable -- is no longer invisible: it is
+// counted (SkippedChainFiles), and ResumeResult.PositionFound (which
+// main.go's currentSelfReport reports on the heartbeat as
+// position_found) no longer stays true for a scan that did not actually
+// read everything selectChain thought it would.
+//
+// The sibling is chmod'd unreadable rather than deleted or replaced: a
+// directory listing needs no read permission on the file itself, so
+// listCandidates still finds it (exactly like a real vanish/replace race
+// between listing and open), while openNoFollow deterministically fails
+// -- no race to win.
+func TestTailer_SkippedChainFileClearsPositionFound(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencanary.log")
+
+	if err := os.WriteFile(path, []byte("old1\nold2\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	rotatedInode := inodeOf(t, path)
+	rotatedPath := filepath.Join(dir, "opencanary.log.1")
+	if err := os.Rename(path, rotatedPath); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("new1\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(rotatedPath, 0o000); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(rotatedPath, 0o600) })
+
+	resumeFrom := queue.Position{Inode: rotatedInode, Offset: int64(len("old1\n"))}
+
+	tl := New(path, Config{PollInterval: testPollInterval})
+	var emitted []Line
+	result, lr, _, err := tl.catchUp(resumeFrom, true, func(l Line) {
+		emitted = append(emitted, l)
+	})
+	if err != nil {
+		t.Fatalf("catchUp: %v", err)
+	}
+	if lr != nil {
+		_ = lr.f.Close()
+	}
+
+	if result.PositionFound {
+		t.Fatal("PositionFound = true, want false: the chain's rotated sibling could not be opened, so old2 was never actually read")
+	}
+	if got := tl.SkippedChainFiles(); got != 1 {
+		t.Fatalf("SkippedChainFiles() = %d, want 1", got)
+	}
+	for _, l := range emitted {
+		if string(l.Data) == "old2" {
+			t.Fatal("old2 was emitted despite the sibling being unopenable")
+		}
+	}
+}
+
 func TestTailer_RotationMidRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencanary.log")

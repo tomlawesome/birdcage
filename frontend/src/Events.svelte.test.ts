@@ -61,6 +61,30 @@ describe('Events.svelte: quiet line vs a row list', () => {
     expect(container.querySelector('.kind')?.textContent).toContain('DROPPED OUT')
     expect(container.querySelectorAll('.row.k-off')).toHaveLength(1)
   })
+
+  it('a canary silent only in active_states moves the heading down like a headline-silent one', () => {
+    const headline = render(Events, {
+      canaries: [canary({ status: 'silent', last_heartbeat_at: '2026-09-12T20:00:00Z' })],
+      visitors: [],
+      trace,
+      range: '24h',
+    })
+    const viaActive = render(Events, {
+      canaries: [
+        canary({
+          status: 'token_conflict',
+          active_states: ['token_conflict', 'silent'],
+          last_heartbeat_at: '2026-09-12T20:00:00Z',
+        }),
+      ],
+      visitors: [],
+      trace,
+      range: '24h',
+    })
+    const top = (c: HTMLElement) => (c.querySelector('.grp') as HTMLElement).style.top
+    expect(top(viaActive.container)).toBe(top(headline.container))
+    expect(viaActive.container.querySelectorAll('.row.k-off')).toHaveLength(1)
+  })
 })
 
 describe('Events.svelte: a who-segment renders as bold, coloured, or plain', () => {

@@ -332,16 +332,29 @@ only at the point that text is displayed, per surface:
   by anyone who can reach the listener. Every route below has the same
   gap:
 
-  | Route            | Method | Auth                          |
-  | ---------------- | ------ | ------------------------------ |
-  | `/`              | GET    | requireAuth seam, pending #8  |
-  | `/api/alerts`    | GET    | requireAuth seam, pending #8  |
-  | `/api/instances` | GET    | requireAuth seam, pending #8  |
-  | `/api/stats`     | GET    | requireAuth seam, pending #8  |
-  | `/api/canaries`  | GET    | requireAuth seam, pending #8  |
-  | `/api/visitors`  | GET    | requireAuth seam, pending #8  |
-  | `/api/trace`     | GET    | requireAuth seam, pending #8  |
-  | `/api/stream`    | GET    | requireAuth seam, pending #8  |
+  | Route                      | Method | Auth                          |
+  | -------------------------- | ------ | ----------------------------- |
+  | `/`                        | GET    | requireAuth seam, pending #8  |
+  | `/api/alerts`              | GET    | requireAuth seam, pending #8  |
+  | `/api/instances`           | GET    | requireAuth seam, pending #8  |
+  | `/api/stats`               | GET    | requireAuth seam, pending #8  |
+  | `/api/canaries`            | GET    | requireAuth seam, pending #8  |
+  | `/api/canary`              | GET    | requireAuth seam, pending #8  |
+  | `/api/canaries/{id}/runs`  | GET    | requireAuth seam, pending #8  |
+  | `/api/scans`               | GET    | requireAuth seam, pending #8  |
+  | `/api/visitors`            | GET    | requireAuth seam, pending #8  |
+  | `/api/trace`               | GET    | requireAuth seam, pending #8  |
+  | `/api/stream`              | GET    | requireAuth seam, pending #8  |
+  | `/api/history`             | GET    | requireAuth seam, pending #8  |
+  | `/api/mail`                | GET    | requireAuth seam, pending #8  |
+
+  `/api/scans` is the one to weigh first when deciding who may reach
+  the listener: it returns every registered scanner's findings -- the
+  CVEs present on each scanned host and their exposure tier -- which is
+  a map of the fleet's weak points to anyone who can fetch it.
+  `internal/api/api.go`'s `dashboardRouteSpecs` is the list this table
+  mirrors, and `TestSecurityDocListsEveryDashboardRoute` fails when a
+  route is registered there without a row here.
 
   `/api/stream` (issue #44) is a server-sent-events connection birdcage
   holds open rather than answering once, so until #8 lands it also caps

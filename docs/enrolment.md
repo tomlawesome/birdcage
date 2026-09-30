@@ -743,6 +743,20 @@ runs as uid 65532 with no capabilities at all, so the agent started from
 it gets none either: port-scan detection is off, and the agent logs one
 line saying so at startup.
 
+## Tuning SNMP detection
+
+These settings belong in `docs/configuration.md` with the rest of the
+canary's environment variables; they are here for now, alongside the
+other detection knobs above, for the same reason.
+
+Both are optional. Set them the same way as the variables in the
+`docker run` block above (`-e NAME=value`).
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `MOCKINGBIRD_SNMP` | on | Set to `0` to turn SNMP detection off entirely. Any other value, including unset, leaves it on. |
+| `MOCKINGBIRD_SNMP_LISTEN` | `:161` | Where the SNMP UDP socket binds. Point it elsewhere if something else on the host -- a real SNMP agent, for example -- already answers on the standard port. |
+
 ## Catching a poisoner on your segment
 
 When a Windows machine cannot find a name in DNS, it asks the whole

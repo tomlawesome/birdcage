@@ -141,6 +141,15 @@ describe('rule 4 -- nothing (quiet fixture)', () => {
   })
 })
 
+describe('rule 4 -- empty fleet, zero canaries enrolled (hand-built)', () => {
+  it('hero: No canaries are enrolled yet, with no sub line, and does not throw', () => {
+    const s = computeSentence([], [], '14d', '2026-09-12T00:00:00Z')
+    expect(s.rule).toBe(4)
+    expect(plainText(s.hero)).toBe('No canaries are enrolled yet.')
+    expect(s.sub).toEqual([])
+  })
+})
+
 // issue #45 -- the health states that widen rule 2's slot. Hand-built
 // like rule 3 and status.test.ts's ranking cases: no fixture covers the
 // new states yet, and building canaries directly isolates the copy and
@@ -201,6 +210,24 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     )
     expect(s.sub.find((seg) => seg.text === '04:00')?.bold).toBe(true)
     expect(s.sub.find((seg) => seg.text === 'Go and see why.')?.bold).toBe(true)
+  })
+
+  // Backend commit 89c56f7: a scanner's failed run leaves
+  // self_test_failed_services empty and fills last_run instead -- the
+  // one field only a scanner ever carries (ADR-0012 decision 6), the
+  // same signal tileStatus.ts already uses to branch on kind.
+  it('self-test failed, scanner kind (last_run present): names the stalled stage, never port wording', () => {
+    const bad = canary('canary-scan', 'self_test_failed', {
+      self_test_failed_services: [],
+      last_run: { verdict: 'fail', last_stage: 'collected', reason: 'grype exited 1', ended_at: now },
+    })
+    const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
+    expect(s.rule).toBe(2)
+    expect(plainText(s.hero)).toBe('Quiet for 23 days — but canary-scan failed its self-test.')
+    expect(plainText(s.sub)).toContain('Scan target failed — last stage order received (grype exited 1)')
+    expect(plainText(s.sub)).toContain('check the scanner')
+    expect(plainText(s.sub)).not.toContain('silent port')
+    expect(plainText(s.sub)).not.toContain('catching nothing')
   })
 
   it('not delivering: hero and sub', () => {

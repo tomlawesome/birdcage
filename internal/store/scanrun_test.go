@@ -502,7 +502,10 @@ func TestScannerReadModelRunLastRunAndTestFailedClears(t *testing.T) {
 			t.Errorf("ActiveStates = %v, want pending", c.ActiveStates)
 		}
 
-		// Fails on a failed snapshot: self_test_failed naming the scan target.
+		// Fails on a failed snapshot: self_test_failed naming the last
+		// stage reached (LastRun), never a honeypot-shaped service list
+		// -- a scanner's self_test_targets row is always the fixed
+		// "scan 0" placeholder, not a real port a visitor could probe.
 		snap := passingSnapshot("scan-a", scanT0)
 		snap.Status, snap.Reason, snap.FindingCount = ScanStatusFailed, "grype exited 1", 0
 		snap.ReceivedAt = scanT0.Add(5 * time.Minute)
@@ -511,8 +514,8 @@ func TestScannerReadModelRunLastRunAndTestFailedClears(t *testing.T) {
 		if c.Run != nil || c.LastRun == nil || c.LastRun.Verdict != VerdictFail || c.LastRun.LastStage != StageAnswered {
 			t.Fatalf("after fail: run %+v last %+v", c.Run, c.LastRun)
 		}
-		if !hasActive(c, StateTestFailed) || len(c.SelfTestFailedServices) != 1 || c.SelfTestFailedServices[0] != "scan 0" {
-			t.Fatalf("after fail: states %v services %v, want self_test_failed on scan 0", c.ActiveStates, c.SelfTestFailedServices)
+		if !hasActive(c, StateTestFailed) || len(c.SelfTestFailedServices) != 0 {
+			t.Fatalf("after fail: states %v services %v, want self_test_failed with no service list", c.ActiveStates, c.SelfTestFailedServices)
 		}
 
 		// A later ok timer snapshot clears the tile's self_test_failed.

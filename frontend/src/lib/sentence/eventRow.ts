@@ -209,8 +209,15 @@ function capitalize(s: string): string {
  * testable without rendering. A canary that has never sent a heartbeat
  * sorts to the very end ('' sorts lowest under `<`), rather than
  * floating to the top or breaking the comparison. */
+// The server keeps reporting silence in active_states even once a worse
+// state (token/credential conflict) wins the headline status -- checking
+// status alone drops the dropped-out row exactly when it matters most.
+export function isSilent(c: Canary): boolean {
+  return c.status === 'silent' || (c.active_states?.includes('silent') ?? false)
+}
+
 export function buildEventRows(canaries: Canary[], visitors: Visitor[], now: string): EventRow[] {
-  const silentCanaries = canaries.filter((c) => c.status === 'silent')
+  const silentCanaries = canaries.filter(isSilent)
   return [
     ...silentCanaries.map((c) => ({ row: computeDroppedOutRow(c), sortKey: c.last_heartbeat_at ?? '' })),
     ...visitors.map((v) => ({ row: computeEventRow(v, canaries, now), sortKey: v.last_at })),
@@ -225,7 +232,7 @@ export interface EventsHeading {
 }
 
 export function computeEventsHeading(canaries: Canary[], visitors: Visitor[], range: Range): EventsHeading {
-  const silentCount = canaries.filter((c) => c.status === 'silent').length
+  const silentCount = canaries.filter(isSilent).length
   const prefix = `events · ${rangeLong(range)} · `
   if (visitors.length === 0 && silentCount === 0) {
     return { segments: [{ text: prefix }, { text: 'none', bold: true }], showQuietLine: true }

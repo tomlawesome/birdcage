@@ -33,7 +33,7 @@ leftovers() {
     docker ps -a --format '{{.Names}}'
     docker volume ls --format '{{.Name}}'
     docker images --format '{{.Repository}}'
-  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|holder|smbclient)" | sort -u
+  } 2>/dev/null | grep -E "^$E2E_PREFIX-(lure|holder-image|smbclient)" | sort -u
 }
 
 check_clean() { # check_clean <label>
@@ -58,6 +58,20 @@ echo "== down is safe when nothing is up =="
 "$LURE_STACK" down >/dev/null 2>&1
 check "$?" "0" "down exits 0 with nothing up"
 check_clean "down with nothing up leaves nothing behind"
+
+# No docker needed: this only evaluates the two scripts' own HOLDER=
+# assignment lines. It used to be byte-identical to stack.sh's, so
+# smb-lure-stack.sh's down()/up() force-removed and replaced the base
+# stack's holder container instead of its own.
+echo "== the lure's holder name does not collide with stack.sh's own base holder =="
+lure_holder="$(eval "$(grep -E '^HOLDER=' "$LURE_STACK")"; echo "$HOLDER")"
+base_holder="$(eval "$(grep -E '^HOLDER=' "$STACK")"; echo "$HOLDER")"
+if [ "$lure_holder" != "$base_holder" ]; then
+  echo "ok - smb-lure-stack.sh's HOLDER ($lure_holder) differs from stack.sh's ($base_holder)"
+else
+  echo "FAIL - smb-lure-stack.sh's HOLDER collides with stack.sh's own: $lure_holder"
+  fail=1
+fi
 
 echo "== up refuses without E2E_PREFIX =="
 ( unset E2E_PREFIX; "$LURE_STACK" up >/dev/null 2>&1 )

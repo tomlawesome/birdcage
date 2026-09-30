@@ -707,30 +707,51 @@ export BIRDCAGE_ENROL_URL=https://$BIRDCAGE:8444
 EOF
 }
 
+# Runs one cleanup command. An object that was never there (or already
+# gone) is not a failure -- down() must stay safe to run against a
+# stack that only partly came up -- but any other error is logged and
+# recorded, rather than the blanket `|| true` that used to hide a stuck
+# object on a shared runner from every log and exit code.
+cleanup_step() { # cleanup_step <label> <cmd...>
+  local label="$1" out
+  shift
+  out="$("$@" 2>&1)" && return 0
+  # Docker's "already gone" wording varies by subcommand ("No such
+  # container", "no such volume", and "network X not found"), so match
+  # each form case-insensitively rather than risk one of them logging
+  # every ordinary down() as a failure.
+  case "${out,,}" in
+    *"no such"*|*"not found"*) return 0 ;;
+    *) log "cleanup failed: $label: $out"; CLEANUP_FAILED=1 ;;
+  esac
+}
+
 down() {
-  docker rm --force "$CANARY" >/dev/null 2>&1 || true
-  docker rm --force "$OPENCANARY" >/dev/null 2>&1 || true
-  docker rm --force "$HOLDER" >/dev/null 2>&1 || true
-  docker rm --force "$BIRDCAGE" >/dev/null 2>&1 || true
-  docker rm --force "$PG" >/dev/null 2>&1 || true
+  CLEANUP_FAILED=0
+  cleanup_step "canary container" docker rm --force "$CANARY"
+  cleanup_step "opencanary container" docker rm --force "$OPENCANARY"
+  cleanup_step "holder container" docker rm --force "$HOLDER"
+  cleanup_step "birdcage container" docker rm --force "$BIRDCAGE"
+  cleanup_step "postgres container" docker rm --force "$PG"
   local vol
   for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL"; do
-    docker volume rm --force "$vol" >/dev/null 2>&1 || true
+    cleanup_step "volume $vol" docker volume rm --force "$vol"
   done
-  docker network rm "$NET" >/dev/null 2>&1 || true
-  docker image rm --force "$HELPER_IMAGE" >/dev/null 2>&1 || true
+  cleanup_step "network $NET" docker network rm "$NET"
+  cleanup_step "helper image $HELPER_IMAGE" docker image rm --force "$HELPER_IMAGE"
   # Only ever an image tag this harness named itself -- see
   # BIRDCAGE_IMAGE's comment above.
   local image
   for image in "$BIRDCAGE_IMAGE" "$MOCKINGBIRD_IMAGE" "$OPENCANARY_IMAGE" "$HOLDER_IMAGE"; do
     case "$image" in
-      "$E2E_PREFIX"*) docker image rm --force "$image" >/dev/null 2>&1 || true ;;
+      "$E2E_PREFIX"*) cleanup_step "image $image" docker image rm --force "$image" ;;
     esac
   done
   # PG_IMAGE is never overridable (see its definition above), so it is
   # always safe to remove -- always this harness's own build, rebuilt
   # fresh on every `up`.
-  docker image rm --force "$PG_IMAGE" >/dev/null 2>&1 || true
+  cleanup_step "postgres image $PG_IMAGE" docker image rm --force "$PG_IMAGE"
+  return "$CLEANUP_FAILED"
 }
 
 case "${1:-}" in

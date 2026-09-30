@@ -2,6 +2,8 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -334,5 +336,37 @@ func TestSendHeartbeatMalformedResponseBodyReturnsNilNotError(t *testing.T) {
 	}
 	if settings != nil {
 		t.Fatalf("SendHeartbeat settings = %v, want nil for a malformed response body", settings)
+	}
+}
+
+// TestSendHeartbeatOversizedResponseBodyReturnsNilNotError is the gate's
+// required case, applied to the one decode site in this package that
+// used to skip it: a 200 response body larger than maxResponseBytes must
+// be refused rather than fully buffered (#48: "no unbounded reads"),
+// even though it is well-formed JSON that would otherwise decode into
+// real settings.
+func TestSendHeartbeatOversizedResponseBodyReturnsNilNotError(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"ok":true,"settings":{`)
+		// Padding well past maxResponseBytes (128 KiB), in an otherwise
+		// valid settings object a pre-fix decoder would happily accept.
+		for i := 0; i < 5000; i++ {
+			if i > 0 {
+				_, _ = io.WriteString(w, ",")
+			}
+			_, _ = fmt.Fprintf(w, `"k%d":"%032d"`, i, i)
+		}
+		_, _ = io.WriteString(w, `}}`)
+	}))
+	defer ts.Close()
+	c := newTestClient(t, ts)
+
+	settings, err := c.SendHeartbeat(ctx(), "tok", SelfReport{AgentVersion: "1.0.0"})
+	if err != nil {
+		t.Fatalf("SendHeartbeat: %v", err)
+	}
+	if settings != nil {
+		t.Fatalf("SendHeartbeat settings = %v, want nil for a response body over the %d-byte cap", settings, maxResponseBytes)
 	}
 }

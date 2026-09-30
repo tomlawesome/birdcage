@@ -59,6 +59,7 @@
       class:critical={c.status === 'token_conflict' ||
         c.status === 'credential_conflict' ||
         c.status === 'not_delivering' ||
+        c.status === 'opencanary_down' ||
         c.status === 'hits_merged' ||
         c.status === 'self_test_failed' ||
         c.status === 'throttled'}
@@ -66,7 +67,8 @@
       class:degraded={c.status === 'rotation_stalled' ||
         c.status === 'renewal_stalled' ||
         c.status === 'upgrade_in_progress' ||
-        c.status === 'agent_out_of_date'}
+        c.status === 'agent_out_of_date' ||
+        c.status === 'db_stale'}
       class:pending={c.status === 'pending'}
     >
       <!-- The tile is the way into the canary's own page (issue #118).

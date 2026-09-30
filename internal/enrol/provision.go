@@ -52,6 +52,13 @@ type provisionResponse struct {
 
 // handleProvision serves POST /enrol/provision.
 func (h *handler) handleProvision(w http.ResponseWriter, r *http.Request) {
+	// The same per-address cap as /enrol/hello, and before anything
+	// else: this route is reachable by the same unauthenticated caller
+	// and a junk request costs a CSR parse and signature check below.
+	if !h.limitBySource(w, r, "POST /enrol/provision", "enrolment.provision_rate_limited") {
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxProvisionBodyBytes)
 	var req provisionRequest
 	dec := json.NewDecoder(r.Body)

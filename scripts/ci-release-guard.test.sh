@@ -100,6 +100,16 @@ sign:
   script:
     - scripts/attest-tested-image.sh" "sign: calls scripts/attest-tested-image.sh but its \`tags:\` do not include"
 
+# Rule 3, the other way round: the tag is what puts a job on the runner
+# that mounts the key, so a second job wearing it -- in any stage -- could
+# read the key while the signer check above still passes.
+expect 1 "rule 3: a non-signer carrying the birdcage-signing tag is caught" "$good
+leak:
+  stage: test
+  tags: [birdcage-signing]
+  script:
+    - cat /etc/birdcage-signing/cosign.key" "leak: carries the \`birdcage-signing\` tag but does not call"
+
 # Rule 4: the signer must not also ship. Uses a raw docker push rather than
 # publish-channel.sh/promote-release.sh, so this fixture does not also trip
 # rule 6 below (which is about that pair specifically) -- each fixture

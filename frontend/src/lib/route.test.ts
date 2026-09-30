@@ -6,11 +6,15 @@ describe('parseRoute', () => {
     expect(parseRoute('#/canaries/canary-iot')).toEqual({ name: 'canary', id: 'canary-iot' })
   })
 
-  it('treats an empty, bare or unknown hash as the cage', () => {
+  it('treats an empty, bare, unknown or malformed hash as the cage', () => {
     expect(parseRoute('')).toEqual({ name: 'cage' })
     expect(parseRoute('#/')).toEqual({ name: 'cage' })
     expect(parseRoute('#/visitors')).toEqual({ name: 'cage' })
     expect(parseRoute('#/canaries/')).toEqual({ name: 'cage' })
+    // A bad percent-escape is the malformed case the contract names:
+    // it must land on the fleet, not throw out of App.svelte's mount.
+    expect(parseRoute('#/canaries/%')).toEqual({ name: 'cage' })
+    expect(parseRoute('#/canaries/%E0%A4%A')).toEqual({ name: 'cage' })
   })
 
   it('refuses a deeper path rather than reading the first segment as an id', () => {

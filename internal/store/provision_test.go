@@ -233,6 +233,56 @@ func TestProvisionReplayIsUnknownSecret(t *testing.T) {
 	})
 }
 
+// TestProvisionConcurrentGuardBlocksSecondWinner reproduces the race two
+// callers presenting the same enrolment secret at once would hit under
+// Postgres's read-committed isolation: both read the session while it
+// is still "contacted" before either writes, then both reach Provision's
+// own completing step. SQLite's single connection (SetMaxOpenConns(1))
+// serializes every transaction, so it cannot hold two such reads open at
+// once to reproduce the interleaving itself; instead this calls
+// Provision's own completeContactedSession helper directly, twice, in
+// the shape the race would produce -- a first call that wins (the state
+// really was "contacted") and a second against the same session id
+// carrying the state the racer would have read, after the first has
+// already moved it on. Before the guard existed, both calls would have
+// claimed the session; the fix requires the second to report won=false
+// and leave the row alone.
+func TestProvisionConcurrentGuardBlocksSecondWinner(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		mintedAt := mustParse(t, "2026-01-01T00:00:00Z")
+		_, session := contactedFixture(t, database, mintedAt)
+
+		won, err := completeContactedSession(ctx, database, session.ID, "winner-canary-id")
+		if err != nil {
+			t.Fatalf("first completeContactedSession: %v", err)
+		}
+		if !won {
+			t.Fatal("first completeContactedSession: won = false, want true (session was still contacted)")
+		}
+
+		// The racer: reached completion with the same session id and
+		// the same "contacted" expectation it read before the winner
+		// committed.
+		won, err = completeContactedSession(ctx, database, session.ID, "racer-canary-id")
+		if err != nil {
+			t.Fatalf("second completeContactedSession: %v", err)
+		}
+		if won {
+			t.Fatal("second completeContactedSession: won = true, want false (the winner already took this session)")
+		}
+
+		var canaryID *string
+		row := database.QueryRow(`SELECT agent_id FROM enrolment_sessions WHERE id = ?`, session.ID)
+		if err := row.Scan(&canaryID); err != nil {
+			t.Fatalf("scan agent_id: %v", err)
+		}
+		if canaryID == nil || *canaryID != "winner-canary-id" {
+			t.Errorf("agent_id = %v, want %q (the racer must not have overwritten it)", canaryID, "winner-canary-id")
+		}
+	})
+}
+
 // TestProvisionUnknownSecret covers a secret that was never minted at
 // all -- the other leg of UnknownSecret, alongside the replay case
 // above.

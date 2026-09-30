@@ -122,4 +122,21 @@ describe('server-sent updates (#44)', () => {
 
     expect(callsAfterSilence).toBeGreaterThan(callsBeforeSilence)
   })
+  it('in fixture mode (?scene=) no stream is opened: the page is offline by design', async () => {
+    // The pixel gates (scripts/band-compare.mjs, canary-compare.mjs) drive
+    // a dev build with ?scene= and no Go server behind vite's proxy. Every
+    // fetch already answers from the fixture there; a live EventSource
+    // would 502 through the proxy and fail the gate on a console error.
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.useFakeTimers()
+    stubSuccessfulFetch()
+    history.replaceState(null, '', '/?scene=quiet')
+    try {
+      render(App)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(FakeEventSource.instances).toHaveLength(0)
+    } finally {
+      history.replaceState(null, '', '/')
+    }
+  })
 })

@@ -25,7 +25,14 @@ export function parseRoute(hash: string): Route {
   // contain a slash, and canaryHref escapes it -- it is an *unescaped*
   // slash that means a deeper path this app has no page for.
   if (raw === '' || raw.includes('/')) return { name: 'cage' }
-  return { name: 'canary', id: decodeURIComponent(raw) }
+  // A bad percent-escape (a bare "%") makes decodeURIComponent throw, and
+  // App.svelte calls this at mount with nothing to catch it: that is the
+  // malformed hash the contract above promises lands on the fleet.
+  try {
+    return { name: 'canary', id: decodeURIComponent(raw) }
+  } catch {
+    return { name: 'cage' }
+  }
 }
 
 /** The href a tile's link carries. encodeURIComponent, because a canary

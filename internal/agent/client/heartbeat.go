@@ -149,7 +149,11 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var out heartbeatResponse
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		// decodeBounded, not a raw json.Decoder: every other response
+		// this package reads is capped at maxResponseBytes (#48: "no
+		// unbounded reads"), and this was the one decode site that
+		// skipped it.
+		if err := decodeBounded(resp.Body, &out); err != nil {
 			return nil, nil
 		}
 		return out.Settings, nil

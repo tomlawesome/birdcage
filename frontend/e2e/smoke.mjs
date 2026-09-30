@@ -118,6 +118,24 @@ async function main() {
   // sslmode=verify-full (internal/startcheck.PostgresRequiresVerifyFull
   // refuses anything weaker; see docs/ci-hops.md). SQLite otherwise, a
   // fresh file per run exactly as #39 left it.
+  //
+  // Everything below seeds fake data into whatever DATABASE_URL points
+  // at and overwrites admin_approval_address/release_address
+  // unconditionally -- fine against the scratch database CI's own
+  // Postgres service provides, not fine against a real fleet's, which
+  // a developer's shell could still have exported. Refuse unless
+  // whoever set DATABASE_URL also marked it disposable
+  // (SMOKE_DATABASE_URL_IS_DISPOSABLE=1) -- test:smoke:postgres does,
+  // right next to where it sets DATABASE_URL itself (.gitlab-ci.yml).
+  if (process.env.DATABASE_URL && process.env.SMOKE_DATABASE_URL_IS_DISPOSABLE !== '1') {
+    console.error(
+      'smoke: DATABASE_URL is set but SMOKE_DATABASE_URL_IS_DISPOSABLE=1 is not -- refusing.\n' +
+        'This script seeds fake data into DATABASE_URL and overwrites admin_approval_address/release_address\n' +
+        'unconditionally. Set SMOKE_DATABASE_URL_IS_DISPOSABLE=1 only if DATABASE_URL is truly a scratch database.'
+    )
+    process.exit(1)
+  }
+
   const databaseURL = process.env.DATABASE_URL ?? join(workDir, 'seed.db')
   const engine = process.env.DATABASE_URL ? 'postgres' : 'sqlite'
 

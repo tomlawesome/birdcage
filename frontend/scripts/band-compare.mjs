@@ -164,6 +164,11 @@ async function main() {
     console.log(`${r.scene}: ${r.pct.toFixed(3)}% differing pixels (${r.diffPixels}/${r.totalPixels}) -- ${status}`)
     if (r.consoleErrors.length) console.log(`  console errors: ${r.consoleErrors.join(' | ')}`)
     if (r.pct > THRESHOLD_PCT) failed = true
+    // A page error is a failure even when the pixels agree (agreed rule,
+    // already enforced by canary-compare.mjs): a component that throws
+    // or logs an error is not a page that works, whether or not that
+    // happens to move a pixel.
+    if (r.consoleErrors.length > 0) failed = true
   }
   console.log(`\nDiff images written to ${outDir}`)
 

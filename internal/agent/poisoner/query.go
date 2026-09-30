@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -267,55 +268,83 @@ func lookup(ctx context.Context, proto Protocol, name string, seg segment, shape
 // window is how long to listen, a parameter rather than replyWindow directly
 // so a test can prove the "nothing answered" path without waiting the real
 // window out.
+//
+// Each socket is read in its own goroutine, against the same shared
+// deadline, rather than one after another: sockets are read in series
+// starves every socket after the first, since ReadFromUDP blocks until
+// either a datagram arrives or the deadline passes, so an idle first
+// socket alone consumes the whole window and later sockets (the IPv6
+// one, in practice) are never read at all.
 func collectAnswers(ctx context.Context, sockets []querySocket, record asked, arpPath string, window time.Duration) ([]Answer, error) {
 	deadline := time.Now().Add(window)
+	answersCh := make(chan Answer)
+	var wg sync.WaitGroup
+	for _, sock := range sockets {
+		wg.Add(1)
+		go func(sock querySocket) {
+			defer wg.Done()
+			readSocketAnswers(ctx, sock, record, arpPath, deadline, answersCh)
+		}(sock)
+	}
+	go func() {
+		wg.Wait()
+		close(answersCh)
+	}()
+
 	seen := make(map[string]struct{})
 	var out []Answer
-	buf := make([]byte, MaxDatagramLen)
-
-	for _, sock := range sockets {
-		local, localPort := localAddr(sock.conn)
-		for {
-			if ctx.Err() != nil {
-				return out, nil
-			}
-			left := time.Until(deadline)
-			if left <= 0 {
-				break
-			}
-			if err := sock.conn.SetReadDeadline(time.Now().Add(left)); err != nil {
-				break
-			}
-			n, src, err := sock.conn.ReadFromUDP(buf)
-			if err != nil {
-				// A timeout is the expected outcome: nothing answered,
-				// which is what a healthy segment does.
-				break
-			}
-			r, err := parseReplyFor(record.proto, buf[:n])
-			if err != nil || !record.matches(r) {
-				// Malformed, or not an answer to this lookup. Dropped
-				// quietly: a log line per bad datagram on a port an
-				// attacker can aim at would be the denial of service.
-				continue
-			}
-			host := src.IP.String()
-			if _, already := seen[host]; already {
-				continue
-			}
-			seen[host] = struct{}{}
-			out = append(out, Answer{
-				Source:     host,
-				SourcePort: src.Port,
-				Protocol:   record.proto,
-				Name:       record.name,
-				MAC:        lookupMACWithRetry(arpPath, host),
-				Local:      local,
-				LocalPort:  localPort,
-			})
+	for a := range answersCh {
+		if _, already := seen[a.Source]; already {
+			continue
 		}
+		seen[a.Source] = struct{}{}
+		out = append(out, a)
 	}
 	return out, nil
+}
+
+// readSocketAnswers reads one socket until ctx is done or deadline passes,
+// sending every matching answer it sees to out. Split out of
+// collectAnswers so each socket can run in its own goroutine against the
+// shared deadline, instead of one socket's idle read starving the rest.
+func readSocketAnswers(ctx context.Context, sock querySocket, record asked, arpPath string, deadline time.Time, out chan<- Answer) {
+	local, localPort := localAddr(sock.conn)
+	buf := make([]byte, MaxDatagramLen)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return
+		}
+		if err := sock.conn.SetReadDeadline(time.Now().Add(left)); err != nil {
+			return
+		}
+		n, src, err := sock.conn.ReadFromUDP(buf)
+		if err != nil {
+			// A timeout is the expected outcome: nothing answered,
+			// which is what a healthy segment does.
+			return
+		}
+		r, err := parseReplyFor(record.proto, buf[:n])
+		if err != nil || !record.matches(r) {
+			// Malformed, or not an answer to this lookup. Dropped
+			// quietly: a log line per bad datagram on a port an
+			// attacker can aim at would be the denial of service.
+			continue
+		}
+		host := src.IP.String()
+		out <- Answer{
+			Source:     host,
+			SourcePort: src.Port,
+			Protocol:   record.proto,
+			Name:       record.name,
+			MAC:        lookupMACWithRetry(arpPath, host),
+			Local:      local,
+			LocalPort:  localPort,
+		}
+	}
 }
 
 // parseReplyFor picks the parser a protocol's replies need.

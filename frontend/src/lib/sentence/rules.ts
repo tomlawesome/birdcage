@@ -18,6 +18,7 @@ import { canariesPhrase, minutesPhrase, rangeNoun, servicesNarrative, triedNarra
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { wordOrNumber } from './words'
 import { shortVersion } from './version'
+import { stageLabel } from './stage'
 import type { Segment } from './types'
 
 export interface SentenceResult {
@@ -271,6 +272,26 @@ function rule2HitsMerged(c: Canary, canaries: Canary[], now: string, lastHit: La
  * so the claim is narrower and stronger -- named services, not "the
  * agent", failed to catch a probe birdcage knows it sent. */
 function rule2SelfTestFailed(c: Canary, canaries: Canary[], now: string, lastHit: LastHit | null): SentenceResult {
+  // A scanner's failed run leaves self_test_failed_services empty --
+  // there is no per-service target to name, unlike a honeypot's
+  // self-test (backend commit 89c56f7) -- and fills last_run instead,
+  // the one field only a scanner ever carries. Its presence is the same
+  // signal tileStatus.ts already uses to branch on kind; reuse that
+  // wording verbatim rather than the port/visitor phrasing below, which
+  // is nonsense for a scanner.
+  if (c.last_run) {
+    return {
+      rule: 2,
+      hero: [...quietBut(now, lastHit), { text: `${c.name} failed its self-test.`, bold: true }],
+      sub: [
+        {
+          text: `Scan target failed — last stage ${stageLabel(c.last_run.last_stage)}${c.last_run.reason ? ` (${c.last_run.reason})` : ''} — `,
+        },
+        { text: 'check the scanner.', bold: true },
+        ...othersFine(canaries, c),
+      ],
+    }
+  }
   const services = c.self_test_failed_services ?? []
   const named = services.length > 0 ? services.join(', ') : 'one of its services'
   return {
@@ -569,6 +590,13 @@ export function computeSentence(
   now: string,
   lastHit: LastHit | null = null,
 ): SentenceResult {
+  // A fleet with no canaries enrolled yet has no "worst" and no newest
+  // heartbeat for rule4's reduce to start from -- say so plainly rather
+  // than falling through into rules that all assume at least one canary.
+  if (canaries.length === 0) {
+    return { rule: 4, hero: [{ text: 'No canaries are enrolled yet.' }], sub: [] }
+  }
+
   const arriving = visitors.find((v) => v.kind === 'sweep' && v.still_arriving)
   if (arriving) return rule1(arriving, canaries, visitors, range, now)
 

@@ -59,8 +59,16 @@ fail() {
 
 # helper runs a shell command inside the harness's helper container: on
 # the stack's network, with curl, openssl, jq and sqlite, and with
-# /tls, /work, /data and /state mounted (see stack.sh).
-helper() { "$E2E_STACK" helper "$@"; }
+# /tls, /work, /data and /state mounted (see stack.sh). Bounded
+# (E2E_HELPER_TIMEOUT, default 20s): almost nothing run through here
+# (a bare curl, nc -w 5) carries a timeout of its own, so a connection
+# that is accepted and then never answers used to block whichever
+# poll() attempt called it forever, past poll()'s own stated attempts
+# bound. `timeout` wraps the external "$E2E_STACK" call, not this
+# function, so a caller that stashes the result in a variable (poll()
+# callbacks like conflict_visible, outbox_row) still sees it land.
+E2E_HELPER_TIMEOUT="${E2E_HELPER_TIMEOUT:-20}"
+helper() { timeout "$E2E_HELPER_TIMEOUT" "$E2E_STACK" helper "$@"; }
 
 # poll retries a command until it succeeds, bounded. The bound is part
 # of the failure message the caller writes, so a journey never waits
@@ -68,6 +76,8 @@ helper() { "$E2E_STACK" helper "$@"; }
 # waited. The command is run as given, never through eval: a journey's
 # assertions are full of quotes and backslashes, and an eval layer is
 # where one of them silently becomes a command that always succeeds.
+# Attempts are only actually bounded if whatever they run is too --
+# see helper()'s own E2E_HELPER_TIMEOUT above.
 #
 #   poll 30 helper 'curl ... | grep -q ftp' || fail "... after 30 attempts"
 poll() {

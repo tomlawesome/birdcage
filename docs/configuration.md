@@ -91,7 +91,41 @@ pg_restore --clean --if-exists --dbname="postgres://user:pass@host:5432/dbname" 
   birdcage-backup-20260101.dump
 ```
 
+**Check the target before running this.** `--clean --if-exists` drops
+anything already in the target database that isn't in the dump, with no
+confirmation prompt -- if the connection string above is copied unchanged
+from the backup example, this wipes whatever birdcage has written since
+that backup was taken. Confirm the connection string points at the
+intended restore target, not the live database, before running it:
+
+```
+psql "postgres://user:pass@host:5432/dbname" -c 'select current_database();'
+```
+
 Stop birdcage before restoring so it isn't writing to the database mid-restore.
+
+### CA directory
+
+Back up `BIRDCAGE_CA_DIR` (default `/var/lib/birdcage/ca`) alongside the
+database, whichever engine is in use, and restore it before starting
+birdcage on the restored data -- every enrolled canary's client
+certificate and the dashboard's own certificate chain to the CA key in
+that directory, so a restore that omits it starts birdcage with a fresh,
+unrelated CA and the whole fleet must be re-enrolled.
+
+Birdcage refuses to start unless the restored directory is owned by the
+uid the container runs as (1000 in the shipped image) and has mode
+`0700`. It does not check the files inside, so restore them with the
+modes it created them with -- key `0600`, certificate `0644` -- rather
+than leaving the key readable to everyone. A restore made as root usually
+loses all of these, so set them before starting:
+
+```
+chown -R 1000:1000 /var/lib/birdcage/ca
+chmod 0700 /var/lib/birdcage/ca
+chmod 0600 /var/lib/birdcage/ca/ca-key.pem
+chmod 0644 /var/lib/birdcage/ca/ca.pem
+```
 
 ## Dashboard TLS
 

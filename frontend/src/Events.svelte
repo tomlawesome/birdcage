@@ -11,12 +11,15 @@
   // never the browser clock or a visitor's own last_at.
   import type { Canary, Range, TraceResponse, Visitor } from './lib/types'
   import { buildEventRows, computeEventsHeading, QUIET_LINE, type EventRow } from './lib/sentence'
+  import { isSilent } from './lib/sentence/eventRow'
 
   let { canaries, visitors, trace, range }: { canaries: Canary[]; visitors: Visitor[]; trace: TraceResponse; range: Range } =
     $props()
 
   let heading = $derived(computeEventsHeading(canaries, visitors, range))
-  let silentCanaries = $derived(canaries.filter((c) => c.status === 'silent'))
+  // Same test as buildEventRows uses, so the heading and rows move down
+  // for a dropped-out canary whatever state won its headline status.
+  let silentCanaries = $derived(canaries.filter(isSilent))
   let now = $derived(trace.now)
   // The merge-and-sort decision itself lives in lib/sentence/eventRow.ts's
   // buildEventRows (#74) -- testable without rendering this component.

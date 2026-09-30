@@ -407,7 +407,12 @@ func (d *Detector) count(ctx context.Context, l listener) {
 				return
 			}
 			// Anything else on a socket that cannot write is not
-			// recoverable by reading again.
+			// recoverable by reading again. Log it: this listener's
+			// goroutine ending here, silently, would otherwise leave
+			// pace-matching for this protocol stopped with nothing
+			// telling the operator why (Run's WaitGroup does not
+			// track which listener exited).
+			d.log.Warn(fmt.Sprintf("poisoner: %s counting socket stopped: %v", l.proto, err))
 			return
 		}
 		d.observe(l, buf[:n], src)

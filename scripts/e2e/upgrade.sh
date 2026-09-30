@@ -331,15 +331,15 @@ lure_image="$(printed_image smb-lure)"
 
 script="$(printf '%s\n' "$upgrade_cmd" | sed \
   -e "/^docker pull $(re "$lure_image")\$/d" \
-  -e '/^docker rm -f smb-lure$/d' \
+  -e '/^docker rm -f smb-lure\( || true\)\{0,1\}$/d' \
   -e '/^docker volume create /,/[^\\]$/d' \
   -e '/^docker run -d --name smb-lure /,/[^\\]$/d' \
   -e '/-v smb-audit:\/audit/d' \
   -e '/MOCKINGBIRD_SMB_AUDIT_PATH/d' \
   "${edits[@]}" \
-  -e "s|^docker rm -f holder\$|docker rm -f $E2E_HOLDER|" \
-  -e "s|^docker rm -f mockingbird\$|docker rm -f $E2E_CANARY|" \
-  -e "s|^docker rm -f opencanary\$|docker rm -f $E2E_OPENCANARY|" \
+  -e "s#^docker rm -f holder\( || true\)\{0,1\}\$#docker rm -f $E2E_HOLDER\1#" \
+  -e "s#^docker rm -f mockingbird\( || true\)\{0,1\}\$#docker rm -f $E2E_CANARY\1#" \
+  -e "s#^docker rm -f opencanary\( || true\)\{0,1\}\$#docker rm -f $E2E_OPENCANARY\1#" \
   -e "s|^docker run -d --name holder |docker run -d --name $E2E_HOLDER --network $E2E_NET --network-alias $E2E_CANARY |" \
   -e "s|--name mockingbird |--name $E2E_CANARY |" \
   -e "s|--name opencanary |--name $E2E_OPENCANARY |" \
@@ -347,9 +347,11 @@ script="$(printf '%s\n' "$upgrade_cmd" | sed \
   -e "s|-v mockingbird-log:|-v $E2E_PREFIX-log:|" \
   -e "s|--network container:holder |--network container:$E2E_HOLDER |")"
 
+# The removal lines carry `|| true` (a re-paste must tolerate a container
+# already gone), so every pattern on them allows that suffix.
 # Nothing unprefixed may survive: a literal `holder` or `smb-audit` here
 # would create or remove something outside this stack on a shared daemon.
-if printf '%s\n' "$script" | grep -Eq -- '--name (holder|mockingbird|opencanary|smb-lure) |container:holder |rm -f (holder|mockingbird|opencanary|smb-lure)$|smb-audit|docker pull|mockingbird-(state|log):'; then
+if printf '%s\n' "$script" | grep -Eq -- '--name (holder|mockingbird|opencanary|smb-lure) |container:holder |rm -f (holder|mockingbird|opencanary|smb-lure)( \|\| true)?$|smb-audit|docker pull|mockingbird-(state|log):'; then
   fail "the edited upgrade command still names something outside this stack:
 $script"
 fi
