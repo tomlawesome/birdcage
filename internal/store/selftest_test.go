@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -437,6 +439,47 @@ func TestMatchSelfTestClaim_GoodClaimMarksSynthetic(t *testing.T) {
 		}
 		if matched || refusal == "" {
 			t.Fatalf("a second event's claim on the same marker was accepted (matched=%v, refusal=%q)", matched, refusal)
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_ConcurrentClaimsBindOnce: two different events
+// carrying the same marker, corroborated at the same moment, must not
+// both be filed as synthetic. The early ClaimedBy read and the final
+// claim are separate lock acquisitions with a database round trip
+// between them, so both can pass the read; only a check-and-set at the
+// claim itself keeps note 19855's one claim per target. Run with -race.
+func TestMatchSelfTestClaim_ConcurrentClaimsBindOnce(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		for round := 0; round < 20; round++ {
+			marker := mintAttributedSelfTestCommand(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			matched := make([]bool, 2)
+			for i := range matched {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					<-start
+					alert := AlertInsert{InstanceID: "canary-a", Service: "portscan", SourceIP: "192.0.2.10", EventID: fmt.Sprintf("evt-%d-%d", round, i)}
+					m, _, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+					if err != nil {
+						t.Errorf("MatchSelfTestClaim: %v", err)
+					}
+					matched[i] = m
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+			if matched[0] && matched[1] {
+				t.Fatalf("round %d: both events were filed as synthetic on one marker", round)
+			}
+			if !matched[0] && !matched[1] {
+				t.Fatalf("round %d: neither event was matched", round)
+			}
 		}
 	})
 }

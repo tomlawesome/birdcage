@@ -278,7 +278,15 @@ func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex
 	if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
 		return false, "", fmt.Errorf("record selftest claim match: %w", err)
 	}
-	idx.claim(alert.InstanceID, marker, alert.EventID)
+	// Check 5 again, atomically this time. The read above and this
+	// claim are separate lock acquisitions with a database round trip
+	// between them, so two events carrying the same marker can both
+	// pass the read; only the one that binds the marker here is
+	// synthetic, the other is refused and stored real. The loser's
+	// recordSelfTestMatch above changed nothing: it is idempotent.
+	if !idx.tryClaim(alert.InstanceID, marker, alert.EventID) {
+		return false, "marker already claimed by another event", nil
+	}
 	return true, "", nil
 }
 
@@ -527,16 +535,26 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 	return true, nil
 }
 
-// claim binds canaryID's marker to the event that first claimed it --
-// MatchSelfTestClaim's one-claim-per-target rule. A no-op for a marker
-// the index no longer holds.
-func (idx *SelfTestIndex) claim(canaryID, marker, eventID string) {
+// tryClaim binds canaryID's marker to eventID -- MatchSelfTestClaim's
+// one-claim-per-target rule -- and reports whether eventID holds it:
+// true for the first claimant and for that same event presented again,
+// false once another event has it. Check and set under one lock, so two
+// concurrent claims cannot both win. A marker the index no longer holds
+// (expired since the caller's lookup) is nobody's to contest: true, as
+// the unconditional claim this replaced behaved.
+func (idx *SelfTestIndex) tryClaim(canaryID, marker, eventID string) bool {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	if info, ok := idx.byCanary[canaryID][marker]; ok {
-		info.ClaimedBy = eventID
-		idx.byCanary[canaryID][marker] = info
+	info, ok := idx.byCanary[canaryID][marker]
+	if !ok {
+		return true
 	}
+	if info.ClaimedBy != "" && info.ClaimedBy != eventID {
+		return false
+	}
+	info.ClaimedBy = eventID
+	idx.byCanary[canaryID][marker] = info
+	return true
 }
 
 // selfTestMarkerInfo is one live marker's expiry and the service it was
