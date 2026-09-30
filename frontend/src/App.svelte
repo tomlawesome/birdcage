@@ -17,7 +17,7 @@
   // footer sentence change -- and the page's own read joins the same
   // tick as the four above, so a canary page refreshes exactly as the
   // cage does.
-  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors } from './lib/api'
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode } from './lib/api'
   import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
@@ -219,6 +219,9 @@
   // it did before this effect existed.
   $effect(() => {
     if (typeof EventSource === 'undefined') return
+    // A fixture scene has no server behind it: the fetches above already
+    // answer from the fixture, and the stream must stay closed too.
+    if (inFixtureMode()) return
     const source = new EventSource('/api/stream')
     source.onmessage = () => triggerRefresh?.()
     return () => source.close()
