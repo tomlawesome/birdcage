@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,44 @@ func TestListTraceLastHitClassifiesAgainstFullHistoryNotJustRange(t *testing.T) 
 		}
 		if trace.LastHit == nil || trace.LastHit.Kind != KindRepeat {
 			t.Fatalf("LastHit = %+v, want kind repeat (classified over the full history, not the 15m range)", trace.LastHit)
+		}
+	})
+}
+
+// TestAlertsForSourceReturnsOnlyWhatClassifyKindNeeds is F2-48's fix:
+// buildLastHit's history query only ever feeds classifyKind, which only
+// looks at when, which canary and which service a hit was (hitPoint);
+// id, dest_port, raw and synthetic were being loaded via the shared
+// []Alert scan and thrown away on every poll. alertsForSource now
+// returns []hitPoint directly, so a huge raw payload on every historical
+// row is never read back at all, while the values classifyKind actually
+// uses still come through correctly, newest first.
+func TestAlertsForSourceReturnsOnlyWhatClassifyKindNeeds(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-07-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "canary-iot", Name: "canary-iot", Lane: "iot", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt})
+
+		hugeRaw := strings.Repeat("x", 64*1024)
+		insertAlertRaw(t, database, "canary-iot", "198.51.100.7", 445, "smb", hugeRaw, "2026-08-01T10:00:00Z")
+		insertAlertRaw(t, database, "canary-iot", "198.51.100.7", 445, "smb", hugeRaw, "2026-08-15T10:00:00Z")
+		insertAlertRaw(t, database, "canary-iot", "198.51.100.7", 22, "ssh", hugeRaw, "2026-09-01T10:00:05Z")
+
+		hits, err := alertsForSource(context.Background(), database, "198.51.100.7")
+		if err != nil {
+			t.Fatalf("alertsForSource: %v", err)
+		}
+		want := []hitPoint{
+			{At: mustParse(t, "2026-09-01T10:00:05Z"), CanaryID: "canary-iot", Service: "ssh"},
+			{At: mustParse(t, "2026-08-15T10:00:00Z"), CanaryID: "canary-iot", Service: "smb"},
+			{At: mustParse(t, "2026-08-01T10:00:00Z"), CanaryID: "canary-iot", Service: "smb"},
+		}
+		if len(hits) != len(want) {
+			t.Fatalf("got %d hits, want %d", len(hits), len(want))
+		}
+		for i, w := range want {
+			if !hits[i].At.Equal(w.At) || hits[i].CanaryID != w.CanaryID || hits[i].Service != w.Service {
+				t.Errorf("hits[%d] = %+v, want %+v", i, hits[i], w)
+			}
 		}
 	})
 }
