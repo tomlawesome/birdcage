@@ -226,10 +226,19 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mint canary token: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE enrolment_sessions SET agent_id = ?, state = ?, enrolment_secret_hash = NULL WHERE id = ?`,
-		canaryID, string(EnrolmentStateProvisioned), found.ID); err != nil {
+	// Guarded by "state = contacted" (the state we read above), the
+	// same shape FirstContact's own burn guard uses: two calls that
+	// both read this session while it was still contacted can each
+	// reach here, but only one's UPDATE matches, so only one commits.
+	// The loser gets won=false and returns without committing, so the
+	// canary/cert/token it minted above are rolled back with it rather
+	// than left as a stray, un-recorded credential.
+	won, err := completeContactedSession(ctx, tx, found.ID, canaryID)
+	if err != nil {
 		return ProvisionResult{}, UnknownSecret, fmt.Errorf("mark enrolment session provisioned: %w", err)
+	}
+	if !won {
+		return ProvisionResult{}, UnknownSecret, nil
 	}
 
 	// TriggeredBy is a fixed "enrolment" rather than an actor identity:
@@ -258,4 +267,24 @@ func Provision(ctx context.Context, database *db.DB, secretHash string, now time
 		ClientCertPEM:      string(certPEM),
 		HeartbeatIntervalS: DefaultHeartbeatIntervalS,
 	}, Provisioned, nil
+}
+
+// completeContactedSession claims sessionID for canaryID, but only if it
+// is still in state "contacted" -- the state Provision's own read
+// required. It reports won=false, with nothing changed, when another
+// call already claimed the session first, so a caller that loses the
+// race can tell and undo whatever it minted rather than leaving a
+// second, un-recorded credential live.
+func completeContactedSession(ctx context.Context, conn db.Conn, sessionID, canaryID string) (won bool, err error) {
+	res, err := conn.ExecContext(ctx, `
+		UPDATE enrolment_sessions SET agent_id = ?, state = ?, enrolment_secret_hash = NULL WHERE id = ? AND state = ?`,
+		canaryID, string(EnrolmentStateProvisioned), sessionID, string(EnrolmentStateContacted))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
