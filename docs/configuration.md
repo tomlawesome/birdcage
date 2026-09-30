@@ -104,6 +104,15 @@ psql "postgres://user:pass@host:5432/dbname" -c 'select current_database();'
 
 Stop birdcage before restoring so it isn't writing to the database mid-restore.
 
+### CA directory
+
+Back up `BIRDCAGE_CA_DIR` (default `/var/lib/birdcage/ca`) alongside the
+database, whichever engine is in use, and restore it before starting
+birdcage on the restored data -- every enrolled canary's client
+certificate and the dashboard's own certificate chain to the CA key in
+that directory, so a restore that omits it starts birdcage with a fresh,
+unrelated CA and the whole fleet must be re-enrolled.
+
 ## Dashboard TLS
 
 Issue #63, owner decision: "we must never allow the GUI to run without
