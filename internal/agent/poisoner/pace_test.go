@@ -204,6 +204,14 @@ func TestPaceSettingsNormalise(t *testing.T) {
 	if odd.CeilingGap != odd.FloorGap {
 		t.Errorf("ceiling %v is still looser than floor %v", odd.CeilingGap, odd.FloorGap)
 	}
+
+	// A sub-floor ceiling -- however it reached PaceSettings -- never
+	// survives normalise: cmd/mockingbird's own entry points already
+	// refuse one, but this is the backstop for any other caller.
+	tooFast := PaceSettings{FloorGap: time.Hour, CeilingGap: 30 * time.Millisecond, Hours: AllHours()}.normalise()
+	if tooFast.CeilingGap != MinCeilingGap {
+		t.Errorf("ceiling %v normalised to %v, want MinCeilingGap %v", 30*time.Millisecond, tooFast.CeilingGap, MinCeilingGap)
+	}
 }
 
 // TestProvisionalNumbersAreMarked is a check on the code, not the maths.

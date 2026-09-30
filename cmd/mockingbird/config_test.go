@@ -68,8 +68,31 @@ func TestLoadConfigMissingCACert(t *testing.T) {
 	}
 }
 
+// TestLoadConfigMissingIngestURL proves an enrolled state directory
+// missing ingest-url is a loud, named refusal rather than a silent
+// fallback to envBirdcageURL's enrolment-listener address.
+func TestLoadConfigMissingIngestURL(t *testing.T) {
+	dir := writeStateDir(t)
+	if err := os.Remove(filepath.Join(dir, ingestURLFileName)); err != nil {
+		t.Fatalf("remove %s: %v", ingestURLFileName, err)
+	}
+	setValidEnv(t, dir)
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("loadConfig succeeded with ingest-url missing")
+	}
+	if !strings.Contains(err.Error(), ingestURLFileName) {
+		t.Fatalf("err = %q, want it to name %s", err, ingestURLFileName)
+	}
+}
+
 // TestLoadConfigSuccess proves the happy path: every field lands where
 // it should, and the derived token/position paths sit inside StateDir.
+// BirdcageURL comes from the ingest-url state file, not envBirdcageURL --
+// writeStateDir's "placeholder" content for every enrolStateFiles entry
+// is exactly what ingest-url gets too, so that is what loadConfig must
+// return here.
 func TestLoadConfigSuccess(t *testing.T) {
 	dir := writeStateDir(t)
 	setValidEnv(t, dir)
@@ -78,7 +101,7 @@ func TestLoadConfigSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if cfg.BirdcageURL != "https://birdcage.example:8443" {
+	if cfg.BirdcageURL != "placeholder" {
 		t.Errorf("BirdcageURL = %q", cfg.BirdcageURL)
 	}
 	if cfg.TokenPath != filepath.Join(dir, tokenFileName) {

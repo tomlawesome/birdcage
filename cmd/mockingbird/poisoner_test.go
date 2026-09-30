@@ -136,6 +136,16 @@ func TestPoisonerSettingsWarnsRatherThanFailing(t *testing.T) {
 			},
 		},
 		{
+			// A typo such as this one must not turn the canary into a
+			// continuous broadcaster.
+			name: "a ceiling below MinCeilingGap", key: envPoisonerCeiling, value: "30ms",
+			check: func(t *testing.T, cfg poisoner.Config) {
+				if cfg.Pace.CeilingGap != poisoner.DefaultCeilingGap {
+					t.Errorf("ceiling = %v, want the default", cfg.Pace.CeilingGap)
+				}
+			},
+		},
+		{
 			name: "working hours that do not parse", key: envPoisonerHours, value: "nine to five",
 			check: func(t *testing.T, cfg poisoner.Config) {
 				if cfg.Pace.Hours != poisoner.DefaultWorkingHours() {

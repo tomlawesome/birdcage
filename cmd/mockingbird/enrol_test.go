@@ -13,14 +13,14 @@ import (
 // simply absent, which the next boot's EnsureEnrolled reports as
 // incomplete enrolment state" -- actually holds for this agent kind.
 // EnsureEnrolled only checks enrolStateFiles (ca.pem, client.pem,
-// client-key.pem, token), a strict subset of what writeEnrolmentState
-// writes; the promise only holds if every file outside that subset
-// (ingest-url, admin-approval-address, release-address) is written
-// before every file inside it, since writeState writes sequentially and
-// a crash lands a prefix of the list. If a required file were ever
-// written before a non-required one, a crash between them would leave
-// EnsureEnrolled reporting "already enrolled" while that non-required
-// file stays absent forever.
+// client-key.pem, token, ingest-url), a strict subset of what
+// writeEnrolmentState writes; the promise only holds if every file
+// outside that subset (admin-approval-address, release-address) is
+// written before every file inside it, since writeState writes
+// sequentially and a crash lands a prefix of the list. If a required
+// file were ever written before a non-required one, a crash between
+// them would leave EnsureEnrolled reporting "already enrolled" while
+// that non-required file stays absent forever.
 func TestWriteEnrolmentStateWritesNonRequiredFilesBeforeRequiredFiles(t *testing.T) {
 	hello := enrol.Hello{
 		EnrolmentSecret:      "secret",
