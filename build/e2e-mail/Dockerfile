@@ -34,7 +34,7 @@
 ARG BASE_IMAGE=alpine:3.24
 FROM ${BASE_IMAGE}
 
-RUN apk add --no-cache postfix=3.11.7-r0 dovecot=2.4.5-r0 openssl=3.5.8-r0
+RUN apk add --no-cache postfix=3.11.7-r0 dovecot=2.4.5-r0 openssl=3.5.9-r0
 
 COPY build/e2e-mail/main.cf /etc/postfix/main.cf
 COPY build/e2e-mail/dovecot.conf /etc/dovecot/dovecot.conf
