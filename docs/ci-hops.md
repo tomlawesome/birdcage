@@ -160,6 +160,8 @@ recorded here because `.gitlab-ci.yml` and this file move together.
 | `release:preview` | push to `preview` | verifies that evidence, then creates the `preview` tag |
 | `release:promote` | `main`, manual | the single button that cuts a release: verifies again, then moves the tested digest to the version tag |
 | `release:gitlab` | `main`, after the button | creates the annotated tag and the release note from `VERSION` |
+| `release:mirror-preview` | push to `preview` | copies the `preview` tag to GHCR (the `*_MIRROR_REPO` variables), under the `GHCR_TOKEN`/`GHCR_USER` credential |
+| `release:mirror-release` | `main`, after the button | copies the version tag `release:promote` just created to GHCR, the same way |
 
 `release:push` deliberately has no `needs:`, which is what makes it wait
 for every job in every earlier stage. A list of jobs there would be a
@@ -203,10 +205,10 @@ job-specific name, never the shared `birdcage-build`/`mockingbird-build`/
 tags, so it was never exposed to this race and calls nothing new.)
 
 This registry push is transport between this pipeline's own jobs, not a
-release -- it never replaces `release:push`'s publication to
-`$GHCR_BIRDCAGE_REPO` / `$GHCR_MOCKINGBIRD_REPO`, which is still the only
-place a consumer, or an attacker's search engine, would ever find these
-images by name.
+release -- it never replaces `release:mirror-preview` / `release:mirror-release`'s
+publication to GHCR (the `*_MIRROR_REPO` variables, pushed under
+`GHCR_TOKEN`/`GHCR_USER`), which is still the only place a consumer, or an
+attacker's search engine, would ever find these images by name.
 
 The internal registry needs its own cleanup policy -- deleting `ci-.*`
 tags older than about a week is plenty, since nothing here is ever read
