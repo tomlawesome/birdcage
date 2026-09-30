@@ -11,6 +11,7 @@ import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } 
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
 import { numberToWords, plural, wordOrNumber } from '../sentence/words'
 import { shortVersion } from '../sentence/version'
+import { stageLabel } from '../sentence/stage'
 import {
   canaryOf,
   lastCompletedRun,
@@ -258,6 +259,26 @@ function silenceRecap(recent: Silence[]): string {
 function selfTestFailedSentence(input: CanaryPageInput): CanarySentence {
   const canary = canaryOf(input)
   const now = input.trace.now
+
+  // A scanner's failed run leaves self_test_failed_services empty --
+  // there is no per-service target to name, unlike a honeypot's
+  // self-test (backend commit 89c56f7) -- and fills last_run instead,
+  // the one field only a scanner ever carries. Its presence is the same
+  // signal tileStatus.ts already uses to branch on kind; reuse that
+  // wording verbatim rather than the port/visitor phrasing below, which
+  // is nonsense for a scanner.
+  if (canary.last_run) {
+    return {
+      hero: [{ text: canary.name, cls: 'c' }, { text: ' failed its self-test.', bold: true }],
+      sub: [
+        {
+          text: `Scan target failed — last stage ${stageLabel(canary.last_run.last_stage)}${canary.last_run.reason ? ` (${canary.last_run.reason})` : ''} — `,
+        },
+        { text: 'check the scanner.', bold: true },
+      ],
+    }
+  }
+
   const failed = canary.self_test_failed_services ?? []
   const at = canary.last_self_test_at ?? now
   const ports = failed.length === 1 ? 'that port' : 'those ports'
