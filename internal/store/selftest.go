@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/agentkind"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/selftest"
 )
@@ -505,6 +506,18 @@ func applySelfTestState(ctx context.Context, database *db.DB, c *Canary) (testFa
 	c.LastSelfTestPassed = run.Passed
 	if run.Passed == nil || *run.Passed {
 		return false, nil
+	}
+	if c.Kind == agentkind.Scanner {
+		// A scanner's self_test_targets row is always MintScanCommand's
+		// fixed "scan 0" placeholder (scanrun.go) -- there is no
+		// per-service target to name, unlike a honeypot's self-test, so
+		// leaving SelfTestFailedServices unset here keeps the
+		// port/visitor-worded self-test narrative from being fed a
+		// value it was never meant for. applyScanRunState (canary.go
+		// calls it right after this, for Scanner kind only) already
+		// fills c.LastRun with the real failure detail, the last stage
+		// reached.
+		return true, nil
 	}
 	failed, err := SelfTestTargetsUnmatched(ctx, database, run.CommandID)
 	if err != nil {
