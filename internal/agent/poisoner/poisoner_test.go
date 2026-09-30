@@ -378,6 +378,58 @@ func TestCollectAnswersCatchesAFakePoisoner(t *testing.T) {
 	}
 }
 
+// TestCollectAnswersReadsASecondSocketEvenWhenTheFirstIsIdle proves the
+// starvation case a dual-stack lookup hits: the first socket in the slice
+// (IPv4, in production) gets no reply for the whole window, while the
+// second (IPv6, in production) gets one almost immediately. Reading
+// sockets one after another against one shared deadline would let the
+// idle first socket consume the entire window and never read the second
+// at all.
+func TestCollectAnswersReadsASecondSocketEvenWhenTheFirstIsIdle(t *testing.T) {
+	idle, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the idle query socket: %v", err)
+	}
+	defer func() { _ = idle.Close() }()
+
+	answered, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the answered query socket: %v", err)
+	}
+	defer func() { _ = answered.Close() }()
+
+	poisonerConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("open the poisoner's socket: %v", err)
+	}
+	defer func() { _ = poisonerConn.Close() }()
+
+	const id = 0x4d2
+	answer := dnsResponse(id, []byte{
+		0x09, 'f', 's', '-', 'l', 'o', 'n', '-', '0', '2', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}, 1)
+	if _, err := poisonerConn.WriteToUDP(answer, answered.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatalf("the poisoner could not answer: %v", err)
+	}
+
+	record := asked{name: "fs-lon-02", proto: ProtocolLLMNR, ids: map[uint16]struct{}{id: {}}}
+	// idle is listed first, matching openMulticastSockets' IPv4-before-
+	// IPv6 order -- the order that starved the second socket.
+	sockets := []querySocket{{conn: idle}, {conn: answered}}
+	window := 300 * time.Millisecond
+	answers, err := collectAnswers(context.Background(), sockets, record, "", window)
+	if err != nil {
+		t.Fatalf("collectAnswers: %v", err)
+	}
+	if len(answers) != 1 {
+		t.Fatalf("got %d answers, want 1 -- the reply on the second socket must not be starved by the idle first one", len(answers))
+	}
+	if a := answers[0]; a.Source != "127.0.0.1" || a.LocalPort != answered.LocalAddr().(*net.UDPAddr).Port {
+		t.Errorf("answer = %+v, want it attributed to the answered socket", a)
+	}
+}
+
 // TestCollectAnswersIgnoresSomethingElsesReply proves the transaction-id
 // match is doing work: a response with an id this agent never minted, for a
 // name it never asked, is not a hit.
