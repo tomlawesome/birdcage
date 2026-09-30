@@ -161,3 +161,9 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   Passed on retry (job 25217) against the same commit, under the same
   three-pipeline load. Not diagnosed. First sighting. Distinct from #146,
   which fails lifecycle.sh step 1.
+
+## Dependency proxy answers 502 on an image pull (build:images)
+
+- 2026-09-30 · 0c3e368 · pipeline 1845 / build:images · the job's own image
+  pull from GitLab's dependency proxy failed "502 Bad Gateway" after 5s,
+  before any script ran; the job does not touch the code this batch changed.
