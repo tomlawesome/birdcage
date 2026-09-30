@@ -237,7 +237,9 @@ lint:scripts:
     # red with four "curl: command not found" -- which this job found by
     # being run in this image before it was committed, on a workstation
     # where curl happens to exist.
-    - apk add --no-cache bash curl >/dev/null
+    # git: scripts/release-candidate.test.sh builds merge shapes in a
+    # scratch repository.
+    - apk add --no-cache bash curl git >/dev/null
     - pip install --quiet pyyaml
   script:
     - |
