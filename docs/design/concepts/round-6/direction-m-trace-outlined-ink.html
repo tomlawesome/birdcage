@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 6 · M · The trace, outlined · silence in ink</title>
+<style>
+  :root {
+    --void: #06080e; --raised: #0f1422;
+    --hair: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --ink: #e9eefb; --ink-2: #97a4c4; --ink-3: #55628a; --accent: #9db8e8;
+    --lan: #3987e5; --srv: #199e70; --iot: #c98500; --guest: #d76a9e;
+    --ok: #37b364; --alarm: #ff5470; --now: #e8b05a;
+    --sweep: #ff5470; --repeat: #ff9e64; --inside: #f072c8; --touch: #b8c56a;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--void); color: var(--ink); font: 13.5px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .scene { position: relative; width: 1600px; height: 1000px; margin: 0 auto 40px; overflow: hidden;
+    background: radial-gradient(1100px 600px at 75% -15%, rgba(80,115,205,.07), transparent 60%), var(--void); border-bottom: 1px solid var(--hair-2); }
+  .tag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; font: 9.5px var(--mono); letter-spacing: .12em; color: var(--ink-3); z-index: 9; }
+  .wordmark { position: absolute; top: 18px; left: 24px; font-weight: 800; font-size: 15px; letter-spacing: .04em; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  .tabs { position: absolute; top: 21px; left: 150px; display: flex; gap: 20px; font: 12px var(--sans); color: var(--ink-3); }
+  .tabs .on { color: var(--ink); position: relative; }
+  .tabs .on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 1px; background: var(--accent); }
+  .status { position: absolute; top: 20px; right: 40px; display: flex; gap: 16px; align-items: center; font: 11px var(--mono); color: var(--ink-2); }
+  .status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: 1px; }
+  .status .dot.off { background: none; border: 1.5px solid var(--ink-2); animation: none; }
+  .status .flag { color: var(--alarm); } .status .flag b { color: var(--void); background: var(--alarm); border-radius: 9px; padding: 0 7px; font-weight: 700; font-size: 10.5px; }
+  .status .mute { color: var(--ink); font-weight: 700; }
+  .status .who { color: var(--ink-3); border: 1px solid var(--hair-2); border-radius: 999px; padding: 2px 10px; }
+  .ranges { display: flex; gap: 4px; margin-right: 8px; } .ranges span { font: 11px var(--mono); color: var(--ink-3); padding: 2px 9px; border-radius: 4px; }
+  .ranges .on { color: var(--ink); background: var(--raised); border: 1px solid var(--hair-2); }
+  .deck { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 30px; align-items: center; }
+  .deck span { writing-mode: sideways-lr; color: var(--ink-3); font: 500 9.5px var(--mono); letter-spacing: .22em; }
+  .deck .on { color: var(--ink); font-size: 12px; letter-spacing: .26em; }
+  .ibtn { position: absolute; left: 14px; bottom: 12px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hair-2); color: var(--ink-3); font: italic 600 11px Georgia, serif; text-align: center; line-height: 16px; }
+
+  .score { position: absolute; inset: 0; pointer-events: none; }
+  .ax { font: 600 9.5px var(--mono); letter-spacing: .12em; fill: var(--ink-3); text-transform: uppercase; }
+  .ax.now { fill: var(--now); letter-spacing: .06em; }
+  .axs { font: 9px var(--sans); fill: var(--ink-3); text-anchor: middle; opacity: .8; }
+  .axt { stroke: var(--hair-2); }
+  .brink { stroke: var(--now); stroke-width: 1.6; }
+  .bandlab { font: 600 9.5px var(--mono); }
+  .bl { font: 10.5px var(--mono); fill: var(--ink); } .bl.dim { fill: var(--ink-3); font-size: 9.5px; }
+
+  .grp { position: absolute; left: 54px; font: 600 9.5px var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; }
+  .grp b { color: var(--ink-2); font-weight: 600; } .grp .r { color: var(--alarm); }
+  .hero { position: absolute; left: 54px; font: 500 26px/1.2 var(--sans); color: var(--ink); letter-spacing: -.01em; }
+  .hero b { font-weight: 700; } .hero .ok { color: var(--ok); } .hero .r { color: var(--alarm); }
+  .sub { position: absolute; left: 54px; width: 900px; font: 13px/1.55 var(--sans); color: var(--ink-2); }
+  .sub b { color: var(--ink); font-weight: 600; } .sub .ip { font: 12.5px var(--mono); color: var(--ink); }
+  .quiet-line { position: absolute; left: 54px; font: italic 13px/1.5 var(--sans); color: var(--ink-3); }
+  .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pill { font: 600 11px var(--sans); color: var(--accent); border: 1px solid var(--hair-2); border-radius: 999px; padding: 3px 12px; white-space: nowrap; }
+  .pill.quiet { color: var(--ink-3); }
+
+  /* the canary tiles */
+  .tiles { position: absolute; left: 54px; right: 80px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .tile { --c: var(--ink-2); position: relative; padding: 14px 16px 12px; }
+  .tile .n { font: 700 12.5px var(--mono); color: var(--c); }
+  .tile .n small { font-weight: 500; color: var(--ink-3); margin-left: 8px; }
+  .tile .st { margin-top: 6px; padding-right: 96px; font: 11px var(--mono); color: var(--ink-2); }
+  .tile .st .ok { color: var(--ok); } .tile .st .al { color: var(--alarm); font-weight: 700; } .tile .st .rp { color: var(--repeat); font-weight: 700; }
+  .tile .st .off { color: var(--ink); font-weight: 700; }
+  .tile .pt { margin-top: 8px; font: 10px var(--mono); color: var(--ink-3); }
+  .tile .big { position: absolute; right: 16px; top: 12px; font: 600 20px var(--sans); color: var(--ink); letter-spacing: -.02em; }
+  .tile .big small { display: block; font: 9px var(--mono); color: var(--ink-3); letter-spacing: .12em; text-transform: uppercase; text-align: right; font-weight: 600; }
+  .tile.k-lan { --c: var(--lan); } .tile.k-srv { --c: var(--srv); } .tile.k-iot { --c: var(--iot); } .tile.k-guest { --c: var(--guest); }
+  .tile .acts { margin-top: 10px; }
+
+  /* the events */
+  .row { position: absolute; left: 40px; right: 80px; height: 70px; display: grid; grid-template-columns: 92px 132px 1fr auto; column-gap: 16px; align-items: center; padding-left: 14px; border-bottom: 1px solid var(--hair); }
+  .row::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--k); }
+  .row.k-sw { --k: var(--sweep); } .row.k-rp { --k: var(--repeat); } .row.k-in { --k: var(--inside); } .row.k-tc { --k: var(--touch); } .row.k-off { --k: var(--ink-2); }
+  .row .t { font: 11px var(--mono); color: var(--ink); } .row .t small { display: block; font: 10px var(--mono); color: var(--ink-3); }
+  .row .kind { font: 700 11px var(--mono); letter-spacing: .06em; color: var(--k); white-space: nowrap; }
+  .row .kind small { display: block; font: 10px var(--mono); color: var(--ink-3); letter-spacing: 0; margin-top: 3px; font-weight: 500; }
+  .row .who { font: 12.5px var(--sans); color: var(--ink-2); line-height: 1.45; }
+  .row .who .ip { font: 12.5px var(--mono); color: var(--ink); } .row .who b { color: var(--ink); font-weight: 600; }
+
+  .legend { position: absolute; left: 54px; right: 80px; font: 11px var(--sans); color: var(--ink-3); display: flex; gap: 22px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; }
+  .legend .ln { display: inline-block; width: 22px; height: 0; border-top: 1.5px solid var(--lan); vertical-align: 3px; margin-right: 6px; opacity: .7; }
+  .legend .gap { display: inline-block; width: 22px; height: 0; border-top: 1.5px dashed var(--ink-3); vertical-align: 3px; margin-right: 6px; }
+  .legend .nw { color: var(--now); }
+  .foot { position: absolute; left: 0; right: 40px; bottom: 14px; display: flex; justify-content: center; gap: 60px; font: 12.5px var(--sans); color: var(--ink-2); }
+  .foot b { color: var(--ink); font-weight: 600; } .foot .r { color: var(--alarm); } .foot .ok { color: var(--ok); font-weight: 600; }
+  @media (prefers-reduced-motion: no-preference) { .status .dot { animation: pulse 1.8s ease-in-out infinite; } .status .dot.off { animation: none; } @keyframes pulse { 50% { opacity: .4; } } }
+
+  .tile { background: var(--raised); border: 1px solid var(--c); border-radius: 8px; }
+
+  .tile.silent { border-color: var(--ink-3); border-style: dashed; background: transparent; }
+</style>
+</head>
+<body>
+
+<section class="scene" id="m-quiet" aria-label="The trace, outlined · silence in ink: a quiet fortnight: a flat trace, four canaries phoning home, no events">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the cage</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot"></span>QUIET · 4 of 4 phoning home</span><span>◎ 0 visitors · 14 d</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE TRACE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<line x1="190" y1="290" x2="1520" y2="290" stroke="var(--lan)" stroke-width="1.2" opacity=".6"/>
+<rect x="1514.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1484.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1424.1" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1393.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1363.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1333.4" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1303.2" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1272.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1242.7" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1212.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1182.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.0" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1091.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="293" class="bandlab" fill="var(--lan)" text-anchor="end">canary-lan</text>
+<line x1="190" y1="302" x2="1520" y2="302" stroke="var(--srv)" stroke-width="1.2" opacity=".6"/>
+<rect x="1498.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1468.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1438.2" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1408.0" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1377.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1347.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1317.3" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1287.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1226.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1196.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1166.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1135.9" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1105.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="305" class="bandlab" fill="var(--srv)" text-anchor="end">canary-srv</text>
+<line x1="190" y1="314" x2="1520" y2="314" stroke="var(--iot)" stroke-width="1.2" opacity=".6"/>
+<rect x="1508.2" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1478.0" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1447.8" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1417.5" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1387.3" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1357.1" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1326.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1296.6" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.4" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1236.2" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1205.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1175.7" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1145.5" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1115.3" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1085.0" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="317" class="bandlab" fill="var(--iot)" text-anchor="end">canary-iot</text>
+<line x1="190" y1="326" x2="1520" y2="326" stroke="var(--guest)" stroke-width="1.2" opacity=".6"/>
+<rect x="1517.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1487.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1457.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1427.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1396.9" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1366.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1336.4" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1306.2" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1276.0" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1245.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1185.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1155.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1124.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1094.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="329" class="bandlab" fill="var(--guest)" text-anchor="end">canary-guest</text>
+<line x1="1520" y1="230" x2="1520" y2="366" class="brink"/>
+<text x="190.0" y="368" class="ax">14 d</text><line x1="190.0" y1="352" x2="190.0" y2="358" class="axt"/>
+<text x="492.3" y="368" class="ax">24 h</text><line x1="492.3" y1="352" x2="492.3" y2="358" class="axt"/>
+<text x="794.5" y="368" class="ax">1 h</text><line x1="794.5" y1="352" x2="794.5" y2="358" class="axt"/>
+<text x="1066.6" y="368" class="ax">15 m</text><line x1="1066.6" y1="352" x2="1066.6" y2="358" class="axt"/>
+<text x="1520" y="368" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="517.6" y1="354" x2="517.6" y2="358" class="axt" opacity=".6"/>
+<line x1="470.9" y1="354" x2="470.9" y2="358" class="axt" opacity=".6"/>
+<line x1="447.6" y1="354" x2="447.6" y2="358" class="axt" opacity=".6"/>
+<line x1="424.4" y1="354" x2="424.4" y2="358" class="axt" opacity=".6"/>
+<line x1="401.1" y1="354" x2="401.1" y2="358" class="axt" opacity=".6"/>
+<text x="401.1" y="384" class="axs">tue 1 sep</text>
+<line x1="377.9" y1="354" x2="377.9" y2="358" class="axt" opacity=".6"/>
+<line x1="354.6" y1="354" x2="354.6" y2="358" class="axt" opacity=".6"/>
+<line x1="331.4" y1="354" x2="331.4" y2="358" class="axt" opacity=".6"/>
+<line x1="308.1" y1="354" x2="308.1" y2="358" class="axt" opacity=".6"/>
+<text x="308.1" y="384" class="axs">fri 28 aug</text>
+<line x1="284.9" y1="354" x2="284.9" y2="358" class="axt" opacity=".6"/>
+<line x1="261.6" y1="354" x2="261.6" y2="358" class="axt" opacity=".6"/>
+<line x1="238.4" y1="354" x2="238.4" y2="358" class="axt" opacity=".6"/>
+<line x1="215.1" y1="354" x2="215.1" y2="358" class="axt" opacity=".6"/>
+<text x="215.1" y="384" class="axs">mon 24 aug</text>
+<line x1="191.9" y1="354" x2="191.9" y2="358" class="axt" opacity=".6"/>
+<text x="643.4" y="384" class="axs">23 hours, compressed</text>
+<text x="1293.3" y="384" class="axs">the last quarter hour, stretched</text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · sat 5 sep · 22:04:31</div>
+  <div class="hero" style="top:94px">Quiet for <b class="ok">23 days</b>.</div>
+  <div class="sub" style="top:134px">Nothing has touched a canary since <b>Thu 13 Aug</b> — one touch on canary-guest :23 from <span class="ip">198.51.100.200</span>, cleared with a note. The four canaries have phoned home every minute since; the newest heartbeat was three seconds ago.</div>
+  <div class="tiles" style="top:430px">
+    <div class="tile k-lan "><div class="n">canary-lan<small>on lan</small></div><div class="st"><span class="ok">● 9 s</span> · every minute · quiet 23 d</div><div class="pt">ssh 22 · http 80 · smb 445</div><div class="big">0<small>hits · 14 d</small></div></div>
+    <div class="tile k-srv "><div class="n">canary-srv<small>on srv</small></div><div class="st"><span class="ok">● 41 s</span> · every minute · quiet 23 d</div><div class="pt">ssh 22 · mysql 3306 · ftp 21</div><div class="big">0<small>hits · 14 d</small></div></div>
+    <div class="tile k-iot "><div class="n">canary-iot<small>on iot</small></div><div class="st"><span class="ok">● 22 s</span> · every minute · quiet 23 d</div><div class="pt">telnet 23 · ssh 22 · smb 445</div><div class="big">0<small>hits · 14 d</small></div></div>
+    <div class="tile k-guest "><div class="n">canary-guest<small>on guest</small></div><div class="st"><span class="ok">● 3 s</span> · every minute · quiet 23 d</div><div class="pt">telnet 23 · ssh 22 · http 80</div><div class="big">0<small>hits · 14 d</small></div></div>
+  </div>
+  <div class="grp" style="top:578px">events · 14 days · <b>none</b></div>
+  <div class="quiet-line" style="top:602px">Nothing in the window. A flat trace is the cage working — the only things moving on this page are the heartbeats.</div>
+  <div class="foot"><span>twenty-three quiet days · <span class="ok">all four phoning home</span> · nothing to act on</span></div>
+  <div class="legend" style="top:912px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a drop is silence</span><span>a rise is a visitor, its words at the top, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>dim marks are single heartbeats where the axis is stretched</span><span class="nw">— the brink · now</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">M · THE TRACE, OUTLINED · SILENCE IN INK · SCENE 1 · A QUIET FORTNIGHT</div>
+</section>
+
+<section class="scene" id="m-silent" aria-label="The trace, outlined · silence in ink: a canary gone silent: one line drops out of the trace">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the cage</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot off"></span>3 of 4 phoning home · <span class="mute">canary-iot silent 6 m</span></span><span>◎ 0 visitors · 14 d</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE TRACE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<line x1="190" y1="290" x2="1520" y2="290" stroke="var(--lan)" stroke-width="1.2" opacity=".6"/>
+<rect x="1514.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1484.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1424.1" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1393.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1363.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1333.4" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1303.2" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1272.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1242.7" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1212.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1182.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.0" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1091.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="293" class="bandlab" fill="var(--lan)" text-anchor="end">canary-lan</text>
+<line x1="190" y1="302" x2="1520" y2="302" stroke="var(--srv)" stroke-width="1.2" opacity=".6"/>
+<rect x="1498.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1468.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1438.2" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1408.0" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1377.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1347.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1317.3" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1287.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1226.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1196.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1166.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1135.9" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1105.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="305" class="bandlab" fill="var(--srv)" text-anchor="end">canary-srv</text>
+<line x1="190" y1="314" x2="1332.6" y2="314" stroke="var(--iot)" stroke-width="1.2" opacity=".6"/>
+<path d="M1332.6,314 C1342.6,314 1340.6,344 1352.6,344" fill="none" stroke="var(--ink-3)" stroke-width="1.2"/>
+<line x1="1352.6" y1="344" x2="1520" y2="344" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="2 5" opacity=".8"/>
+<rect x="1326.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1296.6" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.4" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1236.2" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1205.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1175.7" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1145.5" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1115.3" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1085.0" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<circle cx="1332.6" cy="314" r="3.6" fill="var(--void)" stroke="var(--iot)" stroke-width="1.4"/>
+<text x="1322.6" y="347" class="bl" text-anchor="end">canary-iot dropped out · last heartbeat <tspan fill="var(--ink)">21:58:19</tspan> · silent 6 m 12 s</text>
+<text x="180" y="317" class="bandlab" fill="var(--iot)" text-anchor="end">canary-iot</text>
+<line x1="190" y1="326" x2="1520" y2="326" stroke="var(--guest)" stroke-width="1.2" opacity=".6"/>
+<rect x="1517.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1487.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1457.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1427.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1396.9" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1366.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1336.4" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1306.2" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1276.0" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1245.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1185.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1155.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1124.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1094.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="329" class="bandlab" fill="var(--guest)" text-anchor="end">canary-guest</text>
+<line x1="1520" y1="230" x2="1520" y2="366" class="brink"/>
+<text x="190.0" y="368" class="ax">14 d</text><line x1="190.0" y1="352" x2="190.0" y2="358" class="axt"/>
+<text x="492.3" y="368" class="ax">24 h</text><line x1="492.3" y1="352" x2="492.3" y2="358" class="axt"/>
+<text x="794.5" y="368" class="ax">1 h</text><line x1="794.5" y1="352" x2="794.5" y2="358" class="axt"/>
+<text x="1066.6" y="368" class="ax">15 m</text><line x1="1066.6" y1="352" x2="1066.6" y2="358" class="axt"/>
+<text x="1520" y="368" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="517.6" y1="354" x2="517.6" y2="358" class="axt" opacity=".6"/>
+<line x1="470.9" y1="354" x2="470.9" y2="358" class="axt" opacity=".6"/>
+<line x1="447.6" y1="354" x2="447.6" y2="358" class="axt" opacity=".6"/>
+<line x1="424.4" y1="354" x2="424.4" y2="358" class="axt" opacity=".6"/>
+<line x1="401.1" y1="354" x2="401.1" y2="358" class="axt" opacity=".6"/>
+<text x="401.1" y="384" class="axs">tue 1 sep</text>
+<line x1="377.9" y1="354" x2="377.9" y2="358" class="axt" opacity=".6"/>
+<line x1="354.6" y1="354" x2="354.6" y2="358" class="axt" opacity=".6"/>
+<line x1="331.4" y1="354" x2="331.4" y2="358" class="axt" opacity=".6"/>
+<line x1="308.1" y1="354" x2="308.1" y2="358" class="axt" opacity=".6"/>
+<text x="308.1" y="384" class="axs">fri 28 aug</text>
+<line x1="284.9" y1="354" x2="284.9" y2="358" class="axt" opacity=".6"/>
+<line x1="261.6" y1="354" x2="261.6" y2="358" class="axt" opacity=".6"/>
+<line x1="238.4" y1="354" x2="238.4" y2="358" class="axt" opacity=".6"/>
+<line x1="215.1" y1="354" x2="215.1" y2="358" class="axt" opacity=".6"/>
+<text x="215.1" y="384" class="axs">mon 24 aug</text>
+<line x1="191.9" y1="354" x2="191.9" y2="358" class="axt" opacity=".6"/>
+<text x="643.4" y="384" class="axs">23 hours, compressed</text>
+<text x="1293.3" y="384" class="axs">the last quarter hour, stretched</text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · sat 5 sep · 22:04:31</div>
+  <div class="hero" style="top:94px">Quiet for <b class="ok">23 days</b> — but <b>canary-iot is silent.</b></div>
+  <div class="sub" style="top:134px">Its last heartbeat was <b>21:58:19</b>, six minutes ago; it phones home every minute. A silent canary is not the quiet we want — the host may be down, or its firewall rule on the router may have moved. The other three are fine.</div>
+  <div class="tiles" style="top:430px">
+    <div class="tile k-lan "><div class="n">canary-lan<small>on lan</small></div><div class="st"><span class="ok">● 9 s</span> · every minute · quiet 23 d</div><div class="pt">ssh 22 · http 80 · smb 445</div><div class="big">0<small>hits · 14 d</small></div></div>
+    <div class="tile k-srv "><div class="n">canary-srv<small>on srv</small></div><div class="st"><span class="ok">● 41 s</span> · every minute · quiet 23 d</div><div class="pt">ssh 22 · mysql 3306 · ftp 21</div><div class="big">0<small>hits · 14 d</small></div></div>
+    <div class="tile k-iot silent"><div class="n">canary-iot<small>on iot</small></div><div class="st"><span class="off">○ silent 6 m 12 s</span> · last heard 21:58:19</div><div class="pt">telnet 23 · ssh 22 · smb 445</div><div class="big">0<small>hits · 14 d</small></div><div class="acts"><span class="pill">open canary-iot ▸</span><span class="pill quiet">mark as maintenance</span></div></div>
+    <div class="tile k-guest "><div class="n">canary-guest<small>on guest</small></div><div class="st"><span class="ok">● 3 s</span> · every minute · quiet 23 d</div><div class="pt">telnet 23 · ssh 22 · http 80</div><div class="big">0<small>hits · 14 d</small></div></div>
+  </div>
+  <div class="grp" style="top:614px">events · 14 days · <b>1</b> · no visitors</div>
+  <div class="row k-off" style="top:640px"><div class="t">21:58:19<small>6 m 12 s ago</small></div><div class="kind">○ DROPPED OUT<small>canary-iot</small></div><div class="who"><b>canary-iot</b> stopped phoning home. Six heartbeats missed since. Not a visitor: the host may be down, or its firewall rule on the router may have moved.</div><div class="acts"><span class="pill">open canary-iot ▸</span><span class="pill">lookback in mikroview ▸</span><span class="pill quiet">mark as maintenance</span></div></div>
+  <div class="foot"><span>twenty-three quiet days · <b>one canary has stopped talking</b> — silence is only good news while the heartbeat keeps coming</span></div>
+  <div class="legend" style="top:912px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a drop is silence</span><span>a rise is a visitor, its words at the top, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>dim marks are single heartbeats where the axis is stretched</span><span class="nw">— the brink · now</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">M · THE TRACE, OUTLINED · SILENCE IN INK · SCENE 2 · A CANARY GONE SILENT</div>
+</section>
+
+<section class="scene" id="m-night" aria-label="The trace, outlined · silence in ink: the sweep night: visitors rise from the trace, tiles and events beneath">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class=on>the cage</span><span>visitors</span><span>audit log</span></div>
+  <div class="status"><div class="ranges"><span>15 m</span><span>1 h</span><span>24 h</span><span class=on>14 d</span><span>90 d</span></div><span><span class="dot"></span>LIVE · 4 canaries</span><span class="flag">⚑ <b>1</b></span><span>◎ 4 visitors</span><span class="who">tom (admin)</span></div>
+  <div class="deck"><span class=on>THE TRACE</span><span>VISITORS</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+  <svg class="score" viewBox="0 0 1600 1000" aria-hidden="true">
+<line x1="190" y1="290" x2="1520" y2="290" stroke="var(--lan)" stroke-width="1.2" opacity=".6"/>
+<rect x="1514.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1484.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1454.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1424.1" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1393.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1363.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1333.4" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1303.2" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1272.9" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1242.7" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1212.5" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1182.3" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1152.0" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1121.8" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1091.6" y="288" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="293" class="bandlab" fill="var(--lan)" text-anchor="end">canary-lan</text>
+<line x1="190" y1="302" x2="1520" y2="302" stroke="var(--srv)" stroke-width="1.2" opacity=".6"/>
+<rect x="1498.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1468.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1438.2" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1408.0" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1377.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1347.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1317.3" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1287.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1256.8" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1226.6" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1196.4" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1166.1" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1135.9" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1105.7" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1075.5" y="300" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="305" class="bandlab" fill="var(--srv)" text-anchor="end">canary-srv</text>
+<line x1="190" y1="314" x2="1520" y2="314" stroke="var(--iot)" stroke-width="1.2" opacity=".6"/>
+<rect x="1508.2" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1478.0" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1447.8" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1417.5" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1387.3" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1357.1" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1326.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1296.6" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1266.4" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1236.2" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1205.9" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1175.7" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1145.5" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1115.3" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1085.0" y="312" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="317" class="bandlab" fill="var(--iot)" text-anchor="end">canary-iot</text>
+<line x1="190" y1="326" x2="1520" y2="326" stroke="var(--guest)" stroke-width="1.2" opacity=".6"/>
+<rect x="1517.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1487.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1457.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1427.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1396.9" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1366.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1336.4" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1306.2" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1276.0" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1245.7" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1215.5" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1185.3" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1155.1" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1124.8" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<rect x="1094.6" y="324" width="1.4" height="4" fill="var(--ink-3)" opacity=".55"/>
+<text x="180" y="329" class="bandlab" fill="var(--guest)" text-anchor="end">canary-guest</text>
+<path d="M375.9,314 C382.5,314 382.5,298 387.9,298 L399.2,298 C404.6,298 404.6,314 411.2,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M375.9,314 C382.5,314 382.5,298 387.9,298 L399.2,298 C404.6,298 404.6,314 411.2,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M398.8,314 C405.4,314 405.4,298 410.8,298 L422.4,298 C427.8,298 427.8,314 434.4,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M398.8,314 C405.4,314 405.4,298 410.8,298 L422.4,298 C427.8,298 427.8,314 434.4,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M422.1,314 C428.7,314 428.7,298 434.1,298 L445.7,298 C451.1,298 451.1,314 457.7,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M422.1,314 C428.7,314 428.7,298 434.1,298 L445.7,298 C451.1,298 451.1,314 457.7,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M445.3,314 C451.9,314 451.9,298 457.3,298 L468.9,298 C474.3,298 474.3,314 480.9,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M445.3,314 C451.9,314 451.9,298 457.3,298 L468.9,298 C474.3,298 474.3,314 480.9,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M453.3,302 C464.7,302 464.7,268 474.1,268 L474.1,268 C483.5,268 483.5,302 494.9,302" fill="var(--touch)" fill-opacity=".14" stroke="none"/><path d="M453.3,302 C464.7,302 464.7,268 474.1,268 L474.1,268 C483.5,268 483.5,302 494.9,302" fill="none" stroke="var(--touch)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="474.1" y="252" class="bl" text-anchor="middle"><tspan fill="var(--touch)">✱ </tspan>anonymous ftp, once</text><text x="474.1" y="264" class="bl dim" text-anchor="middle">192.0.2.88 → canary-srv :21 · yesterday 03:18</text>
+<path d="M468.6,314 C475.2,314 475.2,298 480.6,298 L492.2,298 C497.6,298 497.6,314 504.2,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M468.6,314 C475.2,314 475.2,298 480.6,298 L492.2,298 C497.6,298 497.6,314 504.2,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M628.0,314 C639.4,314 639.4,280 648.8,280 L793.4,280 C802.7,280 802.7,314 814.2,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M628.0,314 C639.4,314 639.4,280 648.8,280 L793.4,280 C802.7,280 802.7,314 814.2,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="820.2" y="264" class="bl" text-anchor="start"><tspan fill="var(--repeat)">✱ </tspan>37 knocks tonight, every 20 min · six nights</text><text x="820.2" y="276" class="bl dim" text-anchor="start">198.51.100.7 → canary-iot :445</text>
+<path d="M742.9,290 C757.6,290 757.6,226 769.7,226 L769.8,226 C781.8,226 781.8,290 796.6,290" fill="var(--inside)" fill-opacity=".14" stroke="none"/><path d="M742.9,290 C757.6,290 757.6,226 769.7,226 L769.8,226 C781.8,226 781.8,290 796.6,290" fill="none" stroke="var(--inside)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="769.7" y="210" class="bl" text-anchor="middle"><tspan fill="var(--inside)">✱ </tspan>/ then /admin</text><text x="769.7" y="222" class="bl dim" text-anchor="middle">10.0.40.23 → canary-lan :80 · 19:11</text>
+<path d="M871.1,314 C877.7,314 877.7,298 883.1,298 L883.1,298 C888.5,298 888.5,314 895.1,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M871.1,314 C877.7,314 877.7,298 883.1,298 L883.1,298 C888.5,298 888.5,314 895.1,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M992.0,314 C998.6,314 998.6,298 1004.0,298 L1004.0,298 C1009.4,298 1009.4,314 1016.0,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M992.0,314 C998.6,314 998.6,298 1004.0,298 L1004.0,298 C1009.4,298 1009.4,314 1016.0,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M1225.2,290 C1239.9,290 1239.9,226 1252.0,226 L1252.5,226 C1264.5,226 1264.5,290 1279.3,290" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1225.2,290 C1239.9,290 1239.9,226 1252.0,226 L1252.5,226 C1264.5,226 1264.5,290 1279.3,290" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="1219.2" y="210" class="bl" text-anchor="end"><tspan fill="var(--sweep)">✱ </tspan>root / root · session libssh2</text><text x="1219.2" y="222" class="bl dim" text-anchor="end">203.0.113.42 → canary-lan · 21:55</text>
+<path d="M1253.0,302 C1274.3,302 1274.3,178 1291.8,178 L1291.8,178 C1309.2,178 1309.2,302 1330.6,302" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1253.0,302 C1274.3,302 1274.3,178 1291.8,178 L1291.8,178 C1309.2,178 1309.2,302 1330.6,302" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="1247.0" y="162" class="bl" text-anchor="end"><tspan fill="var(--sweep)">✱ </tspan>mysql root / (empty) · root / password</text><text x="1247.0" y="174" class="bl dim" text-anchor="end">203.0.113.42 → canary-srv · 21:56</text>
+<path d="M1291.9,302 C1298.5,302 1298.5,286 1303.9,286 L1303.9,286 C1309.3,286 1309.3,302 1315.9,302" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1291.9,302 C1298.5,302 1298.5,286 1303.9,286 L1303.9,286 C1309.3,286 1309.3,302 1315.9,302" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M1346.3,314 C1352.9,314 1352.9,298 1358.3,298 L1358.3,298 C1363.7,298 1363.7,314 1370.3,314" fill="var(--repeat)" fill-opacity=".14" stroke="none"/><path d="M1346.3,314 C1352.9,314 1352.9,298 1358.3,298 L1358.3,298 C1363.7,298 1363.7,314 1370.3,314" fill="none" stroke="var(--repeat)" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M1386.6,314 C1414.5,314 1414.5,130 1437.4,130 L1437.4,130 C1460.2,130 1460.2,314 1488.2,314" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1386.6,314 C1414.5,314 1414.5,130 1437.4,130 L1437.4,130 C1460.2,130 1460.2,314 1488.2,314" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="1380.6" y="114" class="bl" text-anchor="end"><tspan fill="var(--sweep)">✱ </tspan>root / toor</text><text x="1380.6" y="126" class="bl dim" text-anchor="end">203.0.113.42 → canary-iot · 22:01</text>
+<path d="M1442.6,326 C1477.1,326 1477.1,82 1505.4,82 L1505.4,82 C1512.0,82 1512.0,326 1520.0,326" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1442.6,326 C1477.1,326 1477.1,82 1505.4,82 L1505.4,82 C1512.0,82 1512.0,326 1520.0,326" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="1436.6" y="66" class="bl" text-anchor="end"><tspan fill="var(--sweep)">✱ </tspan>root / 123456 · admin / admin</text><text x="1436.6" y="78" class="bl dim" text-anchor="end">203.0.113.42 → canary-guest · 22:04</text>
+<path d="M1508.0,326 C1514.6,326 1514.6,310 1520.0,310 L1520.0,310 C1520.0,310 1520.0,326 1520.0,326" fill="var(--sweep)" fill-opacity=".14" stroke="none"/><path d="M1508.0,326 C1514.6,326 1514.6,310 1520.0,310 L1520.0,310 C1520.0,310 1520.0,326 1520.0,326" fill="none" stroke="var(--sweep)" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="1520" y1="44" x2="1520" y2="366" class="brink"/>
+<text x="190.0" y="368" class="ax">14 d</text><line x1="190.0" y1="352" x2="190.0" y2="358" class="axt"/>
+<text x="492.3" y="368" class="ax">24 h</text><line x1="492.3" y1="352" x2="492.3" y2="358" class="axt"/>
+<text x="794.5" y="368" class="ax">1 h</text><line x1="794.5" y1="352" x2="794.5" y2="358" class="axt"/>
+<text x="1066.6" y="368" class="ax">15 m</text><line x1="1066.6" y1="352" x2="1066.6" y2="358" class="axt"/>
+<text x="1520" y="368" class="ax now" text-anchor="end">NOW · 22:04:31</text>
+<line x1="517.6" y1="354" x2="517.6" y2="358" class="axt" opacity=".6"/>
+<line x1="470.9" y1="354" x2="470.9" y2="358" class="axt" opacity=".6"/>
+<line x1="447.6" y1="354" x2="447.6" y2="358" class="axt" opacity=".6"/>
+<line x1="424.4" y1="354" x2="424.4" y2="358" class="axt" opacity=".6"/>
+<line x1="401.1" y1="354" x2="401.1" y2="358" class="axt" opacity=".6"/>
+<text x="401.1" y="384" class="axs">tue 8 sep</text>
+<line x1="377.9" y1="354" x2="377.9" y2="358" class="axt" opacity=".6"/>
+<line x1="354.6" y1="354" x2="354.6" y2="358" class="axt" opacity=".6"/>
+<line x1="331.4" y1="354" x2="331.4" y2="358" class="axt" opacity=".6"/>
+<line x1="308.1" y1="354" x2="308.1" y2="358" class="axt" opacity=".6"/>
+<text x="308.1" y="384" class="axs">fri 4 sep</text>
+<line x1="284.9" y1="354" x2="284.9" y2="358" class="axt" opacity=".6"/>
+<line x1="261.6" y1="354" x2="261.6" y2="358" class="axt" opacity=".6"/>
+<line x1="238.4" y1="354" x2="238.4" y2="358" class="axt" opacity=".6"/>
+<line x1="215.1" y1="354" x2="215.1" y2="358" class="axt" opacity=".6"/>
+<text x="215.1" y="384" class="axs">mon 31 aug</text>
+<line x1="191.9" y1="354" x2="191.9" y2="358" class="axt" opacity=".6"/>
+<text x="643.4" y="384" class="axs">23 hours, compressed</text>
+<text x="1293.3" y="384" class="axs">the last quarter hour, stretched</text>
+  </svg>
+  <div class="grp" style="top:70px">the cage · fri 12 sep · <span class="r">1 flagged</span> · 232 hits today</div>
+  <div class="hero" style="top:94px"><b class="r">One address is walking the cage.</b></div>
+  <div class="sub" style="top:134px"><span class="ip">203.0.113.42</span> has reached <b>all four canaries in nine minutes</b> — ssh, then mysql, default passwords — and is still arriving. Three more visitors in the fortnight. Nothing here blocks: <b>lookback in mikroview ▸</b> to act.</div>
+  <div class="tiles" style="top:430px">
+    <div class="tile k-lan "><div class="n">canary-lan<small>on lan</small></div><div class="st"><span class="ok">● 9 s</span> · <span class="al">✱ swept 21:55</span><br>from inside 19:11</div><div class="pt">ssh 22 · http 80 · smb 445</div><div class="big">4<small>hits · 14 d</small></div></div>
+    <div class="tile k-srv "><div class="n">canary-srv<small>on srv</small></div><div class="st"><span class="ok">● 41 s</span> · <span class="al">✱ swept 21:56</span><br>one touch yesterday</div><div class="pt">ssh 22 · mysql 3306 · ftp 21</div><div class="big">3<small>hits · 14 d</small></div></div>
+    <div class="tile k-iot "><div class="n">canary-iot<small>on iot</small></div><div class="st"><span class="ok">● 22 s</span> · <span class="al">✱ swept 22:01</span> · <span class="rp">repeat :445</span></div><div class="pt">telnet 23 · ssh 22 · smb 445</div><div class="big">222<small>hits · 14 d</small></div></div>
+    <div class="tile k-guest "><div class="n">canary-guest<small>on guest</small></div><div class="st"><span class="ok">● 3 s</span> · <span class="al">✱ swept 22:04</span></div><div class="pt">telnet 23 · ssh 22 · http 80</div><div class="big">2<small>hits · 14 d</small></div></div>
+  </div>
+  <div class="grp" style="top:578px">events · 14 days · <b>4 visitors</b> · newest first</div>
+  <div class="row k-sw" style="top:604px"><div class="t">22:04:31<small>9 m · still arriving</small></div><div class="kind">✱ SWEEP<small>7× · 4 of 4</small></div><div class="who"><span class="ip">203.0.113.42</span> walked <b>all four canaries</b> in nine minutes — ssh, then mysql, default passwords. Never seen before tonight.</div><div class="acts"><span class="pill">lookback in mikroview ▸</span><span class="pill">raw lines ▸</span></div></div>
+  <div class="row k-rp" style="top:674px"><div class="t">21:59:10<small>6 nights · on schedule</small></div><div class="kind">✱ REPEAT<small>221× · 1 of 4</small></div><div class="who"><span class="ip">198.51.100.7</span> knocks on <b>canary-iot :445</b> every ~20 minutes through the night, six nights running. Community-blocked since Tuesday.</div><div class="acts"><span class="pill quiet">already blocked</span></div></div>
+  <div class="row k-in" style="top:744px"><div class="t">19:11:22<small>3 h ago</small></div><div class="kind">✱ FROM INSIDE<small>2× · 1 of 4</small></div><div class="who"><span class="ip">10.0.40.23</span>, a guest device, browsed <b>canary-lan :80</b> and tried /admin. Never auto-blocked (#33).</div><div class="acts"><span class="pill">which device? ▸</span></div></div>
+  <div class="row k-tc" style="top:814px"><div class="t">yesterday<small>03:18:40</small></div><div class="kind">▲ ONE TOUCH<small>1× · 1 of 4</small></div><div class="who"><span class="ip">192.0.2.88</span> logged in to <b>canary-srv :21</b> as anonymous, once, and left.</div><div class="acts"><span class="pill quiet">clear with a note</span></div></div>
+  <div class="foot"><span>a quiet fortnight until <b>21:55</b> tonight — <span class="r">one address is walking the cage right now</span></span></div>
+  <div class="legend" style="top:912px"><span><span class="ln"></span>a line is a canary's heartbeat, unbroken</span><span><span class="gap"></span>a drop is silence</span><span>a rise is a visitor, its words at the top, by kind: <i style="background:var(--sweep)"></i>sweep <i style="background:var(--repeat)"></i>repeat <i style="background:var(--inside)"></i>from inside <i style="background:var(--touch)"></i>one touch</span><span>dim marks are single heartbeats where the axis is stretched</span><span class="nw">— the brink · now</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">M · THE TRACE, OUTLINED · SILENCE IN INK · SCENE 3 · THE SWEEP NIGHT</div>
+</section>
+
+</body>
+</html>

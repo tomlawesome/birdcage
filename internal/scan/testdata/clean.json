@@ -1,0 +1,29 @@
+{
+  "matches": [],
+  "ignoredMatches": [],
+  "source": {
+    "type": "directory",
+    "target": "/host"
+  },
+  "distro": {
+    "name": "debian",
+    "version": "12",
+    "idLike": []
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "1.14.0",
+    "configuration": {},
+    "db": {
+      "status": {
+        "schemaVersion": "6.0.0",
+        "from": "https://grype.anchore.io/databases",
+        "built": "2026-09-20T01:12:07Z",
+        "path": "/root/.cache/grype/db",
+        "valid": true
+      },
+      "providers": {}
+    },
+    "timestamp": "2026-09-22T10:05:00-00:00"
+  }
+}

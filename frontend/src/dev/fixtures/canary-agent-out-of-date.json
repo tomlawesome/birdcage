@@ -1,0 +1,183 @@
+{
+  "canaries": {
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "name": "canary-lan",
+        "lane": "lan",
+        "ports": "ssh 22 · http 80 · smb 445",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:14:22Z",
+        "hits": 0
+      },
+      {
+        "id": "canary-srv",
+        "name": "canary-srv",
+        "lane": "srv",
+        "ports": "ssh 22 · mysql 3306 · ftp 21",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:13:50Z",
+        "hits": 0
+      },
+      {
+        "id": "canary-iot",
+        "name": "canary-iot",
+        "lane": "iot",
+        "ports": "telnet 23 · ssh 22 · smb 445",
+        "status": "agent_out_of_date",
+        "active_states": ["agent_out_of_date"],
+        "last_heartbeat_at": "2026-09-20T09:14:19Z",
+        "hits": 0,
+        "agent_version": "0.1.0+2ea21b94",
+        "birdcage_version": "0.1.1+edc3691a",
+        "last_self_test_at": "2026-09-20T04:00:07Z",
+        "last_self_test_passed": true,
+        "self_test": [
+          { "service": "portscan", "grade": "attributed", "passed": true },
+          { "service": "smb", "grade": "marked", "passed": true },
+          { "service": "ssh", "grade": "marked", "passed": true },
+          { "service": "telnet", "grade": "marked", "passed": true }
+        ]
+      },
+      {
+        "id": "canary-guest",
+        "name": "canary-guest",
+        "lane": "guest",
+        "ports": "telnet 23 · ssh 22 · http 80",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:14:28Z",
+        "hits": 0
+      }
+    ]
+  },
+  "visitors": {
+    "visitors": [],
+    "next_before": null
+  },
+  "trace": {
+    "now": "2026-09-20T09:14:31Z",
+    "range": "14d",
+    "canaries": [
+      {
+        "id": "canary-lan",
+        "lane": "lan",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:14:22Z",
+        "beats": ["2026-09-20T09:14:22Z"],
+        "hits": []
+      },
+      {
+        "id": "canary-srv",
+        "lane": "srv",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:13:50Z",
+        "beats": ["2026-09-20T09:13:50Z"],
+        "hits": []
+      },
+      {
+        "id": "canary-iot",
+        "lane": "iot",
+        "status": "agent_out_of_date",
+        "last_heartbeat_at": "2026-09-20T09:14:19Z",
+        "beats": ["2026-09-20T09:14:19Z"],
+        "hits": []
+      },
+      {
+        "id": "canary-guest",
+        "lane": "guest",
+        "status": "ok",
+        "last_heartbeat_at": "2026-09-20T09:14:28Z",
+        "beats": ["2026-09-20T09:14:28Z"],
+        "hits": []
+      }
+    ],
+    "last_hit": {
+      "at": "2026-08-28T00:00:00Z",
+      "visitor": "198.51.100.201",
+      "canary": "canary-guest",
+      "port": 23,
+      "service": "telnet",
+      "kind": "touch"
+    }
+  },
+  "mail": {
+    "configured": false,
+    "last_sent_at": null,
+    "failing_since": null,
+    "last_error": null,
+    "pending": 0,
+    "suppressed": 0
+  },
+  "history": {
+    "range": "14d",
+    "since": "2026-09-06T09:14:31Z",
+    "until": "2026-09-20T09:14:31Z",
+    "periods": [
+      {
+        "canary_id": "canary-iot",
+        "canary_name": "canary-iot",
+        "state": "agent_out_of_date",
+        "started_at": "2026-09-17T08:00:00Z",
+        "ended_at": null,
+        "flap_count": 1,
+        "end_reason": null
+      }
+    ],
+    "summary": [
+      {
+        "canary_id": "canary-iot",
+        "canary_name": "canary-iot",
+        "state": "agent_out_of_date",
+        "count": 1,
+        "longest_s": 262831,
+        "total_s": 262831
+      }
+    ]
+  },
+  "canary": {
+    "canary-iot": {
+      "canary": {
+        "id": "canary-iot",
+        "name": "canary-iot",
+        "lane": "iot",
+        "ports": "telnet 23 · ssh 22 · smb 445",
+        "status": "agent_out_of_date",
+        "active_states": ["agent_out_of_date"],
+        "last_heartbeat_at": "2026-09-20T09:14:19Z",
+        "hits": 0,
+        "agent_version": "0.1.0+2ea21b94",
+        "birdcage_version": "0.1.1+edc3691a",
+        "upgrade_available": true,
+        "last_self_test_at": "2026-09-20T04:00:07Z",
+        "last_self_test_passed": true,
+        "self_test": [
+          { "service": "portscan", "grade": "attributed", "passed": true },
+          { "service": "smb", "grade": "marked", "passed": true },
+          { "service": "ssh", "grade": "marked", "passed": true },
+          { "service": "telnet", "grade": "marked", "passed": true }
+        ]
+      },
+      "facts": {
+        "kind": "honeypot",
+        "lane": "iot",
+        "ports": "telnet 23 · ssh 22 · smb 445",
+        "address": "10.0.30.9",
+        "heartbeat_interval_s": 60,
+        "self_test_enabled": true,
+        "self_test_schedule": "04:00",
+        "enrolled_at": "2026-07-02T09:41:00Z",
+        "registered_at": "2026-07-02T09:44:50Z",
+        "agent_version": "0.1.0+2ea21b94",
+        "token_rotated_at": "2026-09-17T00:00:00Z",
+        "token_rotates_at": "2026-09-21T09:14:31Z"
+      },
+      "self_test_runs": [
+        {
+          "issued_at": "2026-09-20T04:00:00Z",
+          "completed_at": "2026-09-20T04:00:07Z",
+          "passed": true
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,577 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agentkind"
+	"github.com/tomlawesome/birdcage/internal/db"
+)
+
+// insertCanary defaults c.Kind to agentkind.Honeypot when the caller
+// left it unset -- InsertCanary itself (issue #105) requires a valid
+// kind and no longer defaults one, but every canary this package's own
+// tests have ever built is a honeypot, so this fixture helper carries
+// that default rather than every call site repeating it.
+func insertCanary(t *testing.T, database *db.DB, c Canary) {
+	t.Helper()
+	if c.Kind == "" {
+		c.Kind = agentkind.Honeypot
+	}
+	if err := InsertCanary(context.Background(), database, c); err != nil {
+		t.Fatalf("InsertCanary(%+v): %v", c, err)
+	}
+}
+
+func listCanaries(t *testing.T, database *db.DB, now time.Time, rangeWindow time.Duration) []Canary {
+	t.Helper()
+	canaries, err := ListCanaries(context.Background(), database, now, rangeWindow, "")
+	if err != nil {
+		t.Fatalf("ListCanaries: %v", err)
+	}
+	return canaries
+}
+
+func findCanary(t *testing.T, canaries []Canary, id string) Canary {
+	t.Helper()
+	for _, c := range canaries {
+		if c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("no canary %q in %+v", id, canaries)
+	return Canary{}
+}
+
+func TestInsertCanaryAndListFields(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-lan", Name: "canary-lan", Lane: "lan",
+			Ports: "22,80,445", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		canaries := listCanaries(t, database, enrolledAt, rangeDurations[DefaultRange])
+		if len(canaries) != 1 {
+			t.Fatalf("got %d canaries, want 1: %+v", len(canaries), canaries)
+		}
+		c := canaries[0]
+		if c.ID != "canary-lan" || c.Name != "canary-lan" || c.Lane != "lan" {
+			t.Errorf("canary = %+v, want id/name/lane canary-lan/canary-lan/lan", c)
+		}
+		if c.Ports != "ssh 22 · http 80 · smb 445" {
+			t.Errorf("Ports = %q, want %q", c.Ports, "ssh 22 · http 80 · smb 445")
+		}
+		if c.LastHeartbeatAt != nil {
+			t.Errorf("LastHeartbeatAt = %v, want nil (never beaten)", c.LastHeartbeatAt)
+		}
+		if c.Hits != 0 {
+			t.Errorf("Hits = %d, want 0 (no alerts inserted)", c.Hits)
+		}
+	})
+}
+
+func TestPortsDisplayUnknownPortShownBare(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-x", Name: "canary-x", Lane: "lan",
+			Ports: "22,9999", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		c := findCanary(t, listCanaries(t, database, enrolledAt, rangeDurations[DefaultRange]), "canary-x")
+		if c.Ports != "ssh 22 · 9999" {
+			t.Errorf("Ports = %q, want %q", c.Ports, "ssh 22 · 9999")
+		}
+	})
+}
+
+func TestCanaryStatusOkWithinThreeIntervals(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordHeartbeat(context.Background(), database, "canary-a", beatAt); err != nil {
+			t.Fatalf("RecordHeartbeat: %v", err)
+		}
+
+		// Exactly 3 * 60s after the beat: still "ok" (inclusive threshold).
+		now := beatAt.Add(180 * time.Second)
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != "ok" {
+			t.Errorf("Status = %q at exactly the threshold, want ok", c.Status)
+		}
+		if c.SilentForS != nil || c.BeatsMissed != nil {
+			t.Errorf("SilentForS/BeatsMissed set while ok: %v/%v", c.SilentForS, c.BeatsMissed)
+		}
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(beatAt) {
+			t.Errorf("LastHeartbeatAt = %v, want %v", c.LastHeartbeatAt, beatAt)
+		}
+	})
+}
+
+func TestCanaryStatusSilentPastThreshold(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-b", Name: "canary-b", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordHeartbeat(context.Background(), database, "canary-b", beatAt); err != nil {
+			t.Fatalf("RecordHeartbeat: %v", err)
+		}
+
+		// One second past 3 * 60s: silent.
+		now := beatAt.Add(181 * time.Second)
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-b")
+		if c.Status != "silent" {
+			t.Fatalf("Status = %q, want silent", c.Status)
+		}
+		if c.SilentForS == nil || *c.SilentForS != 181 {
+			t.Errorf("SilentForS = %v, want 181", c.SilentForS)
+		}
+		if c.BeatsMissed == nil || *c.BeatsMissed != 3 {
+			t.Errorf("BeatsMissed = %v, want 3 (181/60)", c.BeatsMissed)
+		}
+	})
+}
+
+func TestCanaryStatusSilentNeverBeaten(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-c", Name: "canary-c", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		now := enrolledAt.Add(500 * time.Second)
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-c")
+		if c.Status != "silent" {
+			t.Fatalf("Status = %q, want silent (never beaten)", c.Status)
+		}
+		if c.SilentForS == nil || *c.SilentForS != 500 {
+			t.Errorf("SilentForS = %v, want 500 (measured from enrolled_at)", c.SilentForS)
+		}
+		if c.LastHeartbeatAt != nil {
+			t.Errorf("LastHeartbeatAt = %v, want nil", c.LastHeartbeatAt)
+		}
+	})
+}
+
+func TestRecordHeartbeatUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := RecordHeartbeat(context.Background(), database, "no-such-canary", time.Now())
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("RecordHeartbeat(unknown) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+func TestRecordHeartbeatPrunesOlderThan24h(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-d", Name: "canary-d", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		old := mustParse(t, "2026-01-01T00:00:00Z")
+		if err := RecordHeartbeat(context.Background(), database, "canary-d", old); err != nil {
+			t.Fatalf("RecordHeartbeat(old): %v", err)
+		}
+
+		// 25h later: RecordHeartbeat's own prune should remove the row
+		// above (older than 24h of the new beat) but keep the new one.
+		recent := old.Add(25 * time.Hour)
+		if err := RecordHeartbeat(context.Background(), database, "canary-d", recent); err != nil {
+			t.Fatalf("RecordHeartbeat(recent): %v", err)
+		}
+
+		var n int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM heartbeats WHERE agent_id = ?`, "canary-d").Scan(&n); err != nil {
+			t.Fatalf("count heartbeats: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("heartbeats for canary-d = %d, want 1 (old one pruned)", n)
+		}
+	})
+}
+
+func TestListCanariesHitsPerRange(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "node-1", Name: "canary-1", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		insertFixtures(t, database) // node-1/node-2/node-3 alerts, 2026-01-01..05
+
+		now := mustParse(t, "2026-01-05T12:00:00Z")
+		// node-1 fixture rows: id1 (01-01), id2 (01-01), id6 (01-03), id9 (01-05) = 4 total.
+		c14d := findCanary(t, listCanaries(t, database, now, rangeDurations["14d"]), "node-1")
+		if c14d.Hits != 4 {
+			t.Errorf("Hits over 14d = %d, want 4", c14d.Hits)
+		}
+		c24h := findCanary(t, listCanaries(t, database, now, rangeDurations["24h"]), "node-1")
+		if c24h.Hits != 1 {
+			t.Errorf("Hits over 24h = %d, want 1 (only id9, 2026-01-05)", c24h.Hits)
+		}
+	})
+}
+
+func TestParseRangeDefaultAndUnknown(t *testing.T) {
+	d, err := ParseRange("")
+	if err != nil {
+		t.Fatalf("ParseRange(\"\"): %v", err)
+	}
+	if d != rangeDurations[DefaultRange] {
+		t.Errorf("ParseRange(\"\") = %v, want default %v", d, rangeDurations[DefaultRange])
+	}
+
+	for _, r := range []string{"15m", "1h", "24h", "14d", "90d"} {
+		if _, err := ParseRange(r); err != nil {
+			t.Errorf("ParseRange(%q): %v", r, err)
+		}
+	}
+
+	if _, err := ParseRange("7d"); err == nil {
+		t.Error("ParseRange(\"7d\") = nil error, want an error (not a recognized range)")
+	}
+}
+
+// TestRecordCanaryAgentHeartbeatStoresReport is #32 slice 5a's storage
+// half: the agent's self-report fields land against the canary, and
+// last_heartbeat_at advances exactly as RecordHeartbeat's own does.
+func TestRecordCanaryAgentHeartbeatStoresReport(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		report := AgentHeartbeat{QueueDepth: 7, LogReadOK: true, LastEventID: "abc123", AgentVersion: "1.2.3"}
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt, report); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		canaries := listCanaries(t, database, beatAt, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(beatAt) {
+			t.Errorf("LastHeartbeatAt = %v, want %v", c.LastHeartbeatAt, beatAt)
+		}
+
+		var (
+			version    string
+			queueDepth int
+			logReadOK  int
+			lastEvent  string
+		)
+		row := database.QueryRow(
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
+			t.Fatalf("scan self-report columns: %v", err)
+		}
+		if version != "1.2.3" || queueDepth != 7 || logReadOK != 1 || lastEvent != "abc123" {
+			t.Errorf("stored self-report = (%q, %d, %d, %q), want (\"1.2.3\", 7, 1, \"abc123\")",
+				version, queueDepth, logReadOK, lastEvent)
+		}
+	})
+}
+
+// TestRecordCanaryAgentHeartbeatStoresPoisonerNames is #86 slice D's
+// storage half: the bait names the agent reports land against the canary
+// and come back out on the Canary the canary page is built from.
+//
+// The empty case is the one that matters. A canary with the poisoner road
+// off, or an agent built before the field existed, reports nothing -- and
+// that has to be stored as NULL rather than as an empty string, so the
+// facts column can leave the row out entirely instead of rendering a label
+// with nothing beside it.
+func TestRecordCanaryAgentHeartbeatStoresPoisonerNames(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+
+		// Nothing reported yet: NULL, and absent from the Canary.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		var stored *string
+		row := database.QueryRow(`SELECT poisoner_names FROM agents WHERE id = ?`, "canary-a")
+		if err := row.Scan(&stored); err != nil {
+			t.Fatalf("scan poisoner_names: %v", err)
+		}
+		if stored != nil {
+			t.Errorf("poisoner_names = %q, want NULL when the agent reported none", *stored)
+		}
+		c := findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames != nil {
+			t.Errorf("Canary.PoisonerNames = %q, want nil", *c.PoisonerNames)
+		}
+
+		// Then a report with names in it.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3", PoisonerNames: "old-fs-01,printer-7,wpad"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames == nil || *c.PoisonerNames != "old-fs-01,printer-7,wpad" {
+			t.Fatalf("Canary.PoisonerNames = %v, want the three names", c.PoisonerNames)
+		}
+
+		// And a later report with none clears it back to NULL rather than
+		// leaving a stale list on the page: an operator who switches the
+		// detector off must stop seeing names it is no longer asking for.
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", beatAt,
+			AgentHeartbeat{AgentVersion: "1.2.3"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, beatAt, rangeDurations[DefaultRange]), "canary-a")
+		if c.PoisonerNames != nil {
+			t.Errorf("Canary.PoisonerNames = %q after a report with none, want nil", *c.PoisonerNames)
+		}
+	})
+}
+
+// TestRecordCanaryAgentHeartbeatUnknownCanary mirrors RecordHeartbeat's
+// own contract: an unregistered canary id reports ErrCanaryNotFound and
+// touches nothing.
+func TestRecordCanaryAgentHeartbeatUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := RecordCanaryAgentHeartbeat(context.Background(), database, "no-such-canary",
+			mustParse(t, "2026-01-01T00:00:00Z"), AgentHeartbeat{AgentVersion: "1.0.0"})
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("RecordCanaryAgentHeartbeat(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestRecordCanaryCommonHeartbeatStoresVersionAndLastSeen is issue
+// #106's own required proof for the common-only write path: last-seen
+// and agent_version advance, exactly RecordHeartbeat's own contract.
+func TestRecordCanaryCommonHeartbeatStoresVersionAndLastSeen(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-scanner", Name: "canary-scanner", Lane: "lan",
+			Kind: agentkind.Scanner, HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		beatAt := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordCanaryCommonHeartbeat(context.Background(), database, "canary-scanner", beatAt, "1.2.3"); err != nil {
+			t.Fatalf("RecordCanaryCommonHeartbeat: %v", err)
+		}
+
+		canaries := listCanaries(t, database, beatAt, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-scanner")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(beatAt) {
+			t.Errorf("LastHeartbeatAt = %v, want %v", c.LastHeartbeatAt, beatAt)
+		}
+
+		var version string
+		if err := database.QueryRow(`SELECT agent_version FROM agents WHERE id = ?`, "canary-scanner").Scan(&version); err != nil {
+			t.Fatalf("scan agent_version: %v", err)
+		}
+		if version != "1.2.3" {
+			t.Errorf("agent_version = %q, want %q", version, "1.2.3")
+		}
+	})
+}
+
+// TestRecordCanaryCommonHeartbeatLeavesLogTailerColumnsAlone is issue
+// #106's own required proof for the trap its design note names: the
+// common-only write must never zero out (or otherwise touch) the
+// log-tailer columns RecordCanaryAgentHeartbeat writes, or a scanner's
+// heartbeat would make it -- or a real Honeypot it somehow shares a row
+// with -- look like a healthy log tailer with an empty queue.
+func TestRecordCanaryCommonHeartbeatLeavesLogTailerColumnsAlone(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+
+		// A prior log-tailer self-report, as a real Honeypot would send.
+		firstBeat := mustParse(t, "2026-01-01T01:00:00Z")
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", firstBeat,
+			AgentHeartbeat{QueueDepth: 7, LogReadOK: true, LastEventID: "abc123", AgentVersion: "1.0.0"}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		// A later common-only heartbeat -- not a shape a real deployment
+		// would send for the same canary id, but the point of this test
+		// is exactly that the write path itself makes no assumption
+		// about which kind called it: it must leave these columns alone
+		// regardless.
+		secondBeat := mustParse(t, "2026-01-01T02:00:00Z")
+		if err := RecordCanaryCommonHeartbeat(context.Background(), database, "canary-a", secondBeat, "2.0.0"); err != nil {
+			t.Fatalf("RecordCanaryCommonHeartbeat: %v", err)
+		}
+
+		var (
+			version    string
+			queueDepth int
+			logReadOK  int
+			lastEvent  string
+		)
+		row := database.QueryRow(
+			`SELECT agent_version, agent_queue_depth, agent_log_read_ok, agent_last_event_id FROM agents WHERE id = ?`,
+			"canary-a")
+		if err := row.Scan(&version, &queueDepth, &logReadOK, &lastEvent); err != nil {
+			t.Fatalf("scan self-report columns: %v", err)
+		}
+		if version != "2.0.0" {
+			t.Errorf("agent_version = %q, want %q (the common heartbeat's own value)", version, "2.0.0")
+		}
+		if queueDepth != 7 || logReadOK != 1 || lastEvent != "abc123" {
+			t.Errorf("log-tailer columns = (%d, %d, %q), want the untouched first heartbeat's own (7, 1, \"abc123\")",
+				queueDepth, logReadOK, lastEvent)
+		}
+
+		canaries := listCanaries(t, database, secondBeat, rangeDurations[DefaultRange])
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastHeartbeatAt == nil || !c.LastHeartbeatAt.Equal(secondBeat) {
+			t.Errorf("LastHeartbeatAt = %v, want %v (the common heartbeat's own time)", c.LastHeartbeatAt, secondBeat)
+		}
+	})
+}
+
+// TestRecordCanaryCommonHeartbeatUnknownCanary mirrors
+// RecordCanaryAgentHeartbeat's own contract.
+func TestRecordCanaryCommonHeartbeatUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := RecordCanaryCommonHeartbeat(context.Background(), database, "no-such-canary",
+			mustParse(t, "2026-01-01T00:00:00Z"), "1.0.0")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("RecordCanaryCommonHeartbeat(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestSetCanaryLastSeenAddrRecordsAndReads is issue #46 item 1's store-
+// level test: SetCanaryLastSeenAddr writes canaries.last_seen_addr, read
+// back through ListCanaries as Canary.LastSeenAddr.
+func TestSetCanaryLastSeenAddrRecordsAndReads(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", EnrolledAt: time.Now()})
+
+		canaries := listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		if got := findCanary(t, canaries, "canary-a").LastSeenAddr; got != nil {
+			t.Fatalf("LastSeenAddr before any call = %v, want nil", *got)
+		}
+
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "203.0.113.5"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+		canaries = listCanaries(t, database, time.Now(), rangeDurations[DefaultRange])
+		got := findCanary(t, canaries, "canary-a").LastSeenAddr
+		if got == nil || *got != "203.0.113.5" {
+			t.Fatalf("LastSeenAddr = %v, want 203.0.113.5", got)
+		}
+	})
+}
+
+// TestSetCanaryLastSeenAddrUnknownCanary mirrors RecordHeartbeat's own
+// ErrCanaryNotFound contract.
+func TestSetCanaryLastSeenAddrUnknownCanary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		err := SetCanaryLastSeenAddr(context.Background(), database, "no-such-canary", "203.0.113.5")
+		if !errors.Is(err, ErrCanaryNotFound) {
+			t.Fatalf("SetCanaryLastSeenAddr(unknown canary) = %v, want ErrCanaryNotFound", err)
+		}
+	})
+}
+
+// TestWellKnownServiceForPort covers both branches: a port
+// wellKnownPortNames carries, and one it doesn't.
+func TestWellKnownServiceForPort(t *testing.T) {
+	if name, ok := WellKnownServiceForPort(22); !ok || name != "ssh" {
+		t.Fatalf("WellKnownServiceForPort(22) = %q, %v, want \"ssh\", true", name, ok)
+	}
+	if _, ok := WellKnownServiceForPort(59999); ok {
+		t.Fatal("WellKnownServiceForPort(59999) = true, want false (not a well-known port)")
+	}
+}
+
+// TestWellKnownPortNamesNoPostgresEntry pins issue #144: port 5432 used
+// to be named "postgresql" here while the carrier/grade tables keyed on
+// "postgres" -- two spellings that could never match even if the module
+// existed, and OpenCanary 0.9.10 ships no postgres module at all. A
+// self-test target can only be minted from a name this table returns
+// (WellKnownServiceForPort), so 5432 must come back unmapped rather
+// than under a name that can never pass a self-test.
+func TestWellKnownPortNamesNoPostgresEntry(t *testing.T) {
+	if name, ok := WellKnownServiceForPort(5432); ok {
+		t.Errorf("WellKnownServiceForPort(5432) = %q, true, want false (no postgres module)", name)
+	}
+}
+
+// TestListHoneypotCanariesForSelfTest is issue #46 item 5's store-level
+// test: only kind-honeypot canaries come back, each with its raw ports
+// parsed to ints (not portsDisplay's joined string) and its
+// last-seen address.
+func TestListHoneypotCanariesForSelfTest(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "honeypot-a", Name: "a", Lane: "l", Ports: "22,80", EnrolledAt: time.Now()})
+		insertCanary(t, database, Canary{ID: "scanner-a", Name: "s", Lane: "l", Kind: agentkind.Scanner, EnrolledAt: time.Now()})
+		if err := SetCanaryLastSeenAddr(context.Background(), database, "honeypot-a", "192.0.2.10"); err != nil {
+			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+		}
+
+		canaries, err := ListHoneypotCanariesForSelfTest(context.Background(), database)
+		if err != nil {
+			t.Fatalf("ListHoneypotCanariesForSelfTest: %v", err)
+		}
+		if len(canaries) != 1 {
+			t.Fatalf("got %d canaries, want 1 (the scanner must be excluded): %+v", len(canaries), canaries)
+		}
+		c := canaries[0]
+		if c.ID != "honeypot-a" || c.Kind != agentkind.Honeypot {
+			t.Fatalf("got %+v, want honeypot-a/Honeypot", c)
+		}
+		if len(c.Ports) != 2 || c.Ports[0] != 22 || c.Ports[1] != 80 {
+			t.Fatalf("Ports = %v, want [22 80]", c.Ports)
+		}
+		if c.LastSeenAddr == nil || *c.LastSeenAddr != "192.0.2.10" {
+			t.Fatalf("LastSeenAddr = %v, want 192.0.2.10", c.LastSeenAddr)
+		}
+	})
+}
+
+// TestSelfTestCanaryByID covers both the found and not-found cases.
+func TestSelfTestCanaryByID(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+
+		sc, ok, err := SelfTestCanaryByID(context.Background(), database, "canary-a")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID: %v", err)
+		}
+		if !ok || sc.ID != "canary-a" || sc.Kind != agentkind.Honeypot || len(sc.Ports) != 1 || sc.Ports[0] != 22 {
+			t.Fatalf("got %+v, %v, want canary-a/Honeypot/[22]/true", sc, ok)
+		}
+
+		_, ok, err = SelfTestCanaryByID(context.Background(), database, "no-such-canary")
+		if err != nil {
+			t.Fatalf("SelfTestCanaryByID(unknown): %v", err)
+		}
+		if ok {
+			t.Fatal("SelfTestCanaryByID(unknown canary) = true, want false")
+		}
+	})
+}

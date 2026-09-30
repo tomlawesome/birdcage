@@ -1,0 +1,207 @@
+# Licence policy for Birdcage's shipped dependencies -- the Go modules
+# linked into the built binary, not build/test tooling. Read by
+# scripts/licence-check.sh, which runs `go-licenses check` against this
+# list, and by the `lint:licences` job in .gitlab-ci.yml, which calls that
+# script on every merge request and on push to dev.
+#
+# Replaces the retired .github/dependency-review-config.yml (the GitHub
+# dependency-review licence check); the reasoning is in that removal's
+# commit message.
+#
+# The golang.org/x/sys exemption that config carried is NOT reproduced
+# here. It existed only because ClearlyDefined reports x/sys's licence as
+# the compound expression "BSD-3-Clause AND
+# LicenseRef-scancode-google-patent-license-golang" (the standard Google
+# patent grant shipped in every Go x/ module's PATENTS file), which does
+# not match a plain allowlist entry. go-licenses instead reads the
+# module's actual LICENSE file, which for x/sys is plain BSD-3-Clause --
+# already on the list below -- so no exemption is needed. Verified by
+# running `go-licenses check` with this policy: x/sys passes without one
+# (see the commit message for the output).
+#
+# A licence is never added to this list to make one specific package
+# pass. An exception for a package whose licence is genuinely outside
+# this list is instead an exact entry under allow-dependencies-licenses,
+# in the form `pkg:golang/<module>@<version>`, with a comment giving the
+# reason and a review date.
+# Only the licences a shipped module actually uses (`go-licenses report
+# ./...`), not a general list of acceptable ones: a dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a reviewed
+# change rather than a silent pass (owner decision, 2026-09-05).
+allow-licenses:
+  - BSD-3-Clause
+  - MIT
+
+allow-dependencies-licenses: []
+
+# Licence policy for the npm packages under frontend/node_modules, read by
+# scripts/licence-check-npm.py (called via scripts/licence-check-npm.sh).
+# Deliberately a separate key from allow-licenses above: that key is
+# matched by a literal `^allow-licenses:` in licence-check.sh's awk, and
+# this key must never collide with it.
+#
+# The frontend has no runtime `dependencies` -- all direct entries are
+# devDependencies -- but Svelte compiles its runtime helpers into the
+# built bundle regardless, so this list covers the whole installed tree,
+# not just what a `dependencies`-only reading would call shipped.
+#
+# Same house rule as the Go list above: only the licences actually in
+# use, not a general list of acceptable ones. A dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a
+# reviewed change, not a silent pass (owner decision, 2026-09-05).
+#
+# Scanned frontend/node_modules on 2026-09-20 -- 135 packages, every one
+# declaring a licence, none missing. These are exactly that scan's nine
+# licences; a reason is recorded for each one that is not plain MIT.
+allow-npm-licenses:
+  - MIT
+  # Standard permissive licence, same family as MIT/BSD; no obligations
+  # beyond attribution.
+  - Apache-2.0
+  # lightningcss, lightningcss-linux-x64-gnu, lightningcss-linux-x64-musl
+  # (all 1.33.0), dev-only, not referenced in frontend/vite.config.ts.
+  # MPL-2.0 is file-level reciprocal, so what matters is whether any of
+  # lightningcss's own code reaches the built bundle. Checked directly:
+  # built frontend/dist with `npm run build`, then grepped dist/ for
+  # "lightningcss" and for "mozilla public license"/"MPL-2.0". The only
+  # hit was the CSS custom-property names --lightningcss-light and
+  # --lightningcss-dark inside dist/assets/index-*.css -- a naming
+  # convention lightningcss's light-dark() transform emits into the
+  # project's own generated CSS, not any of lightningcss's source, and no
+  # MPL/Mozilla notice appears anywhere in dist/. Lightningcss is a
+  # build-time CSS transformer; what it emits is the project's CSS, and
+  # we do not modify lightningcss itself, so its reciprocal obligation
+  # never triggers.
+  - MPL-2.0
+  # Permissive, functionally identical to MIT with older wording.
+  - ISC
+  # Permissive BSD family, no obligations beyond attribution.
+  - BSD-2-Clause
+  # MIT with the attribution clause removed; strictly more permissive
+  # than MIT.
+  - MIT-0
+  # Permissive BSD family; already allowed for Go deps above.
+  - BSD-3-Clause
+  # lru-cache@11.5.2. OSI-approved permissive licence, plain-language
+  # attribution-only terms.
+  - BlueOak-1.0.0
+  # Public-domain dedication; no obligations at all.
+  - CC0-1.0
+
+# Licence policy for the pip packages installed into the OpenCanary
+# image, read by scripts/licence-check-python.py (called via
+# scripts/licence-check-python.sh). A separate key from the two above for
+# the same reason they are separate from each other: each script's
+# extraction is a plain prefix match on its own key, and the keys must
+# never collide.
+#
+# Covers build/opencanary/requirements.txt -- everything pip installs
+# into the distroless OpenCanary image (build/opencanary/Dockerfile;
+# issue #132 moved this out of the mockingbird image, unchanged
+# otherwise). Before #95 this was the one ecosystem nothing gated at all.
+#
+# Same house rule as the two lists above: only the licences actually in
+# use, not a general list of acceptable ones. A dependency arriving under
+# a licence not yet here fails the job, and adding the entry is a
+# reviewed change, not a silent pass.
+#
+# Scanned build/opencanary/requirements.txt on 2026-09-20 (#95) by
+# actually installing it (`pip install --require-hashes --target`, same
+# as the Dockerfile) and reading every installed package's own metadata:
+# 36 packages, 33 declaring a permissive licence in one of the three
+# forms licence-check-python.py reads (License-Expression, a Classifier,
+# or the old free-text License: field). These are exactly those 33
+# packages' licences. The same legal licence often appears as more than
+# one literal string across packages -- e.g. plain "MIT" from one
+# package's License-Expression and "MIT License" from another's
+# Classifier -- and a package passes on any one of its own candidate
+# strings matching, so not every entry below is needed by every
+# MIT-licensed package; the comments say which packages need which.
+#
+# The other three found in that scan were deliberately NOT on the list
+# above -- their own metadata did not declare an acceptable licence, or
+# did not declare one at all -- but were individually reviewed and
+# recorded below, under allow-python-package-licenses, instead:
+#   - hpfeeds==3.0.0, setuptools==78.1.1, ordereddict==1.1.
+#
+# opencanary 0.9.10 (Refs #114) pulled in setuptools 83.0.0, which now
+# carries "License-Expression: MIT" in its own METADATA -- unlike
+# 78.1.1, it matches the allow-python-licenses MIT entry above directly,
+# so its individual exception below was deleted rather than re-pinned.
+#
+# ordereddict==1.1's individual exception below was deleted for a
+# different reason: the package itself is gone. It was a transitive pin
+# from ntlmlib's Python-2 OrderedDict fallback, which this image's
+# Python 3.13 never takes; #101 dropped it from the lock instead of
+# carrying the exception forward.
+allow-python-licenses:
+  - MIT
+  # attrs, charset-normalizer, urllib3 (License-Expression); constantly,
+  # hyperlink, redis, service-identity, six (their raw License: field).
+  - MIT License
+  # The Classifier form of the same licence -- needed by automat (whose
+  # raw License: field is literally "Copyright (c) 2014") and by
+  # incremental, jinja2, twisted (no raw License: field at all).
+  - MIT-0
+  # cffi. Same permissive MIT-minus-attribution licence already allowed
+  # for npm above.
+  - Apache Software License
+  # The Classifier form of Apache-2.0 -- needed by bcrypt, ntlmlib,
+  # pyopenssl and requests, whose own raw License: fields disagree on
+  # wording ("Apache License, Version 2.0", "Apache 2.0", "Apache-2.0").
+  - BSD-3-Clause
+  # gitpython, idna, markupsafe, pycparser, smmap; also one alternative
+  # of cryptography's "Apache-2.0 OR BSD-3-Clause" License-Expression.
+  # Already allowed for Go above.
+  - BSD-2-Clause
+  # pyasn1; also one alternative of packaging's "Apache-2.0 OR
+  # BSD-2-Clause" License-Expression.
+  - BSD License
+  # The Classifier form of a BSD licence -- gitdb, jinja2, pyasn1-modules,
+  # smmap.
+  - BSD
+  # opencanary, passlib, pyasn1-modules's raw License: field: plain "BSD"
+  # with no clause count given. passlib ships no bundled LICENSE file to
+  # check the text against, so this trusts the metadata field, same as
+  # every other entry here sourced from a raw License: field.
+  - MPL-2.0
+  # certifi. Same licence and reasoning as the MPL-2.0 entry above.
+  - PSF-2.0
+  # typing-extensions. Python Software Foundation License, permissive.
+  - ZPL 2.1
+  # zope-interface. Zope Public License 2.1: permissive BSD-style terms
+  # (checked against the bundled LICENSE.txt -- attribution and a
+  # no-endorsement clause, nothing reciprocal), FSF-certified as
+  # GPL-compatible.
+
+# Named, version-pinned exceptions for pip packages whose own metadata is
+# not something this checker can accept from the allow-python-licenses
+# list above -- either it names a licence not on that list, or it names
+# no licence at all. Each entry is reviewed and recorded individually,
+# never by adding its licence to the list above (which would accept it
+# for every package under that licence, not just the one reviewed).
+# Read by read_package_allow_list() in scripts/licence-check-python.py.
+# A separate key from the two allow-*-licenses keys above for the same
+# collision reason they are separate from each other -- see that
+# function's docstring for exactly which prefix each of the three gates
+# matches, and why none of them can mistake this key for its own.
+#
+# Format: one line per entry, "<name>@<version> <SPDX-id>", matching the
+# exact name@version this checker computes for an installed package. A
+# package passes as the recorded SPDX id regardless of what its own
+# metadata says or fails to say. Bumping the package's version stops the
+# entry matching -- intended, not a bug: the gate fires again on the new
+# version, and that version gets its own review rather than inheriting
+# this one. An entry matching no installed package is itself a failure
+# ("stale exception -- delete it"), so this list cannot silently
+# accumulate exceptions nobody needs any more.
+allow-python-package-licenses:
+  - hpfeeds@3.0.0 GPL-3.0-only
+  # Pulled in by opencanary==0.9.9, which pins it unconditionally --
+  # hpfeeds is not a build tool, it ships in the published mockingbird
+  # image. Its METADATA carries only "License: GPL", which does not say
+  # which version. Installed and read directly: the wheel bundles
+  # hpfeeds-3.0.0.dist-info/LICENSE, 674 lines, opening "GNU GENERAL
+  # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
+  # GPLv3 dependency in the image is the owner's call, not this policy
+  # file's; the owner has accepted it (#95).

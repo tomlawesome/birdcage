@@ -1,0 +1,12 @@
+Restore notes - read before restoring anything
+
+  - The weekly job writes a full copy on Sunday and daily changes after
+    that. A restore needs the Sunday copy plus every day since.
+  - Restores go to a scratch folder first, never over the live share.
+    The last time that rule was skipped it cost a day of finance work.
+  - Two of the older sets were written by the previous appliance and
+    need its own tool to read. Ask before spending time on them.
+  - Nobody has tried a restore end to end since the appliance was
+    replaced. This is on the improvement list and has been for a while.
+
+Contacts are on the internal wiki page for this appliance.

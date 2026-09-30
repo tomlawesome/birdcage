@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 1 · B · Ledger (feed first, rail)</title>
+<style>
+  :root {
+    --bg: #06080e; --bg-elevated: #0f1422; --bg-hover: rgba(160,185,230,.08);
+    --glass: rgba(15,20,34,.66);
+    --fg: #e9eefb; --fg-muted: #97a4c4; --fg-dim: #55628a;
+    --accent: #9db8e8;
+    --border: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --alarm: #ff5470; --alarm-bg: rgba(255,84,112,.12);
+    --warn: #f28a1e; --warn-bg: rgba(242,138,30,.12);
+    --log: #38bdf8;
+    --lane-lan: #3987e5; --lane-srv: #199e70; --lane-iot: #c98500; --lane-guest: #d76a9e;
+    --sans: -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 var(--sans); }
+  .scene { position: relative; width: 1600px; height: 1000px; overflow: hidden; background: var(--bg); margin: 0 auto 40px; border-bottom: 1px solid var(--hair-2); display: grid; grid-template-columns: 216px 1fr; }
+  .scene-tag { position: absolute; right: 0; top: 0; z-index: 9; font: 11.5px var(--mono); color: var(--fg-dim); padding: 4px 10px; background: var(--bg-elevated); border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0 0 0 8px; }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--fg-muted); } .dim { color: var(--fg-dim); }
+
+  /* left rail — mikroview's ratified nav primitive */
+  .rail { border-right: 1px solid var(--border); padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; background: rgba(15,20,34,.35); }
+  .rail .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: .06em; padding: 4px 8px 18px; }
+  .rail .mark .cage { color: var(--accent); font-weight: 600; }
+  .rail .mark svg { width: 22px; height: 22px; }
+  .rail h4 { margin: 12px 8px 4px; font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--fg-dim); }
+  .rail a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-radius: 7px; color: var(--fg-muted); text-decoration: none; font-size: 14px; }
+  .rail a.cur { background: var(--bg-hover); color: var(--fg); }
+  .rail a .b { font: 11px var(--mono); color: var(--alarm); border: 1px solid rgba(255,84,112,.5); border-radius: 999px; padding: 0 7px; }
+  .rail a .q { font: 11px var(--mono); color: var(--fg-dim); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+  .rail a i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; flex: none; }
+  .rail a.canary { font-family: var(--mono); font-size: 13px; }
+  .rail a.canary.off { opacity: .45; }
+  .rail a.canary.off i { background: transparent !important; box-shadow: inset 0 0 0 1.5px var(--fg-dim); }
+  .rail .foot { margin-top: auto; padding: 10px 8px 0; font: 12px var(--mono); color: var(--fg-dim); display: flex; justify-content: space-between; }
+
+  /* content */
+  .content { display: flex; flex-direction: column; min-width: 0; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; height: 60px; padding: 0 30px; border-bottom: 1px solid var(--border); }
+  .topbar h1 { margin: 0; font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 14px; }
+  .topbar h1 small { font: 13px var(--mono); color: var(--fg-muted); }
+  .status { display: flex; align-items: center; gap: 22px; font: 13px var(--mono); color: var(--fg-muted); }
+  .status .live { color: var(--fg); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3ecf7e; margin-right: 8px; vertical-align: middle; box-shadow: 0 0 0 3px rgba(62,207,126,.14); }
+  .status .who { color: var(--fg-dim); }
+
+  /* sweep banner — pushes content, like mikroview's banners */
+  .banner { display: flex; align-items: center; gap: 14px; margin: 14px 30px 0; padding: 10px 16px; border: 1px solid rgba(255,84,112,.4); background: var(--alarm-bg); border-radius: 9px; font: 13px var(--mono); }
+  .banner b { color: var(--alarm); font-weight: 600; }
+  .banner .pips { display: inline-flex; gap: 5px; margin-left: 4px; }
+  .banner .pips i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .banner a { margin-left: auto; color: var(--accent); text-decoration: none; }
+
+  /* filter row */
+  .filters { display: flex; align-items: center; gap: 10px; padding: 14px 30px 0; font: 12.5px var(--mono); color: var(--fg-muted); }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; color: var(--fg-muted); }
+  .chip.on { border-color: var(--accent); color: var(--fg); background: rgba(157,184,232,.1); }
+  .chip.on::after { content: ' ×'; color: var(--fg-dim); }
+  .filters .search { margin-left: auto; border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; color: var(--fg-dim); min-width: 340px; }
+  .filters .search span { color: var(--fg); }
+
+  /* the ledger */
+  .ledger { margin: 12px 30px 0; flex: 1; min-height: 0; }
+  table { width: 100%; border-collapse: collapse; font: 13px var(--mono); }
+  th { text-align: left; font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); padding: 8px 12px; border-bottom: 1px solid var(--hair-2); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
+  tr.day td { padding: 14px 12px 4px; border-bottom: 0; color: var(--fg-dim); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; }
+  tr.sweep td { background: rgba(255,84,112,.05); }
+  tr.sel td { background: var(--bg-hover); }
+  td.time { color: var(--fg-muted); width: 96px; }
+  td.time.same { color: var(--fg-dim); }
+  td .lane { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  td.src .int { color: var(--warn); font-size: 11px; margin-left: 8px; border: 1px solid rgba(242,138,30,.4); border-radius: 4px; padding: 0 5px; }
+  td.svc .port { color: var(--fg-dim); }
+  td.note { color: var(--fg-muted); font-family: var(--sans); font-size: 13px; }
+  .tag { font: 11px var(--mono); border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
+  .tag.sweep { color: var(--alarm); background: var(--alarm-bg); }
+  .tag.repeat { color: var(--warn); background: var(--warn-bg); }
+  .tag.first { color: var(--log); background: rgba(56,189,248,.12); }
+  .tag.inside { color: var(--warn); background: var(--warn-bg); }
+  td.act { text-align: right; color: var(--fg-dim); }
+  td.act a { color: var(--accent); text-decoration: none; margin-left: 12px; }
+
+  .foot { padding: 12px 30px 16px; display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--fg-dim); border-top: 1px solid var(--border); }
+  .foot .k { display: inline-flex; align-items: center; gap: 8px; margin-left: 22px; }
+  .foot .k i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* inline expansion (scene 3) */
+  tr.detail td { background: var(--bg-elevated); padding: 0; border-bottom: 1px solid var(--hair-2); white-space: normal; }
+  .expand { display: grid; grid-template-columns: 1fr 1.25fr; gap: 22px; padding: 18px 20px 20px 36px; border-left: 2px solid var(--lane-srv); min-width: 0; }
+  .expand > div { min-width: 0; }
+  .expand h3 { font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); margin: 0 0 8px; }
+  .expand .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; font: 13px var(--mono); margin: 0; }
+  .expand .kv dt { color: var(--fg-dim); } .expand .kv dd { margin: 0; }
+  .expand pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font: 12px/1.55 var(--mono); color: var(--fg-muted); overflow: hidden; }
+  .expand pre b { color: var(--fg); font-weight: 500; }
+  .fleetrow { display: flex; gap: 8px; margin-top: 14px; }
+  .fleetrow div { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: 12px var(--mono); color: var(--fg-muted); white-space: nowrap; }
+  .fleetrow div b { color: var(--fg); font-weight: 600; margin-right: 6px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .btn { border: 1px solid var(--hair-2); border-radius: 8px; padding: 6px 13px; font: 12.5px var(--mono); color: var(--fg); }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .btn.ghost { border-color: var(--border); color: var(--fg-dim); }
+
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .status .dot { animation: pulse 1.6s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .status .dot { animation: none; } }
+</style>
+</head>
+<body>
+
+<!-- ============ SCENE 1 ============ -->
+<section class="scene" id="b-start" aria-label="Ledger — landing, sweep in progress">
+  <div class="scene-tag">B · Ledger · start</div>
+  <nav class="rail" aria-label="Birdcage navigation">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg><span>BIRD<span class="cage">CAGE</span></span></div>
+    <h4>Live</h4>
+    <a class="cur" href="#">Hits <span class="b">sweep</span></a>
+    <a href="#">Visitors <span class="q">4</span></a>
+    <h4>Canaries</h4>
+    <a class="canary" href="#"><span><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="q">5</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="q">4</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="q">221</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="q">2</span></a>
+    <a href="#" style="color:var(--fg-dim);font-size:13px">+ add canary</a>
+    <h4>Act</h4>
+    <a href="#">Audit log</a>
+    <h4>Admin</h4>
+    <a href="#">Users</a>
+    <a href="#">Tokens</a>
+    <div class="foot"><span>⇔</span><span>⇤</span></div>
+  </nav>
+
+  <div class="content">
+    <div class="topbar">
+      <h1>Hits <small>every canary · today</small></h1>
+      <div class="status">
+        <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+        <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+        <span class="who">tom (admin)</span>
+      </div>
+    </div>
+
+    <div class="banner">
+      <b>▲ sweep in progress</b>
+      <span>203.0.113.42 has touched <b>4 of 4</b> canaries in 9 min</span>
+      <span class="pips"><i style="background:var(--lane-lan)"></i><i style="background:var(--lane-srv)"></i><i style="background:var(--lane-iot)"></i><i style="background:var(--lane-guest)"></i></span>
+      <span class="dim">· ssh, mysql · first seen 21:55 · not in CrowdSec</span>
+      <a href="#">show only this source ▸</a>
+    </div>
+
+    <div class="filters">
+      <span class="dim">show</span>
+      <span class="chip on">today</span>
+      <span class="chip">canary</span><span class="chip">source</span><span class="chip">service</span><span class="chip">time</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+
+    <div class="ledger">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">21:59:10</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time same">19:11:58</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">14:40:12</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">14:39:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>negotiate, NT LM 0.12</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="day"><td colspan="6">yesterday · thu 11 sep</td></tr>
+          <tr><td class="time">03:18:09</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">192.0.2.88</td><td class="svc">ftp <span class="port">21</span></td><td class="note">USER anonymous · one touch, gone</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">02:51:30</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 5 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      <span>232 hits today · 14 shown · <span class="muted">newest first · scroll for more</span></span>
+      <span>
+        <span class="k"><i style="background:var(--lane-lan)"></i>lan</span><span class="k"><i style="background:var(--lane-srv)"></i>srv</span><span class="k"><i style="background:var(--lane-iot)"></i>iot</span><span class="k"><i style="background:var(--lane-guest)"></i>guest</span>
+        <span class="k"><i style="background:var(--alarm)"></i>sweep</span><span class="k"><i style="background:var(--warn)"></i>repeat / from inside</span>
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCENE 2: filtered ============ -->
+<section class="scene" id="b-filter" aria-label="Ledger — filtered to one source IP">
+  <div class="scene-tag">B · Ledger · filter: source 203.0.113.42</div>
+  <nav class="rail" aria-label="Birdcage navigation">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg><span>BIRD<span class="cage">CAGE</span></span></div>
+    <h4>Live</h4>
+    <a class="cur" href="#">Hits <span class="b">sweep</span></a>
+    <a href="#">Visitors <span class="q">4</span></a>
+    <h4>Canaries</h4>
+    <a class="canary" href="#"><span><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="q">2</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="q">2</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="q">1</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="q">2</span></a>
+    <a href="#" style="color:var(--fg-dim);font-size:13px">+ add canary</a>
+    <h4>Act</h4>
+    <a href="#">Audit log</a>
+    <h4>Admin</h4>
+    <a href="#">Users</a>
+    <a href="#">Tokens</a>
+    <div class="foot"><span>⇔</span><span>⇤</span></div>
+  </nav>
+
+  <div class="content">
+    <div class="topbar">
+      <h1>Hits <small>from 203.0.113.42 · today</small></h1>
+      <div class="status">
+        <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+        <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+        <span class="who">tom (admin)</span>
+      </div>
+    </div>
+
+    <div class="banner" style="border-color:var(--hair-2);background:var(--bg-elevated)">
+      <b style="color:var(--fg)">203.0.113.42</b>
+      <span class="muted">7 hits · 4 canaries · 21:55 → 22:04 · ssh, mysql</span>
+      <span class="pips"><i style="background:var(--lane-lan)"></i><i style="background:var(--lane-srv)"></i><i style="background:var(--lane-iot)"></i><i style="background:var(--lane-guest)"></i></span>
+      <span class="dim">· never seen before tonight · CrowdSec: no decision · mitigation: none (wave 2)</span>
+      <a href="#">lookback in mikroview ▸</a>
+    </div>
+
+    <div class="filters">
+      <span class="dim">show</span>
+      <span class="chip on">today</span>
+      <span class="chip on">source 203.0.113.42</span>
+      <span class="chip">canary</span><span class="chip">service</span><span class="chip">time</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+
+    <div class="ledger">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      <span>7 hits from 203.0.113.42 · <span class="muted">all of them</span></span>
+      <span><span class="k"><i style="background:var(--alarm)"></i>sweep</span><span class="k"><i style="background:var(--log)"></i>first seen</span></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCENE 3: inline expansion ============ -->
+<section class="scene" id="b-hit" aria-label="Ledger — one hit expanded in place">
+  <div class="scene-tag">B · Ledger · hit expanded</div>
+  <nav class="rail" aria-label="Birdcage navigation">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg><span>BIRD<span class="cage">CAGE</span></span></div>
+    <h4>Live</h4>
+    <a class="cur" href="#">Hits <span class="b">sweep</span></a>
+    <a href="#">Visitors <span class="q">4</span></a>
+    <h4>Canaries</h4>
+    <a class="canary" href="#"><span><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="q">5</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="q">4</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="q">221</span></a>
+    <a class="canary" href="#"><span><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="q">2</span></a>
+    <a href="#" style="color:var(--fg-dim);font-size:13px">+ add canary</a>
+    <h4>Act</h4>
+    <a href="#">Audit log</a>
+    <h4>Admin</h4>
+    <a href="#">Users</a>
+    <a href="#">Tokens</a>
+    <div class="foot"><span>⇔</span><span>⇤</span></div>
+  </nav>
+
+  <div class="content">
+    <div class="topbar">
+      <h1>Hits <small>every canary · today</small></h1>
+      <div class="status">
+        <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+        <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+        <span class="who">tom (admin)</span>
+      </div>
+    </div>
+
+    <div class="banner">
+      <b>▲ sweep in progress</b>
+      <span>203.0.113.42 has touched <b>4 of 4</b> canaries in 9 min</span>
+      <span class="pips"><i style="background:var(--lane-lan)"></i><i style="background:var(--lane-srv)"></i><i style="background:var(--lane-iot)"></i><i style="background:var(--lane-guest)"></i></span>
+      <span class="dim">· ssh, mysql · first seen 21:55 · not in CrowdSec</span>
+      <a href="#">show only this source ▸</a>
+    </div>
+
+    <div class="filters">
+      <span class="dim">show</span>
+      <span class="chip on">today</span>
+      <span class="chip">canary</span><span class="chip">source</span><span class="chip">service</span><span class="chip">time</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+
+    <div class="ledger">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">21:59:10</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep sel"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#" style="color:var(--fg)">close ▴</a></td></tr>
+          <tr class="detail"><td colspan="6">
+            <div class="expand">
+              <div>
+                <h3>this hit</h3>
+                <dl class="kv">
+                  <dt>source</dt><dd>203.0.113.42 <span class="dim">· AS64500</span></dd>
+                  <dt>first seen</dt><dd>21:55:39 today <span class="dim">· canary-lan</span></dd>
+                  <dt>touched</dt><dd>4 of 4 canaries <span class="dim">in 9 min</span></dd>
+                  <dt>tried</dt><dd>root / password</dd>
+                  <dt>versions</dt><dd><span class="muted">libssh2 1.9.0 → OpenSSH 7.9p1 (decoy)</span></dd>
+                  <dt>crowdsec</dt><dd><span class="dim">no decision</span></dd>
+                  <dt>mitigation</dt><dd><span class="dim">none yet · v1 wave 2</span></dd>
+                </dl>
+                <h3 style="margin-top:14px">same source, across the fleet</h3>
+                <div class="fleetrow">
+                  <div><b><i class="lane" style="background:var(--lane-lan)"></i>lan</b>2 · 21:55</div>
+                  <div><b><i class="lane" style="background:var(--lane-srv)"></i>srv</b>2 · 21:57</div>
+                  <div><b><i class="lane" style="background:var(--lane-iot)"></i>iot</b>1 · 22:01</div>
+                  <div><b><i class="lane" style="background:var(--lane-guest)"></i>guest</b>2 · 22:04</div>
+                </div>
+                <div class="actions">
+                  <span class="btn primary">lookback in mikroview ▸</span>
+                  <span class="btn">filter to this source</span>
+                  <span class="btn ghost">copy raw</span>
+                </div>
+              </div>
+              <div>
+                <h3>raw from opencanary</h3>
+<pre>{"dst_host": "10.0.20.250", "dst_port": 22,
+ "local_time": "2026-09-12 21:56:58.114",
+ "logdata": {"LOCALVERSION": "SSH-2.0-OpenSSH_7.9p1",
+             "PASSWORD": "<b>password</b>", "USERNAME": "<b>root</b>",
+             "REMOTEVERSION": "SSH-2.0-libssh2_1.9.0"},
+ "logtype": 4002, "node_id": "<b>canary-srv</b>",
+ "src_host": "<b>203.0.113.42</b>", "src_port": 51822,
+ "utc_time": "2026-09-12 20:56:58.114"}</pre>
+                <p class="dim" style="font-size:12px;margin:12px 0 0">lookback asks mikroview for the firewall lines around 21:56:58 for 203.0.113.42 (mikroview#29), read-only, with birdcage's API token.</p>
+              </div>
+            </div>
+          </td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time same">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      <span>232 hits today · 10 shown</span>
+      <span><span class="k"><i style="background:var(--lane-lan)"></i>lan</span><span class="k"><i style="background:var(--lane-srv)"></i>srv</span><span class="k"><i style="background:var(--lane-iot)"></i>iot</span><span class="k"><i style="background:var(--lane-guest)"></i>guest</span><span class="k"><i style="background:var(--alarm)"></i>sweep</span><span class="k"><i style="background:var(--warn)"></i>repeat / from inside</span></span>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

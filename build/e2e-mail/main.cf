@@ -1,0 +1,46 @@
+# main.cf for the e2e-mail image (issue #80). Test-only, never shipped.
+# The whole file, not a patch on Alpine's commented example: everything
+# this server does is written down here, and anything not named takes
+# Postfix's own compiled-in default. entrypoint.sh adds the few settings
+# that depend on MAIL_MODE with `postconf -e` at start.
+compatibility_level = 3.11
+
+myhostname = mail.e2e.invalid
+# Nothing is delivered by local(8): the one domain this server takes
+# mail for is a virtual one (below), so there are no aliases to build
+# and no Unix accounts to receive mail.
+mydestination =
+alias_maps =
+alias_database =
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Straight to the container's stdout through postlogd, so `docker logs`
+# is the mail log -- the journey reads it to prove what a client did
+# and did not send (scripts/e2e/mail.sh).
+maillog_file = /dev/stdout
+
+# e2e.invalid, delivered to a Maildir under /var/mail as vmail -- the
+# account Alpine's postfix package creates. Dovecot reads the same
+# directory as the same account. virtual_uid_maps/virtual_gid_maps
+# want numbers, so entrypoint.sh sets them from that account at start
+# rather than this file hard-coding what a package bump could move.
+virtual_mailbox_domains = e2e.invalid
+virtual_mailbox_base = /var/mail
+virtual_mailbox_maps = texthash:/etc/postfix/vmailbox
+
+# The certificate entrypoint.sh makes at first start, from a throwaway
+# CA whose certificate the client side is handed to trust.
+smtpd_tls_cert_file = /etc/mail-tls/server.pem
+smtpd_tls_key_file = /etc/mail-tls/server-key.pem
+
+# AUTH is Dovecot's (its auth service listens on this socket, see
+# dovecot.conf), not Cyrus's: one account, one password file, checked
+# by one daemon for both SMTP and IMAP.
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+
+# Only an authenticated client may send, and only to e2e.invalid.
+smtpd_relay_restrictions = permit_sasl_authenticated, reject
+smtpd_recipient_restrictions = permit_sasl_authenticated, reject

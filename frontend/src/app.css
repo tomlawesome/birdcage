@@ -1,0 +1,110 @@
+:root {
+  /* The Atlas II identity mikroview ratified (owner, 2026-08-29) and the
+     trace shell adopts unchanged (ADR-0004 item 6, "identity follows
+     mikroview"): the void ground, blue-washed inks, hairline borders,
+     periwinkle accent. Names match docs/design/concepts/round-6/gen.py's
+     CSS block exactly, since that generator is the reference later
+     slices (the band, tiles, events) build against -- not mikroview's
+     own token names, which this app has no other use for.
+     Note: --ink-3 (#55628a) on --void fails the 4.5:1 text-contrast
+     floor (~3.4:1) -- fine here, since it only ever paints dim marks,
+     hairline strokes and disabled state, never body text. */
+  --void: #06080e;
+  --raised: #0f1422;
+  --hair: rgba(160, 185, 230, 0.13);
+  --hair-2: rgba(160, 185, 230, 0.26);
+  --ink: #e9eefb;
+  --ink-2: #97a4c4;
+  --ink-3: #55628a;
+  --accent: #9db8e8;
+
+  /* Verdict/status colours: green means ok, amber only ever means "now",
+     the one alarm colour is reserved for a flagged visitor. */
+  --ok: #37b364;
+  --alarm: #ff5470;
+  --now: #e8b05a;
+
+  /* Lane colours identify canaries (one per network); kind colours
+     identify visitors (sweep, repeat, from inside, one touch). Fixed
+     across the app -- never restyled, same as mikroview's own
+     traffic-state colours. */
+  --lan: #3987e5;
+  --srv: #199e70;
+  --iot: #c98500;
+  --guest: #d76a9e;
+  --sweep: #ff5470;
+  --repeat: #ff9e64;
+  --inside: #f072c8;
+  --touch: #b8c56a;
+
+  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Exactly gen.py's stack: an extra fallback here (Liberation Mono was
+     once in the list) renders wider than the concept shots' font and
+     wraps tile status lines the concept keeps on one line. */
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+  color: var(--ink);
+  background: var(--void);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  /* The ambient glow off the top-right of the void, same wash as
+     mikroview's own body background. */
+  background:
+    radial-gradient(1100px 600px at 75% -15%, rgba(80, 115, 205, 0.07), transparent 60%),
+    var(--void);
+}
+
+#app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--void);
+}
+
+.scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 35%, var(--hair-2)) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
