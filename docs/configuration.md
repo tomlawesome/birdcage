@@ -113,6 +113,19 @@ certificate and the dashboard's own certificate chain to the CA key in
 that directory, so a restore that omits it starts birdcage with a fresh,
 unrelated CA and the whole fleet must be re-enrolled.
 
+Birdcage refuses to start unless the restored directory has exactly the
+ownership and modes it created it with: owned by the uid the container
+runs as (1000 in the shipped image), directory mode `0700`, key `0600`,
+certificate `0644`. A restore made as root usually loses these, so set
+them before starting:
+
+```
+chown -R 1000:1000 /var/lib/birdcage/ca
+chmod 0700 /var/lib/birdcage/ca
+chmod 0600 /var/lib/birdcage/ca/ca-key.pem
+chmod 0644 /var/lib/birdcage/ca/ca.pem
+```
+
 ## Dashboard TLS
 
 Issue #63, owner decision: "we must never allow the GUI to run without
