@@ -717,10 +717,11 @@ cleanup_step() { # cleanup_step <label> <cmd...>
   shift
   out="$("$@" 2>&1)" && return 0
   # Docker's "already gone" wording varies by subcommand ("No such
-  # container" vs "no such volume"), so match case-insensitively rather
-  # than risk one form logging every ordinary down() as a failure.
+  # container", "no such volume", and "network X not found"), so match
+  # each form case-insensitively rather than risk one of them logging
+  # every ordinary down() as a failure.
   case "${out,,}" in
-    *"no such"*) return 0 ;;
+    *"no such"*|*"not found"*) return 0 ;;
     *) log "cleanup failed: $label: $out"; CLEANUP_FAILED=1 ;;
   esac
 }
