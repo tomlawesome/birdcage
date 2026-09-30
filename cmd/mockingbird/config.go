@@ -65,22 +65,24 @@ const (
 	// releaseAddressFileName are written once, at enrolment
 	// (enrolAtBoot in enrol.go), from POST /enrol/hello's own response --
 	// never configurable, never written any other way. ingestURLFileName
-	// is what loadConfig prefers for Config.BirdcageURL once it exists
-	// (see loadConfig): envBirdcageURL names the enrolment listener,
-	// which is a different address from the ingest listener a canary
-	// talks to for the rest of its life.
+	// is what loadConfig requires for Config.BirdcageURL (see loadConfig):
+	// envBirdcageURL names the enrolment listener, which is a different
+	// address from the ingest listener a canary talks to for the rest of
+	// its life, so a silent fallback to it would send every request
+	// after boot to the wrong endpoint.
 	ingestURLFileName            = "ingest-url"
 	adminApprovalAddressFileName = "admin-approval-address"
 	releaseAddressFileName       = "release-address"
 )
 
-// enrolStateFiles are the four files whose presence loadConfig treats as
-// "this canary is already enrolled" (enrol.go's ensureEnrolled). The three
-// files above are enrolment's own record of what hello returned, written
-// alongside these but not part of the presence test itself -- a state
-// directory could in principle be missing one of those and still be a
-// fully enrolled canary in every way that matters to this check.
-var enrolStateFiles = []string{caFileName, clientCertFileName, clientKeyFileName, tokenFileName}
+// enrolStateFiles are the five files whose presence loadConfig treats as
+// "this canary is already enrolled" (enrol.go's ensureEnrolled). The two
+// remaining files above are enrolment's own record of what hello
+// returned, written alongside these but not part of the presence test
+// itself -- a state directory could in principle be missing one of those
+// and still be a fully enrolled canary in every way that matters to this
+// check.
+var enrolStateFiles = []string{caFileName, clientCertFileName, clientKeyFileName, tokenFileName, ingestURLFileName}
 
 // Config is every input this agent reads at startup. Every field is
 // required: loadConfig fails loudly rather than defaulting any of them
@@ -171,24 +173,26 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("recover pending certificate renewal: %s", safeErr(err))
 	}
 
-	// BaseURL prefers whatever enrolment itself learned the ingest
-	// listener's address to be -- envBirdcageURL, once enrolled, names
-	// the enrolment listener, a different address (#47 "The flow"'s own
-	// distinction between the two). A state directory pre-populated
-	// without this file (the CI image test's own setup, which skips
-	// enrolment entirely) falls back to envBirdcageURL unchanged, the
-	// pre-#47 behavior.
-	if raw, err := os.ReadFile(filepath.Join(cfg.StateDir, ingestURLFileName)); err == nil {
-		cfg.BirdcageURL = strings.TrimSpace(string(raw))
-	}
-
 	// safeErr, not a bare %w: os.ReadFile's own error names the full
 	// path it failed on, which here is always something under StateDir
 	// -- one of the values this agent must never log (see safelog.go).
 	// %s of the filename alone already tells an operator which file;
 	// safeErr keeps the underlying reason (permission denied, not
 	// found, ...) without the path.
+	//
+	// BaseURL is overwritten with whatever enrolment itself learned the
+	// ingest listener's address to be -- envBirdcageURL names the
+	// enrolment listener, a different address (#47 "The flow"'s own
+	// distinction between the two). ingest-url is now one of
+	// enrolStateFiles, so ensureEnrolled has already refused to start an
+	// enrolled directory missing it; this read is the same required-file
+	// treatment as the three below, not a fallback.
 	var err error
+	var ingestURL []byte
+	if ingestURL, err = os.ReadFile(filepath.Join(cfg.StateDir, ingestURLFileName)); err != nil {
+		return Config{}, fmt.Errorf("read %s: %s", ingestURLFileName, safeErr(err))
+	}
+	cfg.BirdcageURL = strings.TrimSpace(string(ingestURL))
 	if cfg.CACert, err = os.ReadFile(filepath.Join(cfg.StateDir, caFileName)); err != nil {
 		return Config{}, fmt.Errorf("read %s: %s", caFileName, safeErr(err))
 	}
