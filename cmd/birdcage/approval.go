@@ -96,6 +96,10 @@ func approvalHandler(database *db.DB, log *slog.Logger) mailbox.Handler {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", store.SettingAdminApprovalAddress, err)
 		}
+		signingDomain, err := store.GetSetting(ctx, database, store.SettingAdminApprovalSigningDomain)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", store.SettingAdminApprovalSigningDomain, err)
+		}
 
 		// The reference is whatever the subject carries: birdcage has
 		// not sent a request yet, so there is no expected value to
@@ -115,11 +119,12 @@ func approvalHandler(database *db.DB, log *slog.Logger) mailbox.Handler {
 		}
 
 		verified, verifyErr := approval.Verify(ctx, raw, approval.Rules{
-			PinnedFrom: pinned,
-			Reference:  reference,
-			Now:        now,
-			MaxAge:     approvalMaxAge,
-			Resolver:   net.LookupTXT,
+			PinnedFrom:          pinned,
+			PinnedSigningDomain: signingDomain,
+			Reference:           reference,
+			Now:                 now,
+			MaxAge:              approvalMaxAge,
+			Resolver:            net.LookupTXT,
 			Seen: func(messageID string) bool {
 				seen, err := store.ApprovalSeen(ctx, database, messageID)
 				if err != nil {
@@ -236,6 +241,10 @@ func runApprovalCheck(args []string) error {
 	if pinned == "" {
 		return fmt.Errorf("no administrator address is set. Run: birdcage settings set %s you@example.net", store.SettingAdminApprovalAddress)
 	}
+	signingDomain, err := store.GetSetting(ctx, database, store.SettingAdminApprovalSigningDomain)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", store.SettingAdminApprovalSigningDomain, err)
+	}
 
 	reference := approval.SubjectReference(subjectOf(raw))
 	if reference == "" {
@@ -245,18 +254,25 @@ func runApprovalCheck(args []string) error {
 		return nil
 	}
 
+	signingDomainDisplay := signingDomain
+	if signingDomainDisplay == "" {
+		signingDomainDisplay = "(none set -- falls back to the pinned address's own domain)"
+	}
+
 	fmt.Printf("Checking %s\n", term.Escape(path))
 	fmt.Printf("  pinned administrator address: %s\n", term.Escape(pinned))
+	fmt.Printf("  pinned signing domain: %s\n", term.Escape(signingDomainDisplay))
 	fmt.Printf("  request reference in the subject: %s\n", term.Escape(reference))
 	fmt.Printf("  age limit for this check: %s (a live approval gets %s)\n", checkMaxAge, approvalMaxAge)
 	fmt.Println("  the replay check is skipped: you are re-reading a saved message on purpose")
 	fmt.Println()
 
 	result, err := approval.Verify(ctx, raw, approval.Rules{
-		PinnedFrom: pinned,
-		Reference:  reference,
-		Now:        time.Now().UTC(),
-		MaxAge:     checkMaxAge,
+		PinnedFrom:          pinned,
+		PinnedSigningDomain: signingDomain,
+		Reference:           reference,
+		Now:                 time.Now().UTC(),
+		MaxAge:              checkMaxAge,
 		// Real DNS, deliberately: the whole point of this command is to
 		// try a real provider's signature against the key it actually
 		// published.

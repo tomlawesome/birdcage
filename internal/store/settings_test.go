@@ -147,6 +147,11 @@ func TestSetSettingInvalidValueRejected(t *testing.T) {
 		{"address whitespace only", SettingReleaseAddress, "   ", "must not be empty"},
 		{"address control character", SettingAdminApprovalAddress, "ops\x07@example.com", "control characters"},
 		{"address newline", SettingReleaseAddress, "ops@example.com\n", "control characters"},
+		{"signing domain with scheme", SettingAdminApprovalSigningDomain, "https://example.net", "DNS hostname"},
+		{"signing domain with port", SettingAdminApprovalSigningDomain, "example.net:443", "DNS hostname"},
+		{"signing domain single label", SettingAdminApprovalSigningDomain, "example", "DNS hostname"},
+		{"signing domain leading hyphen", SettingAdminApprovalSigningDomain, "-example.net", "DNS hostname"},
+		{"signing domain with space", SettingAdminApprovalSigningDomain, "exa mple.net", "DNS hostname"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,6 +196,9 @@ func TestSetSettingValidValuesAccepted(t *testing.T) {
 		{SettingRotationSchedule, "09:05"},
 		{SettingAdminApprovalAddress, "ops@example.com"},
 		{SettingReleaseAddress, "#releases"},
+		{SettingAdminApprovalSigningDomain, ""},
+		{SettingAdminApprovalSigningDomain, "example.net"},
+		{SettingAdminApprovalSigningDomain, "mail.example.co.uk"},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.key)+"="+tc.value, func(t *testing.T) {
