@@ -689,6 +689,7 @@ test:smoke:postgres:
         | openssl x509 -outform pem > /tmp/postgres-ca.pem
       [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
     - export DATABASE_URL="postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem"
+    - export SMOKE_DATABASE_URL_IS_DISPOSABLE=1 # this job's own throwaway Postgres service, torn down with it
     - cd frontend
     - npm ci
     - npx playwright install --with-deps firefox
