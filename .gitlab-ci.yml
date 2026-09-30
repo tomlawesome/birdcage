@@ -455,6 +455,10 @@ test:frontend:
     # exits 1 with "Coverage for branches (60.41%) does not meet global
     # threshold".
     - npm run test:coverage
+    # The smoke journey's own helpers: its port allocator (#159) and its
+    # DATABASE_URL guard. Neither needs Go, a built binary or a browser,
+    # and before this nothing ran them.
+    - npm run test:e2e-helpers
     - npx playwright install --with-deps chromium
     - mkdir -p ~/.config/fontconfig && cp scripts/compare-fonts.conf ~/.config/fontconfig/fonts.conf && fc-cache -f
     - fc-match sans-serif && fc-match monospace

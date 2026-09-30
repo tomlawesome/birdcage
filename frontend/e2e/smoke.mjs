@@ -27,10 +27,10 @@
 // Browser: resolved once, by ./browser.mjs (issue #83) -- BIRDCAGE_BROWSER
 // selects it, default firefox.
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
+import { getFreePorts } from './ports.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -57,17 +57,6 @@ function step(name) {
 }
 function ok(msg) {
   console.log(`  ok   ${msg}`)
-}
-
-function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const srv = createServer()
-    srv.on('error', reject)
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address()
-      srv.close(() => resolve(port))
-    })
-  })
 }
 
 function waitForServer(url, timeoutMs = 15000) {
@@ -147,9 +136,7 @@ async function main() {
   }
   ok('seeded')
 
-  const httpPort = await getFreePort()
-  const enrolPort = await getFreePort()
-  const ingestPort = await getFreePort()
+  const [httpPort, enrolPort, ingestPort] = await getFreePorts(3)
 
   // Shared by every CLI step below and by the server itself -- one CA
   // directory, one advertise host, one enrolment address, so `birdcage
