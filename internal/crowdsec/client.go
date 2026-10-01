@@ -367,7 +367,7 @@ func (c *Client) do(ctx context.Context, method, path, token string, body []byte
 	if err != nil {
 		return 0, nil, fmt.Errorf("crowdsec: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return 0, nil, fmt.Errorf("crowdsec: read %s response: %w", path, err)

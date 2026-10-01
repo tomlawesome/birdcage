@@ -45,20 +45,20 @@ func cliFakeLAPI(t *testing.T) (srv *httptest.Server, posted *int) {
 			_ = json.Unmarshal(body, &in)
 			if in.MachineID != "birdcage" || in.Password != "cli-test-password" {
 				w.WriteHeader(401)
-				fmt.Fprint(w, `{"code":401,"message":"incorrect Username or Password"}`)
+				_, _ = fmt.Fprint(w, `{"code":401,"message":"incorrect Username or Password"}`)
 				return
 			}
-			fmt.Fprint(w, `{"code":200,"expire":"2099-01-01T00:00:00Z","token":"tok"}`)
+			_, _ = fmt.Fprint(w, `{"code":200,"expire":"2099-01-01T00:00:00Z","token":"tok"}`)
 		case r.Header.Get("Authorization") != "Bearer tok":
 			w.WriteHeader(401)
 		case strings.HasPrefix(r.URL.Path, "/v1/allowlists/check/"):
-			fmt.Fprint(w, `{"allowlisted":false,"reason":""}`)
+			_, _ = fmt.Fprint(w, `{"allowlisted":false,"reason":""}`)
 		case r.Method == "GET" && r.URL.Path == "/v1/alerts":
-			fmt.Fprint(w, `[]`)
+			_, _ = fmt.Fprint(w, `[]`)
 		case r.Method == "POST" && r.URL.Path == "/v1/alerts":
 			count++
 			w.WriteHeader(201)
-			fmt.Fprint(w, `["9"]`)
+			_, _ = fmt.Fprint(w, `["9"]`)
 		default:
 			w.WriteHeader(404)
 		}

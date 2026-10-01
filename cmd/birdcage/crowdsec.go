@@ -77,7 +77,7 @@ func runCrowdsecAdd(args []string, getenv func(string) string, stdout, stderr io
 	fs.SetOutput(stderr)
 	reason := fs.String("reason", "", "why this address is being banned (required; one line, recorded in CrowdSec and in audit_log)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: birdcage crowdsec add <ip> --reason \"<why>\"")
+		_, _ = fmt.Fprintln(stderr, "usage: birdcage crowdsec add <ip> --reason \"<why>\"")
 		fs.PrintDefaults()
 	}
 	// Accept the address before or after the flag: `add 203.0.113.9
@@ -133,10 +133,10 @@ func runCrowdsecAdd(args []string, getenv func(string) string, stdout, stderr io
 	}
 	switch out.Status {
 	case crowdsec.StatusAdded:
-		fmt.Fprintf(stdout, "added: permanent ban on %s (LAPI alert %s, duration %s); recorded in audit_log as %s\n",
+		_, _ = fmt.Fprintf(stdout, "added: permanent ban on %s (LAPI alert %s, duration %s); recorded in audit_log as %s\n",
 			term.Escape(out.Target), term.Escape(id), out.Duration, crowdsec.ActionAdded)
 	case crowdsec.StatusExists:
-		fmt.Fprintf(stdout, "already banned by birdcage: %s (LAPI alert %s, %s remaining); nothing posted; recorded in audit_log as %s\n",
+		_, _ = fmt.Fprintf(stdout, "already banned by birdcage: %s (LAPI alert %s, %s remaining); nothing posted; recorded in audit_log as %s\n",
 			term.Escape(out.Target), term.Escape(id), term.Escape(out.Duration), crowdsec.ActionExists)
 	default:
 		return fmt.Errorf("unexpected outcome %q", out.Status)

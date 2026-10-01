@@ -75,34 +75,34 @@ func (f *fakeLAPI) serve(w http.ResponseWriter, r *http.Request) {
 		var in loginRequest
 		if err := json.Unmarshal(body, &in); err != nil {
 			w.WriteHeader(400)
-			fmt.Fprint(w, `{"message":"bad json"}`)
+			_, _ = fmt.Fprint(w, `{"message":"bad json"}`)
 			return
 		}
 		if f.loginStatus != 200 {
 			w.WriteHeader(f.loginStatus)
-			fmt.Fprint(w, `{"message":"login broke"}`)
+			_, _ = fmt.Fprint(w, `{"message":"login broke"}`)
 			return
 		}
 		if in.MachineID != "birdcage" || in.Password != f.password {
 			w.WriteHeader(401)
-			fmt.Fprintf(w, `{"code":401,"message":"incorrect Username or Password: %s"}`, in.Password)
+			_, _ = fmt.Fprintf(w, `{"code":401,"message":"incorrect Username or Password: %s"}`, in.Password)
 			return
 		}
-		fmt.Fprintf(w, `{"code":200,"expire":"%s","token":"%s"}`, time.Now().Add(time.Hour).Format(time.RFC3339), f.token)
+		_, _ = fmt.Fprintf(w, `{"code":200,"expire":"%s","token":"%s"}`, time.Now().Add(time.Hour).Format(time.RFC3339), f.token)
 	case r.Header.Get("Authorization") != "Bearer "+f.token:
 		w.WriteHeader(401)
-		fmt.Fprint(w, `{"message":"missing or bad token"}`)
+		_, _ = fmt.Fprint(w, `{"message":"missing or bad token"}`)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, pathAllowlistCheck):
 		if f.allowStatus != 200 {
 			w.WriteHeader(f.allowStatus)
-			fmt.Fprint(w, `{"message":"allowlist broke"}`)
+			_, _ = fmt.Fprint(w, `{"message":"allowlist broke"}`)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(allowlistResponse{Allowlisted: f.allowlisted, Reason: f.allowReason})
 	case r.Method == http.MethodGet && r.URL.Path == pathAlerts:
 		if f.alertsGetError != 0 {
 			w.WriteHeader(f.alertsGetError)
-			fmt.Fprint(w, `{"message":"list broke"}`)
+			_, _ = fmt.Fprint(w, `{"message":"list broke"}`)
 			return
 		}
 		out := f.existing
@@ -113,17 +113,17 @@ func (f *fakeLAPI) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == pathAlerts:
 		w.WriteHeader(f.postStatus)
 		if f.postBody != "" {
-			fmt.Fprint(w, f.postBody)
+			_, _ = fmt.Fprint(w, f.postBody)
 			return
 		}
 		if f.postStatus == 201 {
-			fmt.Fprint(w, `["42"]`)
+			_, _ = fmt.Fprint(w, `["42"]`)
 			return
 		}
-		fmt.Fprint(w, `{"message":"post broke"}`)
+		_, _ = fmt.Fprint(w, `{"message":"post broke"}`)
 	default:
 		w.WriteHeader(404)
-		fmt.Fprint(w, `{"message":"no such route"}`)
+		_, _ = fmt.Fprint(w, `{"message":"no such route"}`)
 	}
 }
 
@@ -169,7 +169,7 @@ func auditRows(t *testing.T, database *db.DB) []auditRow {
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []auditRow
 	for rows.Next() {
 		var r auditRow
