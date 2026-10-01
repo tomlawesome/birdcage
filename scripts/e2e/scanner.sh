@@ -7,7 +7,7 @@
 # freshly-fetched Grype and posting a real snapshot to POST
 # /ingest/scans.
 #
-# Four legs. From #108's "second opinion on the host mount": masking
+# Five legs. From #108's "second opinion on the host mount": masking
 # blinds the scan rather than merely being present (leg 1); an edited
 # command that drops one mask flag is refused rather than silently
 # losing the covering (leg 2); a database that cannot be trusted fails
@@ -17,6 +17,10 @@
 # run's stages advance on the read model (leg 1), a failed scan fails
 # the proof and never registers the node (leg 2), and an unreachable
 # mirror is reported at once and reads db_stale after a day (leg 4).
+# From #109: the findings store's own diff, proven against Nightjar's
+# real timer loop rather than asserted in Go alone -- an unchanged
+# rescan only moves last_seen, and removing the vulnerable package
+# resolves every finding it posted (leg 5).
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/scanner-stack.sh up)"
@@ -119,6 +123,39 @@ runs_field() { # runs_field <canary_id> <jq-filter-over-the-runs-array>
   local canary_id="$1" filt="$2"
   helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries/$canary_id/runs' \
     | jq -r '.runs | $filt'"
+}
+
+# findings_check/findings_field are the same shape again, over GET
+# /api/findings?agent_id= (issue #109) -- the standing findings store's
+# own read-back, filtered to one agent and evaluated as an array (unlike
+# scan_check/canary_check's own "first match" shape: a finding set is
+# the whole array a leg cares about, not one row).
+findings_check() { # findings_check <agent_id> <jq-boolean-expr-over-the-findings-array>
+  local agent_id="$1" expr="$2"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+    | jq -e '.findings | $expr'" >/dev/null 2>&1
+}
+findings_field() { # findings_field <agent_id> <jq-filter-over-the-findings-array>
+  local agent_id="$1" filt="$2"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+    | jq -r '.findings | $filt'"
+}
+
+# scan_count is how many scan_snapshots rows canary_id carries so far --
+# leg 5's own clock, since Nightjar's timer loop (NIGHTJAR_SCAN_INTERVAL_S
+# below) posts a new one on every tick with no other outward sign.
+scan_count() { # scan_count <canary_id>
+  local canary_id="$1"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+    | jq --arg id '$canary_id' '[.scans[] | select(.canary_id == \$id)] | length'"
+}
+
+# scan_count_at_least is scan_count's own poll predicate: true once
+# canary_id carries at least min snapshots.
+scan_count_at_least() { # scan_count_at_least <canary_id> <min>
+  local canary_id="$1" min="$2" n
+  n="$(scan_count "$canary_id" 2>/dev/null)" || return 1
+  [ -n "$n" ] && [ "$n" -ge "$min" ] 2>/dev/null
 }
 
 # reference_count is leg 1's proof that /home/user/app's copy of the
@@ -502,6 +539,80 @@ poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/histo
 ok "the db_stale period is on the canary's history"
 
 docker rm --force "${E2E_PREFIX}-scanner-leg4" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------
+step "leg 5 -- findings store: an unchanged rescan only moves last_seen, and removing the package resolves it"
+# ---------------------------------------------------------------------
+# Issue #109's own two named acceptance proofs, live rather than asserted
+# by unit test alone: NIGHTJAR_SCAN_INTERVAL_S (cmd/nightjar/config.go)
+# shortens Nightjar's normal 6-hour timer loop so this leg sees a second
+# and third real snapshot inside the journey's own bound, each one a
+# genuine "on start and on an interval" cycle (scanner.go's own
+# runScanLoop) against the shared, already-warm fixture and database --
+# never a fabricated snapshot. The fixture volume is safe to mutate here:
+# this is the journey's last leg, and every earlier leg has already
+# finished with it.
+enrol_scanner "e2e-scanner-leg5" "e2e-scanner" "scanner-leg5-enrol.txt"
+run_scanner "${E2E_PREFIX}-scanner-leg5" "${E2E_PREFIX}-scanner-state-leg5" "$SCANNER_DB_VOL" "scanner-leg5-enrol.txt" "" "NIGHTJAR_SCAN_INTERVAL_S=12"
+wait_for_scanner "e2e-scanner-leg5" "${E2E_PREFIX}-scanner-leg5"
+LEG5_CANARY="$SCANNER_CANARY_ID"
+wait_for_stage_progression "$LEG5_CANARY" "${E2E_PREFIX}-scanner-leg5"
+wait_for_registered "$LEG5_CANARY" "${E2E_PREFIX}-scanner-leg5"
+
+step "leg 5 -- the first snapshot's findings land open, first_seen == last_seen"
+poll 60 findings_check "$LEG5_CANARY" 'length > 0' \
+  || fail "leg 5's findings store never gained a row for $LEG5_CANARY" "${E2E_PREFIX}-scanner-leg5" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" 'all(.state == "open")' \
+  && ok "every finding starts open: $(findings_field "$LEG5_CANARY" 'length') finding(s)" \
+  || fail "leg 5's initial findings are not all open: $(findings_field "$LEG5_CANARY" '.')" "$E2E_BIRDCAGE"
+FIRST_SEEN_0="$(findings_field "$LEG5_CANARY" '[.[].first_seen] | min')"
+LAST_SEEN_0="$(findings_field "$LEG5_CANARY" '[.[].last_seen] | max')"
+COUNT_0="$(findings_field "$LEG5_CANARY" 'length')"
+BASE_SCANS="$(scan_count "$LEG5_CANARY")"
+
+step "leg 5 -- an unchanged rescan moves last_seen and nothing else"
+poll 120 scan_count_at_least "$LEG5_CANARY" "$((BASE_SCANS + 1))" \
+  || fail "no additional scan snapshot landed for $LEG5_CANARY within 2 minutes of enrolling (scan interval 12s)" "${E2E_PREFIX}-scanner-leg5" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" "length == $COUNT_0" \
+  && ok "rescan reports the same $COUNT_0 finding(s) -- same identities, not new rows" \
+  || fail "leg 5's finding count changed on an unchanged rescan: now $(findings_field "$LEG5_CANARY" 'length'), was $COUNT_0" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" 'all(.state == "open")' \
+  && ok "every finding is still open after the rescan" \
+  || fail "leg 5's findings are not all still open after an unchanged rescan: $(findings_field "$LEG5_CANARY" '.')" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" "([.[].first_seen] | min) == \"$FIRST_SEEN_0\"" \
+  && ok "first_seen is unchanged at $FIRST_SEEN_0" \
+  || fail "leg 5's first_seen moved on a rescan: now $(findings_field "$LEG5_CANARY" '[.[].first_seen] | min'), was $FIRST_SEEN_0" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" "([.[].last_seen] | max) > \"$LAST_SEEN_0\"" \
+  && ok "last_seen moved forward from $LAST_SEEN_0" \
+  || fail "leg 5's last_seen did not move forward on a rescan: now $(findings_field "$LEG5_CANARY" '[.[].last_seen] | max'), was $LAST_SEEN_0" "$E2E_BIRDCAGE"
+
+step "leg 5 -- removing the vulnerable package resolves every finding it posted"
+BASE_SCANS="$(scan_count "$LEG5_CANARY")"
+# Overwrite /opt/app/package-lock.json (the one copy the mask list
+# leaves visible) with a lockfile that declares no dependencies at all --
+# the next scan cycle sees a host with the vulnerable package gone,
+# exactly the way a real operator's `apt remove`/upgrade would, without
+# this journey ever telling birdcage anything beyond the new snapshot.
+printf '%s\n' '{
+  "name": "fixture-app",
+  "version": "1.0.0",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": { "": { "name": "fixture-app", "version": "1.0.0" } },
+  "dependencies": {}
+}' | docker run --rm --interactive --volume "$SCANNER_FIXTURE_VOL:/host" "${ALPINE_IMAGE:-alpine:3.24}" \
+  sh -c 'cat > /host/opt/app/package-lock.json' \
+  || fail "overwriting the fixture's package-lock.json to drop lodash failed" "${E2E_PREFIX}-scanner-leg5"
+
+poll 120 scan_count_at_least "$LEG5_CANARY" "$((BASE_SCANS + 1))" \
+  || fail "no scan snapshot followed the fixture edit for $LEG5_CANARY within 2 minutes" "${E2E_PREFIX}-scanner-leg5" "$E2E_BIRDCAGE"
+poll 30 findings_check "$LEG5_CANARY" 'all(.state == "fixed")' \
+  || fail "leg 5's findings did not all resolve after the vulnerable package was removed: $(findings_field "$LEG5_CANARY" '.')" "${E2E_PREFIX}-scanner-leg5" "$E2E_BIRDCAGE"
+findings_check "$LEG5_CANARY" "length == $COUNT_0" \
+  && ok "all $COUNT_0 finding(s) resolved to fixed -- rows kept, not deleted" \
+  || fail "leg 5 lost finding rows on resolution: now $(findings_field "$LEG5_CANARY" 'length'), was $COUNT_0" "$E2E_BIRDCAGE"
+
+docker rm --force "${E2E_PREFIX}-scanner-leg5" >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------
 # #108's identity leg is folded into leg 1 above: "the snapshot's canary is
