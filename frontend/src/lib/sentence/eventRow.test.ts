@@ -23,6 +23,7 @@ function visitor(overrides: Partial<Visitor> & { kind: VisitorKind }): Visitor {
     canaries: [{ id: 'canary-lan', hits: 1 }],
     services: ['ssh'],
     tried: ['root / root'],
+    clients: [],
     still_arriving: false,
     ...overrides,
   }
@@ -155,6 +156,38 @@ describe('whoSentence: touch credential is the part before the slash', () => {
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(plainText(row.who)).toContain('as administrator,')
     expect(plainText(row.who)).not.toContain('hunter2')
+  })
+})
+
+describe('whoSentence: client clause', () => {
+  it('appends "Said it was <client>" from the newest client', () => {
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'] })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(plainText(row.who)).toContain('Said it was nuclei.')
+    expect(plainText(row.who)).not.toContain('curl/8.5.0')
+    const client = row.who.find((s) => s.cls === 'client')
+    expect(client?.text).toBe('nuclei')
+    expect(client?.title).toBe('nuclei')
+  })
+
+  it('omits the clause when clients is empty', () => {
+    const v = visitor({ kind: 'touch', clients: [] })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(plainText(row.who)).not.toContain('Said it was')
+    expect(row.who.some((s) => s.cls === 'client')).toBe(false)
+  })
+
+  it('never adds the clause to a poisoner row', () => {
+    const v = visitor({
+      kind: 'inside',
+      services: ['poisoner'],
+      tried: ['llmnr'],
+      clients: ['should-never-appear'],
+      poisoner: { name: 'fs-lon-02', protocol: 'llmnr', mac: '52:54:00:8a:1c:3d' },
+    })
+    const row = computeEventRow(v, canaries, '2026-09-12T21:05:00Z')
+    expect(plainText(row.who)).not.toContain('Said it was')
+    expect(plainText(row.who)).not.toContain('should-never-appear')
   })
 })
 

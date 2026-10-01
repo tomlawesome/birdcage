@@ -112,6 +112,19 @@ function poisonerSentence(v: Visitor): Segment[] {
   ]
 }
 
+// appendClientClause adds "Said it was <client>." using the newest entry in
+// v.clients (#143), to every non-poisoner whoSentence branch -- a poisoner
+// did not send an http/ssh hit, so poisonerSentence never calls this. No
+// clause at all when there is no client to report, rather than an empty
+// sentence fragment.
+function appendClientClause(segments: Segment[], v: Visitor): Segment[] {
+  const client = v.clients[v.clients.length - 1]
+  if (client) {
+    segments.push({ text: ' Said it was ' }, { text: client, cls: 'client', title: client }, { text: '.' })
+  }
+  return segments
+}
+
 function whoSentence(v: Visitor, canaries: Canary[]): Segment[] {
   if (v.poisoner) return poisonerSentence(v)
   const total = canaries.length
@@ -121,37 +134,49 @@ function whoSentence(v: Visitor, canaries: Canary[]): Segment[] {
   if (v.kind === 'sweep') {
     const minutes = Math.max(0, Math.round((Date.parse(v.last_at) - Date.parse(v.first_at)) / 60_000))
     const startedToday = isSameUTCDate(v.first_at, v.last_at)
-    return [
-      { text: v.source_ip, cls: 'ip' },
-      { text: ' walked ' },
-      { text: `${canariesPhrase(v.canaries.length, total)} in ${minutesPhrase(minutes)}`, bold: true },
-      { text: ` — ${servicesNarrative(v.services)}, ${triedNarrative(v.tried)}.` },
-      { text: v.still_arriving && startedToday ? ' Never seen before tonight.' : '' },
-    ]
+    return appendClientClause(
+      [
+        { text: v.source_ip, cls: 'ip' },
+        { text: ' walked ' },
+        { text: `${canariesPhrase(v.canaries.length, total)} in ${minutesPhrase(minutes)}`, bold: true },
+        { text: ` — ${servicesNarrative(v.services)}, ${triedNarrative(v.tried)}.` },
+        { text: v.still_arriving && startedToday ? ' Never seen before tonight.' : '' },
+      ],
+      v,
+    )
   }
   if (v.kind === 'repeat') {
     const spanMinutes = Math.max(1, Math.round((Date.parse(v.last_at) - Date.parse(v.first_at)) / 60_000))
     const interval = Math.max(1, Math.round(spanMinutes / Math.max(1, v.hits - 1)))
     const nights = calendarDaysBetween(v.first_at, v.last_at) + 1
-    return [
-      { text: v.source_ip, cls: 'ip' },
-      { text: ` knocks on ${canaryPort} every ~${interval} minutes through the night, ${wordOrNumber(nights)} nights running.` },
-    ]
+    return appendClientClause(
+      [
+        { text: v.source_ip, cls: 'ip' },
+        { text: ` knocks on ${canaryPort} every ~${interval} minutes through the night, ${wordOrNumber(nights)} nights running.` },
+      ],
+      v,
+    )
   }
   if (v.kind === 'inside') {
     const last = v.tried[v.tried.length - 1] ?? ''
-    return [
-      { text: v.source_ip, cls: 'ip' },
-      { text: ` browsed ${canaryPort} and tried ` },
-      { text: last, bold: true },
-      { text: '.' },
-    ]
+    return appendClientClause(
+      [
+        { text: v.source_ip, cls: 'ip' },
+        { text: ` browsed ${canaryPort} and tried ` },
+        { text: last, bold: true },
+        { text: '.' },
+      ],
+      v,
+    )
   }
   const cred = (v.tried[0] ?? '').split(' / ')[0]
-  return [
-    { text: v.source_ip, cls: 'ip' },
-    { text: ` logged in to ${canaryPort} as ${cred}, once, and left.` },
-  ]
+  return appendClientClause(
+    [
+      { text: v.source_ip, cls: 'ip' },
+      { text: ` logged in to ${canaryPort} as ${cred}, once, and left.` },
+    ],
+    v,
+  )
 }
 
 export function computeEventRow(v: Visitor, canaries: Canary[], now: string): EventRow {

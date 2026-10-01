@@ -116,6 +116,18 @@ describe('only high-signal rises keep a label (issue #59)', () => {
     expect(poison!.l1).not.toContain(' / ')
     expect(poison!.stem).toMatch(/^M[\d.]+,[\d.]+ L/)
   })
+
+  // #143's decision: l1 stays tried-only -- a 10.5px SVG label sized for a
+  // credential cannot hold a 110-char user agent without breaking ADR-0004's
+  // "labels never cross".
+  it('band label ignores client', () => {
+    const trace = structuredClone(nightFixture.trace) as unknown as TraceResponse
+    for (const canary of trace.canaries) {
+      for (const hit of canary.hits) hit.client = 'nuclei-band-label-marker'
+    }
+    const l1s = buildBandModel(trace, 1600).labels.map((l) => l.l1)
+    expect(l1s.some((t) => t.includes('nuclei-band-label-marker'))).toBe(false)
+  })
 })
 
 // Issue #58: night.json is the exact reproduction -- four canaries'

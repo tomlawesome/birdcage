@@ -10,6 +10,10 @@ export interface Segment {
   bold?: boolean
   /** Rendered as <span class={cls}> (or <b class={cls}> when bold too) -- matches gen.py's .ok/.r/.ip/.mute classes. */
   cls?: string
+  /** Rendered as the span's title attribute (precedent: App.svelte's mail
+   * status span) -- the full value behind text when text may be clamped or
+   * truncated, e.g. #143's client clause. */
+  title?: string
 }
 
 export function plainText(segments: Segment[]): string {

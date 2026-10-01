@@ -164,6 +164,34 @@ func TestListTraceHitKindMatchesVisitorClassification(t *testing.T) {
 	})
 }
 
+// TestListTraceHitCarriesClient is #143's trace-level check: ListTrace's
+// per-hit Tried already comes from triedFor (see
+// TestListTraceHitKindMatchesVisitorClassification above), and Client must
+// carry clientFor's result the same way, for the same hit.
+func TestListTraceHitCarriesClient(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-09-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "canary-lan", Name: "canary-lan", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt})
+
+		insertAlertRaw(t, database, "canary-lan", "203.0.113.42", 22, "ssh",
+			`{"logdata": {"USERNAME": "root", "PASSWORD": "root", "REMOTEVERSION": "SSH-2.0-OpenSSH_9.6"}, "logtype": 4002}`,
+			"2026-09-12T21:55:40Z")
+
+		now := mustParse(t, "2026-09-12T22:04:31Z")
+		trace, err := ListTrace(context.Background(), database, now, "14d", rangeDurations["14d"], nil, "")
+		if err != nil {
+			t.Fatalf("ListTrace: %v", err)
+		}
+		lan := findTraceCanary(t, trace, "canary-lan")
+		if len(lan.Hits) != 1 {
+			t.Fatalf("canary-lan hits = %+v, want 1", lan.Hits)
+		}
+		if lan.Hits[0].Client != "SSH-2.0-OpenSSH_9.6" {
+			t.Errorf("Client = %q, want %q", lan.Hits[0].Client, "SSH-2.0-OpenSSH_9.6")
+		}
+	})
+}
+
 func TestListTraceLastHitNilWhenNoAlerts(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := mustParse(t, "2026-09-12T22:04:31Z")

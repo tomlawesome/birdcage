@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -493,6 +494,155 @@ func TestTriedForUnparseableRawFallsBackToServiceName(t *testing.T) {
 				t.Errorf("triedFor(ssh, %q) = %q, want the service name %q", tt.raw, got, "ssh")
 			}
 		})
+	}
+}
+
+// --- clientFor / normalizeClient: pure Go, no database.
+
+func TestClientForHTTP(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "user agent present",
+			raw:  datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`),
+			want: "curl/8.5.0",
+		},
+		{
+			name: "no USERAGENT at all",
+			raw:  datagram(`{"logdata": {}, "logtype": 3000}`),
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clientFor("http", tt.raw); got != tt.want {
+				t.Errorf("clientFor(http, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClientForSSH(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "remote version on logtype 4001",
+			raw:  datagram(`{"logdata": {"REMOTEVERSION": "SSH-2.0-OpenSSH_9.6"}, "logtype": 4001}`),
+			want: "SSH-2.0-OpenSSH_9.6",
+		},
+		{
+			name: "remote version on logtype 4002",
+			raw:  datagram(`{"logdata": {"REMOTEVERSION": "SSH-2.0-PuTTY_Release_0.81"}, "logtype": 4002}`),
+			want: "SSH-2.0-PuTTY_Release_0.81",
+		},
+		{
+			name: "no REMOTEVERSION at all",
+			raw:  datagram(`{"logdata": {}, "logtype": 4000}`),
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clientFor("ssh", tt.raw); got != tt.want {
+				t.Errorf("clientFor(ssh, ...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClientForOtherServicesIsEmpty is clientFor's one departure from
+// triedFor's shape: every service without a client field returns "" to
+// say nothing, not the service name, even when the raw payload happens to
+// carry a USERAGENT or REMOTEVERSION key of its own.
+func TestClientForOtherServicesIsEmpty(t *testing.T) {
+	raw := datagram(`{"logdata": {"USERAGENT": "curl/8.5.0", "REMOTEVERSION": "SSH-2.0-OpenSSH"}, "logtype": 1004}`)
+	for _, service := range []string{"ftp", "telnet", "mysql", "smb", "rdp", "tftp", "sip", "redis", "mssql", poisonerService, "unenumerated"} {
+		if got := clientFor(service, raw); got != "" {
+			t.Errorf("clientFor(%q, ...) = %q, want \"\"", service, got)
+		}
+	}
+}
+
+func TestClientForNormalises(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "invalid UTF-8 is withheld entirely, not shown mangled",
+			in:   "one\xfftwo",
+			want: "",
+		},
+		{
+			name: "a control sequence is shown as a literal escape, never acted on",
+			in:   "clear\x1b[2Kscreen",
+			want: `clear\x1b[2Kscreen`,
+		},
+		{
+			name: "a bidi override is shown as a literal escape, never reordering the text",
+			in:   "canary-‮resrever",
+			want: "canary-\\u202eresrever",
+		},
+		{
+			name: "161 runes is cut to 160 with an ellipsis appended",
+			in:   strings.Repeat("a", 161),
+			want: strings.Repeat("a", 160) + "…",
+		},
+		{
+			name: "surrounding whitespace is trimmed",
+			in:   "  curl/8.5.0  ",
+			want: "curl/8.5.0",
+		},
+		{
+			name: "OpenCanary's own <not supplied> sentinel is withheld, not shown as the client",
+			in:   "<not supplied>",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeClient(tt.in); got != tt.want {
+				t.Errorf("normalizeClient(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClientSummariesDedupesSkipsEmptiesCapsAtFour(t *testing.T) {
+	// hits is newest first, as alertsInRange returns them -- the reverse
+	// of the chronological order the comment below lists. clientSummaries
+	// must walk it back to ascending time order, the order the visitor
+	// actually sent these in, same as triedSummaries.
+	//
+	// Chronological order sent: curl, curl again (dup, skipped), an ssh
+	// hit with no REMOTEVERSION (empty, skipped), Go-http-client, nuclei,
+	// fourth-unique (the fourth distinct client, still kept) and finally
+	// fifth-unique (a fifth distinct client, dropped by the cap).
+	hits := []Alert{
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "fifth-unique"}, "logtype": 3000}`)},
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "fourth-unique"}, "logtype": 3000}`)},
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "nuclei"}, "logtype": 3000}`)},
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "Go-http-client/1.1"}, "logtype": 3000}`)},
+		{Service: "ssh", Raw: datagram(`{"logdata": {}, "logtype": 4000}`)},
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+		{Service: "http", Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+	}
+	want := []string{"curl/8.5.0", "Go-http-client/1.1", "nuclei", "fourth-unique"}
+	got := clientSummaries(hits)
+	if len(got) != len(want) {
+		t.Fatalf("clientSummaries = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("clientSummaries[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
 	}
 }
 
