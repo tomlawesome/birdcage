@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,5 +190,41 @@ func TestHandleFindingsRejectsPost(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/findings", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleFindingsListFailureIs500 mirrors
+// TestCanaryRunsStoreFailureIs500: a findings table the store cannot
+// read is a 500 with the generic body, never a partial or malformed
+// response, and the response never leaks the underlying store error.
+func TestHandleFindingsListFailureIs500(t *testing.T) {
+	database := openTempDB(t)
+	if _, err := database.Exec(`DROP TABLE findings`); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	h := newHandler(database, time.Now, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/findings", nil))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "findings") {
+		t.Fatalf("status = %d body %q, want 500 internal error", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleFindingsStalenessFailureIs500 proves the second store call
+// in handleFindings -- store.FindingsStaleness, reached only once
+// ListFindings itself has already succeeded -- is also a 500 with the
+// generic body, not a response missing the Agents field.
+func TestHandleFindingsStalenessFailureIs500(t *testing.T) {
+	database := openTempDB(t)
+	if _, err := database.Exec(`DROP TABLE scan_snapshots`); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	h := newHandler(database, time.Now, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/findings", nil))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "scan") {
+		t.Fatalf("status = %d body %q, want 500 internal error", rec.Code, rec.Body.String())
 	}
 }

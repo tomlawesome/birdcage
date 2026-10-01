@@ -19,7 +19,7 @@ import (
 // requirement of the issue.
 func runFindings(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: birdcage findings <list|accept> ...")
+		return errors.New("usage: birdcage findings <list|accept>")
 	}
 	switch args[0] {
 	case "list":
