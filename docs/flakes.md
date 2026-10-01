@@ -177,3 +177,9 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   same error. The retry passed.
 - 2026-09-30 · b84245e · pipeline 1867 (!91) / test:smoke, job 27470 · the
   same download, same error. The retry passed. Third sighting: filed as #160.
+
+## gitleaks release download answers 504 (lint:gitleaks)
+
+- 2026-10-01 · 0b5eb09 · pipeline 1916 (!95) / lint:gitleaks, job 28440 ·
+  `scripts/ensure-gitleaks.sh` got "curl: (22) The requested URL returned
+  error: 504" from github.com before any scan ran. Retried as job 28489.
