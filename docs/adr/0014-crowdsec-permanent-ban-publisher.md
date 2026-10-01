@@ -295,7 +295,7 @@ record of what birdcage pushed; the LAPI is the record of what is
 blocked, and birdcage asks it rather than keeping a second copy that
 could disagree.
 
-**10. Minimum LAPI version 1.6.8**, where the allowlist routes arrived;
+**10. Minimum LAPI version 1.6.6**, the first release with the allowlist routes (verified: `pkg/apiserver/controllers/v1/allowlist.go` is absent at v1.6.5 and present at v1.6.6);
 on an older LAPI the allowlist check 404s and birdcage refuses to post.
 Operators are told to run >= 1.8.0 (every advisory above fixed).
 

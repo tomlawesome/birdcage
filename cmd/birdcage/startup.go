@@ -187,6 +187,20 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage crowdsec add <ip> --reason "<why>"` (cmd/birdcage/
+	// crowdsec.go) is ADR-0014's one operator door onto a CrowdSec ban:
+	// CLI-only for the same reason `agent settings` is, and add-only by
+	// construction -- there is no remove verb to dispatch to. Exits
+	// immediately like the others.
+	if len(args) > 1 && args[1] == "crowdsec" {
+		crowdsecLog := logging.New("crowdsec")
+		if err := runCrowdsec(args[2:], os.Getenv, stdout, os.Stderr); err != nil {
+			crowdsecLog.Error(err.Error())
+			return true, 1
+		}
+		return true, 0
+	}
+
 	return false, 0
 }
 
