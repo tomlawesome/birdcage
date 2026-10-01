@@ -6,10 +6,17 @@
 // settings overwrite), and does not block the default (no DATABASE_URL)
 // or a marked one.
 import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+// smoke.mjs makes its own temp directory and removes it on the way out,
+// but runGuard kills it first. Point its TMPDIR here and remove the lot
+// at the end, rather than leaving a directory behind on every run.
+const scratch = mkdtempSync(join(tmpdir(), 'birdcage-smoke-test-'))
 
 let fail = 0
 function check(cond, label) {
@@ -26,7 +33,7 @@ function check(cond, label) {
  * and a browser to complete). Returns what it printed before that. */
 function runGuard(extraEnv, { unsetDatabaseURL = false } = {}) {
   return new Promise((resolve) => {
-    const env = { ...process.env, BIRDCAGE_BIN: '/nonexistent/birdcage', ...extraEnv }
+    const env = { ...process.env, TMPDIR: scratch, BIRDCAGE_BIN: '/nonexistent/birdcage', ...extraEnv }
     if (unsetDatabaseURL) delete env.DATABASE_URL
     const child = spawn('node', [join(here, 'smoke.mjs')], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
@@ -59,4 +66,5 @@ check(withMarker.stdout.includes('seeding'), 'a DATABASE_URL marked disposable i
 const noDatabaseURL = await runGuard({}, { unsetDatabaseURL: true })
 check(noDatabaseURL.stdout.includes('seeding'), 'no DATABASE_URL set (SQLite default) is not refused')
 
+rmSync(scratch, { recursive: true, force: true })
 process.exit(fail)
