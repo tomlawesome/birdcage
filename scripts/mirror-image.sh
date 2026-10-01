@@ -90,7 +90,11 @@ resolve_source_digest() {
 # blob) copy: no rebuild, no local daemon pull of the image itself.
 run_mirror() {
   local source_ref="$1" dest_ref="$2"
-  docker buildx imagetools create --tag "$dest_ref" "$source_ref"
+  # --prefer-index=false (#161): by default imagetools create wraps a
+  # single image manifest in a new index, which has a new digest -- the tag
+  # would land on an unsigned wrapper, not the signed digest. This makes it
+  # copy the manifest unchanged.
+  docker buildx imagetools create --prefer-index=false --tag "$dest_ref" "$source_ref"
 }
 
 # resolve_dest_digest <repo> <tag> -- re-resolves the tag just mirrored, so

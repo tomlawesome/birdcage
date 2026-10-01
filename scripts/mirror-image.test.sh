@@ -30,6 +30,23 @@ digest="sha256:$(printf 'a%.0s' $(seq 64))"
 other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
 tag="preview"
 
+# #161: the real run_mirror, against a docker that only records its arguments.
+# Without --prefer-index=false, imagetools create wraps a single image
+# manifest in a new index with a new digest, so the tag lands on an
+# unsigned wrapper instead of the signed digest. Checked here, before the
+# stub below replaces the function.
+# shellcheck disable=SC2317  # called by the real function below
+docker() { printf '%s\n' "$@" > "$work/docker.args"; }
+# shellcheck disable=SC2218  # defined by the sourced script; the stub comes later
+run_mirror "${source_repo}@${digest}" "${dest_repo}:${tag}"
+if grep -qx -- '--prefer-index=false' "$work/docker.args"; then
+  ok "run_mirror copies the manifest as-is (--prefer-index=false), never wraps it"
+else
+  bad "run_mirror copies the manifest as-is (--prefer-index=false), never wraps it" "docker args: $(tr '\n' ' ' < "$work/docker.args")"
+fi
+unset -f docker
+rm -f "$work/docker.args"
+
 # Stub configuration, read by the stubs below each time main() calls them.
 STUB_SOURCE_RC=0
 STUB_SOURCE_DIGEST="$digest"

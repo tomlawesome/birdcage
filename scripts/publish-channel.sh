@@ -78,7 +78,11 @@ run_verifier() {
 # just made to point at the exact digest the verifier already accepted.
 create_channel_tag() {
   local repo="$1" tag="$2" digest="$3"
-  docker buildx imagetools create --tag "${repo}:${tag}" "${repo}@${digest}"
+  # --prefer-index=false (#161): by default imagetools create wraps a
+  # single image manifest in a new index, which has a new digest -- the tag
+  # would land on an unsigned wrapper, not the signed digest. This makes it
+  # copy the manifest unchanged.
+  docker buildx imagetools create --prefer-index=false --tag "${repo}:${tag}" "${repo}@${digest}"
 }
 
 # resolve_tag_digest <repo> <tag> -- re-resolves the tag just published and
