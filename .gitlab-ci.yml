@@ -2631,11 +2631,17 @@ release:preview:
 # collide with the shipping.
 #
 # The cosign attestation release:attest minted is not part of the image
-# manifest -- cosign stores it as its own object, tagged
-# `sha256-<digest-hex>.att` beside the image, so it has to be copied
-# separately or the countersigning workflow finds an image on GHCR with no
-# evidence next to it. Same script, because from mirror-image.sh's own
-# point of view that object is just another tag to copy and verify.
+# manifest -- cosign v3 stores it as a Sigstore bundle attached as an OCI
+# referrer, listed under the fallback tag `sha256-<digest-hex>` (no `.att`:
+# that was cosign v2, #162). It has to be copied separately or the
+# countersigning workflow finds an image on GHCR with no evidence next to
+# it. Same script, because from mirror-image.sh's own point of view that
+# index is just another tag to copy and verify.
+#
+# That tag is one index listing every referrer of the digest. Mirroring it
+# again after the GitHub countersign has added its own bundle on GHCR would
+# overwrite GHCR's index and drop the countersignature; the documented order
+# (promote, then countersign) never does that.
 #
 # Deliberately not allow_failure and not manual: a failed mirror should
 # turn the pipeline red so it gets noticed and retried, exactly like any
@@ -2661,7 +2667,7 @@ release:mirror-preview:
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
-        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}.att" "$mirror_repo"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}" "$mirror_repo"
       done
 
 # Promotion. One manual job on `main` -- the single button that cuts a
@@ -2786,7 +2792,7 @@ release:mirror-release:
         repo="${pair%|*}"
         mirror_repo="${pair#*|}"
         digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
-        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}.att" "$mirror_repo"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}" "$mirror_repo"
       done
 
 # The annotated tag and the release note, created together once the digest

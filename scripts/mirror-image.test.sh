@@ -199,10 +199,10 @@ else
 fi
 
 # --- tag allow-list (scripts/image-tag-policy.sh) ---------------------------
-# Every tag the release jobs mirror passes, including cosign's .att object;
-# every refused one stops before any registry call.
+# Every tag the release jobs mirror passes, including cosign v3's referrers
+# fallback tag (#162); every refused one stops before any registry call.
 sha40="$(printf 'c%.0s' $(seq 40))"
-att="sha256-$(printf 'd%.0s' $(seq 64)).att"
+att="sha256-$(printf 'd%.0s' $(seq 64))"
 for allowed in v0.1.0 preview latest "sha-${sha40}" "$att"; do
   reset_stubs
   result "$(run "$source_repo" "$allowed" "$dest_repo")"
@@ -223,7 +223,8 @@ refuse_tag() { # refuse_tag <name> <tag> [dest-repo]
   fi
 }
 for refused in v0.1.0-beta v1.2 V1.2.3 0.1.0 sha-abc123 "sha-$(printf 'C%.0s' $(seq 40))" \
-               preview2 latest-foo "sha256-$(printf 'd%.0s' $(seq 64)).sig" ""; do
+               preview2 latest-foo "sha256-$(printf 'd%.0s' $(seq 64)).sig" \
+               "sha256-$(printf 'd%.0s' $(seq 64)).att" ""; do
   refuse_tag "tag '$refused' is refused before anything is touched" "$refused"
 done
 refuse_tag "a ci- transport tag is refused as a GHCR mirror destination" ci-x

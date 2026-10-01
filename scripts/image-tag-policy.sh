@@ -10,10 +10,13 @@
 #   sha-<40 hex>       per-commit anchor, lowercase hex
 #   ci-<...>           build:images transport tags; only on the GitLab
 #                      registry (registry.tomlawson.io), never GHCR
-#   sha256-<64 hex>.att
-#                      cosign's attestation object, named by cosign, not
-#                      us; only when the caller passes --cosign-attestation
-#                      (scripts/mirror-image.sh, which copies it to GHCR)
+#   sha256-<64 hex>    cosign v3's attestation: the OCI referrers fallback
+#                      tag, an index listing the Sigstore bundles attached
+#                      to that digest. Named by cosign, not us; only when
+#                      the caller passes --cosign-attestation
+#                      (scripts/mirror-image.sh, which copies it to GHCR).
+#                      cosign v2's sha256-<hex>.att is never written by the
+#                      pinned v3, so it is not allowed (#162).
 #
 # Usage, sourced:
 #   image_tag_check <repository> <tag> [--cosign-attestation]
@@ -45,7 +48,7 @@ image_tag_check() {
       "'$tag'" "$repo" "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" >&2
     return 1
   fi
-  if [ "$allow_att" = "--cosign-attestation" ] && [[ "$tag" =~ ^sha256-[0-9a-f]{64}\.att$ ]]; then
+  if [ "$allow_att" = "--cosign-attestation" ] && [[ "$tag" =~ ^sha256-[0-9a-f]{64}$ ]]; then
     return 0
   fi
   printf 'image-tag-policy: refused tag %s on %s: not in the allow-list (%s)\n' \
