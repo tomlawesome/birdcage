@@ -114,7 +114,8 @@ main() {
   # The one allow-list, for both ends: the name must be allowed where it is
   # read and where it lands (so a ci- transport tag never reaches GHCR).
   # --cosign-attestation because this script also copies cosign's
-  # sha256-<hex>.att object beside the image; nothing else here may.
+  # sha256-<hex> referrers tag beside the image (#162); nothing else here
+  # may.
   image_tag_check "$source_repo" "$tag" --cosign-attestation ||
     fail "refusing to mirror ${source_repo}:${tag}: the tag is not in scripts/image-tag-policy.sh's allow-list"
   image_tag_check "$dest_repo" "$tag" --cosign-attestation ||

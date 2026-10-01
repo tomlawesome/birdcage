@@ -65,11 +65,18 @@ match. `scripts/mirror-image.sh` is the shared implementation; its tests
 are `scripts/mirror-image.test.sh`.
 
 The cosign attestation `release:attest` minted is not part of the image
-manifest — cosign stores it as its own object, tagged
-`sha256-<digest-hex>.att` beside the image — so both mirror jobs copy that
+manifest. cosign v3 stores it as a Sigstore bundle attached to the digest
+as an OCI referrer, listed under the fallback tag `sha256-<digest-hex>` (no
+`.att` suffix: that was cosign v2's layout, #162). Both mirror jobs copy that
 tag too, using the same script, right after the image tag. Without it the
 countersigning workflow would find an image on GHCR with no evidence beside
 it to verify.
+
+That tag is a single index listing every referrer of the digest. The GitHub
+countersign adds its own bundle to GHCR's copy, so mirroring the same digest
+again after the countersign would overwrite GHCR's index and drop the
+countersignature. The order below (promote, then countersign) never does
+that; re-running a mirror job after a countersign would.
 
 Neither mirror job judges anything: the digest was already named by
 `release:preview` or `release:promote`, which already verified the
@@ -97,8 +104,9 @@ and no others:
 - `sha-<40 lowercase hex>` -- the per-commit anchor.
 - `ci-<pipeline id>` -- `build:images` transport tags; GitLab registry only, never
   mirrored to GHCR.
-- `sha256-<hex>.att` -- cosign's own attestation object, named by cosign;
-  only `scripts/mirror-image.sh` may copy it.
+- `sha256-<hex>` -- cosign v3's referrers fallback tag, holding the
+  attestation bundle; named by cosign; only `scripts/mirror-image.sh` may
+  copy it.
 
 Anything else is refused, exit non-zero, before a registry is touched.
 The list lives in `scripts/image-tag-policy.sh`; `publish-image.sh`,
@@ -372,13 +380,13 @@ Four things in particular to watch on the first cut:
   button. It should end up skipped once the pipeline finishes, since the
   job it needs was never played. If it instead sits pending and holds the
   pipeline open, give it its own `when: manual` and press both.
-- Whether `docker buildx imagetools create` actually copies the cosign
-  attestation object (`sha256-<digest-hex>.att`) the same way it copies the
-  image tag. It is just another manifest reference to buildx, and nothing
-  in this design depends on either registry supporting the newer OCI 1.1
-  referrers API — but this exact copy, GitLab to GHCR, has never run
-  against real registries, and if `cosign verify-attestation` finds nothing
-  on the GHCR side this is the first place to look.
+- Whether the attestation reaches GHCR intact. The first real run
+  (pipeline 1900) found no `.att` tag: cosign v3 had written the bundle as a
+  referrer under `sha256-<digest-hex>` instead (#162). Copying that tag with
+  `imagetools create --prefer-index=false`, then `cosign verify-attestation`
+  against the copy, passed on a local registry; GitLab to GHCR has not yet
+  run. If `cosign verify-attestation` finds nothing on the GHCR side, this
+  is the first place to look.
 - Setup step 4 above (GHCR package-to-repository linkage) is unverified
   until the first `preview` merge actually pushes through
   `release:mirror-preview` and the countersigning workflow is run against
