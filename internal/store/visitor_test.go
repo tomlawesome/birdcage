@@ -587,7 +587,7 @@ func TestClientForNormalises(t *testing.T) {
 		},
 		{
 			name: "a bidi override is shown as a literal escape, never reordering the text",
-			in:   "canary-‮resrever",
+			in:   "canary-\u202eresrever",
 			want: "canary-\\u202eresrever",
 		},
 		{
