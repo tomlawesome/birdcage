@@ -136,6 +136,7 @@ lapi_ready() {
   local attempt
   for attempt in $(seq 1 60); do
     if docker exec "$CROWDSEC" cscli lapi status >/dev/null 2>&1; then
+      log "$CROWDSEC answered cscli lapi status (attempt $attempt)"
       return 0
     fi
     sleep 1
