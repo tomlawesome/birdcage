@@ -190,9 +190,17 @@ func (h *handler) handleScans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, scansResponse{Scans: scans})
 }
 
-// findingsResponse is GET /api/findings' body.
+// findingsResponse is GET /api/findings' body. Agents carries one
+// store.AgentScanStatus per agent represented (keyed by agent id) --
+// issue #109's "marked stale" bullet: a dropped or failed scan leaves
+// the previous snapshot (and every finding under it) in place, but with
+// nothing fresher standing behind it. Unfiltered, every agent that has
+// ever posted a scan appears here, not only ones with open findings
+// right now, since staleness is a fact about the agent's last attempt,
+// not about any one finding.
 type findingsResponse struct {
-	Findings []store.Finding `json:"findings"`
+	Findings []store.Finding                  `json:"findings"`
+	Agents   map[string]store.AgentScanStatus `json:"agents"`
 }
 
 // handleFindings serves GET /api/findings[?agent_id=], issue #109's
@@ -204,13 +212,20 @@ type findingsResponse struct {
 // (cmd/birdcage/finding.go), not an API call, per the dashboard's
 // read-only-until-login rule (dashboardRouteSpecs' own comment).
 func (h *handler) handleFindings(w http.ResponseWriter, r *http.Request) {
-	findings, err := store.ListFindings(r.Context(), h.db, store.FindingFilter{AgentID: r.URL.Query().Get("agent_id")})
+	agentID := r.URL.Query().Get("agent_id")
+	findings, err := store.ListFindings(r.Context(), h.db, store.FindingFilter{AgentID: agentID})
 	if err != nil {
 		log.Printf("api: list findings: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, findingsResponse{Findings: findings})
+	agents, err := store.FindingsStaleness(r.Context(), h.db, agentID)
+	if err != nil {
+		log.Printf("api: findings staleness: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, findingsResponse{Findings: findings, Agents: agents})
 }
 
 // visitorsResponse is GET /api/visitors' body. NextBefore mirrors

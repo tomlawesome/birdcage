@@ -57,18 +57,18 @@ var ErrFindingNotFound = errors.New("store: finding not found")
 // Finding is one row of findings -- a standing condition, not an event:
 // see this file's package comment and ADR-0010 decision 4.
 type Finding struct {
-	ID               int64
-	AgentID          string
-	Target           string
-	VulnerabilityID  string
-	Severity         string
-	InstalledVersion string
-	FixingVersion    string
-	FirstSeen        time.Time
-	LastSeen         time.Time
-	State            FindingState
-	AcceptedBy       string
-	AcceptedAt       *time.Time
+	ID               int64        `json:"id"`
+	AgentID          string       `json:"agent_id"`
+	Target           string       `json:"target"`
+	VulnerabilityID  string       `json:"vulnerability_id"`
+	Severity         string       `json:"severity"`
+	InstalledVersion string       `json:"installed_version"`
+	FixingVersion    string       `json:"fixing_version"`
+	FirstSeen        time.Time    `json:"first_seen"`
+	LastSeen         time.Time    `json:"last_seen"`
+	State            FindingState `json:"state"`
+	AcceptedBy       string       `json:"accepted_by,omitempty"`
+	AcceptedAt       *time.Time   `json:"accepted_at,omitempty"`
 }
 
 // ObservedFinding is one entry of a posted, validated scan snapshot's
@@ -303,6 +303,75 @@ func ListFindings(ctx context.Context, database *db.DB, filter FindingFilter) ([
 	}
 	defer func() { _ = rows.Close() }()
 	return scanFindingRows(rows)
+}
+
+// AgentScanStatus is the staleness fact one agent's findings carry --
+// issue #109's "a dropped or failed scan leaves the previous snapshot
+// in place, marked stale" bullet. Stale is true exactly when the
+// agent's most recently received scan_snapshots row is a failed scan:
+// there is no fresher successful finding set standing behind whatever
+// is on record, so it is shown as unconfirmed rather than silently
+// treated as current. LastOKScan is that agent's most recently
+// received ok scan's ReceivedAt, nil if it has never completed one.
+//
+// Deliberately not a time-based threshold ("no scan in N hours") --
+// that is a ranking/exposure call (#110's own ground, ADR-0010 decision
+// 6), not this store's. This is the smallest fact the issue's own
+// wording asks for: whether the most recent attempt succeeded.
+type AgentScanStatus struct {
+	Stale      bool       `json:"stale"`
+	LastOKScan *time.Time `json:"last_ok_scan,omitempty"`
+}
+
+// FindingsStaleness computes AgentScanStatus for every agent that has
+// at least one scan_snapshots row, or for a single agentID when given.
+// It loads every snapshot (ListScanSnapshots' existing "whole fleet"
+// shape -- #108's own scan_snapshots table has no per-agent filter, and
+// this schema's fleets are small, same reasoning scanrun.go's
+// listScanRuns gives for loading a node's runs whole) and finds each
+// agent's most recent row and most recent ok row by comparing parsed
+// ReceivedAt values in Go, never by SQL ordering on the stored text --
+// the same trap 0010_canary_state_periods.sql's own comment and
+// RevokeCanaryTokensSupersededBy warn about.
+func FindingsStaleness(ctx context.Context, database *db.DB, agentID string) (map[string]AgentScanStatus, error) {
+	snapshots, err := ListScanSnapshots(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("findings staleness: %w", err)
+	}
+
+	type latest struct {
+		any *ScanSnapshot
+		ok  *ScanSnapshot
+	}
+	byAgent := make(map[string]*latest)
+	for i := range snapshots {
+		s := &snapshots[i]
+		if agentID != "" && s.CanaryID != agentID {
+			continue
+		}
+		l, ok := byAgent[s.CanaryID]
+		if !ok {
+			l = &latest{}
+			byAgent[s.CanaryID] = l
+		}
+		if l.any == nil || s.ReceivedAt.After(l.any.ReceivedAt) {
+			l.any = s
+		}
+		if s.Status == ScanStatusOK && (l.ok == nil || s.ReceivedAt.After(l.ok.ReceivedAt)) {
+			l.ok = s
+		}
+	}
+
+	out := make(map[string]AgentScanStatus, len(byAgent))
+	for agent, l := range byAgent {
+		status := AgentScanStatus{Stale: l.any.Status == ScanStatusFailed}
+		if l.ok != nil {
+			t := l.ok.ReceivedAt
+			status.LastOKScan = &t
+		}
+		out[agent] = status
+	}
+	return out, nil
 }
 
 // findingsForAgent loads every finding row for agentID, whatever its

@@ -176,28 +176,16 @@ func TestApplyFindingSnapshotAcceptedThenRemovedStillResolves(t *testing.T) {
 	})
 }
 
-// TestApplyFindingSnapshotDroppedScanNeverResolves is the issue's fourth
-// acceptance bullet in its store-layer half: "a dropped or failed scan
-// leaves the previous snapshot in place ... and never reports findings
-// as resolved." internal/ingest only calls ApplyFindingSnapshot for a
-// status-ok snapshot (scans.go's storeScan); this proves the store side
-// of that contract -- simply never calling it leaves every existing
-// finding exactly as it was, which is what internal/ingest relies on.
-func TestApplyFindingSnapshotDroppedScanNeverResolves(t *testing.T) {
-	forEachEngine(t, func(t *testing.T, database *db.DB) {
-		t1 := mustParse(t, "2026-01-01T00:00:00Z")
-		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
-
-		// A failed/dropped scan: the caller simply does not call
-		// ApplyFindingSnapshot at all (see internal/ingest/scans.go).
-		// Nothing here to call; assert the prior state is untouched.
-		findings := listFindings(t, database, "scanner-a")
-		f := findByVuln(t, findings, "CVE-2014-0160")
-		if f.State != FindingOpen || !f.LastSeen.Equal(t1) {
-			t.Errorf("finding mutated with no ApplyFindingSnapshot call: %+v", f)
-		}
-	})
-}
+// The issue's fourth acceptance bullet in its store-layer half -- "a
+// dropped or failed scan leaves the previous snapshot in place ... and
+// never reports findings as resolved" -- has no store-level test of its
+// own: ApplyFindingSnapshot has no "failed" input to give it (it is the
+// caller's job never to call it for one, per its own doc comment), so a
+// test that calls it once and then asserts nothing changed without
+// calling anything else cannot fail and proves nothing.
+// TestHandleScanFailedScanNeverResolvesFindings (internal/ingest/
+// scans_test.go) is the real coverage: it drives a failed scan through
+// the actual handler and proves the findings underneath are untouched.
 
 // TestApplyFindingSnapshotFixedFindingReopensOnReturn covers the one
 // transition the issue's own acceptance bullets do not name: a finding
@@ -300,4 +288,102 @@ func TestBuildFindingTarget(t *testing.T) {
 	if got := BuildFindingTarget("deb", "openssl"); got != "deb:openssl" {
 		t.Errorf("BuildFindingTarget(deb, openssl) = %q, want deb:openssl", got)
 	}
+}
+
+// TestFindingsStalenessFollowsTheMostRecentScan is issue #109's "marked
+// stale" bullet: a dropped or failed scan leaves the previous findings
+// in place but with nothing fresher behind them. ok -> not stale, then
+// failed -> stale with the findings themselves untouched and
+// LastOKScan still naming the earlier ok scan, then a fresh ok -> not
+// stale again with LastOKScan moved forward.
+func TestFindingsStalenessFollowsTheMostRecentScan(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t1 := mustParse(t, "2026-01-01T00:00:00Z")
+		recordScanSnapshot(t, database, ScanSnapshot{
+			CanaryID: "scanner-a", TakenAt: t1, ReceivedAt: t1, EngineName: "grype", EngineVersion: "v1",
+			Status: ScanStatusOK, FindingCount: 1,
+		})
+		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
+
+		status := findingsStaleness(t, database, "scanner-a")
+		if status.Stale {
+			t.Errorf("Stale = true right after an ok scan, want false")
+		}
+		if status.LastOKScan == nil || !status.LastOKScan.Equal(t1) {
+			t.Errorf("LastOKScan = %v, want %v", status.LastOKScan, t1)
+		}
+
+		t2 := mustParse(t, "2026-01-02T00:00:00Z")
+		recordScanSnapshot(t, database, ScanSnapshot{
+			CanaryID: "scanner-a", TakenAt: t2, ReceivedAt: t2, Status: ScanStatusFailed, Reason: "db stale",
+		})
+		// No ApplyFindingSnapshot call -- matching internal/ingest's own
+		// storeScan, which only calls it for status ok.
+
+		status = findingsStaleness(t, database, "scanner-a")
+		if !status.Stale {
+			t.Errorf("Stale = false after a failed scan, want true")
+		}
+		if status.LastOKScan == nil || !status.LastOKScan.Equal(t1) {
+			t.Errorf("LastOKScan after a failed scan = %v, want still %v (the last ok one)", status.LastOKScan, t1)
+		}
+		f := findByVuln(t, listFindings(t, database, "scanner-a"), opensslFinding.VulnerabilityID)
+		if f.State != FindingOpen || !f.LastSeen.Equal(t1) {
+			t.Errorf("finding mutated by a failed scan: %+v", f)
+		}
+
+		t3 := mustParse(t, "2026-01-03T00:00:00Z")
+		recordScanSnapshot(t, database, ScanSnapshot{
+			CanaryID: "scanner-a", TakenAt: t3, ReceivedAt: t3, EngineName: "grype", EngineVersion: "v1",
+			Status: ScanStatusOK, FindingCount: 1,
+		})
+		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t3)
+
+		status = findingsStaleness(t, database, "scanner-a")
+		if status.Stale {
+			t.Errorf("Stale = true after a fresh ok scan, want false")
+		}
+		if status.LastOKScan == nil || !status.LastOKScan.Equal(t3) {
+			t.Errorf("LastOKScan after the fresh ok scan = %v, want %v", status.LastOKScan, t3)
+		}
+	})
+}
+
+// TestFindingsStalenessScopedPerAgent proves one agent's failed scan
+// never marks another agent stale.
+func TestFindingsStalenessScopedPerAgent(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t1 := mustParse(t, "2026-01-01T00:00:00Z")
+		recordScanSnapshot(t, database, ScanSnapshot{
+			CanaryID: "scanner-a", TakenAt: t1, ReceivedAt: t1, Status: ScanStatusFailed, Reason: "x",
+		})
+		recordScanSnapshot(t, database, ScanSnapshot{
+			CanaryID: "scanner-b", TakenAt: t1, ReceivedAt: t1, EngineName: "grype", EngineVersion: "v1",
+			Status: ScanStatusOK, FindingCount: 0,
+		})
+
+		all, err := FindingsStaleness(context.Background(), database, "")
+		if err != nil {
+			t.Fatalf("FindingsStaleness: %v", err)
+		}
+		if !all["scanner-a"].Stale {
+			t.Errorf("scanner-a Stale = false, want true")
+		}
+		if all["scanner-b"].Stale {
+			t.Errorf("scanner-b Stale = true, want false (its own scan was ok)")
+		}
+	})
+}
+
+func findingsStaleness(t *testing.T, database *db.DB, agentID string) AgentScanStatus {
+	t.Helper()
+	all, err := FindingsStaleness(context.Background(), database, agentID)
+	if err != nil {
+		t.Fatalf("FindingsStaleness: %v", err)
+	}
+	status, ok := all[agentID]
+	if !ok {
+		t.Fatalf("FindingsStaleness has no entry for %q: %+v", agentID, all)
+	}
+	return status
 }
