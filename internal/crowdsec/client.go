@@ -60,7 +60,17 @@ const (
 	decisionType   = "ban"
 	decisionScope  = "ip"
 	alertKind      = "cscli"
-	userAgent      = "birdcage"
+	// userAgent must split into exactly two parts on "/": the LAPI's
+	// watcher-login Authenticator (pkg/apiserver/middlewares/v1/jwt.go,
+	// v1.8.1) does `strings.Split(UserAgent(), "/")` after the password
+	// has already checked out, and if that is not a 2-element slice it
+	// logs "bad user agent" and fails the login with the same
+	// jwt.ErrFailedAuthentication a wrong password gets -- indistinguishable
+	// from a bad credential in the 401 birdcage receives. A bare
+	// "birdcage" (no slash) always took this path; found by reproducing
+	// the e2e failure directly against a real LAPI, not from reading the
+	// error message alone.
+	userAgent = "birdcage/1"
 )
 
 // LAPIError is an answer from the LAPI that was not the one wanted:

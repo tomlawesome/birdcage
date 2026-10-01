@@ -44,11 +44,12 @@ type fakeLAPI struct {
 }
 
 type recordedRequest struct {
-	Method string
-	Path   string
-	Query  string
-	Auth   string
-	Body   []byte
+	Method    string
+	Path      string
+	Query     string
+	Auth      string
+	UserAgent string
+	Body      []byte
 }
 
 func newFakeLAPI(t *testing.T) (*fakeLAPI, *httptest.Server) {
@@ -66,7 +67,7 @@ func newFakeLAPI(t *testing.T) (*fakeLAPI, *httptest.Server) {
 func (f *fakeLAPI) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), Body: body})
+	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), UserAgent: r.Header.Get("User-Agent"), Body: body})
 	f.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -86,6 +87,18 @@ func (f *fakeLAPI) serve(w http.ResponseWriter, r *http.Request) {
 		if in.MachineID != "birdcage" || in.Password != f.password {
 			w.WriteHeader(401)
 			_, _ = fmt.Fprintf(w, `{"code":401,"message":"incorrect Username or Password: %s"}`, in.Password)
+			return
+		}
+		// Mirrors the real LAPI's watcher-login Authenticator
+		// (pkg/apiserver/middlewares/v1/jwt.go, v1.8.1): a User-Agent
+		// that does not split into exactly two "/"-separated parts
+		// fails the same jwt.ErrFailedAuthentication a wrong password
+		// does, as a *separate* check after the credential match. A
+		// fake that skipped this let client.go ship a bare "birdcage"
+		// User-Agent (no slash) that only a real LAPI rejected.
+		if len(strings.Split(r.Header.Get("User-Agent"), "/")) != 2 {
+			w.WriteHeader(401)
+			_, _ = fmt.Fprintf(w, `{"code":401,"message":"incorrect Username or Password: bad user agent %q"}`, r.Header.Get("User-Agent"))
 			return
 		}
 		_, _ = fmt.Fprintf(w, `{"code":200,"expire":"%s","token":"%s"}`, time.Now().Add(time.Hour).Format(time.RFC3339), f.token)
@@ -214,6 +227,17 @@ func TestBlockAddsAPermanentBanLikeCscli(t *testing.T) {
 			if c.Auth != "Bearer "+f.token {
 				t.Errorf("%s %s sent Authorization %q", c.Method, c.Path, c.Auth)
 			}
+		}
+
+		// The real LAPI's watcher-login Authenticator fails a
+		// credential that is otherwise correct if the User-Agent does
+		// not split into exactly two "/"-separated parts
+		// (pkg/apiserver/middlewares/v1/jwt.go, v1.8.1) -- the fake
+		// above enforces the same thing, so this only passes because
+		// login did. Asserted explicitly too, so a regression names
+		// itself rather than surfacing as "login failed".
+		if parts := strings.Split(calls[0].UserAgent, "/"); len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			t.Errorf("login User-Agent = %q, want exactly one \"/\" with text on both sides (a real LAPI 401s otherwise)", calls[0].UserAgent)
 		}
 
 		// The payload is the one cscli decisions add sends, field for
