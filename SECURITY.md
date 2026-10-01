@@ -342,16 +342,20 @@ only at the point that text is displayed, per surface:
   | `/api/canary`              | GET    | requireAuth seam, pending #8  |
   | `/api/canaries/{id}/runs`  | GET    | requireAuth seam, pending #8  |
   | `/api/scans`               | GET    | requireAuth seam, pending #8  |
+  | `/api/findings`            | GET    | requireAuth seam, pending #8  |
   | `/api/visitors`            | GET    | requireAuth seam, pending #8  |
   | `/api/trace`               | GET    | requireAuth seam, pending #8  |
   | `/api/stream`              | GET    | requireAuth seam, pending #8  |
   | `/api/history`             | GET    | requireAuth seam, pending #8  |
   | `/api/mail`                | GET    | requireAuth seam, pending #8  |
 
-  `/api/scans` is the one to weigh first when deciding who may reach
-  the listener: it returns every registered scanner's findings -- the
-  CVEs present on each scanned host and their exposure tier -- which is
-  a map of the fleet's weak points to anyone who can fetch it.
+  `/api/findings` is the one to weigh first when deciding who may reach
+  the listener: it returns every agent's standing findings store (issue
+  #109) -- the CVEs present on each scanned host, their state (open,
+  operator-accepted, fixed) and the version that fixes them -- which is
+  a map of the fleet's weak points to anyone who can fetch it. `/api/scans`
+  is the lesser version of the same exposure: receipts and counts, not
+  finding bodies, for every scan birdcage has recorded.
   `internal/api/api.go`'s `dashboardRouteSpecs` is the list this table
   mirrors, and `TestSecurityDocListsEveryDashboardRoute` fails when a
   route is registered there without a row here.
