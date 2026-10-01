@@ -111,6 +111,7 @@ of it by this issue.
 | `e2e:poisoner` | #86: the real Responder fixture answering a real canary's real bait lookups, proving a poisoner alert reaches birdcage and the canary never connects to the address it was offered. #124 widens the same job rather than adding a second one: it also pushes a live settings change (the segment profile, via `birdcage agent settings set`) and proves it reaches the already-running canary within one heartbeat -- no container restart, and the bait lookups actually stop -- since that push has nothing to prove without this job's already-baiting canary and fixture. |
 | `e2e:postgres-requires-tls` | #84's refusal, watched fire against the real binary. Needs no Postgres server, so it is cheap enough for every merge request. |
 | `e2e:scanner` | Nightjar's own host-mount covering (#108) is enforced by the agent, not only by the printed command -- a regression there is a real exposure, not a cosmetic one. |
+| `e2e:crowdsec` | ADR-0014 (#4): the real `birdcage crowdsec add` against a real CrowdSec Local API (the official image, pinned by digest, over TLS), and CrowdSec itself asked what it holds afterwards. This is the one check that can disagree with our reading of the LAPI's API; the unit tests run against a fake we wrote. It also proves every refusal -- the never-block floor, CrowdSec's own allowlist, a wrong CA, an `http://` URL, a wrong password -- leaves nothing on the LAPI, which is what makes birdcage safe to hand a credential that could, on the CrowdSec side, do more than add. |
 
 ## Hop 2 -- entering and sitting on `preview` and `main`
 
@@ -126,6 +127,7 @@ only for `enrol-and-hit`.
 | `e2e:dashboard-own-ca:postgres` | As above. |
 | `e2e:mail:postgres` | More than "as above", for the reason `e2e:smb-lure:postgres` gives: every assertion reads `mail_outbox` -- sent or not, attempts, the scrubbed error, what is still owed -- and the fleet-wide hourly cap counts those rows with an engine-specific time comparison. |
 | `e2e:scanner:postgres` | As above -- migration 0014's `scan_snapshots` table has a Postgres variant, and the difference worth catching is in how the receipt is written, not in how Nightjar scans. |
+| `e2e:crowdsec:postgres` | As above -- every assertion about what birdcage did is a read of `audit_log`, so the engine is in the path being tested, not beside it. |
 | `test:smoke:safari` | Browser coverage widens here (#83): Safari (WebKit in Playwright) is worth a release pipeline and not worth every branch. `test:smoke` itself stays at hop 1 too -- this adds to it, nothing moved off Firefox. |
 | `test:smoke:edge` | As above, Edge (Chromium with the `msedge` channel). |
 | `test:smoke:postgres` | #81: the same seeded story, the same journeys, against Postgres instead of a fresh SQLite file -- the same "storage engine, not detection" reasoning as the `e2e:*:postgres` rows above. Firefox stays the bar; this widens the database, not the browser. |
