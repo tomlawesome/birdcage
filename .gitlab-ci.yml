@@ -211,6 +211,11 @@ lint:ci:
     # something fails red when it is undone.
     - python3 scripts/ci-release-guard.py
     - scripts/ci-release-guard.test.sh
+    # Every `uses:` pin in .github/workflows/*.yml is recorded, reviewed
+    # and matches its inline version comment (#27). supply-chain/action-pins.json
+    # is the record; this is the check that it is still true.
+    - python3 scripts/action-pins-check.py
+    - scripts/action-pins-check.test.sh
 
 # ---------------------------------------------------------------------------
 # Every scripts/*.test.sh, in one job (#100). Before this, three of the

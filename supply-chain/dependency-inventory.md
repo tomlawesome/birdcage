@@ -313,6 +313,13 @@ review's brief:
 | 209 | `github/codeql-action/analyze` | v4.37.6 (same commit as above -- both `init` and `analyze` come from the same action release) | v4.38.1, same gap as the row above. | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- GitHub Actions mirror pipeline only | Predates the rule -- not individually recorded |
 | 210 | `actions/dependency-review-action` | v5.0.0 (commit `a1d282b...`) | v5.0.0 -- already current (GitHub releases API, verified). | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- GitHub Actions mirror pipeline only | Predates the rule -- not individually recorded |
 
+Every `uses:` pin above (and `actions/checkout` in `countersign.yml`, row 220) is
+also recorded in `supply-chain/action-pins.json` -- issue #27's adoption of
+orbit's supply-chain-policy shape, which records *when* a pin was last
+reviewed, not only that it is pinned. `scripts/action-pins-check.py`, run in
+`lint:ci`, fails if a `uses:` pin is unrecorded, not a full commit SHA, or
+disagrees with its recorded version.
+
 ### H. Found in this review but missing from the issue #73 table (2026-09-20 comment) -- `.gitlab-ci.yml` and `.github/workflows/countersign.yml`
 
 The 2026-09-20 table covered `.gitlab-ci.yml`'s `image:` and `services:` lines fairly completely, but missed several packages fetched inline inside job scripts, one CI image, and a whole GitHub Actions workflow file that did not exist (or was not read) at review time. Numbering continues from 211.
