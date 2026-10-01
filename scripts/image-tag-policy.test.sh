@@ -50,10 +50,14 @@ assert_refused "ci-1234 is refused on any other registry" "registry.example.com/
 assert_refused "a bare ci- with nothing after it is refused" "$gitlab" ci-
 
 # --- cosign attestation objects: only when the caller opts in ---------------
-assert_allowed "sha256-<hex>.att is allowed with --cosign-attestation" "$ghcr" "sha256-${hex64}.att" --cosign-attestation
-assert_refused "sha256-<hex>.att is refused without --cosign-attestation" "$ghcr" "sha256-${hex64}.att"
+# cosign v3 lists its bundle under the referrers fallback tag sha256-<hex>
+# (#162); v2's .att and .sig names are never written, so never allowed.
+assert_allowed "sha256-<hex> is allowed with --cosign-attestation" "$ghcr" "sha256-${hex64}" --cosign-attestation
+assert_refused "sha256-<hex> is refused without --cosign-attestation" "$ghcr" "sha256-${hex64}"
+assert_refused "sha256-<hex>.att is refused even with --cosign-attestation" "$ghcr" "sha256-${hex64}.att" --cosign-attestation
 assert_refused "sha256-<hex>.sig is refused even with --cosign-attestation" "$ghcr" "sha256-${hex64}.sig" --cosign-attestation
-assert_refused "sha256-<short hex>.att is refused" "$ghcr" "sha256-abc.att" --cosign-attestation
+assert_refused "sha256-<short hex> is refused" "$ghcr" "sha256-abc" --cosign-attestation
+assert_refused "sha256-<uppercase hex> is refused" "$ghcr" "sha256-${hex64^^}" --cosign-attestation
 
 # --- representative bad names are refused -----------------------------------
 for tag in v0.1.0-beta v0.1.0-rc.1 v1.2 V1.2.3 0.1.0 v0.1.0+abc v1.2.3.4 \
