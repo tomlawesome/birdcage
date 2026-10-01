@@ -23,6 +23,8 @@ scripts/licence-check-python.sh
 scripts/licence-check-python.py
 supply-chain/licence-policy.yml
 scripts/agent-deps-check.sh
+scripts/action-pins-check.py
+supply-chain/action-pins.json
 supply-chain/policy-files.txt
 
 # The release path (#90). Everything below decides whether a built artefact

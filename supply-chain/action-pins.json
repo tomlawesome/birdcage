@@ -1,0 +1,43 @@
+{
+  "_comment": "Policy for every `uses:` pin in .github/workflows/*.yml (issue #27). Shape adopted from tomlawesome/orbit's .github/supply-chain-policy.json: each pin is recorded by commit, not just pinned by commit, so a reviewer can tell what a pin is and when someone last looked at it. Read by scripts/action-pins-check.py, run in lint:ci. Each entry's version/licence was verified against the action's own GitHub repository at the pinned commit on 2026-10-01 (tag lookup + /license endpoint), not invented.",
+  "schemaVersion": 1,
+  "actions": [
+    {
+      "name": "actions/checkout",
+      "commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "version": "v7.0.1",
+      "licence": "MIT",
+      "source": "https://github.com/actions/checkout",
+      "updateOwner": "Birdcage maintainers",
+      "reviewBy": "2027-01-01"
+    },
+    {
+      "name": "github/codeql-action/init",
+      "commit": "2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2",
+      "version": "v4.38.2",
+      "licence": "MIT",
+      "source": "https://github.com/github/codeql-action",
+      "updateOwner": "Birdcage maintainers",
+      "reviewBy": "2027-01-01"
+    },
+    {
+      "name": "github/codeql-action/analyze",
+      "commit": "2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2",
+      "version": "v4.38.2",
+      "licence": "MIT",
+      "source": "https://github.com/github/codeql-action",
+      "updateOwner": "Birdcage maintainers",
+      "reviewBy": "2027-01-01"
+    },
+    {
+      "name": "actions/dependency-review-action",
+      "commit": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+      "version": "v5.0.0",
+      "licence": "MIT",
+      "source": "https://github.com/actions/dependency-review-action",
+      "updateOwner": "Birdcage maintainers",
+      "reviewBy": "2027-01-01"
+    }
+  ],
+  "exceptions": []
+}
