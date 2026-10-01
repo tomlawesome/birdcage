@@ -144,7 +144,7 @@ Known-good shapes this design copies:
   without a cron job on the CrowdSec host (above), so the credential
   birdcage holds is instead made as narrow as CrowdSec permits and its
   one capability birdcage must not use (delete) is absent from
-  birdcage's code by construction -- see the contested point below.
+  birdcage's code by construction -- see the accepted risk below.
 
 Known-bad shapes this design refuses:
 
@@ -216,7 +216,7 @@ outside birdcage, which is the owner's stated reason for the lean: an
 attacker who takes over birdcage's functionality cannot unblock
 themselves through it.
 
-*Contested, recorded, not resolved here:* the machine credential
+*Accepted risk (owner, 2026-10-01, #4):* the machine credential
 birdcage holds is not add-only on the CrowdSec side; CrowdSec has no
 such credential. An attacker who steals the password file (not merely
 birdcage's functionality) can delete decisions with it. Two mitigations
@@ -228,9 +228,8 @@ and give birdcage its own machine (never the LAPI's local one), so the
 credential can be revoked alone. The alternative that would make
 add-only a CrowdSec property -- birdcage publishes a list, a cron job on
 the CrowdSec host imports it, birdcage holds at most a read-only bouncer
-key to confirm -- is a different owner decision from the one on #5 and
-is left for the owner; if taken, it replaces `internal/crowdsec`'s
-client and keeps the floor check, audit rows and CLI as they are.
+key to confirm -- was offered and declined: the owner accepts the credential with the
+two mitigations above.
 
 **4. Never expires, as far as CrowdSec can express it.** CrowdSec
 requires a duration; birdcage sends `876000h` (one hundred years).
@@ -270,7 +269,10 @@ failure silently, and it never suppresses the error.
 | the LAPI | birdcage | its TLS server certificate, verified against the system roots or `BIRDCAGE_CROWDSEC_CA_FILE` (a PEM bundle, for the private CA most self-hosted LAPIs use) | the CA file is a mounted read-only file |
 
 `BIRDCAGE_CROWDSEC_LAPI_URL` must be `https://`; `http://` is refused,
-as is a URL carrying userinfo, a query or a fragment. TLS 1.2 minimum,
+as is a URL carrying userinfo, a query or a fragment. This holds on a
+private Docker network too (owner, 2026-10-01, #4): birdcage cannot see
+who else shares the network, and any other container on it could
+intercept the password. TLS 1.2 minimum,
 HTTP/1.1 only (as `internal/agent/enrol/transport.go` already does),
 10-second dial, handshake, header and per-call timeouts, response bodies
 bounded at 64 KiB. The configuration is all-or-nothing like the
@@ -340,7 +342,7 @@ it is listed for the owner in `AGENTS.md` under CI-only tools.
 - TLS client-certificate authentication to the LAPI (birdcage has a CA
   that could issue one). It would remove the password but hands the
   LAPI a whole CA to trust, and a machine authenticated that way still
-  has every machine right; no gain on the contested point.
+  has every machine right; no gain on the accepted risk.
 - The RouterOS pull list and its allow list. #5.
 - Retries, queues and reconciliation. A one-shot CLI reports its
   failure to the operator who ran it.
@@ -355,7 +357,7 @@ it is listed for the owner in `AGENTS.md` under CI-only tools.
 - The operator must register a machine for birdcage on the CrowdSec
   host (`cscli machines add birdcage --password ... -f /dev/null`) and
   put the LAPI behind TLS. Both steps are in `docs/configuration.md`.
-- The contested point in decision 3 stays on #4 for the owner, with the
-  pull alternative spelled out, and is not quietly resolved here.
+- Decision 3's delete-capable credential is an accepted risk (owner,
+  2026-10-01, #4); the pull alternative was declined.
 - #6, when it arrives, calls `internal/crowdsec.Blocker.Block` with its
   own `triggered_by`; nothing in this ADR needs reopening for that.

@@ -592,6 +592,10 @@ is exactly the shape this refuses. Put the LAPI behind TLS
 certificate is from a private CA, hand birdcage that CA with
 `BIRDCAGE_CROWDSEC_CA_FILE`.
 
+This holds on a private Docker network too. Birdcage cannot see who
+else shares that network, and any other container on it could pick up
+the password in transit.
+
 ### The password file
 
 The password is read only from a file, for the reason given under
