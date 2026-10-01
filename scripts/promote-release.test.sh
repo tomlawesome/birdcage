@@ -37,6 +37,23 @@ version="$("$here/release-version.sh")"
 tag="$("$here/release-version.sh" --tag)"
 stamp="$("$here/release-version.sh" --stamp "$commit")"
 
+# #161: the real create_version_tag, against a docker that only records its arguments.
+# Without --prefer-index=false, imagetools create wraps a single image
+# manifest in a new index with a new digest, so the tag lands on an
+# unsigned wrapper instead of the signed digest. Checked here, before the
+# stub below replaces the function.
+# shellcheck disable=SC2317  # called by the real function below
+docker() { printf '%s\n' "$@" > "$work/docker.args"; }
+# shellcheck disable=SC2218  # defined by the sourced script; the stub comes later
+create_version_tag "$repo" "$tag" "$digest_ok"
+if grep -qx -- '--prefer-index=false' "$work/docker.args"; then
+  ok "create_version_tag copies the manifest as-is (--prefer-index=false), never wraps it"
+else
+  bad "create_version_tag copies the manifest as-is (--prefer-index=false), never wraps it" "docker args: $(tr '\n' ' ' < "$work/docker.args")"
+fi
+unset -f docker
+rm -f "$work/docker.args"
+
 # default_stubs -- the happy-path fixture wiring shared by most cases:
 #   - the anchor tag (repo:sha-<commit>) always resolves to digest_ok
 #   - the version tag (repo:<tag>) resolves only once create_version_tag has

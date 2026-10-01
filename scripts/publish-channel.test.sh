@@ -32,6 +32,23 @@ other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
 commit="$(printf 'b%.0s' $(seq 40))"
 tag="preview"
 
+# #161: the real create_channel_tag, against a docker that only records its arguments.
+# Without --prefer-index=false, imagetools create wraps a single image
+# manifest in a new index with a new digest, so the tag lands on an
+# unsigned wrapper instead of the signed digest. Checked here, before the
+# stub below replaces the function.
+# shellcheck disable=SC2317  # called by the real function below
+docker() { printf '%s\n' "$@" > "$work/docker.args"; }
+# shellcheck disable=SC2218  # defined by the sourced script; the stub comes later
+create_channel_tag "$repo" "$tag" "$digest"
+if grep -qx -- '--prefer-index=false' "$work/docker.args"; then
+  ok "create_channel_tag copies the manifest as-is (--prefer-index=false), never wraps it"
+else
+  bad "create_channel_tag copies the manifest as-is (--prefer-index=false), never wraps it" "docker args: $(tr '\n' ' ' < "$work/docker.args")"
+fi
+unset -f docker
+rm -f "$work/docker.args"
+
 # Stub configuration, read by the stubs below each time main() calls them.
 STUB_VERIFIER_RC=0
 STUB_CREATE_RC=0
