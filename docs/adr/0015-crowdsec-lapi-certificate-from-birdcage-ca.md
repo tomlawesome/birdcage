@@ -1,6 +1,10 @@
 # ADR-0015: Birdcage issues the CrowdSec LAPI's TLS certificate from its own root CA, server-auth only, one year, written once to the LAPI's own storage
 
-**Status:** Accepted
+**Status:** Proposed -- held for #166 (owner, 2026-10-02). The owner
+ruled out any server-side key file: the key is made in memory, offered
+once as a dashboard download, then wiped. Decisions 2 and 4 (the
+`--out` command) are void; the rest is the starting point once login
+(#8) exists. Not to be built from as it stands.
 **Date:** 2026-10-02
 **Relates to:** #163 (this feature), #4 (CrowdSec integration; owner
 answers 2a and 4a, 2026-10-01), #150 (CA rotation; owner ruling
@@ -414,12 +418,12 @@ whole of the new code is `crypto/x509`, `crypto/ecdsa`, `encoding/pem`,
 - The e2e stack runs two LAPI containers on the `big` lane; the second
   exists only to present a certificate birdcage did not issue.
 
-## Owner decision
+## Owner decisions after this draft
 
-**Birdcage writes the LAPI's private key to `--out` (decision 4).**
-#62's rule ("exactly one private key exists as a file on the birdcage
-host: the CA's") is about birdcage's own keys. The owner confirmed
-option (a) on 2026-10-02 (#163): `--out <dir>` writes `lapi-key.pem`
-`0600` atomically, refuses to overwrite without `--replace`, refuses
-the CA directory and keeps no copy. Printing the key to stdout, and
-declining #163, were the alternatives.
+- 2026-10-02 (#163, 12a then 13a/13b/14): no `--out` command and no
+  key file on the server. Birdcage generates the key in memory,
+  offers it once as a dashboard download to the operator's computer,
+  then wipes it. The revision must say what "wiped" promises in Go:
+  buffers birdcage owns are zeroed; transient copies by the garbage
+  collector or TLS write buffers cannot be ruled out.
+- 2026-10-02 (15a): #163 folded into #166, held until login (#8).
