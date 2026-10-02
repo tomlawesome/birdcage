@@ -1,6 +1,6 @@
 # ADR-0015: Birdcage issues the CrowdSec LAPI's TLS certificate from its own root CA, server-auth only, one year, written once to the LAPI's own storage
 
-**Status:** Proposed (one owner question, below; everything else is decided)
+**Status:** Accepted
 **Date:** 2026-10-02
 **Relates to:** #163 (this feature), #4 (CrowdSec integration; owner
 answers 2a and 4a, 2026-10-01), #150 (CA rotation; owner ruling
@@ -414,26 +414,12 @@ whole of the new code is `crypto/x509`, `crypto/ecdsa`, `encoding/pem`,
 - The e2e stack runs two LAPI containers on the `big` lane; the second
   exists only to present a certificate birdcage did not issue.
 
-## Open question for the owner
+## Owner decision
 
-**Q1. Birdcage writing the LAPI's private key to `--out` (decision
-4).** #62's rule is "exactly one private key exists as a file on the
-birdcage host: the CA's". Decision 4 reads that as a rule about
-birdcage's own keys, and writes the LAPI's key once, to the LAPI's
-storage, keeping nothing. Options:
-
-- **a. As decided above (recommended).** `--out <dir>` writes
-  `lapi-key.pem` `0600` atomically, refuses to overwrite without
-  `--replace`, refuses the CA directory, keeps no copy. The operator's
-  Compose example mounts the CrowdSec TLS volume for the one command,
-  so the key never sits in birdcage's own volume.
-- **b. Print the PEM to stdout, write nothing.** Birdcage's process
-  never writes a key file; the operator redirects. The key then passes
-  through a terminal and is created with the operator's umask (often
-  `0644` for a moment), and the "one command" becomes a redirect plus
-  two `chmod`s. Worse in practice, cleaner on paper.
-- **c. Neither; the operator keeps making the certificate by hand**,
-  which is today, and #163 closes as declined.
-
-If **a** is confirmed, this ADR's status becomes Accepted with no
-other change.
+**Birdcage writes the LAPI's private key to `--out` (decision 4).**
+#62's rule ("exactly one private key exists as a file on the birdcage
+host: the CA's") is about birdcage's own keys. The owner confirmed
+option (a) on 2026-10-02 (#163): `--out <dir>` writes `lapi-key.pem`
+`0600` atomically, refuses to overwrite without `--replace`, refuses
+the CA directory and keeps no copy. Printing the key to stdout, and
+declining #163, were the alternatives.
