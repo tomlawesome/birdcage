@@ -181,3 +181,9 @@ kept current in the private fixtures project on GitLab
 `.gitlab-ci.yml` is the whole of what lives in this repository, and
 moving it is the version check. Never a Dockerfile, entrypoint or run
 recipe for such a tool here, not even under `build/e2e-*`.
+
+## Frontend in a worktree
+
+Run `npm ci` in a worktree's `frontend/`; never symlink `node_modules`
+from another checkout. Vitest resolves through the link and fails
+(owner, 2026-10-01).
