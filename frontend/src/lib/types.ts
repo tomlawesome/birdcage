@@ -258,6 +258,10 @@ export interface Visitor {
   canaries: VisitorCanaryHits[]
   services: string[]
   tried: string[]
+  /** What this visitor's HTTP/SSH hits said they were (#143: USERAGENT /
+   * REMOTEVERSION) -- deduped, empties skipped, first four in time order,
+   * the same shape as tried. Empty for a visitor with no http or ssh hits. */
+  clients: string[]
   /** Present only for a visitor with a poisoner hit (#86 slice D): what it
    * claimed to be, over which of the three bait protocols, and its hardware
    * address if the canary's neighbour table had one. Absent for every other
@@ -279,6 +283,9 @@ export interface TraceHit {
   kind: VisitorKind
   service: string
   tried: string
+  /** What this one hit said it was (#143: USERAGENT / REMOTEVERSION), or
+   * "" for a service with no client field, or an absent/odd/sentinel value. */
+  client: string
 }
 
 /** GET /api/trace's per-canary shape (issue #35). */

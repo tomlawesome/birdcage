@@ -63,6 +63,21 @@ describe('the four round-7 scenes', () => {
     expect(sub).toContain('Nothing here blocks: lookback in mikroview ▸ to act.')
   })
 
+  it('visited sentence says what the hit called itself', () => {
+    const input = sceneInput('night')
+    const scene = canaryScene(input)
+    if (scene.kind !== 'visited') throw new Error('expected a visited scene')
+    // Mutate the exact TraceHit canaryScene picked, by identity, rather
+    // than re-deriving "the telnet hit at 22:01" -- the fixture's own
+    // shape is canaryScene's to decide, not this test's to re-guess.
+    scene.hit.client = 'curl/8.5.0'
+    const subSegments = canarySentence(input).sub
+    expect(plainText(subSegments)).toContain('Said it was curl/8.5.0.')
+    const clientSeg = subSegments.find((s) => s.cls === 'client')
+    expect(clientSeg?.text).toBe('curl/8.5.0')
+    expect(clientSeg?.title).toBe('curl/8.5.0')
+  })
+
   it('a single silence is a bad minute, not a pattern', () => {
     const input = sceneInput('silent')
     input.history!.periods = input.history!.periods.filter((p) => p.ended_at === null)

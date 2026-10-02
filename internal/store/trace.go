@@ -36,6 +36,7 @@ type TraceHit struct {
 	Kind    VisitorKind `json:"kind"`
 	Service string      `json:"service"`
 	Tried   string      `json:"tried"`
+	Client  string      `json:"client"`
 }
 
 // TraceCanary is one canary's line in the trace. Field names match
@@ -139,6 +140,7 @@ func ListTrace(ctx context.Context, database *db.DB, now time.Time, rangeStr str
 				Kind:    kindBySource[a.SourceIP],
 				Service: a.Service,
 				Tried:   triedFor(a.Service, a.Raw),
+				Client:  clientFor(a.Service, a.Raw),
 			})
 		}
 		canaryBeats := beats[c.ID]

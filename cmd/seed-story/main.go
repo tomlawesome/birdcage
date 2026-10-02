@@ -46,6 +46,7 @@ type fixtureHit struct {
 	Visitor string    `json:"visitor"`
 	Service string    `json:"service"`
 	Tried   string    `json:"tried"`
+	Client  string    `json:"client"`
 }
 
 type fixtureTraceCanary struct {
@@ -155,7 +156,7 @@ func main() {
 		}
 
 		for _, h := range tc.Hits {
-			raw, err := hitRaw(h.Service, h.Tried)
+			raw, err := hitRaw(h.Service, h.Tried, h.Client)
 			if err != nil {
 				log.Fatalf("seed-story: build raw for %s hit: %v", tc.ID, err)
 			}
@@ -217,7 +218,7 @@ func rawPorts(display string) string {
 // enough, since extractLogData looks for the first '{' byte and decodes
 // from there, the same as a real OpenCanary log payload but without the
 // syslog envelope this script has no need to fabricate.
-func hitRaw(service, tried string) (string, error) {
+func hitRaw(service, tried, client string) (string, error) {
 	logdata := map[string]string{}
 	switch service {
 	case "ssh", "telnet", "ftp", "mysql":
@@ -233,6 +234,16 @@ func hitRaw(service, tried string) (string, error) {
 	// ("smb", or the bare service name) when SHARENAME is absent, so an
 	// empty logdata object is enough.
 	default:
+	}
+	// clientFor's own fields (#143): only http and ssh have one, same as
+	// above, and only when the fixture hit actually carries one.
+	if client != "" {
+		switch service {
+		case "http":
+			logdata["USERAGENT"] = client
+		case "ssh":
+			logdata["REMOTEVERSION"] = client
+		}
 	}
 	b, err := json.Marshal(map[string]any{"logdata": logdata})
 	if err != nil {

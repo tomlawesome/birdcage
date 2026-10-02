@@ -16,8 +16,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/term"
 )
 
 // VisitorKind is which of the four ADR-0004 rise colours a visitor gets.
@@ -72,6 +74,7 @@ type Visitor struct {
 	Canaries      []VisitorCanaryHits `json:"canaries"`
 	Services      []string            `json:"services"`
 	Tried         []string            `json:"tried"`
+	Clients       []string            `json:"clients"`
 	StillArriving bool                `json:"still_arriving"`
 
 	// Poisoner is present only for a visitor with a poisoner hit (#86
@@ -453,6 +456,61 @@ func triedFor(service, raw string) string {
 	}
 }
 
+// clientSentinel is OpenCanary's own placeholder for a client field it has
+// nothing to report (http.py:144, :169) -- its words, not the visitor's, so
+// it is treated the same as absent rather than shown.
+const clientSentinel = "<not supplied>"
+
+// maxClientRunes caps how long a stored client string can be: a user agent
+// or an SSH version banner is attacker-controlled and otherwise unbounded.
+const maxClientRunes = 160
+
+// clientFor extracts issue #143's client field for a single hit -- the
+// string that says what kind of client knocked, which triedFor's
+// credentials-and-paths summary has no room for. Only http (USERAGENT) and
+// ssh (REMOTEVERSION, present on OpenCanary logtypes 4001 and 4002) have
+// one; every other service returns "" rather than falling back to the
+// service name the way triedFor does, since an empty client means "say
+// nothing" here, not "say http".
+func clientFor(service, raw string) string {
+	logdata := extractLogData(raw)
+	switch service {
+	case "http":
+		s, _ := logString(logdata, "USERAGENT")
+		return normalizeClient(s)
+	case "ssh":
+		s, _ := logString(logdata, "REMOTEVERSION")
+		return normalizeClient(s)
+	default:
+		return ""
+	}
+}
+
+// normalizeClient applies clientFor's display pipeline to one raw field
+// value, in order: invalid UTF-8 (mail/templates.go:136's displayName
+// pattern) withholds the whole value rather than showing a mangled one;
+// strings.TrimSpace; OpenCanary's own clientSentinel withholds too, since
+// it is OpenCanary's words rather than the visitor's; term.Escape so
+// control bytes and bidi overrides show as literal escapes instead of
+// doing something to the operator's terminal; then a 160-rune cap, with
+// "…" appended when that cuts the string, so one long value can't push a
+// row's layout around the way triedFor's credentials never have to.
+func normalizeClient(s string) string {
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == clientSentinel {
+		return ""
+	}
+	s = term.Escape(s)
+	if utf8.RuneCountInString(s) > maxClientRunes {
+		runes := []rune(s)
+		s = string(runes[:maxClientRunes]) + "…"
+	}
+	return s
+}
+
 // poisonerFor builds Visitor.Poisoner from hits (newest first, as
 // alertsInRange returns them): the newest poisoner hit's own facts, or nil
 // when this visitor has none.
@@ -499,6 +557,27 @@ func triedSummaries(hits []Alert) []string {
 	return out
 }
 
+// clientSummaries builds Visitor.Clients from hits (newest first, as
+// alertsInRange returns them): every hit's clientFor result, skipping the
+// empties (absent, odd, or a non-client service), deduplicated, keeping the
+// first four in time order -- the same shape as triedSummaries, for the
+// same reason: ascending is the order the visitor's own clients actually
+// appeared in, not arrival-into-this-slice order.
+func clientSummaries(hits []Alert) []string {
+	seen := make(map[string]bool, 4)
+	out := make([]string, 0, 4)
+	for i := len(hits) - 1; i >= 0 && len(out) < 4; i-- {
+		a := hits[i]
+		c := clientFor(a.Service, a.Raw)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
+
 // buildVisitor turns one source_ip's hits (newest first, as
 // alertsInRange/ListVisitors group them) into its Visitor summary.
 func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges []*net.IPNet) Visitor {
@@ -539,6 +618,7 @@ func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges [
 		Canaries:      canaries,
 		Services:      services,
 		Tried:         triedSummaries(hits),
+		Clients:       clientSummaries(hits),
 		StillArriving: !newest.Before(now.Add(-stillArrivingWindow)),
 		Poisoner:      poisonerFor(hits),
 	}

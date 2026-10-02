@@ -57,7 +57,7 @@
       <div class="t">{row.time.primary}<small>{row.time.small}</small></div>
       <div class="kind">{row.kind.symbol} {row.kind.label}<small>{row.kind.small}</small></div>
       <div class="who">
-        {#each row.who as seg, j (j)}{#if seg.bold}<b>{seg.text}</b>{:else if seg.cls}<span class={seg.cls}>{seg.text}</span>{:else}{seg.text}{/if}{/each}
+        {#each row.who as seg, j (j)}{#if seg.bold}<b>{seg.text}</b>{:else if seg.cls}<span class={seg.cls} title={seg.title}>{seg.text}</span>{:else}{seg.text}{/if}{/each}
       </div>
       <div class="acts">
         {#each row.actions as a, k (k)}<span class="pill" class:quiet={a.quiet}>{a.label}</span>{/each}
@@ -161,10 +161,24 @@
     font: 12.5px var(--sans);
     color: var(--ink-2);
     line-height: 1.45;
+    /* A client string (#143) can run long enough to push a row's layout
+       around the way triedFor's credentials never do; clamp at three
+       lines and stop there, same reasoning as History.svelte's .sum --
+       the title attribute on .client carries the full value past the
+       clamp. */
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
   }
   .row .who :global(.ip) {
     font: 12.5px var(--mono);
     color: var(--ink);
+  }
+  .row .who :global(.client) {
+    font: 12.5px var(--mono);
+    color: var(--ink-2);
   }
   .row .who :global(b) {
     color: var(--ink);

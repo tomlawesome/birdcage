@@ -82,6 +82,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       ],
       services: ['ssh'],
       tried: ['root / root'],
+      clients: [],
       still_arriving: false,
     },
     {
@@ -93,6 +94,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       canaries: [{ id: 'canary-srv', hits: 1 }],
       services: ['ftp'],
       tried: ['anonymous / (empty)'],
+      clients: [],
       still_arriving: false,
     },
   ]
@@ -536,6 +538,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       canaries: [{ id: 'canary-lan', hits: 2 }],
       services: ['ssh'],
       tried: ['root / root'],
+      clients: [],
       still_arriving: true,
     }
     const s = computeSentence(fleet(bad), [sweep], '14d', now, lastHit)
@@ -553,6 +556,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       canaries: [{ id: 'canary-srv', hits: 1 }],
       services: ['ssh'],
       tried: ['root / root'],
+      clients: [],
       still_arriving: false,
     }
     const s = computeSentence(fleet(bad), [touch], '14d', now, lastHit)

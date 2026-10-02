@@ -109,7 +109,7 @@
     >{/if}{/each}
 </div>
 <div class="sub" style:top="134px">
-  {#each sentence.sub as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b>{:else}<span class={seg.cls}
+  {#each sentence.sub as seg, i (i)}{#if seg.bold}<b class={seg.cls}>{seg.text}</b>{:else}<span class={seg.cls} title={seg.title}
       >{seg.text}</span
     >{/if}{/each}
 </div>
@@ -298,6 +298,10 @@
   .sub :global(.ip) {
     font: 12.5px var(--mono);
     color: var(--ink);
+  }
+  .sub :global(.client) {
+    font: 12.5px var(--mono);
+    color: var(--ink-2);
   }
 
   .col {

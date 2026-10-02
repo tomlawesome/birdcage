@@ -59,6 +59,7 @@
     "tried": [
      "llmnr"
     ],
+    "clients": [],
     "still_arriving": true,
     "poisoner": {
      "name": "fs-lon-02",
@@ -149,7 +150,8 @@
       "visitor": "10.30.0.51",
       "kind": "inside",
       "service": "poisoner",
-      "tried": "llmnr"
+      "tried": "llmnr",
+      "client": ""
      }
     ]
    },
