@@ -38,7 +38,7 @@
 # neither python3 nor the templates reach the shipped image.
 FROM alpine:3.24 AS content
 
-RUN apk add --no-cache python3=3.14.7-r1
+RUN apk add --no-cache python3=3.14.8-r0
 
 COPY build/smb-lure/make-bait.py /make-bait.py
 COPY build/smb-lure/bait /templates

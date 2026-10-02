@@ -70,6 +70,17 @@ This section is rewritten route-by-route when #8 lands.
   can make birdcage write. A gap in which birdcage itself was not
   running is recorded as its own "unobserved" span rather than left to
   read as a healthy period the dashboard never actually watched.
+- **The CrowdSec machine password (#4, ADR-0014) is a secret**, and the
+  strictest-handled one here: it is read only from a mounted file
+  (`BIRDCAGE_CROWDSEC_PASSWORD_FILE`; there is no plain-variable form),
+  the LAPI is reached over `https://` only with the certificate fully
+  verified, and neither the password, the one-hour token it is exchanged
+  for, nor the raw body of any LAPI answer reaches a log line, a printed
+  line or an `audit_log` row. It deserves that care because CrowdSec has
+  no add-only machine credential: birdcage itself can only add (no
+  remove command, route or code), but the credential could delete
+  through the LAPI if stolen -- see [docs/configuration.md](docs/configuration.md#crowdsec)
+  for the two ways to narrow that.
 - **The SMTP account birdcage sends from (issue #55) is a secret**, and
   is handled exactly like the CrowdSec/RouterOS credentials above:
   supplied by file (`BIRDCAGE_MAIL_PASSWORD_FILE`, preferred — see

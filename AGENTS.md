@@ -90,6 +90,13 @@ CI-only tools, never linked or shipped:
 - `python3` (Alpine package, Python Software Foundation) -- the release
   jobs' evidence judge in `scripts/verify-validation-evidence.sh`; owner,
   2026-09-30, #158. Installed via `RELEASE_APK_PACKAGES`, never shipped.
+- `crowdsecurity/crowdsec` container image (CrowdSec SAS, MIT) -- the
+  real Local API `e2e:crowdsec` runs `birdcage crowdsec add` against,
+  pinned by digest in `scripts/e2e/crowdsec-stack.sh` (v1.8.1); #4,
+  ADR-0014. **Proposed, awaiting the owner's approval on #4.** A CI
+  fixture only: never linked, never shipped, and nothing in it phones
+  out (the journey disables the agent, the central-API client and the
+  hub download).
 
 Frontend (`frontend/package.json`), dev-only, never shipped:
 

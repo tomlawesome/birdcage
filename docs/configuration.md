@@ -539,9 +539,139 @@ domain is trusted -- the reply must still come from the administrator
 address and the signature must still cover it. Nothing sets this for
 you, and changing it is an ordinary settings change.
 
+## CrowdSec
+
+birdcage can place a permanent ban on one address in your CrowdSec
+Local API (LAPI), on your request and never on its own: `birdcage
+crowdsec add <ip> --reason "<why>"`, run on the birdcage host. It is
+the same thing `cscli decisions add` does, with every add written to
+`audit_log` first-class, and with birdcage's own never-block floor and
+CrowdSec's own allowlist both asked before anything is posted. There
+is no remove: a ban is removed with `cscli` on the CrowdSec host, not
+through birdcage. The design and the research behind it are
+[ADR-0014](adr/0014-crowdsec-permanent-ban-publisher.md).
+
+It is off unless you configure it, and nothing else about birdcage
+changes if you leave it off.
+
+| Variable | Required | What it is |
+| --- | --- | --- |
+| `BIRDCAGE_CROWDSEC_LAPI_URL` | yes | The LAPI, `https://` only, e.g. `https://crowdsec.lan:8080`. |
+| `BIRDCAGE_CROWDSEC_MACHINE_ID` | yes | The machine you registered for birdcage (below). |
+| `BIRDCAGE_CROWDSEC_PASSWORD_FILE` | yes | Path to a file containing that machine's password. There is no plain-variable form. |
+| `BIRDCAGE_CROWDSEC_CA_FILE` | no | A PEM bundle to verify the LAPI's certificate against, for a private CA. Unset, the system roots are used. |
+
+### Register a machine for birdcage
+
+On the CrowdSec host, give birdcage a machine of its own -- never the
+LAPI's local one, so the credential can be revoked alone:
+
+```sh
+cscli machines add birdcage --password "$(cat /path/to/birdcage-crowdsec-password)" -f /dev/null
+```
+
+The password file is the one you then mount into birdcage. The LAPI
+needs at least CrowdSec 1.6.6 (the first release with the allowlist
+routes birdcage asks before posting); run 1.8.0 or later, which fixes
+every advisory ADR-0014 lists.
+
+### All of them, or none of them
+
+Set none and CrowdSec is off. Set any one and every required one must
+be set and valid, or birdcage refuses to start and names the variable
+you need to fix -- the same rule, for the same reason, as ["Outbound
+mail"](#outbound-mail) above. The command checks the same things again
+before it contacts anything.
+
+The URL must be `https://`. There is no plaintext mode and no way to
+skip certificate verification: the machine password crosses the wire
+on every login, and the official image's `http://0.0.0.0:8080` default
+is exactly the shape this refuses. Put the LAPI behind TLS
+(`api.server.tls` in its `config.yaml`, or `USE_TLS=true` with
+`LAPI_CERT_FILE`/`LAPI_KEY_FILE` on the official image) and, if the
+certificate is from a private CA, hand birdcage that CA with
+`BIRDCAGE_CROWDSEC_CA_FILE`.
+
+This holds on a private Docker network too. Birdcage cannot see who
+else shares that network, and any other container on it could pick up
+the password in transit.
+
+### The password file
+
+The password is read only from a file, for the reason given under
+["Prefer the password file"](#prefer-the-password-file) above -- and
+more so here, because this credential can also *delete* decisions on
+the CrowdSec side (below). In Docker Compose:
+
+```yaml
+services:
+  birdcage:
+    environment:
+      BIRDCAGE_CROWDSEC_LAPI_URL: https://crowdsec.lan:8080
+      BIRDCAGE_CROWDSEC_MACHINE_ID: birdcage
+      BIRDCAGE_CROWDSEC_PASSWORD_FILE: /run/secrets/birdcage_crowdsec_password
+      BIRDCAGE_CROWDSEC_CA_FILE: /run/secrets/crowdsec_ca
+    secrets:
+      - birdcage_crowdsec_password
+      - crowdsec_ca
+
+secrets:
+  birdcage_crowdsec_password:
+    file: ./secrets/crowdsec-password
+  crowdsec_ca:
+    file: ./secrets/crowdsec-ca.pem
+```
+
+The file must be readable by the user birdcage runs as and must not be
+empty; either way birdcage refuses to start, naming the path and this
+process's uid and gid. One trailing newline is trimmed. The password is
+never logged, never printed and never written to `audit_log`.
+
+### What birdcage can do with this credential, and what it cannot
+
+birdcage adds and never removes: there is no remove command, no remove
+route and no code that deletes. But CrowdSec has no machine credential
+that can only add -- the same credential can delete decisions through
+the LAPI. So add-only is a property of birdcage, not of CrowdSec, and
+someone who steals the password file (not merely birdcage's commands)
+could delete with it. Two things narrow that, both yours to do:
+
+- give birdcage its own machine, as above, so revoking it touches
+  nothing else (`cscli machines delete birdcage`);
+- if the LAPI sits behind a reverse proxy, allow birdcage's address
+  only `POST /v1/watchers/login`, `POST /v1/alerts`, `GET /v1/alerts`
+  and `GET /v1/allowlists/check/`, which is everything it uses.
+
+### What a ban looks like on the CrowdSec side
+
+`cscli decisions list` shows it with origin `cscli` (so CrowdSec treats
+it as a manual decision and does not report it to CrowdSec's central
+API unless you have turned `share_manual_decisions` on), type `ban`,
+scope `ip`, the reason you gave prefixed `birdcage: `, and an expiry a
+hundred years out -- CrowdSec requires a duration, and that is as near
+to "never" as it can express. The LAPI's own alert flush leaves an
+alert alone while it still carries a live decision, so the ban is not
+swept away with old alerts.
+
+Adding the same address twice posts nothing the second time: birdcage
+looks for its own live ban first and reports it instead.
+
+### Checking it works
+
+```sh
+birdcage crowdsec add 203.0.113.9 --reason "probing the SSH canary all night"
+```
+
+prints `added: permanent ban on 203.0.113.9 (LAPI alert N, duration
+876000h); recorded in audit_log as crowdsec.block_added`. On the
+CrowdSec host, `cscli decisions list` shows it. Every outcome -- added,
+already there, refused by the floor or the allowlist, or failed -- is a
+row in `audit_log` with the address as its target.
+
 ## Other environment variables
 
 See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
+variables, ["CrowdSec"](#crowdsec) above for the `BIRDCAGE_CROWDSEC_*`
 variables, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
 `BIRDCAGE_HTTP_TLS_CERT`, `BIRDCAGE_HTTP_TLS_KEY` and
 `BIRDCAGE_DASHBOARD_HOST`, and

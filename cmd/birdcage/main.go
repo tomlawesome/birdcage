@@ -247,6 +247,12 @@ func main() {
 	approvalLog := logging.New("approval")
 	mailboxConfig, mailboxEnabled := loadMailboxConfig(approvalLog)
 
+	// ADR-0014: the CrowdSec connection is validated here so a bad
+	// configuration refuses at startup, not at the first `birdcage
+	// crowdsec add`. Nothing in the server uses it yet (no automatic
+	// trigger until #6), so the result is only logged.
+	loadCrowdsecConfig(logging.New("crowdsec"))
+
 	// DATABASE_URL picks the engine (Postgres) when set; unset,
 	// cfg.dbPath passes through as a bare path, which db.Open treats
 	// as SQLite.
