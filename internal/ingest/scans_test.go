@@ -459,3 +459,167 @@ func mustParseTime(t *testing.T, s string) time.Time {
 	}
 	return tm
 }
+
+// stepClock returns a now func that advances by a minute on every call,
+// starting at start -- for tests below that need several posts to land
+// at distinct, ordered ReceivedAt values without relying on real wall-
+// clock granularity between two calls in the same test.
+func stepClock(start time.Time) func() time.Time {
+	t := start
+	return func() time.Time {
+		t = t.Add(time.Minute)
+		return t
+	}
+}
+
+func listFindingsFor(t *testing.T, database *db.DB, agentID string) []store.Finding {
+	t.Helper()
+	findings, err := store.ListFindings(context.Background(), database, store.FindingFilter{AgentID: agentID})
+	if err != nil {
+		t.Fatalf("ListFindings: %v", err)
+	}
+	return findings
+}
+
+// TestHandleScanPersistsFindings proves issue #109's own wiring claim:
+// a posted ok snapshot's findings land in the findings store (open,
+// first_seen == last_seen == the snapshot's own received-at clock), not
+// just counted onto scan_snapshots the way #108 left it.
+func TestHandleScanPersistsFindings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		raw := mintToken(t, database, "canary-a")
+		clock := stepClock(mustParseTime(t, "2026-01-01T00:00:00Z"))
+		h := newHandler(database, nil, clock, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, validScanOKBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		findings := listFindingsFor(t, database, "canary-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+		}
+		f := findings[0]
+		if f.State != store.FindingOpen {
+			t.Errorf("State = %q, want open", f.State)
+		}
+		if f.Target != store.BuildFindingTarget("deb", "openssl") || f.VulnerabilityID != "CVE-2014-0160" {
+			t.Errorf("Target/VulnerabilityID = %q/%q, want deb:openssl/CVE-2014-0160", f.Target, f.VulnerabilityID)
+		}
+		if f.Severity != "critical" || f.InstalledVersion != "1.0.1f-1ubuntu2" || f.FixingVersion != "1.0.1f-1ubuntu2.1" {
+			t.Errorf("Severity/InstalledVersion/FixingVersion = %q/%q/%q, want critical/1.0.1f-1ubuntu2/1.0.1f-1ubuntu2.1",
+				f.Severity, f.InstalledVersion, f.FixingVersion)
+		}
+		if !f.FirstSeen.Equal(f.LastSeen) {
+			t.Errorf("FirstSeen != LastSeen on a brand new finding: %v != %v", f.FirstSeen, f.LastSeen)
+		}
+	})
+}
+
+// TestHandleScanRescanUnchangedOnlyMovesLastSeen is the issue's first
+// acceptance bullet, proven through the real ingest path rather than the
+// store function directly: two identical ok snapshots for the same
+// agent leave exactly one finding row, with last_seen moved to the
+// second snapshot's received time and first_seen untouched.
+func TestHandleScanRescanUnchangedOnlyMovesLastSeen(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		raw := mintToken(t, database, "canary-a")
+		clock := stepClock(mustParseTime(t, "2026-01-01T00:00:00Z"))
+		h := newHandler(database, nil, clock, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		for i := 0; i < 2; i++ {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, validScanOKBody))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("scan %d: status = %d, want %d (body %q)", i, rec.Code, http.StatusOK, rec.Body.String())
+			}
+		}
+
+		findings := listFindingsFor(t, database, "canary-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings after an identical rescan, want 1 (same identity, not a second row): %+v", len(findings), findings)
+		}
+		f := findings[0]
+		if f.State != store.FindingOpen {
+			t.Errorf("State = %q, want still open", f.State)
+		}
+		if f.FirstSeen.Equal(f.LastSeen) {
+			t.Errorf("FirstSeen == LastSeen (%v) after a second scan -- last_seen should have moved", f.FirstSeen)
+		}
+		if !f.LastSeen.After(f.FirstSeen) {
+			t.Errorf("LastSeen (%v) is not after FirstSeen (%v)", f.LastSeen, f.FirstSeen)
+		}
+	})
+}
+
+// TestHandleScanRemovedPackageResolvesFinding is the issue's second
+// acceptance bullet through the real ingest path: a second ok snapshot
+// that no longer reports the package resolves the finding without the
+// agent saying anything beyond its new (empty) finding set.
+func TestHandleScanRemovedPackageResolvesFinding(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		raw := mintToken(t, database, "canary-a")
+		clock := stepClock(mustParseTime(t, "2026-01-01T00:00:00Z"))
+		h := newHandler(database, nil, clock, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, validScanOKBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("first scan status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		cleanBody := `{"taken_at": "2026-01-02T00:00:00Z", "engine": {"name": "grype", "version": "v0.119.0", "db_built_at": "2026-01-01T12:00:00Z"},
+			"status": "ok", "findings": [], "masked_paths": []}`
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, cleanBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("clean rescan status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		findings := listFindingsFor(t, database, "canary-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1 (resolved, not deleted): %+v", len(findings), findings)
+		}
+		if findings[0].State != store.FindingFixed {
+			t.Errorf("State = %q, want fixed", findings[0].State)
+		}
+	})
+}
+
+// TestHandleScanFailedScanNeverResolvesFindings is the issue's fourth
+// acceptance bullet through the real ingest path: a dropped/failed scan
+// leaves every existing finding exactly as it was -- it is never even
+// consulted, because internal/ingest only calls ApplyFindingSnapshot for
+// status == ok (see storeScan).
+func TestHandleScanFailedScanNeverResolvesFindings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		raw := mintToken(t, database, "canary-a")
+		clock := stepClock(mustParseTime(t, "2026-01-01T00:00:00Z"))
+		h := newHandler(database, nil, clock, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, validScanOKBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ok scan status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		before := listFindingsFor(t, database, "canary-a")
+
+		failedBody := `{"taken_at": "2026-01-02T00:00:00Z", "status": "failed", "reason": "db stale", "findings": [], "masked_paths": []}`
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, failedBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("failed scan status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		after := listFindingsFor(t, database, "canary-a")
+		if len(after) != 1 || after[0].State != store.FindingOpen || !after[0].LastSeen.Equal(before[0].LastSeen) {
+			t.Errorf("findings after a failed scan = %+v, want unchanged from %+v", after, before)
+		}
+	})
+}

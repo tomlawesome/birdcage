@@ -159,6 +159,21 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage findings <list|accept> ...` (cmd/birdcage/finding.go) is
+	// issue #109's operator acceptance CLI -- the one write path onto
+	// findings.state, since the dashboard API stays read-only until login
+	// exists (#134), the same reason `agent settings` above is CLI-only.
+	// Like `agent`, `settings` and `approval`, it exits immediately rather
+	// than starting the services below.
+	if len(args) > 1 && args[1] == "findings" {
+		findingsLog := logging.New("findings")
+		if err := runFindings(args[2:]); err != nil {
+			findingsLog.Error(err.Error())
+			return true, 1
+		}
+		return true, 0
+	}
+
 	// `birdcage approval check <file>` (cmd/birdcage/approval.go) is
 	// issue #54's way of trying a real provider's DKIM signature by
 	// hand: a real signed approval cannot be a committed test fixture,

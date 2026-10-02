@@ -222,7 +222,7 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		snapshot.FindingCount = 0
 	}
 
-	outcome, err := h.storeScan(r, snapshot, body.RunID, now)
+	outcome, err := h.storeScan(r, snapshot, body.Findings, body.RunID, now)
 	if err != nil {
 		slog.Error("ingest: record scan snapshot failed", "canary", tok.CanaryID, "err", err)
 		writeIngestError(w, http.StatusServiceUnavailable, "service unavailable")
@@ -245,7 +245,10 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 // a run that passed or failed.
 const noRunAudit store.ScanRunOutcome = -1
 
-// storeScan stores snapshot and, when runID is set, settles the run it
+// storeScan stores snapshot, applies its finding set to #109's findings
+// store (store.ApplyFindingSnapshot, skipped entirely for a failed scan
+// -- ADR-0010 decision 5/the issue's own "a dropped or failed scan ...
+// never resolves anything"), and, when runID is set, settles the run it
 // answers -- all in one transaction (ADR-0012 decision 4). It also
 // records the node's database refresh state from the snapshot. It
 // returns store.ScanRunUnknown (nothing stored; the caller refuses the
@@ -253,7 +256,7 @@ const noRunAudit store.ScanRunOutcome = -1
 // caller to audit after the transaction is over, and noRunAudit
 // otherwise. Audits are written after commit: SQLite serves one
 // connection, which the open transaction holds.
-func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, runID string, now time.Time) (store.ScanRunOutcome, error) {
+func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, findings []ingestScanFinding, runID string, now time.Time) (store.ScanRunOutcome, error) {
 	ctx := r.Context()
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -284,6 +287,21 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 
 	if err := store.RecordScanSnapshot(ctx, tx, snapshot); err != nil {
 		return noRunAudit, err
+	}
+	if snapshot.Status == store.ScanStatusOK {
+		observed := make([]store.ObservedFinding, 0, len(findings))
+		for _, f := range findings {
+			observed = append(observed, store.ObservedFinding{
+				Target:           store.BuildFindingTarget(f.Type, f.Package),
+				VulnerabilityID:  f.Vulnerability,
+				Severity:         f.Severity,
+				InstalledVersion: f.Version,
+				FixingVersion:    f.FixVersion,
+			})
+		}
+		if err := store.ApplyFindingSnapshot(ctx, tx, snapshot.CanaryID, observed, snapshot.ReceivedAt); err != nil {
+			return noRunAudit, fmt.Errorf("apply finding snapshot: %w", err)
+		}
 	}
 	// Decision 10: a snapshot whose refresh failed marks the node
 	// failing (from birdcage's clock, if not already); an ok snapshot

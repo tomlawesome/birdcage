@@ -122,6 +122,7 @@ func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*
 	mux.Handle("/api/canaries/{id}/runs", protected)
 	mux.Handle("/api/canary", protected)
 	mux.Handle("/api/scans", protected)
+	mux.Handle("/api/findings", protected)
 	mux.Handle("/api/visitors", protected)
 	mux.Handle("/api/trace", protected)
 	mux.Handle("/api/stream", protected)
@@ -143,11 +144,11 @@ type dashboardRouteSpec struct {
 	handler http.HandlerFunc
 }
 
-// dashboardRouteSpecs is birdcage's entire dashboard API -- twelve GET
+// dashboardRouteSpecs is birdcage's entire dashboard API -- thirteen GET
 // routes (including /api/stream, issue #44, /api/history, issue #56,
 // /api/mail, issue #55, /api/scans, issue #108 slice 1, /api/canary,
-// issue #118, and /api/canaries/{id}/runs, issue #116) -- and nothing
-// else.
+// issue #118, /api/canaries/{id}/runs, issue #116, and /api/findings,
+// issue #109) -- and nothing else.
 //
 // Owner, 2026-09-26: the dashboard API stays read-only until login
 // exists (#8) -- requireAuth is still a no-op, so any mutating route
@@ -169,6 +170,7 @@ func dashboardRouteSpecs(h *handler) []dashboardRouteSpec {
 		{http.MethodGet, "/api/canary", h.handleCanary},
 		{http.MethodGet, "/api/canaries/{id}/runs", h.handleCanaryRuns},
 		{http.MethodGet, "/api/scans", h.handleScans},
+		{http.MethodGet, "/api/findings", h.handleFindings},
 		{http.MethodGet, "/api/visitors", h.handleVisitors},
 		{http.MethodGet, "/api/trace", h.handleTrace},
 		{http.MethodGet, "/api/stream", h.handleStream},
