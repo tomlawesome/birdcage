@@ -131,7 +131,16 @@ policy:promotion-hop:
           [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "preview" ] || { echo "main only accepts merge requests from preview"; exit 1; }
           ;;
         preview)
-          [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "dev" ] || { echo "preview only accepts merge requests from dev"; exit 1; }
+          # A hotfix/<name> branch cut from preview carries a fix that cannot
+          # wait for an audit of dev's newer work (#89, owner 2026-10-02).
+          # The name is bounded as orbit's stable-promotion-policy.mjs does.
+          case "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" in
+            dev) ;;
+            hotfix/*)
+              printf '%s\n' "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" | grep -Eqx 'hotfix/[A-Za-z0-9._-]+' || { echo "hotfix branch name must be hotfix/<name> using A-Z a-z 0-9 . _ -"; exit 1; }
+              ;;
+            *) echo "preview only accepts merge requests from dev or hotfix/<name>"; exit 1 ;;
+          esac
           ;;
       esac
 
