@@ -54,6 +54,23 @@ fi
 unset -f docker
 rm -f "$work/docker.args"
 
+# #171: the real run_verifier, against a verifier that prints its "accepted"
+# summary on stdout as verify-validation-evidence.sh does. main()'s stdout is
+# the promoted digest and nothing else, and callers capture it with $(...),
+# so the summary must go to stderr. Checked before the stub below replaces it.
+mkdir -p "$work/fake-verifier"
+cat > "$work/fake-verifier/verify-validation-evidence.sh" <<'EOF'
+#!/bin/sh
+echo "verify-validation-evidence: accepted $BIRDCAGE_DIGEST: validated at commit $BIRDCAGE_COMMIT"
+EOF
+chmod +x "$work/fake-verifier/verify-validation-evidence.sh"
+verifier_out="$(here="$work/fake-verifier"; run_verifier "$repo" "$digest_ok" "$commit" 2>/dev/null)" && verifier_status=0 || verifier_status=$?
+if [ "$verifier_status" = 0 ] && [ -z "$verifier_out" ]; then
+  ok "run_verifier keeps the verifier's summary off stdout, so it cannot join the captured digest"
+else
+  bad "run_verifier keeps the verifier's summary off stdout, so it cannot join the captured digest" "exit $verifier_status, stdout=[$verifier_out]"
+fi
+
 # default_stubs -- the happy-path fixture wiring shared by most cases:
 #   - the anchor tag (repo:sha-<commit>) always resolves to digest_ok
 #   - the version tag (repo:<tag>) resolves only once create_version_tag has
