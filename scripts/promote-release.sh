@@ -82,14 +82,15 @@ resolve_tag_digest() {
 # the resolved digest, in a fresh environment carrying exactly the inputs it
 # documents, plus BIRDCAGE_REF passed through when the caller has it set.
 # Its exit code is returned unchanged; this function never inspects or
-# re-judges its output.
+# re-judges its output. That output goes to stderr: the verifier prints its
+# "accepted" summary on stdout, and this script's stdout is the bare digest.
 run_verifier() {
   local repo="$1" digest="$2" commit="$3"
   local env_args=(BIRDCAGE_IMAGE="$repo" BIRDCAGE_DIGEST="$digest" BIRDCAGE_COMMIT="$commit")
   if [ -n "${BIRDCAGE_REF:-}" ]; then
     env_args+=(BIRDCAGE_REF="$BIRDCAGE_REF")
   fi
-  env "${env_args[@]}" "$here/verify-validation-evidence.sh"
+  env "${env_args[@]}" "$here/verify-validation-evidence.sh" >&2
 }
 
 # read_release_version / read_release_tag -- the version and the tag name,
