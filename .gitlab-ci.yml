@@ -2795,6 +2795,9 @@ release:mirror-release:
     DOCKER_HOST: unix:///var/run/docker.sock
   <<: *mirror_login
   script:
+    # release:promote is allow_failure, and a failed allow_failure job still
+    # satisfies needs:, so this job starts even when promotion failed (#171).
+    - 'test -n "${RELEASE_TAG:-}" || { echo "no RELEASE_TAG: release:promote did not finish"; exit 1; }'
     - |
       set -eu
       for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
@@ -2829,6 +2832,9 @@ release:gitlab:
     - job: release:promote
       artifacts: true
   script:
+    # Same reason as release:mirror-release (#171): without this an empty
+    # tag reaches release-cli, because echo succeeds either way.
+    - 'test -n "${RELEASE_TAG:-}" && test -n "${RELEASE_COMMIT:-}" || { echo "no RELEASE_TAG/RELEASE_COMMIT: release:promote did not finish"; exit 1; }'
     - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
