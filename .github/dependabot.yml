@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    # Target the integration branch explicitly rather than inheriting the
+    # repository default, so updates keep following dev -> preview -> main
+    # even if the default branch changes.
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  # The Go module exists (ADR-0001 backend); track its dependency updates
+  # on the integration branch like the actions ones.
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns:
+          - "*"

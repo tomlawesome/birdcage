@@ -1,0 +1,20 @@
+-- canaries gains last_seen_addr (issue #46 item 1): the peer host of the
+-- canary's most recent accepted ingest heartbeat
+-- (internal/ingest/heartbeat.go, both the honeypot and the common
+-- shape), read from the request's own net.SplitHostPort(r.RemoteAddr)
+-- rather than anything the payload carries -- the same "identity from
+-- the transport, never the body" rule the rest of the ingest submux
+-- already follows (see ingestBatch.NodeID's own doc comment in
+-- internal/ingest/batch.go).
+--
+-- This is what #46's scheduled self-test probes: "a honeypot listening
+-- only on localhost catches nobody and a loopback probe would pass for
+-- one anyway" (#46 settled decision 2), so the self-test scheduler
+-- (internal/selftestsched) needs the canary's real LAN address, not
+-- birdcage's own idea of where it might be.
+--
+-- Nullable: a canary that has never sent an ingest-token heartbeat (an
+-- old direct-insert canary, or one enrolled but not yet phoned home) has
+-- no known address, and the scheduler must skip it rather than mint a
+-- self-test against an empty string.
+ALTER TABLE canaries ADD COLUMN last_seen_addr TEXT;

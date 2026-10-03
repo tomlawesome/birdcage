@@ -1,0 +1,2881 @@
+# GitLab is where birdcage is developed: branches, merge requests and the
+# dev -> preview -> main promotions all happen here, and this file is the
+# CI that gates them. GitHub is a read-only mirror of those three branches
+# (the `sync` stage pushes each one after a merge) and keeps CodeQL and
+# dependency review. The general model is in the gitlab-first-migration
+# skill; the jobs below carry what GitHub's ci.yml, licence.yml and
+# branch-policy.yml used to (all three retired once this file was green).
+#
+# The `sync` stage reads MIRROR_TO_GITHUB and GITHUB_MIRROR_SSH_KEY, both
+# protected project CI/CD variables the owner set on 2026-09-13. Nothing
+# here sets them, and it fires only on a push pipeline for one of the three
+# branches -- in practice, the push a merge makes.
+#
+# Runner lanes (ai/agent-infra#3): `big` is 8 CPU / 18 GB, `light` is
+# 4 CPU / 6 GB. A job with no matching tag does not run at all.
+
+stages:
+  - lint
+  - test
+  - e2e
+  - release
+  - sync
+
+default:
+  tags: [light]
+  interruptible: true
+
+variables:
+  GOFLAGS: "-mod=readonly"
+  # Where the six images are published (#90, #125, #126, #132).
+  # Deliberately NOT named BIRDCAGE_IMAGE: that is the environment
+  # variable scripts/verify-validation-evidence.sh reads to know which
+  # repository it is judging, and a pipeline-wide value of that name
+  # would be inherited by every verifier call -- including the one
+  # checking the *other* image, which would then verify the wrong
+  # repository and still pass.
+  BIRDCAGE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/birdcage
+  MOCKINGBIRD_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/mockingbird
+  NIGHTJAR_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/nightjar
+  SMB_LURE_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/smb-lure
+  HOLDER_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/holder
+  OPENCANARY_RELEASE_REPO: ${CI_REGISTRY_IMAGE}/opencanary
+  # Where the same digests are mirrored, read-only, for the public (#90,
+  # note 22233): GitLab is where a release is published and promoted --
+  # the evidence is bound to the digest here -- and GHCR is only ever a
+  # copy of a digest that already cleared that bar, never a second place
+  # to publish from.
+  BIRDCAGE_MIRROR_REPO: ghcr.io/tomlawesome/birdcage
+  MOCKINGBIRD_MIRROR_REPO: ghcr.io/tomlawesome/mockingbird
+  NIGHTJAR_MIRROR_REPO: ghcr.io/tomlawesome/nightjar
+  SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
+  HOLDER_MIRROR_REPO: ghcr.io/tomlawesome/holder
+  OPENCANARY_MIRROR_REPO: ghcr.io/tomlawesome/opencanary
+  # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
+  # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
+  # was failing e2e and test:go before they ever ran. Same bytes, cached on
+  # the GitLab server instead of re-crossing the WAN every job. `library/`
+  # is Docker Hub's own namespace for an official, unprefixed image.
+  # Job `image:`/`services:` pulls are authenticated to the proxy by the
+  # runner automatically; a job that pulls one of these on its own account
+  # inside its script (docker run/build/pull against its own daemon) still
+  # needs its own `docker login` first -- see the jobs that do. Versions
+  # unchanged from before this issue; only the source moved.
+  GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27
+  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
+  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
+  # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
+  # not the newest Python: lint:licences-python audits the pip packages
+  # exactly as that image installs them, and zope.interface==7.2 (pinned by
+  # build/opencanary/requirements.txt) has no 3.14 wheel yet.
+  PYTHON_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-slim-trixie
+  ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/alpine:3.24
+  DOCKER_CLI_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/docker:29-cli
+  # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
+  # now the one Postgres pin in this file, used by both test:go's service
+  # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
+  # separate call sites (one env var, one script default) rather than
+  # unified, so a future major-version bump is one line here.
+  POSTGRES18_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:18-alpine
+  # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
+  # shipped), built during the e2e stage.
+  DEBIAN_TRIXIE_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/debian:trixie-slim
+  # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
+  # and what test:release-scripts installs to run their tests there.
+  # python3: scripts/verify-validation-evidence.sh judges evidence in it.
+  RELEASE_APK_PACKAGES: bash curl python3
+
+.gate: &gate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The higher bar (#91, docs/ci-hops.md): extra jobs, run only when entering
+# and sitting on `preview` and `main`, where a Postgres-only regression is
+# worth catching before -- and after -- the promotion lands. Nothing here
+# replaces the gate above, and nothing was moved out of it; the gate's own
+# jobs still run at these hops too, because `*gate` names them as well.
+.higher_bar: &higher_bar
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+.git_safe: &git_safe
+  before_script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
+# POLICY -- the promotion order. This is the gate GitHub's branch-policy.yml
+# used to be. Bites only if the project requires a passing pipeline to
+# merge; otherwise a warning.
+# ---------------------------------------------------------------------------
+policy:promotion-hop:
+  stage: lint
+  image: $ALPINE_IMAGE
+  needs: []
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+  script:
+    - 'echo "MR !$CI_MERGE_REQUEST_IID: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME -> $CI_MERGE_REQUEST_TARGET_BRANCH_NAME"'
+    - |
+      case "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" in
+        main)
+          [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "preview" ] || { echo "main only accepts merge requests from preview"; exit 1; }
+          ;;
+        preview)
+          # A hotfix/<name> branch cut from preview carries a fix that cannot
+          # wait for an audit of dev's newer work (#89, owner 2026-10-02).
+          # The name is bounded as orbit's stable-promotion-policy.mjs does.
+          case "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" in
+            dev) ;;
+            hotfix/*)
+              printf '%s\n' "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" | grep -Eqx 'hotfix/[A-Za-z0-9._-]+' || { echo "hotfix branch name must be hotfix/<name> using A-Z a-z 0-9 . _ -"; exit 1; }
+              ;;
+            *) echo "preview only accepts merge requests from dev or hotfix/<name>"; exit 1 ;;
+          esac
+          ;;
+      esac
+
+# ---------------------------------------------------------------------------
+# LINT
+# ---------------------------------------------------------------------------
+lint:go:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  script:
+    - go build ./...
+    - go vet ./...
+    - |
+      files=$(git ls-files '*.go')
+      [ -n "$files" ] || { echo "git ls-files returned no Go files"; exit 1; }
+      unformatted=$(gofmt -l $files)
+      [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
+    # Built from source with the image's Go: the prebuilt binary is built
+    # with an older Go and refuses go.mod's `go 1.27.1` directive.
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+    - golangci-lint run ./...
+
+# Ported from licence.yml; the script is host independent by design.
+lint:licences:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  script:
+    - scripts/licence-check.sh
+
+# The pip counterpart (#95): before this, nothing gated the Python
+# packages installed into the mockingbird image at all. python:3.13-slim-
+# trixie, not a generic Python image, because that is exactly the base
+# build/mockingbird/Dockerfile's honeypot stage installs onto, so what
+# this job sees is what actually ships. Its own tests are
+# scripts/licence-check-python.test.sh, run here too, same reasoning as
+# lint:ci's guard tests.
+# No *git_safe here, unlike lint:licences above: that anchor's
+# before_script runs `git config`, and this image has no git in it at all
+# (pipeline 1421 failed with "git: command not found", exit 127). The job
+# does not need git either -- the runner's helper image does the checkout,
+# and neither the gate nor its tests shell out to git. lint:ci is the same
+# shape for the same reason, on a python image with *gate alone.
+lint:licences-python:
+  stage: lint
+  image: $PYTHON_SLIM_IMAGE
+  <<: *gate
+  script:
+    - scripts/licence-check-python.test.sh
+    - scripts/licence-check-python.sh
+
+# The agent ships in the Mockingbird container, on the machine the product
+# expects to be attacked. No birdcage server package may reach it --
+# ADR-0008 decision 4.
+# ---------------------------------------------------------------------------
+# The live checks in AGENTS.md ("Live testing is not optional") are only
+# worth having if they cannot be quietly switched off. This job is that
+# rule as a red pipeline: it refuses an e2e stage that is missing, empty,
+# allowed to fail, manual, or ruled out of merge requests. Its own tests
+# are scripts/ci-e2e-guard.test.sh, run here too -- a guard nobody tests
+# guards nothing.
+# ---------------------------------------------------------------------------
+lint:ci:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  <<: *gate
+  needs: []
+  before_script:
+    - apk add --no-cache bash >/dev/null
+    - pip install --quiet pyyaml
+  script:
+    - python3 scripts/ci-e2e-guard.py
+    - scripts/ci-e2e-guard.test.sh
+    # The same idea for the release stage (#90): the split that keeps one
+    # job from both judging an artefact and shipping it is prose until
+    # something fails red when it is undone.
+    - python3 scripts/ci-release-guard.py
+    - scripts/ci-release-guard.test.sh
+
+# ---------------------------------------------------------------------------
+# Every scripts/*.test.sh, in one job (#100). Before this, three of the
+# thirteen suites ran anywhere: the two guard suites in lint:ci and the pip
+# licence suite in lint:licences-python. The other ten tested scripts in the
+# release path -- the part of this repository with the least other coverage,
+# none of which has ever run against a real registry -- and nothing ran them.
+#
+# The loop is deliberate. A list would have to be edited every time a suite
+# is added, and the ten that were missing are exactly what happens when
+# somebody forgets. A new scripts/*.test.sh is gated the moment it lands.
+#
+# The suites are hermetic: the ones that would otherwise need docker, cosign
+# or a registry source their script and replace the daemon-touching
+# functions with fixtures, so this needs nothing but bash and python3. The
+# two checks that do need more -- a Postgres for the coverage floors, an
+# installed frontend/node_modules for the npm licences -- say so and skip
+# here, and run for real in test:go and frontend, which have them.
+# ---------------------------------------------------------------------------
+lint:scripts:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  <<: *gate
+  needs: []
+  before_script:
+    # curl is not padding: ensure-cosign.sh downloads with it, and its suite
+    # drives that path against a file:// fixture. Without curl the suite goes
+    # red with four "curl: command not found" -- which this job found by
+    # being run in this image before it was committed, on a workstation
+    # where curl happens to exist.
+    # git: scripts/release-candidate.test.sh builds merge shapes in a
+    # scratch repository.
+    - apk add --no-cache bash curl git >/dev/null
+    - pip install --quiet pyyaml
+  script:
+    - |
+      set -eu
+      found=0
+      failed=""
+      for suite in scripts/*.test.sh; do
+        found=$((found + 1))
+        echo "--- $suite"
+        if bash "$suite"; then :; else failed="$failed $suite"; fi
+      done
+      [ "$found" -gt 0 ] || { echo "no scripts/*.test.sh found at all"; exit 1; }
+      if [ -n "$failed" ]; then
+        echo "failed suites:$failed"
+        exit 1
+      fi
+      echo "all $found script suites passed"
+
+# The release scripts' own tests, run on the image the release jobs use,
+# with exactly the packages they install (RELEASE_APK_PACKAGES). lint:scripts
+# runs every suite on a Python image, which is how #158 slipped through:
+# the scripts passed there and then met no python3 at release:preview.
+# git is for release-candidate.test.sh's scratch repository; release:promote
+# installs it itself. A new release script's test belongs in this list.
+test:release-scripts:
+  stage: lint
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs: []
+  before_script:
+    - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
+  script:
+    - |
+      set -eu
+      failed=""
+      for suite in \
+        scripts/verify-validation-evidence.test.sh \
+        scripts/publish-channel.test.sh \
+        scripts/promote-release.test.sh \
+        scripts/publish-image.test.sh \
+        scripts/attest-tested-image.test.sh \
+        scripts/mirror-image.test.sh \
+        scripts/release-version.test.sh \
+        scripts/release-candidate.test.sh \
+        scripts/image-tag-policy.test.sh \
+        scripts/policy-version.test.sh \
+        scripts/ci-ensure-image.test.sh \
+        scripts/ensure-cosign.test.sh; do
+        echo "--- $suite"
+        if bash "$suite"; then :; else failed="$failed $suite"; fi
+      done
+      if [ -n "$failed" ]; then
+        echo "failed on the release image:$failed"
+        exit 1
+      fi
+
+lint:agent-deps:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  script:
+    # Once per agent binary (ADR-0009 decision 6) -- each kind's own
+    # allowed set, checked separately so one kind's fence cannot cover
+    # for a hole in the other's.
+    - scripts/agent-deps-check.sh ./cmd/mockingbird
+    - scripts/agent-deps-check.sh ./cmd/nightjar
+
+# govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
+# CI-only tool, never linked into birdcage (AGENTS.md, "Approved third-
+# party modules"). Installed from source and run against this project's
+# own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
+# module download the same way it does for golangci-lint above.
+#
+# GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
+# go.mod names a lower floor than 1.27.1, and GOTOOLCHAIN=auto's default
+# module-aware toolchain selection picks a toolchain that satisfies
+# *that* floor, not this project's -- observed directly: it built
+# govulncheck with go1.26.8, which then refused to analyse this
+# project's go1.27-only source ("package requires newer Go version
+# go1.27") on every commit, clean or not. GOTOOLCHAIN=local pins both
+# steps to $GOLANG_IMAGE's own go, which already satisfies govulncheck's
+# floor and matches go.mod exactly -- confirmed against the real
+# golang:1.27 image.
+#
+# A reachable vulnerability fails the job; an unreachable one is printed
+# only -- govulncheck's own default. Proved locally, not assumed: a
+# throwaway module pinning golang.org/x/text@v0.3.6 and calling
+# language.Parse (GO-2021-0113, a known reachable out-of-bounds read)
+# exits 3; this project's own tree, run the same way, exits 0.
+lint:govulncheck:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: *gate
+  script:
+    - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+    - GOTOOLCHAIN=local govulncheck ./...
+
+# gitleaks (#28, owner approval 2026-09-27): the released MIT binary, not
+# the commercially-licensed gitleaks-action -- scripts/ensure-gitleaks.sh
+# installs it from a checksum-verified release, the same shape as
+# scripts/ensure-cosign.sh. CI-only, never linked or shipped.
+#
+# GIT_DEPTH: 0 overrides the project's default shallow clone so full
+# history is actually there to scan (acceptance criterion 1); a shallow
+# checkout would make this job pass on a repository it never really
+# looked at. scripts/gitleaks-scan.sh is the one place the scan command
+# itself is written (--redact, criteria 3/4) so this job and its own
+# test run the identical invocation.
+#
+# The self-test runs before the real scan, in the same job: it proves the
+# gate can fail (criterion 2, a planted secret) using the gitleaks this
+# job just installed, rather than assuming a check that never ran red
+# actually gates anything.
+lint:gitleaks:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    # $GOLANG_IMAGE (Debian) already ships git, bash, curl, openssl and
+    # tar -- everything ensure-gitleaks.sh and the self-test need. Only
+    # gitleaks itself is missing.
+    - scripts/ensure-gitleaks.sh /usr/local/bin
+  script:
+    - scripts/gitleaks-scan.test.sh
+    - scripts/gitleaks-scan.sh .
+
+# #139: nothing else in this file ever checks a pin against its own
+# upstream -- every version above is trusted to still be current for as
+# long as nobody happens to look. scripts/staleness-check.py is that
+# look: every Go module, npm package, pip package, container tag, apk
+# pin and checksum-pinned tool this file and the Dockerfiles name,
+# compared against its real registry. Never on a merge request or on
+# push to dev -- a check that only reads the outside world has nothing to
+# do with the change in front of it, would make every pipeline pay for a
+# round trip to half a dozen registries, and would go red for a reason
+# nobody in the merge request can fix by editing their own diff. A
+# pipeline schedule whose description is exactly `staleness` is what
+# runs it (schedule 14, weekly on `dev`; GitLab exposes the description
+# as $CI_PIPELINE_SCHEDULE_DESCRIPTION, so no schedule variable has to
+# be set by hand -- the endpoint for those is owner-only, #139); the
+# `when: never` fallback keeps every other trigger, including an
+# unrelated schedule, from running it by accident. `scripts/ci-e2e-
+# guard.py` carries the matching rule (docs/ci-hops.md's own guard,
+# extended by this issue): any `audit:`-prefixed job must be
+# schedule-only and outside the `e2e` stage, so this arrangement cannot
+# quietly grow a second copy that runs on every branch.
+audit:staleness:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION == "staleness"
+    - when: never
+  before_script:
+    - pip install --quiet pyyaml
+  script:
+    - python3 scripts/staleness-check.py --report staleness-report.md
+  artifacts:
+    paths: [staleness-report.md]
+    when: always
+    expire_in: 90 days
+
+# ---------------------------------------------------------------------------
+# TEST
+# ---------------------------------------------------------------------------
+
+# Frontend: type-check, unit tests, the two pixel gates against the
+# round-6 concept shots, then the production build the Go binary embeds.
+# The fonts.conf makes the generic font families resolve to what the
+# reference shots were rendered with (frontend/scripts/compare-fonts.conf
+# explains; GitHub run 34747740616 is what happens without it).
+test:frontend:
+  stage: test
+  image: $NODE_IMAGE
+  <<: *gate
+  # This job needs nothing any lint job produces, but with no needs: key
+  # it waited for the whole lint stage anyway before starting, and
+  # test:smoke then waited on its artifacts in turn -- the longest chain
+  # in the pipeline, scheduled to start last. No saving is claimed for
+  # this: the runner is shared with every other project on this host and
+  # wall clock for the same gate ranges from 263 to 1620 seconds, so one
+  # pipeline cannot show the effect. See docs/ci-hops.md, which explains
+  # why quoting a figure from a single run is a mistake. The dependency
+  # was simply never real.
+  needs: []
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/node_modules/
+  script:
+    - cd frontend
+    - npm ci
+    # Licence gate for the npm tree (#92). It lives here, rather than in
+    # lint:licences with its Go counterpart, because it needs an
+    # installed node_modules and this is the only job that has one --
+    # a separate job would pay a second `npm ci` on every merge request
+    # to check the same tree. It runs before the tests so a licence
+    # problem is reported without waiting for them. node:26-trixie ships
+    # python3 (3.13.5, verified), which the checker needs.
+    - ../scripts/licence-check-npm.sh
+    - npm run check
+    # Coverage, not a bare test run (#74). The thresholds in
+    # vitest.config.ts are a ratchet at today's numbers, so this fails if
+    # coverage falls. Proved to fail: forcing the branch threshold to 95
+    # exits 1 with "Coverage for branches (60.41%) does not meet global
+    # threshold".
+    - npm run test:coverage
+    - npx playwright install --with-deps chromium
+    - mkdir -p ~/.config/fontconfig && cp scripts/compare-fonts.conf ~/.config/fontconfig/fonts.conf && fc-cache -f
+    - fc-match sans-serif && fc-match monospace
+    - npm run compare:band
+    - npm run compare:below-band
+    # Issue #118's canary page, gated the same way the band is: the four
+    # round-7 scenes against references captured from the build.
+    - npm run compare:canary
+    - npm run build
+  # Surfaces the total in the job list, and feeds GitLab the per-line
+  # cobertura report so coverage shows on the merge request diff rather
+  # than only in this log.
+  coverage: '/All files\s*\|\s*([\d.]+)/'
+  artifacts:
+    paths:
+      - frontend/dist/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: frontend/coverage/cobertura-coverage.xml
+    expire_in: 1 day
+    when: always
+
+# Go tests against SQLite and a real Postgres (issue #7, ADR-0001):
+# BIRDCAGE_TEST_DATABASE_URL is what tells internal/db/dbtest the
+# Postgres is there; unset, those tests silently run SQLite-only.
+#
+# TLS since #84 (birdcage now refuses a weaker DATABASE_URL at
+# start-up -- internal/startcheck, not exercised by this job, but
+# BIRDCAGE_TEST_DATABASE_URL should not model a shape birdcage itself
+# refuses). The service's entrypoint is overridden to generate a
+# throwaway certificate before handing over to the stock entrypoint --
+# ported from mikroview's test:postgres job, which solved the same
+# problem first, the same way: no image build and no Docker inside this
+# job, since `services:` cannot build one.
+#
+# verify-full, not mikroview's require: this needs the actual chain, so
+# `before_script` below captures the certificate the server presents
+# over the network with openssl s_client and hands it to psql/pgx as
+# sslrootcert -- the certificate is its own CA (self-signed), so the
+# leaf the server sent back IS the root verify-full is told to trust.
+test:go:
+  stage: test
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  needs: []
+  services:
+    - name: $POSTGRES18_IMAGE
+      alias: postgres
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          apk add --no-cache openssl >/dev/null
+          mkdir -p /certs
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+            -addext "subjectAltName=DNS:postgres" \
+            -keyout /certs/server.key -out /certs/server.crt
+          chown postgres:postgres /certs/server.crt /certs/server.key
+          chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+          exec docker-entrypoint.sh postgres -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+  variables:
+    POSTGRES_PASSWORD: birdcage-ci
+    BIRDCAGE_TEST_DATABASE_URL: postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem
+  script:
+    # The runner only waits for the port, and Postgres listens briefly
+    # during its own init before restarting; ask the server itself.
+    - apt-get -qq update && apt-get -qq install -y postgresql-client openssl >/dev/null
+    - |
+      ready=0
+      for attempt in $(seq 1 40); do
+        pg_isready -h postgres -U postgres >/dev/null 2>&1 && { ready=1; break; }
+        sleep 1
+      done
+      [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    # BIRDCAGE_TEST_DATABASE_URL's sslrootcert names this exact path --
+    # captured now, from the running server, rather than shared from the
+    # service container, which no volume or filesystem connects this
+    # job container to.
+    - |
+      openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+        | openssl x509 -outform pem > /tmp/postgres-ca.pem
+      [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
+    # -coverprofile alongside -race so one run does both (#74). The
+    # floors in supply-chain/coverage-floors.yml are a ratchet at
+    # measured values, not the owner's 70-85% band: a threshold set at
+    # the band would be red on code nobody touched.
+    #
+    # Go reports statement coverage, and that already catches an untaken
+    # branch: a body that never runs is uncovered statements. What it
+    # cannot see is a compound condition. `if a && b` reaches 100% having
+    # only ever run (true,true) and (false,true) -- b was never decisive
+    # and nothing says so. Demonstrated, not assumed. So the branch floor
+    # in the owner's policy is set on the frontend, where vitest reports
+    # branches; here the floor is on statements.
+    #
+    # This run sets BIRDCAGE_TEST_DATABASE_URL, so internal/db is
+    # measured against real Postgres here and reads higher than it does
+    # on a workstation, where the same tests fall back to SQLite.
+    # golang:1.27 ships python3 (3.13.5, verified), which the checker
+    # needs.
+    # #93: run the suite as a NON-ROOT user. internal/startcheck proves
+    # birdcage refuses to start on unsafe file permissions, and those
+    # tests skip themselves as uid 0 -- correctly, because root ignores
+    # the mode bits they set, so the refusal would "pass" without ever
+    # being exercised. This image runs as root, so until now those two
+    # tests ran only on whoever happened to run the suite locally. A
+    # check that looks enforced and is not is the thing AGENTS.md's live
+    # testing rule exists to prevent.
+    #
+    # Root is still needed for the setup above -- apt-get, and capturing
+    # the server certificate -- so only the test run drops privileges.
+    # The caches go to a tester-owned directory rather than the image's
+    # root-owned /go/pkg/mod, because `go test` writes a lock there when
+    # it resolves modules and would fail as a non-root user. Downloading
+    # the modules again costs seconds and go.sum still verifies them.
+    - |
+      set -eu
+      useradd --create-home --uid 1001 tester
+      install -d -o tester -g tester /tmp/gotest
+      # tester has to read the certificate the URL below names.
+      chmod 0644 /tmp/postgres-ca.pem
+    # -timeout=20m: room above internal/store's ~100s post-#138 runtime
+    # (was ~500-550s, hitting go test's 10m per-package default under a
+    # busy runner) plus every other package, so a genuinely hung test
+    # still fails the job instead of running forever.
+    - >-
+      su tester -c "cd '$CI_PROJECT_DIR' &&
+      HOME=/home/tester
+      GOCACHE=/tmp/gotest/cache
+      GOMODCACHE=/tmp/gotest/mod
+      GOFLAGS='$GOFLAGS'
+      BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
+      go test ./... -race -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
+    # Read back as root: the profile is tester-owned but world-readable,
+    # and nothing below writes to it.
+    - go tool cover -func=/tmp/gotest/coverage.out | tail -1
+    - python3 scripts/coverage-floor.py /tmp/gotest/coverage.out
+
+# The real binary, with the frontend build embedded, seeded from the
+# night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
+# image plus the Go tarball pinned to go.mod's version, since both are
+# needed in one job. SQLite only -- Postgres at the preview bar is #7's.
+#
+# Firefox (#83, AGENTS.md "Browser journeys run in Firefox"): the owner
+# browses on Firefox, so that is the bar every change has to clear. The
+# engine is resolved once, by frontend/e2e/browser.mjs -- BIRDCAGE_BROWSER
+# below is set explicitly rather than relying on that module's default, so
+# the browser this job runs is visible here rather than only in the script
+# it calls.
+test:smoke:
+  stage: test
+  image: $NODE_IMAGE
+  <<: [*gate, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: firefox
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps firefox
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The same journey (frontend/e2e/smoke.mjs), widened to Safari at the
+# `preview` -> `main` promotion (#83, docs/ci-hops.md "Hop 2"): Firefox
+# stays the bar for every change above, and this adds to it rather than
+# replacing it -- test:smoke keeps running at this hop too, because *gate
+# names it as well. Safari is WebKit in Playwright.
+test:smoke:safari:
+  stage: test
+  image: $NODE_IMAGE
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: safari
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps webkit
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The same journey, widened to Edge at the promotion (#83, docs/ci-hops.md
+# "Hop 2"). Edge is Chromium with the msedge channel, not a separate
+# Playwright engine -- frontend/e2e/browser.mjs resolves that.
+test:smoke:edge:
+  stage: test
+  image: $NODE_IMAGE
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  variables:
+    BIRDCAGE_BROWSER: edge
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps msedge
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The same journeys again (#81), against Postgres instead of a fresh
+# SQLite file, at the same hop docs/ci-hops.md already puts every other
+# journey's Postgres variant (e2e:smb:postgres and its neighbours,
+# "Hop 2"): storage-engine differences show up in how the seeded story
+# is written and read back, not in what a browser does, so this is worth
+# a release pipeline and not worth every branch -- Firefox alone stays
+# the bar every change has to clear. DATABASE_URL is frontend/e2e/smoke.mjs's
+# own switch (unset there is SQLite, exactly as #39 left it); it must
+# already carry sslmode=verify-full, since internal/startcheck.PostgresRequiresVerifyFull
+# refuses anything weaker before birdcage's first listener binds. The
+# Postgres-with-TLS service block below is test:go's own, verbatim --
+# same throwaway certificate, same reason (services: cannot build an
+# image, so the stock entrypoint is overridden to mint one before
+# handing back to it).
+test:smoke:postgres:
+  stage: test
+  image: $NODE_IMAGE
+  <<: [*higher_bar, *git_safe]
+  needs:
+    - job: test:frontend
+      artifacts: true
+  services:
+    - name: $POSTGRES18_IMAGE
+      alias: postgres
+      entrypoint: ["sh", "-c"]
+      command:
+        - |
+          apk add --no-cache openssl >/dev/null
+          mkdir -p /certs
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
+            -addext "subjectAltName=DNS:postgres" \
+            -keyout /certs/server.key -out /certs/server.crt
+          chown postgres:postgres /certs/server.crt /certs/server.key
+          chmod 600 /certs/server.key && chmod 644 /certs/server.crt
+          exec docker-entrypoint.sh postgres -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+  variables:
+    POSTGRES_PASSWORD: birdcage-ci
+    BIRDCAGE_BROWSER: firefox
+  script:
+    - curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    - export PATH="/usr/local/go/bin:$PATH" && go version
+    - rm -rf web/dist && cp -r frontend/dist web/dist
+    - go build -o birdcage ./cmd/birdcage
+    # The runner only waits for the port, and Postgres listens briefly
+    # during its own init before restarting; ask the server itself --
+    # same wait as test:go's own.
+    - apt-get -qq update && apt-get -qq install -y postgresql-client openssl >/dev/null
+    - |
+      ready=0
+      for attempt in $(seq 1 40); do
+        pg_isready -h postgres -U postgres >/dev/null 2>&1 && { ready=1; break; }
+        sleep 1
+      done
+      [ "$ready" = 1 ] || { echo "postgres never became ready"; exit 1; }
+    # sslrootcert names this exact path -- captured now, from the running
+    # server, rather than shared from the service container, which no
+    # volume or filesystem connects this job container to.
+    - |
+      openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
+        | openssl x509 -outform pem > /tmp/postgres-ca.pem
+      [ -s /tmp/postgres-ca.pem ] || { echo "could not capture the postgres server certificate"; exit 1; }
+    - export DATABASE_URL="postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/tmp/postgres-ca.pem"
+    - export SMOKE_DATABASE_URL_IS_DISPOSABLE=1 # this job's own throwaway Postgres service, torn down with it
+    - cd frontend
+    - npm ci
+    - npx playwright install --with-deps firefox
+    - BIRDCAGE_BIN="$CI_PROJECT_DIR/birdcage" npm run smoke
+
+# The two shipped images (#69), built and run as validation only -- nothing
+# here pushes to a registry; publishing is a separate job with its own
+# credentials (git-and-delivery skill, "Validation and publication are
+# separate jobs"). Same shape as mikroview's test:container: the runner
+# host's rootless Docker socket, names carrying $CI_JOB_ID so parallel
+# pipelines never collide, and probes over --network container: rather
+# than --publish, which would race other jobs for host ports.
+# ---------------------------------------------------------------------------
+# The images are built ONCE, here, and every later job uses those exact
+# bytes (#90). Before this job existed, `test:image:birdcage` built its own
+# copy and threw it away, so nothing that was tested could ever be the thing
+# that shipped -- a release would have pushed a second build of the same
+# source and called it validated. Now the image that answers the checks is
+# the image whose digest gets published.
+#
+# How the bytes reach the later jobs: every job here talks to the same
+# Docker daemon on the runner host (DOCKER_HOST below, as the existing jobs
+# already do), so an image built in this job is normally still in that
+# daemon's store for the rest of the pipeline. No `docker save` artifact is
+# needed, which matters because the mockingbird image is a few hundred
+# megabytes and this runs on every branch.
+#
+# That daemon is SHARED across every pipeline running on this host at once
+# (#112), which the prune two paragraphs down was not written for: it used
+# to assume the local tag it just built was the only copy, so deleting every
+# other pipeline's tag was harmless because "harmless" meant "self-healing
+# for a runner that only ever has one pipeline on it". On a shared daemon it
+# instead deletes whatever another still-running pipeline is mid-e2e-stage
+# with, and that pipeline's jobs then fail for a reason that has nothing to
+# do with the code under test. Rather than change what gets pruned or when
+# (docs/ci-hops.md's #112 write-up has the four options considered and why
+# this one won), this job now also pushes each image to this project's own
+# container registry ($CI_REGISTRY_IMAGE, via scripts/publish-image.sh,
+# which pushes and then proves the round trip) and records the resulting
+# repo@digest in release.env alongside the local tag. Every later job that
+# uses one of these images calls scripts/ci-ensure-image.sh first, which
+# pulls that digest back and retags it locally if the daemon's local copy
+# is ever missing. Whoever prunes, and whenever, the worst case is now one
+# recovery pull instead of a failed job -- unless a job uses the same tag
+# TWICE (#112, second incident): the first use's ci-ensure-image.sh call
+# already recovered it, but nothing stopped a second concurrent prune from
+# deleting it again before the second use, and nothing re-checked before
+# that second use ran. That is now fixed at both ends: the prune below
+# only removes a tag old enough that no pipeline still running could have
+# built it (see that job's own comment), and every script with a second
+# use of a shared tag re-runs scripts/ci-ensure-image.sh immediately
+# before that second use. This registry push is transport between this
+# pipeline's own jobs, not a release: publication that customers or an
+# attacker's search engine would ever see is still `release:push`'s
+# alone, to the four *_MIRROR_REPO variables above, unchanged by any of
+# this.
+#
+# The internal registry needs a cleanup policy of its own -- deleting
+# `ci-.*` tags older than about a week is plenty, since nothing here is
+# ever read after its pipeline finishes. That is a project setting
+# (Settings > Packages and registries > Container registry) only the
+# project owner can set; without it the registry keeps every pipeline's
+# images forever and grows without bound. That is growth, not breakage:
+# no job here reads an old tag, so an unset cleanup policy costs disk on
+# the registry, never a wrong or missing image.
+#
+# This job records each image's config ID, and `release:push` refuses to
+# publish anything whose config ID is not the one recorded here -- that
+# check does not depend on which daemon still holds the bytes, because
+# scripts/ci-ensure-image.sh has already made sure release:push's own local
+# tag is the real thing before it ever looks at the ID.
+#
+# The stamp is the release version, not a CI-only string, because the
+# version has to be in the bytes before the digest exists -- promotion moves
+# the tested digest to the version tag and never rebuilds. scripts/release-
+# version.sh is the only place that string is decided.
+build:images:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  before_script:
+    # bash for scripts/release-version.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+  script:
+    # Build images from earlier pipelines are pruned here rather than in an
+    # after_script somewhere: a later job cannot know whether the pipeline
+    # still needs them, and a cancelled pipeline never reaches its cleanup
+    # at all. #145: the prune used to list only the local repo name, so it
+    # removed the local "<name>-build:<pipeline id>" tag and left the
+    # registry-named "${CI_REGISTRY_IMAGE}/<name>-build:ci-<pipeline id>"
+    # tag on the same image, which kept the image alive for good. On the
+    # runner host on 2026-09-27, 268 of 305 images were this project's
+    # build images this left behind. scripts/ci-prune-build-images.sh has
+    # the fixed loop and its own header for the age rule, the busybox
+    # `date -D` parsing, and the failure posture.
+    - scripts/ci-prune-build-images.sh
+    - |
+      set -eu
+      stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"
+      echo "building images as $stamp"
+      # Job-token creds, exactly as release:push logs in to GHCR -- never a
+      # personal token -- and only for this project's own registry, which
+      # every job in this pipeline can already reach.
+      echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+      : > release.env
+      # One list entry per image -- the build, the local tag, the registry
+      # push and the dotenv lines below all read from $name.
+      for name in birdcage mockingbird nightjar smb-lure holder opencanary; do
+        local_tag="${name}-build:${CI_PIPELINE_ID}"
+        # --provenance=false --sbom=false: with the containerd image store
+        # (Docker 29's default on the runner) a build otherwise produces an
+        # OCI index -- the image manifest plus a BuildKit provenance
+        # manifest -- and pushing that index to the GitLab registry fails
+        # with "blob unknown to registry" naming the image manifest
+        # (pipeline #1474, #112). A plain single image manifest pushes and
+        # pulls by digest cleanly, and the attestation this project relies
+        # on is release:attest's own cosign signature, not BuildKit's.
+        docker build --provenance=false --sbom=false \
+          --build-arg VERSION="$stamp" \
+          --file "build/${name}/Dockerfile" --tag "$local_tag" .
+        # The config ID is the identity later jobs check back against. It is
+        # not the registry digest -- that only exists once something is
+        # pushed -- but it is what makes "the image I tested" and "the
+        # image I am pushing" the same statement.
+        image_id="$(docker image inspect --format '{{.Id}}' "$local_tag")"
+        # Pushed to this project's OWN registry, never GHCR -- this is
+        # transport between this pipeline's own jobs (#112), so a shared
+        # daemon's prune below can never delete the only copy. It is not a
+        # release: release:push alone publishes anywhere a consumer would
+        # ever pull from. scripts/publish-image.sh both pushes and proves
+        # the round trip, the same guarantee release:push already relies on
+        # for GHCR, reused here rather than re-implemented.
+        registry_tag="${CI_REGISTRY_IMAGE}/${name}-build:ci-${CI_PIPELINE_ID}"
+        docker tag "$local_tag" "$registry_tag"
+        digest="$(scripts/publish-image.sh "$registry_tag" "$image_id")"
+        # `-` becomes `_` as well as upper-casing: smb-lure's dotenv keys
+        # would otherwise be SMB-LURE_BUILD_IMAGE, which is not a usable
+        # variable name, and the dotenv report would be rejected rather
+        # than the pipeline failing anywhere near the cause.
+        upper="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
+        {
+          echo "${upper}_BUILD_IMAGE=$local_tag"
+          echo "${upper}_BUILD_ID=$image_id"
+          echo "${upper}_BUILD_DIGEST=${CI_REGISTRY_IMAGE}/${name}-build@${digest}"
+        } >> release.env
+      done
+      echo "BIRDCAGE_STAMP=$stamp" >> release.env
+      cat release.env
+  artifacts:
+    # dotenv rather than files: these are ten short strings every later
+    # job needs as variables, and none of them is worth a download.
+    reports:
+      dotenv: release.env
+    expire_in: 1 day
+
+test:image:birdcage:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: birdcage-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+    # This job's alpine probe container is pulled by this job's own daemon
+    # call (docker run against $ALPINE_IMAGE), not by GitLab's runner-level
+    # image auth -- that only covers this job's own image:/services:.
+    # $ALPINE_IMAGE already names the dependency proxy, but a pull still
+    # needs a credential for it (refs #128). --password-stdin only, never
+    # echoed.
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    # The image under test is the one build:images produced, not a fresh
+    # build of the same source -- see that job's header for why that
+    # distinction is the whole point. Tagged under this job's own name so
+    # the after_script below can clean up without touching the shared build
+    # tag the release jobs still need.
+    - docker tag "$BIRDCAGE_BUILD_IMAGE" "$APP"
+    # #90: the release job stamps the version into the binary and compares
+    # it back, so the stamping itself is proved here rather than at a
+    # release nobody can retry. An image whose VERSION argument is silently
+    # ignored still starts and still serves, so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    - >-
+      docker run --detach --name "$APP"
+      --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
+      --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m
+      --tmpfs /var/lib/birdcage:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 64 --memory 256m --cpus 0.5
+      "$APP"
+    - |
+      for attempt in $(seq 1 20); do
+        if docker run --rm --network "container:$APP" "$ALPINE_IMAGE" \
+             wget -q -O - http://127.0.0.1:8080/api/alerts 2>/dev/null | grep -q '"alerts"'; then
+          echo "/api/alerts answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 20 ]; then
+          echo "/api/alerts never answered; container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+  after_script:
+    - docker rm --force "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker image rm "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# The agent fails closed without a token and client certificate in its
+# state directory, so the job mints throwaway ones into a named volume
+# (never into the repository) and points MOCKINGBIRD_BIRDCAGE_URL at a
+# closed port: what is under test is that the image starts as uid 65532
+# and its own loopback receiver answers. Since issue #132 this image
+# carries no honeypot service of its own to prove against -- OpenCanary
+# moved to build/opencanary, and test:image:opencanary below is its own
+# equivalent of this job, proving the FTP banner the way this job used
+# to. The loopback path from OpenCanary to the agent across the two
+# containers is #48's/#132's end-to-end test, not this job's.
+test:image:mockingbird:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: mockingbird-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    # As in test:image:birdcage: the image under test is the one
+    # build:images produced, so the bytes that answer these checks are the
+    # bytes release:push publishes.
+    - docker tag "$MOCKINGBIRD_BUILD_IMAGE" "$APP"
+    # #97, matching test:image:birdcage's own check (#90): the stamping is
+    # proved here rather than at a release nobody can retry. An image whose
+    # VERSION argument is silently ignored still starts and still serves,
+    # so only asking it wins.
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    - docker volume create "$APP-state" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-state:/s" "$ALPINE_IMAGE" sh -c '
+      apk add --no-cache openssl >/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/ca-key.pem -out /s/ca.pem -days 1 -subj /CN=ci-throwaway-ca 2>/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
+      rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      echo https://127.0.0.1:1 > /s/ingest-url &&
+      chown -R 65532:65532 /s && chmod 600 /s/*'
+    # --cap-add NET_RAW is the capability the port-scan detector needs
+    # (#65). It has no effect here because --init and --security-opt
+    # no-new-privileges are both set: the agent is started by an init
+    # holding no capabilities, and no-new-privileges stops it gaining the
+    # binary's file capability (docs/enrolment.md has the detail; without
+    # --init, as the printed command runs it, the capability survives).
+    # So this job's container reports port-scan detection off. That is deliberate:
+    # this job exists to prove nothing in the image runs as root, and
+    # relaxing its hardening to exercise a different feature would cost
+    # more than it proves. The capability itself is proved by the image
+    # test in #65 and by the unit tests in internal/agent/portscan.
+    #
+    # No --tmpfs for /var/log/opencanary or /var/tmp any more (#132):
+    # this image never writes to either now -- OpenCanary owned both,
+    # and OpenCanary is a different image. The log tailer opening an
+    # empty, read-only, image-baked directory and finding no file there
+    # is an ordinary "nothing to read yet" state (config.go's own
+    # comment), not a startup failure.
+    - >-
+      docker run --detach --name "$APP" --init
+      --volume "$APP-state:/var/lib/mockingbird"
+      --read-only --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges
+      --pids-limit 64 --memory 256m --cpus 0.5
+      --env MOCKINGBIRD_BIRDCAGE_URL=https://127.0.0.1:1
+      "$APP"
+    - |
+      # #132: OpenCanary is a separate image now (test:image:opencanary
+      # below proves its own FTP banner, the way this job used to), so
+      # what this job can still prove about this one is that its own
+      # loopback receiver -- the socket OpenCanary's webhook posts to --
+      # comes up and accepts a connection under the same hardening.
+      for attempt in $(seq 1 30); do
+        if docker run --rm --network "container:$APP" "$ALPINE_IMAGE" sh -c 'nc -z -w2 127.0.0.1 9919'; then
+          echo "the agent's own loopback receiver answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 30 ]; then
+          echo "the agent's own receiver never answered on 127.0.0.1:9919"
+          echo "container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container -- docker-init, the agent -- must be
+    # uid 65532; a root process here is the failure the image exists to
+    # prevent.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm "mockingbird-test-$CI_JOB_ID-state" >/dev/null 2>&1 || true
+    - docker image rm "mockingbird-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# test:image:opencanary is issue #132's own split of what
+# test:image:mockingbird used to prove about the combined image: OpenCanary
+# starts as uid 65532 under the exact hardening this image ships with
+# (build/opencanary/README.md has the per-flag evidence) and answers a real
+# FTP client. Unlike the agent, OpenCanary needs the sysctl to bind ports
+# under 1024 at all -- see build/opencanary/Dockerfile's own comment -- so
+# this job's own throwaway holder gives it a network namespace to bind in,
+# the same shape scripts/e2e/stack.sh's start_holder uses for the real
+# journeys.
+test:image:opencanary:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: opencanary-test-$CI_JOB_ID
+    APP_HOLDER: opencanary-test-holder-$CI_JOB_ID
+    APP_SINK: opencanary-test-sink-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - docker tag "$OPENCANARY_BUILD_IMAGE" "$APP"
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    # A throwaway holder (#126), exactly as an operator's own enrolment
+    # would deploy one, so OpenCanary has a network namespace to bind its
+    # ports in without owning one directly -- the shape it actually ships
+    # in, not a simplification of it.
+    - >-
+      docker run --detach --name "$APP_HOLDER"
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 16 --memory 32m
+      "$HOLDER_BUILD_IMAGE"
+    # A stand-in for the agent's event receiver on 127.0.0.1:9919 in the
+    # holder's namespace, started before OpenCanary. OpenCanary's webhook
+    # logger treats a refused connection there as fatal to loading the
+    # whole application (ADR-0013, consequence 4; pipeline 1702 failed
+    # exactly this way), so in production the agent starts first. This
+    # job tests the image, not the agent, so a plain stdlib HTTP server
+    # that answers 202 (the status opencanary.conf expects) to every POST
+    # stands in for it. It runs from the image under test -- the only
+    # Python this job has -- under the same hardening as OpenCanary, as
+    # uid 65532.
+    - |
+      docker run --detach --name "$APP_SINK" \
+        --network "container:$APP_HOLDER" \
+        --read-only --cap-drop ALL --security-opt no-new-privileges \
+        --pids-limit 8 --memory 32m \
+        --entrypoint /usr/bin/python3 "$APP" -c '
+      import http.server as h
+      class R(h.BaseHTTPRequestHandler):
+          def do_POST(self):
+              self.rfile.read(int(self.headers.get("Content-Length") or 0))
+              self.send_response(202)
+              self.send_header("Content-Length", "0")
+              self.end_headers()
+          def log_message(self, *a):
+              pass
+      h.HTTPServer(("127.0.0.1", 9919), R).serve_forever()
+      '
+      for attempt in $(seq 1 15); do
+        if docker run --rm --network "container:$APP_HOLDER" "$ALPINE_IMAGE" nc -z 127.0.0.1 9919; then
+          echo "event sink listening on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 15 ]; then
+          echo "event sink never listened on 127.0.0.1:9919; its log follows"
+          docker logs "$APP_SINK"
+          exit 1
+        fi
+      done
+    - >-
+      docker run --detach --name "$APP" --init
+      --network "container:$APP_HOLDER"
+      --sysctl net.ipv4.ip_unprivileged_port_start=0
+      --tmpfs /var/tmp:rw,noexec,nosuid,size=16m,uid=65532,gid=65532
+      --tmpfs /var/log/opencanary:rw,noexec,nosuid,size=64m,uid=65532,gid=65532
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 32 --memory 128m --cpus 0.5
+      "$APP"
+    - |
+      # The `sleep 2` and the banner assertion are #77's own finding,
+      # carried over unchanged from this job's pre-#132 shape: BusyBox nc
+      # shuts the socket down for writing the moment its stdin ends and
+      # can exit before draining what the server already sent, so holding
+      # stdin open until the reply arrives is what makes this a readiness
+      # check rather than a timing measurement. Still assert the banner,
+      # not just that the port accepts a connection -- a bare connect
+      # would pass against a socket with nothing behind it.
+      for attempt in $(seq 1 30); do
+        reply=$(docker run --rm --network "container:$APP_HOLDER" "$ALPINE_IMAGE" \
+                  sh -c '{ printf "USER x\r\nPASS y\r\nQUIT\r\n"; sleep 2; } | nc -w 5 127.0.0.1 21' || true)
+        if printf '%s' "$reply" | grep -q '^220 '; then
+          echo "FTP answered on attempt $attempt"
+          break
+        fi
+        sleep 1
+        if [ "$attempt" = 30 ]; then
+          if [ -n "$reply" ]; then
+            echo "FTP replied but never sent a 220 greeting. Last reply:"
+            printf '%s\n' "$reply"
+          else
+            echo "FTP sent nothing at all -- no connection, or no reply within the timeout."
+          fi
+          echo "container log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container -- docker-init, twistd -- must be
+    # uid 65532; a root process here is the failure the image exists to
+    # prevent.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | grep -q ' 65532 .*python3' || { echo "OpenCanary is not running as 65532"; exit 1; }
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "$APP" >/dev/null 2>&1 || true
+    - docker rm --force "$APP_SINK" >/dev/null 2>&1 || true
+    - docker rm --force "$APP_HOLDER" >/dev/null 2>&1 || true
+    - docker image rm "$APP" >/dev/null 2>&1 || true
+
+# Nightjar's own equivalent of test:image:mockingbird above, #108 section
+# 8: proves non-root start under the exact run-command shape the enrol
+# renderer prints -- --read-only, every capability dropped, the full
+# internal/hostmask flag list, and a real Grype scan of the runner's own
+# filesystem with a real, freshly-fetched vulnerability database (no
+# fixture engine here, unlike scripts/e2e/scanner.sh's later, controlled
+# journey -- this job's job is the image, not the finding). Nightjar has
+# no listener to answer, so what stands in for test:image:mockingbird's
+# FTP banner check is proving the scan itself completes and is posted --
+# a throwaway birdcage TLS listener on loopback is stood up so SendScan
+# has somewhere real to reach, and its own log is what proves a snapshot
+# arrived, rather than trusting a closed-port warning to mean "the scan
+# itself was fine."
+test:image:nightjar:
+  stage: test
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    APP: nightjar-test-$CI_JOB_ID
+  before_script:
+    # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned the local tag
+    # between when it was built and now (#112) -- this recovers it from the
+    # registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - docker tag "$NIGHTJAR_BUILD_IMAGE" "$APP"
+    - |
+      got="$(docker run --rm "$APP" version)"
+      want="$BIRDCAGE_STAMP"
+      if [ "$got" != "$want" ]; then
+        echo "binary reports '$got', expected '$want'"
+        exit 1
+      fi
+      echo "version stamped: $got"
+    - docker volume create "$APP-state" >/dev/null
+    - docker volume create "$APP-db" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-state:/s" "$ALPINE_IMAGE" sh -c '
+      apk add --no-cache openssl >/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/ca-key.pem -out /s/ca.pem -days 1 -subj /CN=ci-throwaway-ca 2>/dev/null &&
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /s/client-key.pem -out /s/client.pem -days 1 -subj /CN=ci-throwaway-client 2>/dev/null &&
+      rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
+      echo https://127.0.0.1:1 > /s/ingest-url &&
+      chown -R 65532:65532 /s && chmod 600 /s/*'
+    # No published port, no --cap-add, no --sysctl (#108 section 4): the
+    # printed run command's exact flag set, mask list included, so this
+    # job would fail if a future edit ever let the two drift apart.
+    - >-
+      docker run --detach --name "$APP" --restart unless-stopped
+      --read-only --cap-drop ALL --security-opt no-new-privileges
+      -v /:/host:ro
+      -v /dev/null:/host/etc/shadow:ro
+      -v /dev/null:/host/etc/gshadow:ro
+      --tmpfs /host/etc/ssh:ro
+      --tmpfs /host/root:ro
+      --tmpfs /host/proc:ro
+      --tmpfs /host/run:ro
+      --tmpfs /host/sys:ro
+      --tmpfs /host/dev:ro
+      --tmpfs /host/tmp:ro
+      --tmpfs /host/var/tmp:ro
+      --tmpfs /host/home:ro
+      --volume "$APP-state:/var/lib/nightjar"
+      --volume "$APP-db:/var/lib/nightjar-grype-db"
+      --pids-limit 64 --memory 768m --cpus 1.0
+      --env NIGHTJAR_BIRDCAGE_URL=https://127.0.0.1:1
+      --env NIGHTJAR_SCAN_INTERVAL_S=3600
+      "$APP"
+    # Nightjar posts nothing this job can read back without a real
+    # birdcage listening -- the closed port above proves nothing except
+    # that the process survives a send failure. So the check here is the
+    # one this job can make honestly: the process stays up (no
+    # crash-loop from a --read-only filesystem grype cannot get scratch
+    # space from -- exactly the failure this job would have caught
+    # before the image shipped) and it reaches the point of attempting
+    # to send, which only happens after a real mount check and a real
+    # grype run both returned.
+    - |
+      for attempt in $(seq 1 40); do
+        if docker logs "$APP" 2>&1 | grep -q "send scan"; then
+          echo "reached send-scan on attempt $attempt"
+          break
+        fi
+        if [ "$(docker inspect "$APP" --format '{{.State.Status}}')" != "running" ]; then
+          echo "container is not running; log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+        sleep 3
+        if [ "$attempt" = 40 ]; then
+          echo "never reached send-scan within the timeout; log follows"
+          docker logs "$APP"
+          exit 1
+        fi
+      done
+    # Every process in the container must be uid 65532 -- a root process
+    # here is the failure this image exists to prevent, same assertion
+    # test:image:mockingbird makes.
+    - docker top "$APP" -o pid,user,args
+    - docker top "$APP" -o pid,user,args | awk 'NR > 1 && $2 != "65532" { bad = 1; print "not 65532:", $0 } END { exit bad }'
+  after_script:
+    - docker rm --force "nightjar-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm "nightjar-test-$CI_JOB_ID-state" "nightjar-test-$CI_JOB_ID-db" >/dev/null 2>&1 || true
+    - docker image rm "nightjar-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
+# E2E -- the real stack, deployed and exercised (#78). Where the two
+# test:image:* jobs above prove each image starts and stays unprivileged
+# on its own, this stage puts them together: birdcage serving real TLS,
+# a canary enrolled by the very `docker run` command the product printed,
+# and a real hit travelling from OpenCanary to the dashboard's API.
+# AGENTS.md's "Live testing is not optional" is what this stage is for.
+#
+# Everything lives in scripts/e2e/ rather than here, so the same run
+# happens on a workstation -- which is how anyone debugs a red job:
+#
+#     eval "$(scripts/e2e/stack.sh up)"
+#     scripts/e2e/enrol-and-hit.sh
+#     scripts/e2e/stack.sh logs
+#     scripts/e2e/stack.sh down
+#
+# With neither override set, `up` builds both images from scratch, same
+# as always -- a workstation debugging a red job has no build:images run
+# to hand it images. In CI (#98), E2E_BIRDCAGE_IMAGE and
+# E2E_MOCKINGBIRD_IMAGE below point stack.sh at the tags build:images
+# already built, so the journey tests those bytes instead of building a
+# second copy of the same source.
+#
+# Adding a journey (#79 port scan, #80 mail, #81 dashboard) is a job of
+# the same four lines with a different script name; the stack it needs
+# is already stood up by stack.sh.
+#
+# E2E_PREFIX names every container, volume, network and image tag the
+# run creates, so parallel pipelines never collide -- the same reason
+# the test:image:* jobs above carry $CI_JOB_ID -- and so after_script
+# can clean up a job that failed or was cancelled. Nothing is left
+# behind either way.
+e2e:enrol-and-hit:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    # Issue #78 journey C: the birdcage image alone, refusing to start on
+    # a handful of bad configurations -- before stack.sh up, since it
+    # needs no stack (or the stack's own well-configured containers)
+    # to make its point.
+    - scripts/e2e/startup-refusals.sh
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/enrol-and-hit.sh
+    - scripts/e2e/refusals.sh
+    # Issue #54: replaces the canary's containers by running the upgrade
+    # command the canary page prints, and hands the same canary back ok.
+    # Before lifecycle.sh, whose deliberate use of a rotated-out token
+    # holds token_conflict for 24 h, so the canary never reads ok again.
+    - scripts/e2e/upgrade.sh
+    - scripts/e2e/lifecycle.sh
+    - scripts/e2e/surface.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journeys against the other engine birdcage ships. Separate
+# job rather than a matrix entry so a Postgres-only failure is named as
+# one in the pipeline, and so the SQLite run -- the common case -- is
+# not held up behind the slower one.
+e2e:enrol-and-hit:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    # Issue #78 journey C: the birdcage image alone, refusing to start on
+    # a handful of bad configurations -- before stack.sh up, since it
+    # needs no stack (or the stack's own well-configured containers)
+    # to make its point.
+    - scripts/e2e/startup-refusals.sh
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/enrol-and-hit.sh
+    - scripts/e2e/refusals.sh
+    # Issue #54: replaces the canary's containers by running the upgrade
+    # command the canary page prints, and hands the same canary back ok.
+    # Before lifecycle.sh, whose deliberate use of a rotated-out token
+    # holds token_conflict for 24 h, so the canary never reads ok again.
+    - scripts/e2e/upgrade.sh
+    - scripts/e2e/lifecycle.sh
+    - scripts/e2e/surface.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# Issue #130 (ADR-0012 Part B): agent-made keys, seven-day client
+# certificates renewed from half-life, cert-bound tokens, conflict
+# detection and one-action revocation -- four journeys, one job, the
+# same shape as e2e:enrol-and-hit above: they share one credentials
+# stack (E2E_CLIENT_CERT_TTL turns the whole run's certificates into a
+# few minutes rather than seven days) and one failure surface --
+# everything here is the credential's own lifecycle, not four unrelated
+# things sharing a runner by coincidence. Four separate jobs would each
+# pay for their own stack.sh up (build, TLS, enrolment) to prove one
+# step of a lifecycle the others already stood up.
+e2e:agent-credentials:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  # agent-renewal.sh and agent-expiry.sh both poll for several minutes
+  # of real half-life and expiry; nothing here is CPU-bound, but the
+  # wall clock means this job runs longest of the e2e stage.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-cred-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+    # Four minutes: long enough that the primary canary's own heartbeat
+    # (60s ticks) reaches half-life and renews well inside it, short
+    # enough that agent-expiry.sh's full wait for expiry stays a matter
+    # of minutes rather than the real seven days (docs/configuration.md).
+    E2E_CLIENT_CERT_TTL: 4m
+  before_script:
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/agent-provisioning.sh
+    - scripts/e2e/agent-renewal.sh
+    - scripts/e2e/agent-conflict.sh
+    - scripts/e2e/agent-expiry.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same four journeys against the other engine birdcage ships:
+# client_certs' own migration comment is explicit that the two engines
+# compare stored text timestamps at different resolutions
+# (docs/flakes.md), and this feature's health signals (renewal_stalled,
+# certificate_expired) are computed entirely from those comparisons --
+# the one class of bug this file exists to catch that SQLite alone
+# cannot.
+e2e:agent-credentials:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs:
+    - job: build:images
+      artifacts: true
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-cred-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+    E2E_CLIENT_CERT_TTL: 4m
+  before_script:
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/agent-provisioning.sh
+    - scripts/e2e/agent-renewal.sh
+    - scripts/e2e/agent-conflict.sh
+    - scripts/e2e/agent-expiry.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# Issue #78 journey 3 (#46's front half): a real smbclient against a
+# real smbd with the full_audit VFS module, over the real chain proved
+# on 2026-09-20 -- OpenCanary parsing that audit line and the agent
+# forwarding it to birdcage. build/e2e-samba is a CI-only image (ADR-0008:
+# Samba never goes near build/mockingbird/Dockerfile); scripts/e2e/smb-stack.sh
+# is the extra infrastructure only this journey needs, started here
+# rather than by `stack.sh up`, so the other two journeys above stay as
+# fast as they were.
+e2e:smb:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-stack.sh up)"
+    - scripts/e2e/smb.sh
+  after_script:
+    # smb-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/smb-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #87's own journey, and #123's acceptance. Deliberately separate
+# from e2e:smb above rather than a third line added to it: that job drives
+# build/e2e-samba and OpenCanary's own smb module, which is the arrangement
+# #78 proved and #87 decision 40b replaced, and it still guards that path.
+# This one runs the image that actually ships (build/smb-lure) beside a
+# canary that reads the audit file with the agent's own tailer and parse,
+# and asserts that one file opened is exactly ONE alert naming the share
+# and the path -- across a restart of the canary.
+e2e:smb-lure:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points the harness at
+  # (#98), so the journey tests the bytes that would ship -- including the
+  # lure's own -- rather than a second build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (a small Alpine smbclient; the lure, the holder
+  # and the canary are all tags build:images already built) and runs a
+  # second canary, the holder and the lure alongside the base stack's
+  # four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-lure-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    # Neither the lure, the holder nor OpenCanary has a test:image job of
+    # its own; their version stamps, which release:promote relies on
+    # (#125, #126, #132), are checked here.
+    - |
+      got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "smb-lure version stamped: $got"
+    - |
+      got="$(docker run --rm "$HOLDER_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "holder reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "holder version stamped: $got"
+    - |
+      got="$(docker run --rm "$OPENCANARY_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "opencanary reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "opencanary version stamped: $got"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-lure-stack.sh up)"
+    - scripts/e2e/smb-lure.sh
+  after_script:
+    # smb-lure-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/smb-lure-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request. It is worth a
+# twin because this journey's assertions run through the store rather than
+# past it: the alert ids the run counts from, and the "exactly one" the
+# collapser is judged by, are both reads of stored alerts.
+#
+# It sits here beside its own gate job rather than with the other `:postgres`
+# twins further down, so every #87 edit to this file is one contiguous block
+# and a parallel branch editing the same file has one place to merge.
+e2e:smb-lure:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points the harness at
+  # (#98), so the journey tests the bytes that would ship -- including the
+  # lure's own -- rather than a second build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (a small Alpine smbclient; the lure, the holder
+  # and the canary are all tags build:images already built) and runs a
+  # second canary, the holder and the lure alongside the base stack's
+  # four containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-lure-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    # Neither the lure, the holder nor OpenCanary has a test:image job of
+    # its own; their version stamps, which release:promote relies on
+    # (#125, #126, #132), are checked here.
+    - |
+      got="$(docker run --rm "$SMB_LURE_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "smb-lure reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "smb-lure version stamped: $got"
+    - |
+      got="$(docker run --rm "$HOLDER_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "holder reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "holder version stamped: $got"
+    - |
+      got="$(docker run --rm "$OPENCANARY_BUILD_IMAGE" version)"
+      if [ "$got" != "$BIRDCAGE_STAMP" ]; then
+        echo "opencanary reports '$got', expected '$BIRDCAGE_STAMP'"
+        exit 1
+      fi
+      echo "opencanary version stamped: $got"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-lure-stack.sh up)"
+    - scripts/e2e/smb-lure.sh
+  after_script:
+    # smb-lure-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/smb-lure-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #80: birdcage's outbound mail and its approval mailbox against a
+# real Postfix and Dovecot (build/e2e-mail, test-only, never shipped)
+# rather than the in-process fakes their unit tests use: an alert sent
+# through STARTTLS and AUTH and read back over IMAPS, a server without
+# STARTTLS refused, a rejected credential kept out of the record, a
+# message over the server's size limit refused and recorded, an
+# approval reply read, judged and marked read, and a DKIM-signed reply
+# verified against a key published in a real DNS server (build/e2e-dns,
+# unbound, test-only) with each of #80's mutations refused -- the
+# signing key is made inside the job and never leaves it.
+# scripts/e2e/mail-stack.sh
+# restarts birdcage with mail configured, which is why this is its own
+# stack run rather than a line added to another job.
+e2e:mail:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds two extra images (the Alpine mail server, and the test DNS
+  # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
+  # runs them beside the base stack's containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-mail-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/mail-stack.sh up)"
+    - scripts/e2e/mail.sh
+  after_script:
+    # mail-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/mail-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md). The outbox is the record every assertion
+# above reads -- sent or not, attempts, the scrubbed error, what is still
+# owed -- and the fleet-wide cap counts its rows with an engine-specific
+# time comparison, so the engine is in the path being tested.
+e2e:mail:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds two extra images (the Alpine mail server, and the test DNS
+  # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
+  # runs them beside the base stack's containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-mail-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/mail-stack.sh up)"
+    - scripts/e2e/mail.sh
+  after_script:
+    # mail-stack.sh down first, for the reason e2e:smb gives: it removes
+    # containers attached to the network stack.sh down is about to remove.
+    - scripts/e2e/mail-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #63's new default: no operator certificate configured at all,
+# so birdcage mints the dashboard's HTTPS certificate from its own CA
+# instead of refusing to start. Its own stack run (E2E_DASHBOARD_MODE),
+# separate from e2e:enrol-and-hit above, which deliberately keeps
+# exercising the operator-certificate mode -- see
+# scripts/e2e/dashboard-own-ca.sh's own comment for why this isn't a
+# third line added to that job instead.
+e2e:dashboard-own-ca:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-dash-$CI_JOB_ID
+    E2E_DASHBOARD_MODE: own-ca
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/dashboard-own-ca.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# Issue #88: a real snmpget against the agent's own SNMP listener
+# (internal/agent/snmp -- a plain UDP reader, no OpenCanary module and
+# no scapy behind it, see #85) produces a real alert in birdcage. The
+# base stack's canary already runs this listener by default, so unlike
+# e2e:smb this needs no second canary -- only a client that can speak
+# SNMP, which scripts/e2e/snmp.sh builds and removes itself
+# (build/e2e-snmp), the same way this job's siblings above build and
+# remove their own images.
+e2e:snmp:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/snmp.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# Issue #79: a real sweep of closed ports against the real Mockingbird
+# image produces a real port-scan alert, and the image run without a
+# working NET_RAW capability reports detection absent rather than
+# silently matching nothing -- #65's own trap, where a filter with the
+# wrong offsets passed every unit test and only running the real image
+# caught it. test:image:mockingbird above proves the image starts
+# unprivileged and deliberately keeps --security-opt no-new-privileges,
+# which turns this exact feature off; this is the second, separate job
+# issue #65's comments ask for, exercising the capability and the BPF
+# filter instead. scripts/e2e/portscan-stack.sh is the extra
+# infrastructure this journey needs and no other journey does: two more
+# canaries carrying the two capability shapes, plus the container this
+# journey sweeps from (see that file's own comment for the capability
+# combination that looked plausible and was tried and rejected).
+e2e:portscan:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs six containers at once (the base stack's four plus two more
+  # canaries and a sweep container), using the images build:images
+  # already built; the light lane's 4 CPU / 6 GB is not enough headroom
+  # for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-portscan-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/portscan-stack.sh up)"
+    - scripts/e2e/portscan.sh
+  after_script:
+    # portscan-stack.sh down first: it removes containers attached to
+    # the network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/portscan-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #86's poisoner, caught by the tool it exists to catch: real
+# Responder, in a sibling container on the canary's own network, answering
+# a real canary's real bait lookups. Sits at hop 1 for the same reason
+# e2e:portscan does -- the encoders and the sockets only prove anything
+# against the real image, and running Responder against them is what found
+# an mDNS parser that dropped every real answer (RFC 6762 forbids a
+# question section in a response) and a MAC missing from the first hit.
+# Neither showed up in any unit test.
+#
+# It also asserts the half that needs the real attacker: Responder stands
+# up the SMB and HTTP servers a poisoned victim would authenticate to, and
+# logs every client that reaches them. "The canary never connected to the
+# offered address" is therefore checked from the attacker's own side of the
+# wire, which is the only place that could disagree with our code.
+e2e:poisoner:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Four containers at once (birdcage, the base canary, this journey's own
+  # canary and Responder), and Responder is a Python process that binds a
+  # dozen sockets; the light lane's 4 CPU / 6 GB is not enough headroom.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-poisoner-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+    # The poisoner fixture. Attack tooling is never built in this
+    # repository (its mirror is public): the private fixtures project
+    # builds, scans and publishes it, and this pin is the whole of what
+    # lives here (AGENTS.md, "Attack-tool fixtures"). Moving the pin is
+    # the version check -- a one-line change, not a rebuild per pipeline.
+    # The pull uses this job's token, so the fixtures project must list
+    # this project under its job-token permissions (#127).
+    E2E_POISONER_FIXTURE_IMAGE: poisoner-fixture:pinned
+    # Responder v3.2.2.0, built and published once in the private fixtures
+    # project (#127). Move this digest to move the version -- the check.
+    E2E_POISONER_FIXTURE_DIGEST: registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture@sha256:d57449276d70bd1209888c43d8bac274c7b50563fc8d85ad5498ed90ea7c7033
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    # The poisoner fixture is pulled by digest from the fixtures project
+    # and tagged for the harness -- the same recovery pull the two build
+    # images get above, which also does the registry login.
+    - scripts/ci-ensure-image.sh "$E2E_POISONER_FIXTURE_IMAGE" "$E2E_POISONER_FIXTURE_DIGEST"
+    - eval "$(scripts/e2e/poisoner-stack.sh up)"
+    - scripts/e2e/poisoner.sh
+    # Issue #124: reuses this same canary and fixture -- poisoner.sh has
+    # already proved the canary is baiting; this pushes a live settings
+    # change to it and proves the change reaches the running container,
+    # with no restart, rather than standing up a second four-container
+    # stack to prove the same push in isolation.
+    - scripts/e2e/agent-settings.sh
+  after_script:
+    # poisoner-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, the same ordering
+    # e2e:portscan's own after_script keeps.
+    - scripts/e2e/poisoner-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# Issue #84's refusal, watched actually happen against the real binary
+# rather than only asserted in internal/startcheck's own unit tests: a
+# check nobody has watched fire is not evidence it actually gates
+# cmd/birdcage's start-up path. Builds and runs the shipped image
+# directly instead of going through stack.sh up -- the point is what
+# happens (or rather never happens) before that sequence's own
+# startcheck-then-listen ordering would ever reach "ready", so there is
+# no stack to stand up first. No Postgres server needed anywhere, real
+# or fake: PostgresRequiresVerifyFull only parses the URL, it never
+# dials (see scripts/e2e/postgres-requires-tls.sh).
+e2e:postgres-requires-tls:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  needs: []
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-tls-refusal-$CI_JOB_ID
+  before_script:
+    # The script is bash (`set -eu`, case statements over multi-line
+    # output); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+  script:
+    - scripts/e2e/postgres-requires-tls.sh
+
+# Issue #108 slice 1, commit 5: Nightjar (ADR-0010) enrolled by the real
+# `birdcage canary enrol --kind scanner` command and run from its own
+# printed line, exactly as e2e:smb runs mockingbird's. scripts/e2e/
+# scanner-stack.sh is the extra infrastructure only this journey needs
+# (the Nightjar image, a fixture tree standing in for the operator's
+# host filesystem, and Grype's real vulnerability database fetched once)
+# -- started here rather than by stack.sh up, the same split smb-stack.sh
+# uses. NIGHTJAR_BUILD_IMAGE is build:images' own dotenv name for the
+# tag it built from this exact commit (commit 94945df).
+e2e:scanner:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *gate
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-$CI_JOB_ID
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only.
+    - apk add --no-cache bash >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    # scanner-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/scanner-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request: a storage
+# engine difference here would show up in how the audit line was written,
+# not in how it was parsed, which is worth a release pipeline and not
+# worth every branch.
+e2e:smb:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Builds one extra image (the Samba server; the second canary's
+  # Mockingbird tag is the one build:images already built) and runs a
+  # Samba server plus a second canary alongside the base stack's four
+  # containers.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-smb-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/smb-stack.sh up)"
+    - scripts/e2e/smb.sh
+  after_script:
+    # smb-stack.sh down first: it removes containers attached to the
+    # network stack.sh down is about to remove, and stack.sh down
+    # tolerates -- but need not be made to work around -- a network that
+    # still has endpoints on it.
+    - scripts/e2e/smb-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request.
+e2e:snmp:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-snmp-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/snmp.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request.
+e2e:dashboard-own-ca:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points stack.sh at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Runs four containers at once, using the images build:images already
+  # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-dash-pg-$CI_JOB_ID
+    E2E_DASHBOARD_MODE: own-ca
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - scripts/e2e/dashboard-own-ca.sh
+  after_script:
+    - scripts/e2e/stack.sh down
+
+# The same journey against the other engine birdcage ships, at the higher
+# bar (#91, docs/ci-hops.md) rather than every merge request: migration
+# 0014's own scan_snapshots table has a Postgres variant that deserves a
+# live run, and a storage-engine difference here would show up in how
+# the receipt was written, not in how Nightjar scanned.
+e2e:scanner:postgres:
+  stage: e2e
+  image: $DOCKER_CLI_IMAGE
+  <<: *higher_bar
+  # build:images' dotenv names the tags this job points the stack at
+  # (#98), so the journey tests the bytes that would ship, not a second
+  # build of the same source.
+  needs:
+    - job: build:images
+      artifacts: true
+  # Fetches Grype's real vulnerability database (a couple of minutes)
+  # and runs the base stack's four containers plus three Nightjar
+  # instances in turn; the light lane's 4 CPU / 6 GB is not enough
+  # headroom for that.
+  tags: [big]
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    E2E_PREFIX: birdcage-e2e-scanner-pg-$CI_JOB_ID
+    E2E_BACKEND: postgres
+    E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
+    E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
+    E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
+    E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
+    E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
+  before_script:
+    # The scripts are bash (arrays, and `set -u` around optional
+    # variables); docker:29-cli ships busybox ash only. openssl is for
+    # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
+    # the one-line derived Postgres image this backend needs.
+    - apk add --no-cache bash openssl >/dev/null
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
+  script:
+    # A concurrent pipeline's build:images may have pruned one of these
+    # local tags between when it was built and now (#112) -- this recovers
+    # it from the registry if so, and does nothing if it is still there.
+    - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+    - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+    - eval "$(scripts/e2e/stack.sh up)"
+    - eval "$(scripts/e2e/scanner-stack.sh up)"
+    - scripts/e2e/scanner.sh
+  after_script:
+    - scripts/e2e/scanner-stack.sh down
+    - scripts/e2e/stack.sh down
+
+# ---------------------------------------------------------------------------
+# SYNC -- mirror the three delivery branches to GitHub after a merge.
+# `needs: []`: the mirror reflects the branch, not the pipeline. Never
+# --force: a non-fast-forward refusal means something wrote to GitHub's
+# copy and the branch has forked; reconcile by merge.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# RELEASE (#90) -- build once, judge, then ship what was judged.
+#
+# The house rule this stage exists to obey: NO JOB BOTH JUDGES AN ARTEFACT
+# AND SHIPS IT. So the work is split four ways, and scripts/ci-release-guard.py
+# fails the pipeline if the split is ever quietly undone:
+#
+#   release:push     publishes the immutable anchor tag `sha-<commit>` and
+#                    proves the registry now holds the bytes that were
+#                    tested. Holds a registry credential; holds no key.
+#   release:attest   mints the validation evidence over that digest. The
+#                    ONLY job that can sign, and the fence is the runner,
+#                    not this file: the `birdcage-signing` runner is
+#                    protected and locked to this project, and its host
+#                    mounts the owner-held key read-only. A job without the
+#                    tag never sees the key. This GitLab is CE, which has no
+#                    protected environments, so a CI/CD variable would be
+#                    readable by every job on a protected branch -- which is
+#                    why the key is not one.
+#   release:preview  verifies that evidence and only then gives the digest a
+#                    consumer-visible name. Verifying and signing are
+#                    different jobs by design.
+#   release:promote  moves the exact tested digest to the version tag. Never
+#                    rebuilds, refuses an existing version tag, and refuses
+#                    unless the evidence still stands.
+#
+# WHAT AUTHORISES A RELEASE (#99). One manual job on `main`, and the press
+# is the instruction. It is not the approval click #90 rules out: that rule
+# keeps human judgement from standing between evidence and publication,
+# and every judging job on `preview` stays automatic. `release:promote`
+# then validates rather than trusts -- the commit must carry an anchor from
+# a validated build, the evidence must verify, the image must report the
+# version, and the registry must not already hold it. The tag is created
+# from VERSION afterwards, so there is nothing to type and nothing to
+# mistype.
+#
+# WHAT THE EVIDENCE DOES AND DOES NOT SAY. It binds a digest to a commit and
+# to the policy version that judged it. The image checks and the live
+# journeys ran on that commit; the `test:image:*` jobs and, since #98, the
+# `e2e:*` journeys that use scripts/e2e/stack.sh all run on these exact
+# bytes (build:images) -- see docs/releasing.md for the one job that is
+# still its own build and why. That is what makes "validated" mean the
+# bytes that ship, not a second build of the same source.
+# ---------------------------------------------------------------------------
+
+# Every release job needs the same two things: the tools the scripts are
+# written for, and the registry credential. Nothing here is a key. The
+# credential is the job token GitLab already gives every job -- no CI/CD
+# variable to set, no owner setup, and it is scoped to this project only.
+# The tools are RELEASE_APK_PACKAGES, which test:release-scripts installs
+# too, so a tool missing here fails a merge request, not a release (#158:
+# python3 was missing and the first real run stopped at release:preview).
+.registry_login: &registry_login
+  before_script:
+    - apk add --no-cache $RELEASE_APK_PACKAGES >/dev/null
+    - test -n "$CI_REGISTRY_PASSWORD" || { echo "CI_REGISTRY_PASSWORD is not set -- the job token should always carry this"; exit 1; }
+    - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+
+# The mirror jobs' credential: read access to the GitLab registry (the job
+# token, same as every other release job) plus write access to GHCR, scoped
+# to the push alone (note 22233). Nobody else in the release stage needs
+# GHCR_TOKEN -- every judging and GitLab-shipping job stays on
+# *registry_login only, so a compromise of this credential can, at worst,
+# push a copy of an already-published digest under its own already-public
+# tag; it cannot mint evidence or move a GitLab tag.
+.mirror_login: &mirror_login
+  before_script:
+    - apk add --no-cache bash >/dev/null
+    - test -n "$CI_REGISTRY_PASSWORD" || { echo "CI_REGISTRY_PASSWORD is not set -- the job token should always carry this"; exit 1; }
+    - test -n "$CI_REGISTRY_USER" || { echo "CI_REGISTRY_USER is not set -- the job token should always carry this"; exit 1; }
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+    - test -n "$GHCR_TOKEN" || { echo "GHCR_TOKEN is not set -- is this ref protected?"; exit 1; }
+    - test -n "$GHCR_USER" || { echo "GHCR_USER is not set -- is this ref protected?"; exit 1; }
+    - echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+
+release:push:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  # A cancelled publish leaves a pushed digest with no evidence, or a commit
+  # that can never be released because its anchor half-exists. The next push
+  # must not cancel this one.
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  # No `needs:` on purpose. Without one, GitLab holds this job until every
+  # job in every earlier stage has succeeded -- which is exactly the bar for
+  # publishing -- and it still inherits build:images' dotenv. Listing jobs
+  # here would be a second copy of the gate, free to fall out of step with
+  # the real one.
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *registry_login
+  script:
+    - |
+      set -eu
+      mkdir -p .birdcage-release
+      # Refuse before publishing anything if this version has already been
+      # released (#99). The check belongs here, not at promotion: a preview
+      # build stamped with a version that has already shipped is claiming
+      # candidacy for a release that has closed, and catching that days
+      # later at the cut means days of preview builds nobody can release.
+      released="$(scripts/release-version.sh --tag)"
+      if docker buildx imagetools inspect "${BIRDCAGE_RELEASE_REPO}:${released}" >/dev/null 2>&1; then
+        echo "${BIRDCAGE_RELEASE_REPO}:${released} already exists -- $released has been released."
+        echo "Bump VERSION before merging anything else to preview."
+        exit 1
+      fi
+      anchor="sha-${CI_COMMIT_SHA}"
+      # release:push has no `needs:`, so it waits for every earlier job --
+      # the longest exposure window in the pipeline (#112) -- which means
+      # the local tag build:images built is the most likely of anyone's to
+      # have been pruned by a concurrent pipeline by the time this runs.
+      # Recovers it from this project's own registry if so.
+      scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
+      scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
+      # Only the anchor is pushed here. It is immutable by construction (a
+      # commit sha names one build) and it is never what a user pulls: the
+      # channel name is release:preview's to create, after the evidence has
+      # been judged. The anchor exists at all because an untagged manifest
+      # is rubbish to a registry's garbage collector -- it can be deleted
+      # inside its own evidence window by routine maintenance.
+      docker tag "$BIRDCAGE_BUILD_IMAGE" "${BIRDCAGE_RELEASE_REPO}:${anchor}"
+      docker tag "$MOCKINGBIRD_BUILD_IMAGE" "${MOCKINGBIRD_RELEASE_REPO}:${anchor}"
+      docker tag "$NIGHTJAR_BUILD_IMAGE" "${NIGHTJAR_RELEASE_REPO}:${anchor}"
+      docker tag "$SMB_LURE_BUILD_IMAGE" "${SMB_LURE_RELEASE_REPO}:${anchor}"
+      docker tag "$HOLDER_BUILD_IMAGE" "${HOLDER_RELEASE_REPO}:${anchor}"
+      docker tag "$OPENCANARY_BUILD_IMAGE" "${OPENCANARY_RELEASE_REPO}:${anchor}"
+      # The second argument is the config ID build:images recorded, so this
+      # refuses if what is in the local daemon is not what was tested --
+      # which is also what would happen if a second runner host ever meant
+      # "the same pipeline" no longer implied "the same daemon".
+      birdcage_digest="$(scripts/publish-image.sh "${BIRDCAGE_RELEASE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
+      mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
+      nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
+      smb_lure_digest="$(scripts/publish-image.sh "${SMB_LURE_RELEASE_REPO}:${anchor}" "$SMB_LURE_BUILD_ID")"
+      holder_digest="$(scripts/publish-image.sh "${HOLDER_RELEASE_REPO}:${anchor}" "$HOLDER_BUILD_ID")"
+      opencanary_digest="$(scripts/publish-image.sh "${OPENCANARY_RELEASE_REPO}:${anchor}" "$OPENCANARY_BUILD_ID")"
+      # Passed on as plain variables rather than parsed back out of JSON:
+      # docker:29-cli has no python and no jq, and a digest read wrongly is
+      # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
+      # called BIRDCAGE_DIGEST would be inherited by every later job and
+      # silently answer for scripts/verify-validation-evidence.sh, which
+      # reads exactly that name.
+      {
+        echo "RELEASE_BIRDCAGE_DIGEST=$birdcage_digest"
+        echo "RELEASE_MOCKINGBIRD_DIGEST=$mockingbird_digest"
+        echo "RELEASE_NIGHTJAR_DIGEST=$nightjar_digest"
+        echo "RELEASE_SMB_LURE_DIGEST=$smb_lure_digest"
+        echo "RELEASE_HOLDER_DIGEST=$holder_digest"
+        echo "RELEASE_OPENCANARY_DIGEST=$opencanary_digest"
+      } > digests.env
+      cat digests.env
+      # The durable record of what this pipeline published, kept for 90
+      # days as the thing to read when asking "where did this digest come
+      # from" long after the dotenv has expired.
+      printf '%s\n' \
+        '{' \
+        "  \"commit\": \"${CI_COMMIT_SHA}\"," \
+        "  \"ref\": \"${CI_COMMIT_REF_NAME}\"," \
+        "  \"pipelineId\": \"${CI_PIPELINE_ID}\"," \
+        "  \"stamp\": \"${BIRDCAGE_STAMP}\"," \
+        '  "images": {' \
+        "    \"birdcage\": { \"repository\": \"${BIRDCAGE_RELEASE_REPO}\", \"digest\": \"${birdcage_digest}\" }," \
+        "    \"mockingbird\": { \"repository\": \"${MOCKINGBIRD_RELEASE_REPO}\", \"digest\": \"${mockingbird_digest}\" }," \
+        "    \"nightjar\": { \"repository\": \"${NIGHTJAR_RELEASE_REPO}\", \"digest\": \"${nightjar_digest}\" }," \
+        "    \"smb-lure\": { \"repository\": \"${SMB_LURE_RELEASE_REPO}\", \"digest\": \"${smb_lure_digest}\" }," \
+        "    \"holder\": { \"repository\": \"${HOLDER_RELEASE_REPO}\", \"digest\": \"${holder_digest}\" }," \
+        "    \"opencanary\": { \"repository\": \"${OPENCANARY_RELEASE_REPO}\", \"digest\": \"${opencanary_digest}\" }" \
+        '  }' \
+        '}' > .birdcage-release/tested-images.json
+      cat .birdcage-release/tested-images.json
+  artifacts:
+    name: birdcage-tested-images
+    paths:
+      - .birdcage-release/tested-images.json
+    reports:
+      dotenv: digests.env
+    expire_in: 90 days
+    when: on_success
+
+# The only job that may sign. Deliberately tiny: the pinned cosign binary
+# and this repository's own scripts, and no image build, no test suite and
+# no publication anywhere near the key.
+#
+# No DOCKER_HOST and no daemon: `docker login` writes the credential file
+# without one, and cosign talks to the registry over HTTPS itself.
+release:attest:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  interruptible: false
+  tags: [birdcage-signing]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:push
+      artifacts: true
+  <<: *registry_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}" "${OPENCANARY_RELEASE_REPO}|${RELEASE_OPENCANARY_DIGEST}"; do
+        repo="${pair%|*}"
+        digest="${pair#*|}"
+        echo "attesting $repo@$digest"
+        BIRDCAGE_SIGNING_DIR="${BIRDCAGE_SIGNING_DIR:-/etc/birdcage-signing}" \
+          scripts/attest-tested-image.sh "${repo}@${digest}" "$digest"
+      done
+
+release:preview:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:push
+      artifacts: true
+    - job: release:attest
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *registry_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}" "${OPENCANARY_RELEASE_REPO}|${RELEASE_OPENCANARY_DIGEST}"; do
+        repo="${pair%|*}"
+        digest="${pair#*|}"
+        BIRDCAGE_COMMIT="$CI_COMMIT_SHA" BIRDCAGE_REF="$CI_COMMIT_REF_NAME" \
+          scripts/publish-channel.sh "$repo" "$digest" preview
+      done
+
+# Copies the `preview` tag release:preview just created to GHCR, the public
+# download point (note 22233). This job never judges anything: the digest
+# was already named by release:preview, which already verified the
+# evidence, so scripts/mirror-image.sh only resolves what that tag now
+# points at and copies it -- it does not call
+# scripts/verify-validation-evidence.sh, and must not, or this would become
+# a second job judging the same evidence rather than a copy of a decision
+# already made. That is also why the release guard's "no job both judges
+# and ships" rule does not apply here: there is no judging in this job to
+# collide with the shipping.
+#
+# The cosign attestation release:attest minted is not part of the image
+# manifest -- cosign v3 stores it as a Sigstore bundle attached as an OCI
+# referrer, listed under the fallback tag `sha256-<digest-hex>` (no `.att`:
+# that was cosign v2, #162). It has to be copied separately or the
+# countersigning workflow finds an image on GHCR with no evidence next to
+# it. Same script, because from mirror-image.sh's own point of view that
+# index is just another tag to copy and verify.
+#
+# That tag is one index listing every referrer of the digest. Mirroring it
+# again after the GitHub countersign has added its own bundle on GHCR would
+# overwrite GHCR's index and drop the countersignature; the documented order
+# (promote, then countersign) never does that.
+#
+# Deliberately not allow_failure and not manual: a failed mirror should
+# turn the pipeline red so it gets noticed and retried, exactly like any
+# other job here, but it cannot undo or block the GitLab publish that
+# already happened -- release:push, release:attest and release:preview keep
+# whatever result they already reached regardless of what this job does
+# afterwards.
+release:mirror-preview:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
+  needs:
+    - job: release:preview
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *mirror_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
+        repo="${pair%|*}"
+        mirror_repo="${pair#*|}"
+        digest="$(scripts/mirror-image.sh "$repo" preview "$mirror_repo")"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}" "$mirror_repo"
+      done
+
+# Promotion. One manual job on `main` -- the single button that cuts a
+# release (#99). Nothing here decides that a release should happen: the
+# press is the owner's instruction, and everything the button then does is
+# a refusal or a registry-side copy.
+#
+# This is not the approval click #90 rules out. That rule keeps human
+# judgement from standing between evidence and publication, pretending to
+# be evidence: every judging job on `preview` stays automatic and the
+# evidence is minted without anyone's say-so. Authorisation was always
+# human -- it used to be three typed git commands, and a button is the same
+# instruction with fewer things to mistype. It runs on the pipeline of the
+# exact `main` commit shown in the UI, so it cannot pick the wrong commit
+# or invent a version, and GitLab records who pressed it.
+#
+# The tag is an OUTPUT, not an input: release:gitlab below creates it from
+# VERSION once the digest has actually moved. So there is no tag to check
+# against VERSION here -- that failure mode is removed rather than guarded.
+#
+# Which commit's build is being released: the tag names a commit on `main`,
+# and the anchor was pushed for the commit on `preview`. If `main` fast-
+# forwarded they are the same commit; if the merge made a merge commit, the
+# preview head is one of its parents -- an octopus merge has more than one.
+# HEAD and every parent are tried and the first with an anchor wins -- and
+# it is not a guess, because the evidence binds the commit: promoting the
+# wrong one fails the verifier rather than shipping. Anything else refuses
+# and says which candidates it looked at.
+release:promote:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+      # A manual job is allow_failure by default, and forcing it false
+      # would leave every `main` pipeline reading "blocked" forever waiting
+      # for a release nobody intends to cut yet. Safe here for the reason
+      # scripts/ci-release-guard.py names: the silent-green failure that
+      # rule prevents cannot happen to a job a human is watching, because
+      # they just pressed it.
+      allow_failure: true
+  # No `needs:` here either, for release:push's reason: without one the
+  # button does not become playable until every job in every earlier stage
+  # of `main`'s own pipeline has passed. Cutting a release while the gate
+  # on `main` is red should not be one click away.
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    # Every parent has to be reachable for scripts/release-candidate.sh.
+    GIT_DEPTH: 0
+  <<: *registry_login
+  script:
+    - apk add --no-cache git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - |
+      set -eu
+      # HEAD, or the merged-in parent -- never the first parent, which is
+      # main's previous tip (#154; scripts/release-candidate.sh says why).
+      sh scripts/release-candidate.sh "$BIRDCAGE_RELEASE_REPO" > .release-commit
+      echo "promoting the build of $(cat .release-commit)"
+    - |
+      set -eu
+      commit="$(cat .release-commit)"
+      # --expect-stamp (#97): each image has a `version` command to ask,
+      # so promotion proves the released bytes carry the released version
+      # for all six (smb-lure's since #125, holder's since #126,
+      # opencanary's since #132).
+      birdcage_digest="$(scripts/promote-release.sh --expect-stamp "$BIRDCAGE_RELEASE_REPO" "$commit")"
+      mockingbird_digest="$(scripts/promote-release.sh --expect-stamp "$MOCKINGBIRD_RELEASE_REPO" "$commit")"
+      nightjar_digest="$(scripts/promote-release.sh --expect-stamp "$NIGHTJAR_RELEASE_REPO" "$commit")"
+      smb_lure_digest="$(scripts/promote-release.sh --expect-stamp "$SMB_LURE_RELEASE_REPO" "$commit")"
+      holder_digest="$(scripts/promote-release.sh --expect-stamp "$HOLDER_RELEASE_REPO" "$commit")"
+      opencanary_digest="$(scripts/promote-release.sh --expect-stamp "$OPENCANARY_RELEASE_REPO" "$commit")"
+      # `latest` moves on every release. Whether a 0.x release is the
+      # right thing to run is the decision of whoever pulls it, not this
+      # pipeline's.
+      #
+      # What this pipeline is responsible for is narrower, and is met:
+      # `latest` cannot point at an unapproved build. It is moved through
+      # publish-channel.sh -- the same code that creates the `preview` tag
+      # -- which re-verifies the validation evidence before it moves any
+      # name at all. Nobody moves it by hand. A tag that moves is not a
+      # weaker promise when the moving is gated.
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${birdcage_digest}" "${MOCKINGBIRD_RELEASE_REPO}|${mockingbird_digest}" "${NIGHTJAR_RELEASE_REPO}|${nightjar_digest}" "${SMB_LURE_RELEASE_REPO}|${smb_lure_digest}" "${HOLDER_RELEASE_REPO}|${holder_digest}" "${OPENCANARY_RELEASE_REPO}|${opencanary_digest}"; do
+        BIRDCAGE_COMMIT="$commit" \
+          scripts/publish-channel.sh "${pair%|*}" "${pair#*|}" latest
+      done
+      # The tag release:gitlab will create, decided here so one job reads
+      # VERSION and the other cannot disagree with it.
+      {
+        echo "RELEASE_TAG=$(scripts/release-version.sh --tag)"
+        echo "RELEASE_COMMIT=$commit"
+      } > promotion.env
+      cat promotion.env
+  artifacts:
+    reports:
+      dotenv: promotion.env
+    expire_in: 90 days
+
+# Copies the version tag release:promote just created to GHCR, the same way
+# release:mirror-preview copies `preview` -- see that job's comment for why
+# this does not collide with the release guard's judge/ship rule. Needs
+# release:promote's dotenv for RELEASE_TAG, so this cannot become playable
+# until the button above has actually been pressed and has actually
+# succeeded; GitLab holds it exactly like release:gitlab below.
+release:mirror-release:
+  stage: release
+  image: $DOCKER_CLI_IMAGE
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: release:promote
+      artifacts: true
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  <<: *mirror_login
+  script:
+    - |
+      set -eu
+      for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
+        repo="${pair%|*}"
+        mirror_repo="${pair#*|}"
+        digest="$(scripts/mirror-image.sh "$repo" "$RELEASE_TAG" "$mirror_repo")"
+        scripts/mirror-image.sh "$repo" "sha256-${digest#sha256:}" "$mirror_repo"
+      done
+
+# The annotated tag and the release note, created together once the digest
+# has actually moved. The order matters: promote first, name second. If
+# promotion refuses, nothing anywhere carries the version's name; if this
+# job fails after a good promotion it can be retried on its own, without
+# re-promoting, so a version is never burnt by a half-finished cut.
+#
+# release-cli creates the tag from `ref` using CI_JOB_TOKEN, which acts
+# with the permissions of whoever pressed the button -- so a protected `v*`
+# tag is created when the owner cuts the release and refused when someone
+# without that right tries.
+#
+# Separate job because the `release:` keyword needs release-cli in the
+# image, and because it must not be able to run unless the promotion
+# succeeded: a release note pointing at images that were never promoted is
+# worse than none.
+release:gitlab:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: release:promote
+      artifacts: true
+  script:
+    - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
+  release:
+    tag_name: $RELEASE_TAG
+    tag_message: birdcage $RELEASE_TAG
+    ref: $CI_COMMIT_SHA
+    name: $RELEASE_TAG
+    description: |
+      Images published by digest, promoted from the build `preview` tested:
+
+      - `$BIRDCAGE_RELEASE_REPO:$RELEASE_TAG`
+      - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
+      - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
+      - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
+      - `$HOLDER_RELEASE_REPO:$RELEASE_TAG`
+      - `$OPENCANARY_RELEASE_REPO:$RELEASE_TAG`
+
+      Verify before you run either of them -- docs/releasing.md has the
+      commands. Both carry a key-based validation attestation; the keyless
+      countersignature is added by hand on GitHub after the cut.
+
+sync:mirror-to-github:
+  stage: sync
+  image: $ALPINE_IMAGE
+  needs: []
+  interruptible: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $MIRROR_TO_GITHUB == "true" && ($CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "preview" || $CI_COMMIT_BRANCH == "main")'
+      variables:
+        MIRROR_REF: refs/heads/$CI_COMMIT_BRANCH
+    - if: '$CI_PIPELINE_SOURCE == "push" && $MIRROR_TO_GITHUB == "true" && $CI_COMMIT_TAG =~ /^v[0-9]/'
+      variables:
+        MIRROR_REF: refs/tags/$CI_COMMIT_TAG
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - apk add --no-cache git openssh-client curl jq >/dev/null
+    - test -n "$GITHUB_MIRROR_SSH_KEY" || { echo "GITHUB_MIRROR_SSH_KEY is not set -- is ${CI_COMMIT_TAG:-$CI_COMMIT_BRANCH} protected?"; exit 1; }
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    # GitLab's variable editor trims the key's final newline and OpenSSH
+    # refuses a key without one; put it back, and prove the key loads
+    # before trying GitHub -- without printing any of it.
+    - tr -d '\r' < "$GITHUB_MIRROR_SSH_KEY" > ~/.ssh/mirror_key && chmod 600 ~/.ssh/mirror_key
+    - '[ -n "$(tail -c1 ~/.ssh/mirror_key)" ] && echo >> ~/.ssh/mirror_key || true'
+    - 'head -1 ~/.ssh/mirror_key | grep -q "PRIVATE KEY" || { echo "GITHUB_MIRROR_SSH_KEY does not begin with a PRIVATE KEY header"; exit 1; }'
+    - 'ssh-keygen -y -f ~/.ssh/mirror_key > /dev/null || { echo "GITHUB_MIRROR_SSH_KEY is not a readable private key"; exit 1; }'
+    - curl -fsS https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com \(.)"' > ~/.ssh/known_hosts
+    - test -s ~/.ssh/known_hosts
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+    - git remote add github git@github.com:tomlawesome/birdcage.git 2>/dev/null || git remote set-url github git@github.com:tomlawesome/birdcage.git
+    - git push github "HEAD:$MIRROR_REF"

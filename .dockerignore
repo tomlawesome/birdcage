@@ -1,0 +1,18 @@
+# Build context for build/*/Dockerfile. Everything a `docker build .`
+# from the repository root must not ship to the daemon: the checkout's
+# own state, agent scratch, local builds, and the frontend's dependency
+# tree (the image installs its own from the lockfile).
+.git
+.github
+.claude
+.agents
+docs
+supply-chain
+frontend/node_modules
+frontend/dist
+web/dist/*
+!web/dist/.gitkeep
+birdcage.db
+birdcage
+mockingbird
+*.log

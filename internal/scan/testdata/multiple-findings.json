@@ -1,0 +1,94 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "CVE-2023-0001",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-0001",
+        "namespace": "debian:distro:debian:12",
+        "severity": "High",
+        "urls": [],
+        "description": "example high-severity finding with a known fix",
+        "cvss": [],
+        "fix": {
+          "versions": [
+            "2.4.1-1"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 7.5
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [],
+      "artifact": {
+        "id": "b1",
+        "name": "libfoo",
+        "version": "2.4.0-1",
+        "type": "deb",
+        "locations": [],
+        "language": "",
+        "licenses": [],
+        "cpes": [],
+        "purl": "pkg:deb/debian/libfoo@2.4.0-1",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2023-0002",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-0002",
+        "namespace": "debian:distro:debian:12",
+        "severity": "Negligible",
+        "urls": [],
+        "description": "example negligible-severity finding with no known fix",
+        "cvss": [],
+        "fix": {
+          "versions": [],
+          "state": "not-fixed"
+        },
+        "advisories": [],
+        "risk": 0.5
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [],
+      "artifact": {
+        "id": "b2",
+        "name": "libbar",
+        "version": "1.0.0-3",
+        "type": "deb",
+        "locations": [],
+        "language": "",
+        "licenses": [],
+        "cpes": [],
+        "purl": "pkg:deb/debian/libbar@1.0.0-3",
+        "upstreams": []
+      }
+    }
+  ],
+  "ignoredMatches": [],
+  "source": {
+    "type": "directory",
+    "target": "/host"
+  },
+  "distro": {
+    "name": "debian",
+    "version": "12",
+    "idLike": []
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "1.14.0",
+    "configuration": {},
+    "db": {
+      "status": {
+        "schemaVersion": "6.0.0",
+        "from": "https://grype.anchore.io/databases",
+        "built": "2026-09-20T01:12:07Z",
+        "path": "/root/.cache/grype/db",
+        "valid": true
+      },
+      "providers": {}
+    },
+    "timestamp": "2026-09-22T10:10:00-00:00"
+  }
+}

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 2 · E · The docket</title>
+<style>
+  /* Tokens are mikroview's (concepts/round-30/the-whole.html), unchanged.
+     Birdcage adds only the visitor kinds: sweep, repeat, inside, touch. */
+  :root {
+    --void: #06080e; --raised: #0f1422; --glass: rgba(15,20,34,.66);
+    --hair: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --ink: #e9eefb; --ink-2: #97a4c4; --ink-3: #55628a; --accent: #9db8e8;
+    --lan: #3987e5; --srv: #199e70; --iot: #c98500; --guest: #d76a9e;
+    --ok: #37b364; --alarm: #ff5470; --now: #e8b05a;
+    --sweep: #ff5470; --repeat: #ff9e64; --inside: #f072c8; --touch: #b8c56a;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--void); color: var(--ink); font: 13.5px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .scene {
+    position: relative; width: 1600px; height: 1000px; margin: 0 auto 40px; overflow: hidden;
+    background: radial-gradient(1100px 600px at 75% -15%, rgba(80,115,205,.07), transparent 60%), var(--void);
+    border-bottom: 1px solid var(--hair-2);
+  }
+  .tag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; font: 9.5px var(--mono); letter-spacing: .12em; color: var(--ink-3); z-index: 9; }
+
+  /* ---- free-floating chrome ---- */
+  .wordmark { position: absolute; top: 18px; left: 24px; font-weight: 800; font-size: 15px; letter-spacing: .04em; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  .tabs { position: absolute; top: 21px; left: 150px; display: flex; gap: 20px; font: 12px var(--sans); color: var(--ink-3); }
+  .tabs .on { color: var(--ink); position: relative; }
+  .tabs .on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 1px; background: var(--accent); }
+  .status { position: absolute; top: 20px; right: 40px; display: flex; gap: 16px; align-items: center; font: 11px var(--mono); color: var(--ink-2); }
+  .status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: 1px; }
+  .status .flag { color: var(--alarm); }
+  .status .flag b { color: var(--void); background: var(--alarm); border-radius: 9px; padding: 0 7px; font-weight: 700; font-size: 10.5px; }
+  .status .who { color: var(--ink-3); border: 1px solid var(--hair-2); border-radius: 999px; padding: 2px 10px; }
+  .ranges { display: flex; gap: 4px; margin-right: 8px; }
+  .ranges span { font: 11px var(--mono); color: var(--ink-3); padding: 2px 9px; border-radius: 4px; }
+  .ranges .on { color: var(--ink); background: var(--raised); border: 1px solid var(--hair-2); }
+  .deck { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 30px; align-items: center; }
+  .deck span { writing-mode: sideways-lr; color: var(--ink-3); font: 500 9.5px var(--mono); letter-spacing: .22em; }
+  .deck .on { color: var(--ink); font-size: 12px; letter-spacing: .26em; }
+  .ibtn { position: absolute; left: 14px; bottom: 12px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hair-2); color: var(--ink-3); font: italic 600 11px Georgia, serif; text-align: center; line-height: 16px; }
+
+  /* ---- the ribbon: the wire turned on its side, one row per canary ---- */
+  .ribbon { position: absolute; top: 64px; left: 36px; right: 50px; height: 170px; }
+  .ribbon svg { width: 100%; height: 100%; }
+  .rb-name { font: 650 11px var(--mono); fill: var(--ink); }
+  .rb-epi { font: 9.5px var(--sans); fill: var(--ink-3); }
+  .rb-state { font: 700 8px var(--mono); letter-spacing: .08em; }
+  .st-sweep { fill: var(--alarm); } .st-repeat { fill: var(--repeat); } .st-ok { fill: var(--ok); }
+  .rb-line { stroke-width: 1; }
+  .beat { fill: var(--ink-3); opacity: .45; }
+  .hit { stroke-width: 3; stroke-linecap: round; }
+  .hit.sw { stroke: var(--sweep); } .hit.rp { stroke: var(--repeat); } .hit.in { stroke: var(--inside); } .hit.tc { stroke: var(--touch); }
+  .nowline { stroke: var(--now); stroke-width: 1.6; }
+  .now-t { font: 10px var(--mono); fill: var(--now); }
+  .gut { font: 9.5px var(--mono); fill: var(--ink-3); text-anchor: middle; }
+  .flagline { stroke: var(--alarm); stroke-width: .7; stroke-dasharray: 2 5; opacity: .7; }
+  .flag-t { font: 700 9.5px var(--mono); fill: var(--alarm); }
+  .rb-sum { position: absolute; top: 246px; left: 36px; right: 50px; display: flex; justify-content: space-between; font: 11px var(--sans); color: var(--ink-3); }
+  .rb-sum b { color: var(--ink-2); font-weight: 500; } .rb-sum .r { color: var(--alarm); }
+  .rb-sum .sw { color: var(--sweep); } .rb-sum .rp { color: var(--repeat); } .rb-sum .in { color: var(--inside); } .rb-sum .tc { color: var(--touch); } .rb-sum .nw { color: var(--now); }
+
+  /* ---- the docket ---- */
+  .panel { position: absolute; top: 284px; left: 36px; right: 50px; }
+  .panel.full { top: 96px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; padding: 0 0 8px; }
+  .panel-head .lead { font: 12.5px var(--sans); color: var(--ink-2); } .panel-head .lead b { color: var(--ink); font-weight: 600; } .panel-head .lead .r { color: var(--alarm); }
+  .clearall { font: 600 11px var(--sans); color: var(--now); border: 1px solid rgba(232,176,90,.5); border-radius: 999px; padding: 3px 14px; }
+  table { border-collapse: collapse; width: 100%; font: 12px var(--mono); }
+  th { font: 600 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); text-align: left; padding: 8px 18px; border-bottom: 1px solid var(--hair-2); white-space: nowrap; }
+  td { padding: 10px 18px; color: var(--ink-2); border-bottom: 1px solid var(--hair); white-space: nowrap; vertical-align: top; }
+  td.t { color: var(--ink-3); } td.k { color: var(--ink); } td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.filters td { padding: 2px 18px 8px; }
+  tr.filters span { display: block; border-bottom: 1px dashed var(--hair); font: 10.5px var(--mono); color: var(--ink-3); opacity: .7; padding: 2px 0; }
+  tr.filters span.set { color: var(--ink); opacity: 1; border-bottom-color: var(--accent); }
+  tr.filters span.set i { color: var(--ink-3); font-style: normal; margin-left: 6px; }
+  .fmark { font-weight: 700; white-space: nowrap; }
+  .vt-sweep .fmark { color: var(--sweep); } tr.vt-sweep > td:first-child { box-shadow: inset 3px 0 0 var(--sweep); }
+  .vt-repeat .fmark { color: var(--repeat); } tr.vt-repeat > td:first-child { box-shadow: inset 3px 0 0 var(--repeat); }
+  .vt-inside .fmark { color: var(--inside); } tr.vt-inside > td:first-child { box-shadow: inset 3px 0 0 var(--inside); }
+  .vt-touch .fmark { color: var(--touch); } tr.vt-touch > td:first-child { box-shadow: inset 3px 0 0 var(--touch); }
+  td.ev { font-family: var(--sans); font-size: 12.5px; white-space: normal; max-width: 520px; }
+  td .lane { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .wl { color: var(--ink); border-bottom: 1px dotted var(--hair-2); }
+  tr.open td { border-bottom-color: transparent; background: rgba(160,185,230,.04); }
+  .openc { color: var(--accent); display: inline-block; } tr.open .openc { transform: rotate(90deg); }
+  tr.drawer > td { padding: 0 18px 4px; background: rgba(160,185,230,.04); }
+  tr.drawer.vt-sweep > td { box-shadow: inset 3px 0 0 var(--sweep); }
+  .dwr { display: grid; grid-template-columns: 1.3fr 1fr; gap: 10px 36px; padding: 6px 2px 16px 20px; white-space: normal; }
+  .dwr .story { font: 12.5px var(--sans); color: var(--ink-2); line-height: 1.55; }
+  .dwr .story b { color: var(--ink); font-weight: 600; }
+  .dwr .lines { grid-column: 1; font: 10.5px var(--mono); color: var(--ink-3); white-space: pre; overflow: hidden; }
+  .dwr .side { grid-column: 2; grid-row: 1 / span 2; }
+  .dwr .lab { font: 600 9px var(--mono); letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; }
+  .dwr .side svg { width: 100%; height: 56px; margin: 6px 0 2px; }
+  .dwr .span { font: 10.5px var(--mono); color: var(--ink-3); }
+  .dwr .acts { grid-column: 1 / -1; display: flex; gap: 10px; margin-top: 2px; align-items: center; }
+  .pill { font: 600 11px var(--sans); color: var(--accent); border: 1px solid var(--hair-2); border-radius: 999px; padding: 4px 16px; }
+  .pill.quiet { color: var(--ink-3); }
+  .pill.warn { color: var(--now); border-color: rgba(232,176,90,.5); }
+  .acts .why { font: 10.5px var(--mono); color: var(--ink-3); margin-left: 6px; }
+
+  /* the drawer's own hit list: a flat table within the drawer */
+  .dwr .hits { grid-column: 1 / -1; }
+  .dwr .hits table { font-size: 11.5px; }
+  .dwr .hits th { padding: 6px 14px; }
+  .dwr .hits td { padding: 6px 14px; }
+  .badge { font: 700 10px var(--mono); border-radius: 4px; padding: 0 6px; letter-spacing: .06em; }
+  .b-ssh { color: #5aa7f0; background: rgba(90,167,240,.12); } .b-mysql { color: #2dd4bf; background: rgba(45,212,191,.12); }
+  .b-smb { color: var(--repeat); background: rgba(255,158,100,.12); } .b-http { color: var(--inside); background: rgba(240,114,200,.12); } .b-ftp { color: var(--touch); background: rgba(184,197,106,.12); }
+
+  /* ---- hits: the stream ---- */
+  .top { position: absolute; top: 60px; left: 24px; right: 40px; display: flex; flex-direction: column; gap: 8px; }
+  .filterrow { display: flex; gap: 10px; align-items: center; }
+  .barbtn { font: 11px var(--mono); color: var(--ink-2); border: 1px solid var(--hair-2); border-radius: 6px; padding: 5px 12px; }
+  .fbox { flex: 1; display: flex; align-items: center; gap: 14px; border: 1px solid var(--hair-2); border-radius: 6px; padding: 5px 14px; font: 12px var(--mono); color: var(--ink-3); background: rgba(15,20,34,.4); }
+  .fbox .term { color: var(--ink-2); } .fbox .term b { color: var(--ink); font-weight: 500; } .fbox .term i { color: var(--ink-3); font-style: normal; margin-left: 4px; }
+  .whisper { display: flex; align-items: center; gap: 16px; padding: 2px 0 0 8px; }
+  .whisper svg { flex: 1; height: 30px; }
+  .whisper polyline { fill: none; stroke: var(--accent); stroke-width: 1.2; opacity: .55; }
+  .whisper .marks line { stroke: var(--alarm); stroke-width: 2; }
+  .whisper .stat { font: 10.5px var(--mono); color: var(--ink-3); white-space: nowrap; }
+  .whisper .stat b { color: var(--ink-2); font-weight: 500; } .whisper .stat .r { color: var(--alarm); }
+  .wtimes { display: flex; justify-content: space-between; font: 9.5px var(--mono); color: var(--ink-3); padding: 0 8px 0 90px; margin-top: -6px; }
+  .top th { padding: 10px 18px 8px; }
+  .top td { padding: 9px 18px; vertical-align: middle; }
+  tr.flagged td { background: rgba(255,84,112,.05); }
+  tr.flagged td.t::after { content: ' ⚑'; color: var(--alarm); }
+  td.said { font-family: var(--sans); font-size: 12.5px; }
+  .kind { font: 700 9.5px var(--mono); letter-spacing: .06em; }
+  .kind.sw { color: var(--sweep); } .kind.rp { color: var(--repeat); } .kind.in { color: var(--inside); } .kind.tc { color: var(--touch); }
+  .foot { position: absolute; left: 0; right: 40px; bottom: 14px; display: flex; justify-content: center; gap: 60px; font: 12.5px var(--sans); color: var(--ink-2); }
+  .foot b { color: var(--ink); font-weight: 600; } .foot .r { color: var(--alarm); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .status .dot { animation: pulse 1.8s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .4; } }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== SCENE 1 — THE DOCKET, LANDING ===================== -->
+<section class="scene" id="e-docket" aria-label="The docket — birdcage's landing: who is at the canaries, with the wire as a ribbon above">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class="on">visitors</span><span>canaries</span><span>audit log</span></div>
+  <div class="status">
+    <div class="ranges"><span class="on">15 m</span><span>1 h</span><span>24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span>
+    <span class="flag">⚑ <b>1</b></span>
+    <span>◎ 4 visitors</span>
+    <span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span class="on">VISITORS</span><span>HITS</span><span>THE WIRE</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="ribbon">
+    <svg viewBox="0 0 1514 170" preserveAspectRatio="none" aria-hidden="true">
+      <!-- 15 minutes across: 21:49:31 at x=250 → 22:04:31 at x=1470; 81.3 px per minute -->
+      <g class="gut">
+        <text x="250" y="10">21:50</text><text x="413" y="10">21:52</text><text x="576" y="10">21:54</text><text x="738" y="10">21:56</text><text x="901" y="10">21:58</text><text x="1064" y="10">22:00</text><text x="1226" y="10">22:02</text><text x="1389" y="10">22:04</text>
+      </g>
+      <!-- four wires -->
+      <g>
+        <text x="0" y="40" class="rb-name">canary-lan</text><text x="0" y="52" class="rb-epi">the lan · 10.0.10.250</text><text x="150" y="52" class="rb-state st-sweep">✱ SWEPT 21:55</text>
+        <line x1="250" y1="44" x2="1470" y2="44" class="rb-line" stroke="var(--lan)" opacity=".35"/>
+        <text x="0" y="78" class="rb-name">canary-srv</text><text x="0" y="90" class="rb-epi">the servers · 10.0.20.250</text><text x="150" y="90" class="rb-state st-sweep">✱ SWEPT 21:56</text>
+        <line x1="250" y1="82" x2="1470" y2="82" class="rb-line" stroke="var(--srv)" opacity=".35"/>
+        <text x="0" y="116" class="rb-name">canary-iot</text><text x="0" y="128" class="rb-epi">the things · 10.0.30.250</text><text x="150" y="128" class="rb-state st-sweep">✱ SWEPT 22:01 <tspan class="st-repeat">· REPEAT :445</tspan></text>
+        <line x1="250" y1="120" x2="1470" y2="120" class="rb-line" stroke="var(--iot)" opacity=".35"/>
+        <text x="0" y="154" class="rb-name">canary-guest</text><text x="0" y="166" class="rb-epi">the guests · 10.0.40.250</text><text x="150" y="166" class="rb-state st-sweep">✱ SWEPT 22:04</text>
+        <line x1="250" y1="158" x2="1470" y2="158" class="rb-line" stroke="var(--guest)" opacity=".35"/>
+      </g>
+      <!-- heartbeats, one a minute -->
+      <g class="beat">
+        <rect x="290" y="42" width="2" height="4"/><rect x="371" y="42" width="2" height="4"/><rect x="452" y="42" width="2" height="4"/><rect x="534" y="42" width="2" height="4"/><rect x="615" y="42" width="2" height="4"/><rect x="696" y="42" width="2" height="4"/><rect x="778" y="42" width="2" height="4"/><rect x="859" y="42" width="2" height="4"/><rect x="940" y="42" width="2" height="4"/><rect x="1022" y="42" width="2" height="4"/><rect x="1103" y="42" width="2" height="4"/><rect x="1184" y="42" width="2" height="4"/><rect x="1266" y="42" width="2" height="4"/><rect x="1347" y="42" width="2" height="4"/><rect x="1428" y="42" width="2" height="4"/>
+        <rect x="262" y="80" width="2" height="4"/><rect x="343" y="80" width="2" height="4"/><rect x="424" y="80" width="2" height="4"/><rect x="506" y="80" width="2" height="4"/><rect x="587" y="80" width="2" height="4"/><rect x="668" y="80" width="2" height="4"/><rect x="750" y="80" width="2" height="4"/><rect x="831" y="80" width="2" height="4"/><rect x="912" y="80" width="2" height="4"/><rect x="994" y="80" width="2" height="4"/><rect x="1075" y="80" width="2" height="4"/><rect x="1156" y="80" width="2" height="4"/><rect x="1238" y="80" width="2" height="4"/><rect x="1319" y="80" width="2" height="4"/><rect x="1400" y="80" width="2" height="4"/>
+        <rect x="310" y="118" width="2" height="4"/><rect x="391" y="118" width="2" height="4"/><rect x="472" y="118" width="2" height="4"/><rect x="554" y="118" width="2" height="4"/><rect x="635" y="118" width="2" height="4"/><rect x="716" y="118" width="2" height="4"/><rect x="798" y="118" width="2" height="4"/><rect x="879" y="118" width="2" height="4"/><rect x="960" y="118" width="2" height="4"/><rect x="1042" y="118" width="2" height="4"/><rect x="1123" y="118" width="2" height="4"/><rect x="1204" y="118" width="2" height="4"/><rect x="1286" y="118" width="2" height="4"/><rect x="1367" y="118" width="2" height="4"/><rect x="1448" y="118" width="2" height="4"/>
+        <rect x="280" y="156" width="2" height="4"/><rect x="361" y="156" width="2" height="4"/><rect x="442" y="156" width="2" height="4"/><rect x="524" y="156" width="2" height="4"/><rect x="605" y="156" width="2" height="4"/><rect x="686" y="156" width="2" height="4"/><rect x="768" y="156" width="2" height="4"/><rect x="849" y="156" width="2" height="4"/><rect x="930" y="156" width="2" height="4"/><rect x="1012" y="156" width="2" height="4"/><rect x="1093" y="156" width="2" height="4"/><rect x="1174" y="156" width="2" height="4"/><rect x="1256" y="156" width="2" height="4"/><rect x="1337" y="156" width="2" height="4"/><rect x="1418" y="156" width="2" height="4"/>
+      </g>
+      <!-- hits -->
+      <g>
+        <line class="hit sw" x1="747" y1="37" x2="747" y2="51"/><line class="hit sw" x1="748" y1="37" x2="748" y2="51"/>  <!-- 21:55:39/40 lan -->
+        <line class="hit sw" x1="855" y1="75" x2="855" y2="89"/><line class="hit sw" x1="887" y1="75" x2="887" y2="89"/>  <!-- 21:56:58 · 21:57:22 srv -->
+        <line class="hit rp" x1="1033" y1="113" x2="1033" y2="127"/>  <!-- 21:59:10 iot smb -->
+        <line class="hit sw" x1="1247" y1="113" x2="1247" y2="127"/>  <!-- 22:01:47 iot -->
+        <line class="hit sw" x1="1430" y1="151" x2="1430" y2="165"/><line class="hit sw" x1="1470" y1="151" x2="1470" y2="165"/>  <!-- 22:04:02 · 22:04:31 guest -->
+      </g>
+      <!-- flag line: the sweep is born -->
+      <line class="flagline" x1="747" y1="24" x2="747" y2="170"/>
+      <text x="752" y="30" class="flag-t">✱ 21:55 sweep born here</text>
+      <!-- the brink -->
+      <line x1="1470" y1="18" x2="1470" y2="170" class="nowline"/>
+      <text x="1462" y="30" class="now-t" text-anchor="end">NOW · 22:04:31</text>
+    </svg>
+  </div>
+  <div class="rb-sum">
+    <span><span class="sw">▍ sweep</span> · <span class="rp">▍ repeat</span> · <span class="in">▍ from inside</span> · <span class="tc">▍ one touch</span> · <span style="color:var(--ink-3)">·</span> heartbeat, once a minute · <span class="nw">— the brink</span></span>
+    <span>last 15 minutes · <b>8 hits</b> · <span class="r">1 sweep in progress</span> · open THE WIRE for the full fall ▸</span>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span class="lead"><b>4 visitors</b> in 14 days · <span class="r">1 flagged</span> · 232 hits today · nothing blocked yet — birdcage watches, mikroview acts (#5)</span>
+      <span class="clearall">clear all</span>
+    </div>
+    <table>
+      <thead><tr><th>visitor</th><th>where</th><th>evidence</th><th class="num">count</th><th>first · last</th><th></th></tr></thead>
+      <tbody>
+        <tr class="filters"><td><span>filter</span></td><td><span>filter</span></td><td><span>filter</span></td><td><span>filter</span></td><td><span>filter</span></td><td></td></tr>
+        <tr class="vt-sweep">
+          <td><span class="fmark">✱ SWEEP</span></td>
+          <td class="k"><span class="wl">203.0.113.42</span><br><span class="t" style="color:var(--ink-3)"><i class="lane" style="background:var(--lan)"></i><i class="lane" style="background:var(--srv)"></i><i class="lane" style="background:var(--iot)"></i><i class="lane" style="background:var(--guest)"></i>all four · tcp/22, 3306</span></td>
+          <td class="ev">Walked every canary in nine minutes, in address order, default passwords on ssh then an empty-password mysql login. Never seen before tonight. CrowdSec has nothing on it.</td>
+          <td class="k num">7×</td>
+          <td class="t">21:55:39 · 22:04:31<br>still arriving</td>
+          <td><span class="openc">▸</span></td>
+        </tr>
+        <tr class="vt-repeat">
+          <td><span class="fmark">✱ REPEAT</span></td>
+          <td class="k"><span class="wl">198.51.100.7</span><br><span style="color:var(--ink-3)"><i class="lane" style="background:var(--iot)"></i>canary-iot · tcp/445</span></td>
+          <td class="ev">The same smb knock every ~20 minutes for six days: IPC$ share, then gone. Community-blocked at the router since Tuesday; it keeps knocking.</td>
+          <td class="k num">221×</td>
+          <td class="t">6 d ago · 21:59:10<br>on schedule</td>
+          <td><span class="openc">▸</span></td>
+        </tr>
+        <tr class="vt-inside">
+          <td><span class="fmark">✱ FROM INSIDE</span></td>
+          <td class="k"><span class="wl">10.0.40.23</span> <span style="color:var(--ink-3)">from guest</span><br><span style="color:var(--ink-3)"><i class="lane" style="background:var(--lan)"></i>canary-lan · tcp/80</span></td>
+          <td class="ev">A guest device browsed the web decoy's front page, then tried <span class="wl">/admin</span>. It is on the never-block floor: inside addresses are never auto-blocked (#33).</td>
+          <td class="k num">2×</td>
+          <td class="t">19:11:04 · 19:11:22<br>3 h ago</td>
+          <td><span class="openc">▸</span></td>
+        </tr>
+        <tr class="vt-touch">
+          <td><span class="fmark">▲ ONE TOUCH</span></td>
+          <td class="k"><span class="wl">192.0.2.88</span><br><span style="color:var(--ink-3)"><i class="lane" style="background:var(--srv)"></i>canary-srv · tcp/21</span></td>
+          <td class="ev">Anonymous ftp login, once, yesterday at 03:18. Nothing since.</td>
+          <td class="k num">1×</td>
+          <td class="t">yesterday 03:18<br>1 d ago</td>
+          <td><span class="openc">▸</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="foot"><span>a quiet fortnight until <b>21:55</b> tonight — one address is walking the cage right now</span><span>nothing here blocks: <b>lookback in mikroview ▸</b> to act</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">E · THE DOCKET · SCENE 1 · LANDING</div>
+</section>
+
+<!-- ===================== SCENE 2 — HITS, FILTERED ===================== -->
+<section class="scene" id="e-hits" aria-label="Hits — the stream, filtered to one visitor">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="status">
+    <div class="ranges"><span>15 m</span><span class="on">1 h</span><span>24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span>
+    <span class="flag">⚑ <b>1</b></span>
+    <span>◎ 4 visitors</span>
+    <span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span>VISITORS</span><span class="on">HITS</span><span>THE WIRE</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="top">
+    <div class="filterrow">
+      <span class="barbtn">◂ bar</span>
+      <div class="fbox"><span class="term">source: <b>203.0.113.42</b><i>⌫</i></span><span>type a term, or click a value in a row</span></div>
+    </div>
+    <div class="whisper">
+      <svg viewBox="0 0 1200 30" preserveAspectRatio="none">
+        <polyline points="0,26 100,26 200,25 300,26 400,25 500,26 600,26 700,25 800,26 900,26 960,26 1000,24 1040,26 1080,25 1120,26 1160,26 1200,26"/>
+        <g class="marks"><line x1="1060" y1="6" x2="1060" y2="26"/><line x1="1061" y1="6" x2="1061" y2="26"/><line x1="1087" y1="6" x2="1087" y2="26"/><line x1="1095" y1="6" x2="1095" y2="26"/><line x1="1141" y1="6" x2="1141" y2="26"/><line x1="1186" y1="6" x2="1186" y2="26"/><line x1="1196" y1="6" x2="1196" y2="26"/></g>
+      </svg>
+      <span class="stat"><b>7 hits</b> · <span class="r">4 of 4 canaries</span> · first <b>21:55:39</b> · last <b>22:04:31</b> · autoscroll <b>on</b></span>
+    </div>
+    <div class="wtimes"><span>21:04</span><span>22:04 · now</span></div>
+
+    <table>
+      <thead><tr><th class="num">time</th><th>canary</th><th>service</th><th class="num">port</th><th>visitor</th><th>what it tried</th><th>kind</th></tr></thead>
+      <tbody>
+        <tr class="flagged"><td class="t num">22:04:31.402</td><td class="k"><i class="lane" style="background:var(--guest)"></i>canary-guest</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">login root / 123456</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">22:04:02.118</td><td class="k"><i class="lane" style="background:var(--guest)"></i>canary-guest</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">login admin / admin</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">22:01:47.930</td><td class="k"><i class="lane" style="background:var(--iot)"></i>canary-iot</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">login root / toor</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">21:57:22.551</td><td class="k"><i class="lane" style="background:var(--srv)"></i>canary-srv</td><td><span class="badge b-mysql">MYSQL</span></td><td class="num">3306</td><td class="k">203.0.113.42</td><td class="said">auth root, empty password</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">21:56:58.301</td><td class="k"><i class="lane" style="background:var(--srv)"></i>canary-srv</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">login root / password</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">21:55:40.077</td><td class="k"><i class="lane" style="background:var(--lan)"></i>canary-lan</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">login root / root</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+        <tr class="flagged"><td class="t num">21:55:39.812</td><td class="k"><i class="lane" style="background:var(--lan)"></i>canary-lan</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="k">203.0.113.42</td><td class="said">connection opened — first sight of this address</td><td><span class="kind sw">✱ SWEEP</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="foot"><span><b>203.0.113.42</b> → every canary, :22 then :3306 — <span class="r">4 of 4 in 9 min</span> · 7 so far · flagged as a sweep</span><span>▲ first address to touch every canary in <b>14 d</b></span><span>clear the term to see all <b>232</b> hits today</span></div>
+  <div class="ibtn">i</div>
+  <div class="tag">E · THE DOCKET · SCENE 2 · HITS FILTERED TO 203.0.113.42</div>
+</section>
+
+<!-- ===================== SCENE 3 — THE SWEEP OPENED ===================== -->
+<section class="scene" id="e-visitor" aria-label="The docket with the sweep visitor opened: story, raw lines, episode, its hits, actions">
+  <div class="wordmark">BIRD<em>CAGE</em></div>
+  <div class="tabs"><span class="on">visitors</span><span>canaries</span><span>audit log</span></div>
+  <div class="status">
+    <div class="ranges"><span class="on">15 m</span><span>1 h</span><span>24 h</span><span>14 d</span></div>
+    <span><span class="dot"></span>LIVE · 4 canaries</span>
+    <span class="flag">⚑ <b>1</b></span>
+    <span>◎ 4 visitors</span>
+    <span class="who">tom (admin)</span>
+  </div>
+  <div class="deck"><span class="on">VISITORS</span><span>HITS</span><span>THE WIRE</span><span>CANARIES</span><span>AUDIT LOG</span><span>SETTINGS</span></div>
+
+  <div class="panel full">
+    <div class="panel-head">
+      <span class="lead"><b>4 visitors</b> in 14 days · <span class="r">1 flagged</span> · the ribbon folds away while a visitor is open</span>
+      <span class="clearall">clear all</span>
+    </div>
+    <table>
+      <thead><tr><th>visitor</th><th>where</th><th>evidence</th><th class="num">count</th><th>first · last</th><th></th></tr></thead>
+      <tbody>
+        <tr class="filters"><td><span class="set">sweep<i>⌫</i></span></td><td><span>filter</span></td><td><span>filter</span></td><td><span>filter</span></td><td><span>filter</span></td><td></td></tr>
+        <tr class="vt-sweep open">
+          <td><span class="fmark">✱ SWEEP</span></td>
+          <td class="k"><span class="wl">203.0.113.42</span><br><span style="color:var(--ink-3)"><i class="lane" style="background:var(--lan)"></i><i class="lane" style="background:var(--srv)"></i><i class="lane" style="background:var(--iot)"></i><i class="lane" style="background:var(--guest)"></i>all four · tcp/22, 3306</span></td>
+          <td class="ev">Walked every canary in nine minutes, in address order, default passwords on ssh then an empty-password mysql login. Never seen before tonight. CrowdSec has nothing on it.</td>
+          <td class="k num">7×</td>
+          <td class="t">21:55:39 · 22:04:31<br>still arriving</td>
+          <td><span class="openc">▸</span></td>
+        </tr>
+        <tr class="drawer vt-sweep">
+          <td colspan="6">
+            <div class="dwr">
+              <div class="story"><b>7 asks in nine minutes</b>, all from <b>203.0.113.42</b> (AS64500, never seen before tonight), walking the canaries in address order: <b>canary-lan</b> :22 at 21:55, <b>canary-srv</b> :22 then :3306 at 21:57, <b>canary-iot</b> :22 at 22:01, <b>canary-guest</b> :22 at 22:04. Every login used a default pair. Nothing in CrowdSec knows this address yet. No mitigation has run — blocking arrives with #5, and this address is outside the never-block floor, so it would be eligible.</div>
+              <div class="lines">21:55:39 canary-lan   4001 ssh  SESSION  203.0.113.42:51790 → 10.0.10.250:22   SSH-2.0-libssh2_1.9.0
+21:56:58 canary-srv   4002 ssh  LOGIN    203.0.113.42:51822 → 10.0.20.250:22   root / password
+21:57:22 canary-srv   8001 mysql AUTH    203.0.113.42:51830 → 10.0.20.250:3306 root / (empty)</div>
+              <div class="side">
+                <div class="lab">the episode</div>
+                <svg viewBox="0 0 400 56" preserveAspectRatio="none" aria-hidden="true">
+                  <line x1="0" y1="14" x2="400" y2="14" stroke="var(--lan)" opacity=".3"/><line x1="0" y1="24" x2="400" y2="24" stroke="var(--srv)" opacity=".3"/><line x1="0" y1="34" x2="400" y2="34" stroke="var(--iot)" opacity=".3"/><line x1="0" y1="44" x2="400" y2="44" stroke="var(--guest)" opacity=".3"/>
+                  <rect x="0" y="10" width="3" height="8" fill="var(--alarm)"/><rect x="4" y="10" width="3" height="8" fill="var(--alarm)"/>
+                  <rect x="58" y="20" width="3" height="8" fill="var(--alarm)"/><rect x="76" y="20" width="3" height="8" fill="var(--alarm)"/>
+                  <rect x="272" y="30" width="3" height="8" fill="var(--alarm)"/>
+                  <rect x="372" y="40" width="3" height="8" fill="var(--alarm)"/><rect x="396" y="40" width="3" height="8" fill="var(--alarm)"/>
+                </svg>
+                <div class="span">first 21:55:39 · last 22:04:31 · still arriving · one wire per canary, top to bottom in address order</div>
+              </div>
+              <div class="hits">
+                <table>
+                  <thead><tr><th class="num">time</th><th>canary</th><th>service</th><th class="num">port</th><th>what it tried</th></tr></thead>
+                  <tbody>
+                    <tr><td class="t num">22:04:31.402</td><td class="k"><i class="lane" style="background:var(--guest)"></i>canary-guest</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">login root / 123456</td></tr>
+                    <tr><td class="t num">22:04:02.118</td><td class="k"><i class="lane" style="background:var(--guest)"></i>canary-guest</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">login admin / admin</td></tr>
+                    <tr><td class="t num">22:01:47.930</td><td class="k"><i class="lane" style="background:var(--iot)"></i>canary-iot</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">login root / toor</td></tr>
+                    <tr><td class="t num">21:57:22.551</td><td class="k"><i class="lane" style="background:var(--srv)"></i>canary-srv</td><td><span class="badge b-mysql">MYSQL</span></td><td class="num">3306</td><td class="said">auth root, empty password</td></tr>
+                    <tr><td class="t num">21:56:58.301</td><td class="k"><i class="lane" style="background:var(--srv)"></i>canary-srv</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">login root / password</td></tr>
+                    <tr><td class="t num">21:55:40.077</td><td class="k"><i class="lane" style="background:var(--lan)"></i>canary-lan</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">login root / root</td></tr>
+                    <tr><td class="t num">21:55:39.812</td><td class="k"><i class="lane" style="background:var(--lan)"></i>canary-lan</td><td><span class="badge b-ssh">SSH</span></td><td class="num">22</td><td class="said">connection opened — first sight of this address</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="acts"><span class="pill">open in hits ▸</span><span class="pill">lookback in mikroview ▸</span><span class="pill warn">block at the router</span><span class="why">not yet — #5 · outside the never-block floor, so eligible</span><span class="pill quiet">clear with a note</span></div>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="ibtn">i</div>
+  <div class="tag">E · THE DOCKET · SCENE 3 · 203.0.113.42 OPENED · FILTER sweep</div>
+</section>
+
+</body>
+</html>

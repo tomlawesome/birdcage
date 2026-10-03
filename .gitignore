@@ -1,0 +1,28 @@
+birdcage.db
+
+# The frontend build (frontend/npm run build) is copied here for
+# web/embed.go's //go:embed all:dist to pick up -- nothing built is
+# committed, only the placeholder .gitkeep the embed pattern needs to
+# compile against an unbuilt checkout.
+/web/dist/*
+!/web/dist/.gitkeep
+
+# Agent worktrees the harness creates under the checkout; never part of the project.
+/.claude/worktrees/
+
+# Session handoffs the agents write under the checkout; never part of the project (owner, 2026-09-14).
+/.agents/
+
+# Local `go build` outputs at the repository root; CI and the Dockerfiles build them elsewhere.
+/birdcage
+/mockingbird
+
+# Coverage output (frontend/npm run test:coverage, #74). Reports are
+# produced per run and read from the job log or the merge request; a
+# committed copy would only ever be stale.
+frontend/coverage/
+coverage.out
+
+# Python bytecode from running the guard scripts locally.
+__pycache__/
+*.pyc

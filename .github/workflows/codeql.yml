@@ -1,0 +1,63 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - preview
+      - dev
+  pull_request:
+    branches:
+      - main
+      - preview
+      - dev
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Actions extractor only supports build-mode: none -- there
+          # is nothing to compile. Go is compiled and needs autobuild.
+          # The first Go source has landed (ADR-0001), so the Go entry is
+          # live. Once `CodeQL (go)` has reported at least once on dev,
+          # add it to the required checks on dev, preview, main and
+          # hotfix/** -- requiring a context that has never reported
+          # blocks every PR permanently.
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          build-mode: ${{ matrix.build-mode }}
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:${{ matrix.language }}"

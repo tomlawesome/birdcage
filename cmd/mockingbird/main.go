@@ -1,0 +1,392 @@
+// Command mockingbird is the process that runs on every canary box
+// (issue #48): the only thing there that talks to birdcage. OpenCanary's
+// own webhook handler makes one attempt per event and drops it on
+// failure -- this binary is what makes posting that attempt safe, and
+// everything past it (retries, acknowledgement, credential rotation,
+// the heartbeat, command polling) is our code.
+//
+// This slice (#48's process-composition design note) wires the event
+// path -- the loopback receiver, the log tailer, the memory queue, the
+// acknowledged-position ledger and the sender that ties them together
+// -- and the command poll/runner into the process skeleton the previous
+// slice built. Eleven long-lived goroutines share one cancellation
+// context and one TokenStore: the receiver, the log road (tailer plus its
+// eviction-recovery restart), the sender, the heartbeat, the command
+// poll, the command runner, token rotation, (#65) the boot-time
+// readiness road, (#65 again) the port-scan road, (#88) the snmp road,
+// (#87) the smb audit road, and (#86) the poisoner road.
+//
+// OpenCanary is no longer this agent's own child process (issue #132:
+// it moved into its own container, so #69's supervision -- start it,
+// forward its signals, notice its exit -- no longer applies here, and
+// neither does the readiness road's old gate on a child argv being
+// present). What replaces #69 is not a goroutine of its own: the
+// heartbeat loop dials OpenCanary's own configured ports once per tick
+// (cmd/mockingbird/readiness.go's openCanaryProbe) and reports the
+// result in the same self-report the queue/tailer counters already ride
+// in -- see currentSelfReport's call site below.
+//
+// The port-scan road (#65) is the third way an event reaches the queue,
+// alongside the webhook receiver and the log tailer, and the only one
+// that produces an event nothing else generated: internal/agent/portscan
+// watches this container's own network namespace through a
+// kernel-filtered raw socket and emits an OpenCanary-shaped event when
+// somebody sweeps ports nothing is listening on. It needs CAP_NET_RAW
+// and nothing else; a run without it logs one WARN and carries on with
+// detection off. See portscan.go.
+//
+// The snmp road (#88) is the fourth: internal/agent/snmp is a plain UDP
+// listener on port 161 that decodes SNMP v1/v2c requests itself and
+// never answers. OpenCanary's own snmp module stays disabled -- it
+// needs scapy, which #85 keeps out of this image -- so this is our own
+// reader, not a wrapper around theirs. See snmp.go.
+//
+// The smb audit road (#87) is the fifth, and the only one that reads a
+// file another container wrote: the SMB lure (build/smb-lure) serves a
+// read-only guest share on this canary's own address and writes an audit
+// line per file opened; this agent mounts that volume read-only, follows
+// it with a second internal/agent/tailer instance and parses it with
+// internal/agent/smbaudit. Off unless an audit file is named, which is
+// how a canary deployed without the lure behaves. See smbaudit.go.
+//
+// The poisoner road (#86) is the sixth, and the only one that speaks
+// first: internal/agent/poisoner asks the local segment for names nobody
+// should answer -- over LLMNR, NBT-NS and mDNS, shaped like the client
+// the segment expects -- and treats any answer as an intrusion, because a
+// name that does not exist has no correct answer but silence. It also
+// listens on those three ports to count how much the segment's own hosts
+// ask, so its rate is matched to theirs rather than being a timer an
+// attacker could spot. Those listening sockets are shut for writing when
+// they open, so the kernel, not this code, is what guarantees the canary
+// can never answer another machine's lookup. See poisoner.go.
+//
+// Never import internal/ingest from this package or anything it calls:
+// doing so would pull db, store, api and stream in behind it, linking
+// the whole server into the binary that ships to canary boxes (#48's own
+// hard constraint). internal/opencanary exists for whatever this binary
+// needs from that side.
+//
+// Logging (#71): this binary runs on the honeypot, the one machine in
+// this whole system an attacker who compromises the box gets to read
+// stdout/stderr from directly -- so, unlike cmd/birdcage, it never
+// prints a boot banner or a configuration inventory. What it does log
+// through internal/logging's component loggers is deliberately narrow:
+// "started" with its own version, each connection failure to birdcage
+// (the existing lines below), the OpenCanary child's start/exit, and
+// (#65) one line saying whether port-scan detection is running. That
+// last one is the nearest thing this binary has to an inventory, and it
+// is deliberately thin: a count of how many ports are treated as
+// listening, never which, and no address beyond the source of a scan
+// that is already on its way to birdcage anyway.
+// What it must never log, in any component, at any level: the bearer
+// token, any certificate's path or content, the receiver's listen
+// address, the log path, the state directory, or an event body. Every
+// error that could carry one of those (a file or listen-address error
+// from the standard library embeds its path/address verbatim in its own
+// Error() text) goes through safeErr (safelog.go) before it reaches a
+// log line -- see cmd/mockingbird/nolog_test.go for the test that
+// startup path can never regress.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+
+	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/renewal"
+	"github.com/tomlawesome/birdcage/internal/logging"
+)
+
+// envLogLevel selects internal/logging's threshold (debug/info/warn/
+// error, case-insensitive; unset or unrecognized falls back to info) --
+// see docs/configuration.md. Named and read the same way cmd/birdcage's
+// own envLogLevel is.
+const envLogLevel = "MOCKINGBIRD_LOG_LEVEL"
+
+// version is stamped at build time (-ldflags "-X main.version=...") --
+// #48's ratified deliverable design, item 1: "Stamped into the binary at
+// build ... reported in every heartbeat." Left at "dev" for a build
+// outside the release pipeline, so a local build's self-report is still
+// honest about not being a tagged release.
+var version = "dev"
+
+func main() {
+	logging.SetLevel(os.Getenv(envLogLevel))
+
+	// `mockingbird version` prints the stamped build version and exits
+	// (issue #97), matching cmd/birdcage's own `version` argument (issue
+	// #90, cmd/birdcage/main.go around line 195) exactly: it comes first,
+	// before mainLog or cfg exist, and writes to stdout rather than the
+	// log, because the release job compares its output with the tag it
+	// built from -- one line, no level prefix.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		if err := runVersion(os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
+	// `mockingbird upgrade-token` (issue #54) presents the upgrade command's
+	// single-use token and exits -- upgradetoken.go. Like `version`, it
+	// runs before any configuration is loaded: it needs none of the
+	// running agent's inputs, and must not trigger their side effects.
+	if len(os.Args) > 1 && os.Args[1] == "upgrade-token" {
+		os.Exit(runUpgradeToken(os.Args[2:], os.Stdin, os.Stdout))
+	}
+
+	mainLog := logging.New("mockingbird")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		// Fail-closed per #48 decision 1: "Any missing or unreadable
+		// required input ... is a loud non-zero exit ... a
+		// half-credentialed agent must never half-run." systemd's own
+		// Restart= policy is what retries this, with backoff, rather
+		// than anything in this process looping on its own. safeErr:
+		// loadConfig's own error already names which file by its bare
+		// name (see config.go), but a wrapped os error under it would
+		// otherwise still carry the real StateDir path.
+		mainLog.Error(fmt.Sprintf("configuration: %s", safeErr(err)))
+		os.Exit(1)
+	}
+
+	c, ts, rm, in, err := boot(cfg, version, mainLog)
+	if err != nil {
+		mainLog.Error(safeErr(err))
+		os.Exit(1)
+	}
+
+	// Before issue #132, this was wrapped in a second, derived
+	// context.WithCancel so OpenCanary exiting as this agent's own child
+	// process (runChild, since removed) could also stop the run. That
+	// child no longer exists -- OpenCanary is a separate container now
+	// -- so a signal is the only thing that ends this process, and
+	// sigCtx alone is the run's context.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+
+	// Start order per #48's process-composition note, decision 1: the
+	// receiver first, so the webhook road is open as early as possible
+	// -- every moment it is not is one more webhook attempt OpenCanary's
+	// single, synchronous try can drop, even though the log road
+	// recovers it. Everything else follows, log road (tailer) last,
+	// mirroring the note's own ordering exactly.
+	receiverLog := logging.New("receiver")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := in.Receiver.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			receiverLog.Warn(fmt.Sprintf("stopped: %s", safeErr(err)))
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		_ = in.Receiver.Close()
+	}()
+
+	pacer := newPacer()
+	commands := make(chan *client.Command, commandRunnerBuffer)
+
+	// The port-scan road (#65): the capture socket is opened here, on
+	// the startup path, so an operator who forgot --cap-add NET_RAW sees
+	// one WARN beside the rest of the startup log rather than whenever a
+	// goroutine happened to be scheduled. A nil detector means detection
+	// is off -- disabled, or the capability was missing -- and
+	// runPortscanRoad is then a no-op, so the goroutine count below does
+	// not depend on it.
+	portscanLog := logging.New("portscan")
+	detector, inventory := newPortscanRoad(cfg, in, portscanLog)
+	portscanLog.Info(inventory.line())
+
+	// The snmp road (#88): the UDP socket is opened here for the same
+	// reason -- an operator whose port is unexpectedly privileged (see
+	// snmp.go) sees one WARN at startup rather than whenever the
+	// goroutine gets scheduled. A nil detector means the road is
+	// disabled or the bind failed, and runSNMPRoad is then a no-op.
+	snmpLog := logging.New("snmp")
+	snmpDetector, snmpInv := newSNMPRoad(in, snmpLog)
+	snmpLog.Info(snmpInv.line())
+
+	// The smb audit road (#87): the lure is a separate container, so this
+	// road has nothing to open at startup -- the tailer's own retry loop
+	// waits for the audit file to appear, which it does when the lure
+	// starts, in whichever order the two containers come up. A nil road
+	// means no audit file was named and runSMBAuditRoad is a no-op.
+	smbLog := logging.New("smb")
+	smbRoad, smbInv := newSMBAuditRoad(cfg, in, smbLog)
+	smbLog.Info(smbInv.line())
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runSMBAuditRoad(ctx, smbRoad, smbLog)
+	}()
+
+	// The poisoner road (#86): receive-only sockets on 5355, 5353 and 137
+	// counting the segment's own name lookups, and bait lookups for names
+	// nobody should answer. Opened here for the same reason as the two
+	// above -- the three ports are privileged, so an operator who ran the
+	// container without the sysctl sees one WARN at startup. A nil
+	// detector means the road is off or nothing bound, and
+	// runPoisonerRoad is then a no-op.
+	poisonerLog := logging.New("poisoner")
+	poisonerDetector, poisonerInv, poisonerCfg := newPoisonerRoad(in, poisonerLog)
+	poisonerLog.Info(poisonerInv.line())
+
+	// agentSettings (issue #124) is this canary's record of what
+	// birdcage has pushed and this agent has applied, seeded from the
+	// same Config the detector above was built from so both start in
+	// agreement.
+	agentSettingsState := newAgentSettings(poisonerCfg)
+
+	// The OpenCanary liveness probe (issue #132): a plain port dial
+	// against OpenCanary's own configured ports, run once per heartbeat
+	// tick from inside the report() closure below -- see
+	// openCanaryProbe's own doc comment in readiness.go for why this
+	// replaces #69's child-exit supervision now that OpenCanary is a
+	// separate container.
+	ocProbe := newOpenCanaryProbe(defaultReadinessConfig(), logging.New("opencanary"))
+
+	wg.Add(9)
+	go func() {
+		defer wg.Done()
+		runSenderLoop(ctx, c, ts, in, pacer)
+	}()
+	go func() {
+		defer wg.Done()
+		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
+			sr := currentSelfReport(version, in, poisonerDetector)
+			sr.OpenCanaryUp = ocProbe.Probe(ctx)
+			return sr
+		}, agentSettingsState, poisonerDetector)
+	}()
+	go func() {
+		defer wg.Done()
+		runCommandPollLoop(ctx, c, ts, commands)
+	}()
+	go func() {
+		defer wg.Done()
+		// The poisoner detector doubles as the self-test's bait probe
+		// (#86 slice C): internal/agent/probe cannot reach it, so the
+		// command runner is handed it here. A nil detector -- the road
+		// off -- makes a poisoner target report itself skipped rather
+		// than silently pass.
+		runCommandRunner(ctx, in, poisonerDetector, commands)
+	}()
+	go func() {
+		defer wg.Done()
+		runRotationLoop(ctx, c, ts)
+	}()
+	go func() {
+		defer wg.Done()
+		in.RunLogRoad(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		runPortscanRoad(ctx, detector, portscanLog)
+	}()
+	go func() {
+		defer wg.Done()
+		runSNMPRoad(ctx, snmpDetector, snmpLog)
+	}()
+	go func() {
+		defer wg.Done()
+		runPoisonerRoad(ctx, poisonerDetector, poisonerLog)
+	}()
+
+	// The readiness road (#65): a one-shot, bounded-window check that
+	// every module opencanary.conf enables answered at least once near
+	// boot. Unconditional now: issue #132 split OpenCanary out into its
+	// own container, so it is no longer this agent's own os.Args[1:]
+	// child (see supervise.go's removal note, below) and this check has
+	// something to prove for every honeypot canary, not only one started
+	// with a child argv.
+	readinessLog := logging.New("readiness")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runReadinessCheck(ctx, defaultReadinessConfig(), readinessLog)
+	}()
+
+	<-ctx.Done()
+	mainLog.Info("shutting down")
+	// Queued-but-unsent events are deliberately abandoned here rather
+	// than flushed (#48 decision 1): the acknowledged position never
+	// advanced past them, so the next start re-reads them from the log
+	// -- the durability design working, not a loss.
+	wg.Wait()
+}
+
+// boot builds the birdcage client, token store and intake from cfg, and
+// logs the "started" line -- everything main does before starting its
+// long-lived goroutines. Split out from main so a test (see
+// nolog_test.go) can run exactly this path with a fake config and
+// capture its log output, without also running main's blocking service
+// loops.
+func boot(cfg Config, version string, logger *slog.Logger) (*client.Client, *TokenStore, *renewal.Manager, *Intake, error) {
+	c, err := client.New(client.Config{
+		BaseURL:    cfg.BirdcageURL,
+		CACert:     cfg.CACert,
+		ClientCert: cfg.ClientCert,
+		ClientKey:  cfg.ClientKey,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("build birdcage client: %s", safeErr(err))
+	}
+
+	ts, err := loadTokenStore(cfg.TokenPath)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("load token: %s", safeErr(err))
+	}
+
+	rm := renewal.NewManager(cfg.StateDir, clientKeyFileName, clientCertFileName, cfg.ClientCert, cfg.ClientKey)
+
+	in, err := NewIntake(IntakeConfig{
+		LogPath:      cfg.LogPath,
+		PositionPath: cfg.PositionPath,
+		Listen:       cfg.Listen,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("build intake: %s", safeErr(err))
+	}
+
+	logger.Info(fmt.Sprintf("mockingbird %s started, talking to %s", version, cfg.BirdcageURL))
+	return c, ts, rm, in, nil
+}
+
+// currentSelfReport builds the heartbeat's self-report from the real
+// queue, tailer and ledger state (#48's process-composition note, "the
+// heartbeat currently lies" -- this slice is what stops it). Every
+// field is a live read of counters that exist and are always known once
+// the intake is running: MemQueue.Depth/Dropped/RejectedCount, the
+// tailer's LogReadOK and ResumeFound (PositionFound), the ledger's
+// cumulative Collisions, and the sender's own record of the last
+// birdcage-acknowledged event id. None of these is left at a placeholder
+// zero -- migration 0008 stores them nullable specifically so "never
+// reported" (the previous slice's honest zero SelfReport) stays distinct
+// from "reported zero," and an agent that has actually measured these
+// values must say so.
+func currentSelfReport(version string, in *Intake, bait baitNames) client.SelfReport {
+	return client.SelfReport{
+		PoisonerNames:     reportedBaitNames(bait),
+		QueueDepth:        in.Queue.Depth(),
+		LogReadOK:         in.LogReadOK(),
+		LastEventID:       in.LastEventID(),
+		AgentVersion:      version,
+		Dropped:           int64(in.Queue.Dropped()),
+		Rejected:          int64(in.Queue.RejectedCount()),
+		EventIDCollisions: int64(in.Collisions()),
+		PositionFound:     in.PositionFound(),
+	}
+}

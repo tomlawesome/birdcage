@@ -1,0 +1,79 @@
+# Config for scripts/staleness-check.py (#139). Read with PyYAML, same as
+# every other supply-chain/*.yml -- see that script's own docstring for
+# what each key means and how a row's status is decided.
+#
+# Entries below exist because the live run genuinely needs them, not on
+# spec: an `alpine-branch:` entry only for a Dockerfile whose own `FROM`
+# line does not literally name `alpine:X.Y` (so the script has nowhere
+# else to read the branch from), and nothing at all yet under `accepted:`
+# or `unchecked:` -- every row this check found either passes on its own
+# merits or is a real, unaccepted lag the report is supposed to surface.
+# A row that is unreachable from this repository's own CI runner (not
+# just from wherever this file happened to be edited) is the only reason
+# to add one of those, with an honest reason and, for `accepted:`, a
+# review-by date.
+accepted:
+  # OpenCanary 0.9.10 names each of these with an exact `==` in its own
+  # Requires-Dist (checked in its wheel's METADATA, 2026-09-27), so the
+  # lock cannot move them: only a newer OpenCanary release can. #140.
+  - pin: "pypi:bcrypt"
+    held-at: "3.2.0"
+    reason: "opencanary==0.9.10 pins bcrypt==3.2.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:passlib"
+    held-at: "1.7.1"
+    reason: "opencanary==0.9.10 pins passlib==1.7.1 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:redis"
+    held-at: "7.4.0"
+    reason: "opencanary==0.9.10 pins redis==7.4.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:requests"
+    held-at: "2.33.0"
+    reason: "opencanary==0.9.10 pins requests==2.33.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:service-identity"
+    held-at: "21.1.0"
+    reason: "opencanary==0.9.10 pins service-identity==21.1.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:setuptools"
+    held-at: "83.0.0"
+    reason: "opencanary==0.9.10 pins setuptools==83.0.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:simplejson"
+    held-at: "3.16.0"
+    reason: "opencanary==0.9.10 pins simplejson==3.16.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:urllib3"
+    held-at: "2.7.0"
+    reason: "opencanary==0.9.10 pins urllib3==2.7.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:zope-interface"
+    held-at: "7.2"
+    reason: "opencanary==0.9.10 pins zope-interface==7.2 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:hpfeeds"
+    held-at: "3.0.0"
+    reason: "opencanary==0.9.10 pins hpfeeds==3.0.0 exactly; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  # Owner decisions on #140, 2026-09-27.
+  - pin: "image:python:3.13-slim-trixie"
+    held-at: "3.13-slim-trixie"
+    reason: "the OpenCanary image and its licence job stay on the Python OpenCanary 0.9.10 and Twisted 26.4.0 declare (up to 3.13); zope.interface 7.2 has no 3.14 wheel"
+    review-by: "2026-12-27"
+  - pin: "npm:typescript"
+    held-at: "6.0.3"
+    reason: "svelte-check 4.7.6, the newest release, accepts TypeScript 5 or 6 only; lift when it supports 7"
+    review-by: "2026-12-27"
+
+unchecked: []
+
+alpine-branch:
+  # None of these three has a literal `FROM alpine:X.Y` -- each builds
+  # `FROM ${BASE_IMAGE}`, an ARG whose default is `alpine:3.24` (read the
+  # Dockerfile itself for the current default). Bump this alongside that
+  # default, or the apk pins in these three files quietly get checked
+  # against the wrong Alpine branch.
+  build/e2e-dns/Dockerfile: v3.24
+  build/e2e-mail/Dockerfile: v3.24
+  build/e2e-smbclient/Dockerfile: v3.24

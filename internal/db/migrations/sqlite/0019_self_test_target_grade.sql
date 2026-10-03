@@ -1,0 +1,20 @@
+-- self_test_targets gains grade (issue #46 slice 2, notes 19897/20740):
+-- which of #46's three proof-strength grades this target can reach --
+-- "marked" (a substring marker, SelfTestIndex.match), "challenge_marked"
+-- (vnc's HMAC challenge-response, selftest_vnc.go) or "attributed"
+-- (ntp/portscan/llmnr, claimed by an agent-side match against the run
+-- birdcage issued, arriving with the event -- note 19897's ratified
+-- design, not built yet: #47's wire and sender changes gate it, #46
+-- slice 3). Fixed at mint time by store.gradeForService and never
+-- changed afterward -- this build has
+-- no fallback path that could reach a target at a weaker grade than the
+-- one it was minted for, so "the grade it can achieve" and "the grade
+-- the pass was reached at" are the same column, distinguished only by
+-- whether matched_at is set (see SelfTestServiceResult's own comment).
+--
+-- DEFAULT 'marked' backfills every pre-slice-2 row: every target this
+-- schema minted before this column existed used substring marker
+-- matching, so the default is correct by construction for existing
+-- rows, matching this schema's own precedent
+-- (0016_alerts_synthetic.sql's synthetic column).
+ALTER TABLE self_test_targets ADD COLUMN grade TEXT NOT NULL DEFAULT 'marked';

@@ -1,0 +1,703 @@
+package store
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/tomlawesome/birdcage/internal/audit"
+	"github.com/tomlawesome/birdcage/internal/db"
+)
+
+func boolPtr(b bool) *bool { return &b }
+
+func int64Ptr(n int64) *int64 { return &n }
+
+func TestNotDeliveringNilNeverTriggers(t *testing.T) {
+	// No self-report has ever arrived: must read as "nothing to say yet",
+	// never as a failing log read.
+	if notDelivering(Canary{AgentLogReadOK: nil}) {
+		t.Error("notDelivering(nil AgentLogReadOK) = true, want false")
+	}
+}
+
+func TestNotDeliveringBoundary(t *testing.T) {
+	if notDelivering(Canary{AgentLogReadOK: boolPtr(true)}) {
+		t.Error("notDelivering(log read ok) = true, want false")
+	}
+	if !notDelivering(Canary{AgentLogReadOK: boolPtr(false)}) {
+		t.Error("notDelivering(log read failing) = false, want true")
+	}
+}
+
+// TestOpenCanaryDownNilNeverTriggers: issue #132's own nil/zero rule,
+// identical to notDelivering's -- no heartbeat has ever carried this
+// field (a pre-#132 agent, or a canary that has never reported) must
+// read as "nothing to say yet", never as OpenCanary being down.
+func TestOpenCanaryDownNilNeverTriggers(t *testing.T) {
+	if openCanaryDown(Canary{AgentOpenCanaryUp: nil}) {
+		t.Error("openCanaryDown(nil AgentOpenCanaryUp) = true, want false")
+	}
+}
+
+func TestOpenCanaryDownBoundary(t *testing.T) {
+	if openCanaryDown(Canary{AgentOpenCanaryUp: boolPtr(true)}) {
+		t.Error("openCanaryDown(up) = true, want false")
+	}
+	if !openCanaryDown(Canary{AgentOpenCanaryUp: boolPtr(false)}) {
+		t.Error("openCanaryDown(down) = false, want true")
+	}
+}
+
+// TestApplyOpenCanaryHealth: the same nil/zero/true table
+// TestApplyHitsMergedHealth uses, for issue #132's own state.
+func TestApplyOpenCanaryHealth(t *testing.T) {
+	cases := []struct {
+		name string
+		up   *bool
+		want bool
+	}{
+		{"nil never triggers", nil, false},
+		{"up never triggers", boolPtr(true), false},
+		{"down triggers", boolPtr(false), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentOpenCanaryUp: tc.up}
+			applyOpenCanaryHealth(&c)
+			if got := hasActive(c, StateOpenCanaryDown); got != tc.want {
+				t.Errorf("opencanary_down active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// TestOpenCanaryDownRanksAfterNotDeliveringBeforeHitsMerged: this
+// change's own unratified placement (StateOpenCanaryDown's doc comment)
+// -- beside not_delivering, ahead of hits_merged -- checked both on the
+// rank table and through addActiveStates, the same way
+// TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed does for its
+// own neighbours.
+func TestOpenCanaryDownRanksAfterNotDeliveringBeforeHitsMerged(t *testing.T) {
+	if healthStateRank[StateNotDelivering] >= healthStateRank[StateOpenCanaryDown] {
+		t.Fatalf("ranks: not_delivering %d, opencanary_down %d, want not_delivering first", healthStateRank[StateNotDelivering], healthStateRank[StateOpenCanaryDown])
+	}
+	if healthStateRank[StateOpenCanaryDown] >= healthStateRank[StateHitsMerged] {
+		t.Fatalf("ranks: opencanary_down %d, hits_merged %d, want opencanary_down first", healthStateRank[StateOpenCanaryDown], healthStateRank[StateHitsMerged])
+	}
+
+	// not_delivering wins over opencanary_down.
+	c := Canary{ActiveStates: []string{string(StateNotDelivering)}, Status: string(StateNotDelivering)}
+	addActiveStates(&c, StateOpenCanaryDown)
+	if c.Status != string(StateNotDelivering) {
+		t.Errorf("status %s, want not_delivering to keep winning over opencanary_down (states %v)", c.Status, c.ActiveStates)
+	}
+
+	// opencanary_down wins over hits_merged.
+	c2 := Canary{ActiveStates: []string{string(StateHitsMerged)}, Status: string(StateHitsMerged)}
+	addActiveStates(&c2, StateOpenCanaryDown)
+	if c2.Status != string(StateOpenCanaryDown) {
+		t.Errorf("status %s, want opencanary_down to win over hits_merged (states %v)", c2.Status, c2.ActiveStates)
+	}
+}
+
+func recordAudit(t *testing.T, database *db.DB, action, target string, at time.Time) {
+	t.Helper()
+	if _, err := audit.Append(context.Background(), database, audit.Entry{
+		Action: action, Target: target, Reason: "test", TriggeredBy: target, CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("audit.Append(%s, %s, %v): %v", action, target, at, err)
+	}
+}
+
+func TestLatestAuditSinceBoundary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		now := mustParse(t, "2026-01-01T00:10:00Z")
+
+		// Just inside the 5-minute throttled window (exactly at the
+		// cutoff): the >= comparison must include it.
+		recordAudit(t, database, "ingest.rate_limited", "canary-in", now.Add(-throttledWindow))
+		got, err := latestAuditSince(context.Background(), database, "ingest.rate_limited", "canary-in", now.Add(-throttledWindow))
+		if err != nil {
+			t.Fatalf("latestAuditSince: %v", err)
+		}
+		if got == nil {
+			t.Fatal("latestAuditSince at exactly the cutoff = nil, want the entry")
+		}
+
+		// Just outside: one second before the cutoff.
+		recordAudit(t, database, "ingest.rate_limited", "canary-out", now.Add(-throttledWindow-time.Second))
+		got, err = latestAuditSince(context.Background(), database, "ingest.rate_limited", "canary-out", now.Add(-throttledWindow))
+		if err != nil {
+			t.Fatalf("latestAuditSince: %v", err)
+		}
+		if got != nil {
+			t.Errorf("latestAuditSince one second outside window = %v, want nil", got)
+		}
+	})
+}
+
+func TestLatestAuditSincePicksMostRecent(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		earlier := mustParse(t, "2026-01-01T00:00:00Z")
+		later := mustParse(t, "2026-01-01T00:02:00Z")
+		recordAudit(t, database, "ingest.token_conflict", "canary-a", earlier)
+		recordAudit(t, database, "ingest.token_conflict", "canary-a", later)
+
+		got, err := latestAuditSince(context.Background(), database, "ingest.token_conflict", "canary-a", earlier.Add(-time.Second))
+		if err != nil {
+			t.Fatalf("latestAuditSince: %v", err)
+		}
+		if got == nil || !got.Equal(later) {
+			t.Errorf("latestAuditSince = %v, want %v (the later entry)", got, later)
+		}
+	})
+}
+
+func mintTokenAt(t *testing.T, database *db.DB, canaryID string, at time.Time) CanaryToken {
+	t.Helper()
+	_, tok, err := MintCanaryToken(context.Background(), database, canaryID, at)
+	if err != nil {
+		t.Fatalf("MintCanaryToken(%s, %v): %v", canaryID, at, err)
+	}
+	return tok
+}
+
+func useToken(t *testing.T, database *db.DB, id string, at time.Time) {
+	t.Helper()
+	if err := RecordCanaryTokenUse(context.Background(), database, id, at); err != nil {
+		t.Fatalf("RecordCanaryTokenUse(%s, %v): %v", id, at, err)
+	}
+}
+
+// TestRotationSignalSingleTokenNeverStalls: a canary's first-ever token,
+// still unused, is enrollment/pending territory (#47), never
+// rotation-stalled -- regardless of how long it's been sitting there.
+func TestRotationSignalSingleTokenNeverStalls(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintAt := mustParse(t, "2026-01-01T00:00:00Z")
+		mintTokenAt(t, database, "canary-a", mintAt)
+
+		stalled, _, _, err := rotationSignal(context.Background(), database, "canary-a", mintAt.Add(48*time.Hour))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if stalled {
+			t.Error("rotationSignal(single unused token, 48h later) = stalled, want not stalled")
+		}
+	})
+}
+
+// TestRotationSignalIssuedUnusedBoundary exercises the 15-minute
+// issued-but-unused trigger's boundary, and its 24h escalation boundary.
+func TestRotationSignalIssuedUnusedBoundary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		first := mustParse(t, "2026-01-01T00:00:00Z")
+		firstTok := mintTokenAt(t, database, "canary-a", first)
+		useToken(t, database, firstTok.ID, first)
+
+		rotatedAt := first.Add(time.Hour)
+		mintTokenAt(t, database, "canary-a", rotatedAt) // issued, never used
+
+		// Just inside 15 minutes: not yet stalled.
+		stalled, _, _, err := rotationSignal(context.Background(), database, "canary-a", rotatedAt.Add(rotationStalledThreshold-time.Second))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if stalled {
+			t.Error("rotationSignal one second before 15m = stalled, want not stalled")
+		}
+
+		// Exactly at 15 minutes: stalled, not yet escalated.
+		stalled, escalated, sinceS, err := rotationSignal(context.Background(), database, "canary-a", rotatedAt.Add(rotationStalledThreshold))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if !stalled {
+			t.Fatal("rotationSignal at exactly 15m = not stalled, want stalled")
+		}
+		if escalated {
+			t.Error("rotationSignal at exactly 15m = escalated, want not yet escalated")
+		}
+		if sinceS != int64(rotationStalledThreshold.Seconds()) {
+			t.Errorf("sinceS = %d, want %d", sinceS, int64(rotationStalledThreshold.Seconds()))
+		}
+
+		// Just before 24h: stalled, not escalated.
+		stalled, escalated, _, err = rotationSignal(context.Background(), database, "canary-a", rotatedAt.Add(rotationStalledEscalateThreshold-time.Second))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if !stalled || escalated {
+			t.Errorf("rotationSignal one second before 24h = stalled=%v escalated=%v, want stalled=true escalated=false", stalled, escalated)
+		}
+
+		// Exactly at 24h: escalated.
+		stalled, escalated, _, err = rotationSignal(context.Background(), database, "canary-a", rotatedAt.Add(rotationStalledEscalateThreshold))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if !stalled || !escalated {
+			t.Errorf("rotationSignal at exactly 24h = stalled=%v escalated=%v, want both true", stalled, escalated)
+		}
+	})
+}
+
+// TestRotationSignalSupersededIssueDoesNotFireSpuriously: an
+// issued-but-never-used token from an earlier, superseded rotation
+// attempt must not keep signaling stalled once a later rotation has been
+// issued (and is itself still fresh) -- issue #45: "tracks the latest
+// issuance per canary so a superseded earlier issue does not fire
+// spuriously."
+func TestRotationSignalSupersededIssueDoesNotFireSpuriously(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		first := mustParse(t, "2026-01-01T00:00:00Z")
+		firstTok := mintTokenAt(t, database, "canary-a", first)
+		useToken(t, database, firstTok.ID, first)
+
+		// An earlier rotation attempt, issued 20 minutes in and never
+		// used -- already past the 15m threshold on its own, so a naive
+		// "any unused token past threshold" check would fire on it.
+		staleIssue := mintTokenAt(t, database, "canary-a", first.Add(20*time.Minute))
+		_ = staleIssue
+
+		// A fresh reissue, superseding the stale one, minted a minute
+		// later and itself still only 1 minute old at "now" below.
+		freshIssue := mintTokenAt(t, database, "canary-a", first.Add(21*time.Minute))
+		_ = freshIssue
+
+		// 1 minute after the latest issuance, and only 22 minutes after
+		// firstTok became active -- nowhere near the independent 25h
+		// no-completed-rotation trigger, so only the issued-unused
+		// signal is in play here.
+		now := first.Add(22 * time.Minute)
+		stalled, _, _, err := rotationSignal(context.Background(), database, "canary-a", now)
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if stalled {
+			t.Error("rotationSignal with a fresh (1m old) latest issuance = stalled, want not stalled (superseded stale issue must not fire)")
+		}
+	})
+}
+
+// TestRotationSignalNoCompletedRotationBoundary exercises the second,
+// independent ~25h trigger: an agent that never asks to rotate again
+// after its token first became active.
+func TestRotationSignalNoCompletedRotationBoundary(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mintAt := mustParse(t, "2026-01-01T00:00:00Z")
+		tok := mintTokenAt(t, database, "canary-a", mintAt)
+		useToken(t, database, tok.ID, mintAt.Add(time.Second)) // activated shortly after mint
+
+		// Just before 25h since mint: not stalled.
+		stalled, _, _, err := rotationSignal(context.Background(), database, "canary-a", mintAt.Add(rotationStaleThreshold-time.Second))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if stalled {
+			t.Error("rotationSignal one second before 25h = stalled, want not stalled")
+		}
+
+		// Exactly at 25h: stalled and escalated (this trigger has no
+		// separate escalation step -- it's already past its own bar).
+		stalled, escalated, _, err := rotationSignal(context.Background(), database, "canary-a", mintAt.Add(rotationStaleThreshold))
+		if err != nil {
+			t.Fatalf("rotationSignal: %v", err)
+		}
+		if !stalled || !escalated {
+			t.Errorf("rotationSignal at exactly 25h = stalled=%v escalated=%v, want both true", stalled, escalated)
+		}
+	})
+}
+
+// TestApplyHealthStatePrecedence exercises issue #45's proposed ranking
+// across every pairing this slice builds: the worse state always wins,
+// regardless of the order signals are passed in.
+func TestApplyHealthStatePrecedence(t *testing.T) {
+	now := mustParse(t, "2026-01-01T00:00:00Z")
+
+	cases := []struct {
+		name             string
+		status           string // pre-applyStatus value ("ok" or "silent")
+		notDeliveringNow bool
+		throttled        bool
+		rotationStalled  bool
+		tokenConflict    bool
+		pending          bool
+		want             HealthState
+	}{
+		{"ok alone", "ok", false, false, false, false, false, StateOK},
+		{"throttled alone", "ok", false, true, false, false, false, StateThrottled},
+		{"rotation stalled alone", "ok", false, false, true, false, false, StateRotationStalled},
+		{"throttled beats rotation stalled", "ok", false, true, true, false, false, StateThrottled},
+		{"not delivering beats throttled", "ok", true, true, false, false, false, StateNotDelivering},
+		{"silent beats not delivering", "silent", true, false, false, false, false, StateSilent},
+		{"silent beats rotation stalled", "silent", false, false, true, false, false, StateSilent},
+		{"token conflict beats silent", "silent", false, false, false, true, false, StateTokenConflict},
+		{"token conflict beats everything", "silent", true, true, true, true, false, StateTokenConflict},
+		// Issue #47 step 9: pending ranks last of the fault states --
+		// worse than nothing (it beats "ok", per "never a healthy canary
+		// on the dashboard"), but every other signal here still outranks
+		// it, including the degraded tier (rotation stalled).
+		{"pending alone", "ok", false, false, false, false, true, StatePending},
+		{"rotation stalled beats pending", "ok", false, false, true, false, true, StateRotationStalled},
+		{"token conflict beats pending", "silent", false, false, false, true, true, StateTokenConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: tc.status}
+			var throttledSince, tokenConflictSince *time.Time
+			if tc.throttled {
+				t0 := now.Add(-time.Minute)
+				throttledSince = &t0
+			}
+			if tc.tokenConflict {
+				t0 := now.Add(-time.Minute)
+				tokenConflictSince = &t0
+			}
+			applyHealthState(&c, tc.notDeliveringNow, throttledSince, tc.rotationStalled, false, 60, tokenConflictSince, false, tc.pending, now)
+			if c.Status != string(tc.want) {
+				t.Errorf("Status = %q, want %q", c.Status, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyHealthStateKeepsDetailForNonWinningStates: "one state on the
+// tile, the worst; the rest in its detail" -- a losing signal's own
+// detail field must still be populated even though it didn't win Status.
+func TestApplyHealthStateKeepsDetailForNonWinningStates(t *testing.T) {
+	now := mustParse(t, "2026-01-01T00:00:00Z")
+	c := Canary{Status: "ok"}
+	throttledSince := now.Add(-2 * time.Minute)
+	applyHealthState(&c, true /* not delivering wins */, &throttledSince, true, false, 900, nil, false, false, now)
+
+	if c.Status != string(StateNotDelivering) {
+		t.Fatalf("Status = %q, want %q", c.Status, StateNotDelivering)
+	}
+	if !c.NotDelivering {
+		t.Error("NotDelivering = false, want true")
+	}
+	if c.ThrottledForS == nil || *c.ThrottledForS != 120 {
+		t.Errorf("ThrottledForS = %v, want 120", c.ThrottledForS)
+	}
+	if !c.RotationStalled || c.RotationStalledForS == nil || *c.RotationStalledForS != 900 {
+		t.Errorf("RotationStalled detail = %v/%v, want true/900", c.RotationStalled, c.RotationStalledForS)
+	}
+}
+
+// TestApplyHitsMergedHealth: nil never triggers (no heartbeat field has
+// ever arrived), 0 never triggers (the agent reported a clean count), and
+// a positive count does -- the same nil/zero convention notDelivering
+// documents for AgentLogReadOK.
+func TestApplyHitsMergedHealth(t *testing.T) {
+	cases := []struct {
+		name  string
+		count *int64
+		want  bool
+	}{
+		{"nil never triggers", nil, false},
+		{"zero never triggers", int64Ptr(0), false},
+		{"nonzero triggers", int64Ptr(3), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentEventIDCollisions: tc.count}
+			applyHitsMergedHealth(&c)
+			if got := hasActive(c, StateHitsMerged); got != tc.want {
+				t.Errorf("hits_merged active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed: issue #45's
+// ratified slot for hits_merged -- immediately after not_delivering, and
+// ahead of self_test_failed -- checked both on the rank table directly and
+// through addActiveStates the way TestDBStaleRanksBetweenTestFailedAndThrottled
+// does for db_stale.
+func TestHitsMergedRanksAfterNotDeliveringBeforeSelfTestFailed(t *testing.T) {
+	if healthStateRank[StateNotDelivering] >= healthStateRank[StateHitsMerged] {
+		t.Fatalf("ranks: not_delivering %d, hits_merged %d, want not_delivering first", healthStateRank[StateNotDelivering], healthStateRank[StateHitsMerged])
+	}
+	if healthStateRank[StateHitsMerged] >= healthStateRank[StateTestFailed] {
+		t.Fatalf("ranks: hits_merged %d, self_test_failed %d, want hits_merged first", healthStateRank[StateHitsMerged], healthStateRank[StateTestFailed])
+	}
+
+	// not_delivering wins over hits_merged.
+	c := Canary{ActiveStates: []string{string(StateNotDelivering)}, Status: string(StateNotDelivering)}
+	addActiveStates(&c, StateHitsMerged)
+	if c.Status != string(StateNotDelivering) {
+		t.Errorf("status %s, want not_delivering to keep winning over hits_merged (states %v)", c.Status, c.ActiveStates)
+	}
+
+	// hits_merged wins over self_test_failed.
+	c2 := Canary{ActiveStates: []string{string(StateTestFailed)}, Status: string(StateTestFailed)}
+	addActiveStates(&c2, StateHitsMerged)
+	if c2.Status != string(StateHitsMerged) {
+		t.Errorf("status %s, want hits_merged to win over self_test_failed (states %v)", c2.Status, c2.ActiveStates)
+	}
+}
+
+// TestListCanariesSurfacesThrottledAndTokenConflict is an end-to-end
+// check through ListCanaries itself (not just the derivation helpers),
+// on both engines: a rate-limit crossing and a token-conflict entry
+// recorded via the real audit.Append path are read back as the
+// corresponding ordered health state.
+func TestListCanariesSurfacesThrottledAndTokenConflict(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-throttled", Name: "canary-throttled", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		insertCanary(t, database, Canary{
+			ID: "canary-conflict", Name: "canary-conflict", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		if err := RecordHeartbeat(context.Background(), database, "canary-throttled", now); err != nil {
+			t.Fatalf("RecordHeartbeat: %v", err)
+		}
+		if err := RecordHeartbeat(context.Background(), database, "canary-conflict", now); err != nil {
+			t.Fatalf("RecordHeartbeat: %v", err)
+		}
+		recordAudit(t, database, "ingest.rate_limited", "canary-throttled", now.Add(-time.Minute))
+		recordAudit(t, database, "ingest.token_conflict", "canary-conflict", now.Add(-time.Minute))
+
+		canaries := listCanaries(t, database, now, rangeDurations[DefaultRange])
+		throttled := findCanary(t, canaries, "canary-throttled")
+		conflict := findCanary(t, canaries, "canary-conflict")
+
+		if throttled.Status != string(StateThrottled) {
+			t.Errorf("throttled canary Status = %q, want %q", throttled.Status, StateThrottled)
+		}
+		if throttled.ThrottledForS == nil {
+			t.Error("throttled canary ThrottledForS = nil, want set")
+		}
+		if conflict.Status != string(StateTokenConflict) {
+			t.Errorf("conflict canary Status = %q, want %q", conflict.Status, StateTokenConflict)
+		}
+		if conflict.TokenConflictForS == nil {
+			t.Error("conflict canary TokenConflictForS = nil, want set")
+		}
+	})
+}
+
+// TestListCanariesSurfacesNotDelivering checks the agent_log_read_ok
+// self-report path end-to-end through RecordCanaryAgentHeartbeat and
+// ListCanaries.
+func TestListCanariesSurfacesNotDelivering(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: false, LastEventID: "abc",
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != string(StateNotDelivering) {
+			t.Errorf("Status = %q, want %q", c.Status, StateNotDelivering)
+		}
+		if !c.NotDelivering {
+			t.Error("NotDelivering = false, want true")
+		}
+	})
+}
+
+// TestListCanariesSurfacesHitsMerged checks the event-id-collision
+// self-report path end-to-end through RecordCanaryAgentHeartbeat and
+// ListCanaries, including that it clears once a later heartbeat reports
+// the count back at 0.
+func TestListCanariesSurfacesHitsMerged(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		collisions := int64(3)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abc", EventIDCollisions: &collisions,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != string(StateHitsMerged) {
+			t.Errorf("Status = %q, want %q", c.Status, StateHitsMerged)
+		}
+		if c.AgentEventIDCollisions == nil || *c.AgentEventIDCollisions != 3 {
+			t.Errorf("AgentEventIDCollisions = %v, want 3", c.AgentEventIDCollisions)
+		}
+
+		// A later heartbeat reporting the count back at 0 clears it.
+		zero := int64(0)
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abd", EventIDCollisions: &zero,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status == string(StateHitsMerged) {
+			t.Errorf("Status = %q after count returned to 0, want cleared", c.Status)
+		}
+	})
+}
+
+// TestListCanariesSurfacesOpenCanaryDown checks issue #132's own
+// self-report path end-to-end through RecordCanaryAgentHeartbeat and
+// ListCanaries, including that it clears once a later heartbeat's probe
+// reports OpenCanary answering again -- the "restarting OpenCanary alone
+// still raises, and then clears, an alert" behaviour the issue's e2e
+// proof exercises against a real container.
+func TestListCanariesSurfacesOpenCanaryDown(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{
+			ID: "canary-a", Name: "canary-a", Lane: "lan",
+			HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+		})
+		now := enrolledAt.Add(time.Minute)
+		down := false
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abc", OpenCanaryUp: &down,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status != string(StateOpenCanaryDown) {
+			t.Errorf("Status = %q, want %q", c.Status, StateOpenCanaryDown)
+		}
+		if c.AgentOpenCanaryUp == nil || *c.AgentOpenCanaryUp {
+			t.Errorf("AgentOpenCanaryUp = %v, want false", c.AgentOpenCanaryUp)
+		}
+
+		// A later heartbeat reporting OpenCanary up again clears it.
+		up := true
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 3, LogReadOK: true, LastEventID: "abd", OpenCanaryUp: &up,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		c = findCanary(t, listCanaries(t, database, later, rangeDurations[DefaultRange]), "canary-a")
+		if c.Status == string(StateOpenCanaryDown) {
+			t.Errorf("Status = %q after OpenCanary reported up, want cleared", c.Status)
+		}
+	})
+}
+
+// TestApplyAgentOutOfDateHealth is issue #54's own table: nil/empty/dev
+// on either side never triggers (unknown is never behind), an agent
+// strictly behind birdcage's release core does, and an agent equal to or
+// newer than birdcage does not. agentBehindBirdcage itself carries the
+// exhaustive version-parsing table (version_test.go); this proves the
+// health-state wiring on top of it.
+func TestApplyAgentOutOfDateHealth(t *testing.T) {
+	cases := []struct {
+		name            string
+		agentVersion    *string
+		birdcageVersion string
+		want            bool
+	}{
+		{"nil agent version never triggers", nil, "1.2.3", false},
+		{"empty agent version never triggers", strPtr(""), "1.2.3", false},
+		{"dev agent version never triggers", strPtr("dev"), "1.2.3", false},
+		{"dev birdcage version never triggers", strPtr("1.0.0"), "dev", false},
+		{"behind triggers", strPtr("1.0.0"), "1.2.3", true},
+		{"equal never triggers", strPtr("1.2.3"), "1.2.3", false},
+		{"newer never triggers", strPtr("1.3.0"), "1.2.3", false},
+		{"behind ignoring build metadata", strPtr("1.0.0+aaaaaaaa"), "1.2.3+bbbbbbbb", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Canary{Status: "ok", AgentVersion: tc.agentVersion}
+			applyAgentOutOfDateHealth(&c, tc.birdcageVersion)
+			if got := hasActive(c, StateAgentOutOfDate); got != tc.want {
+				t.Errorf("agent_out_of_date active = %v, want %v (states %v)", got, tc.want, c.ActiveStates)
+			}
+		})
+	}
+}
+
+// strPtr is this file's own string-pointer fixture helper, matching
+// boolPtr/int64Ptr above.
+func strPtr(s string) *string { return &s }
+
+// TestAgentOutOfDateRanksBetweenRenewalStalledAndPending: issue #54's own
+// slot, the one healthStateRank reserved for it since #45's proposed
+// precedence -- checked both on the rank table directly and through
+// addActiveStates, the same way TestDBStaleRanksBetweenTestFailedAndThrottled
+// does for db_stale.
+func TestAgentOutOfDateRanksBetweenRenewalStalledAndPending(t *testing.T) {
+	if healthStateRank[StateRenewalStalled] >= healthStateRank[StateAgentOutOfDate] || healthStateRank[StateAgentOutOfDate] >= healthStateRank[StatePending] {
+		t.Fatalf("ranks: renewal_stalled %d, agent_out_of_date %d, pending %d",
+			healthStateRank[StateRenewalStalled], healthStateRank[StateAgentOutOfDate], healthStateRank[StatePending])
+	}
+
+	c := Canary{ActiveStates: []string{string(StateRenewalStalled), string(StatePending)}, Status: string(StateRenewalStalled)}
+	addActiveStates(&c, StateAgentOutOfDate)
+	if c.Status != string(StateRenewalStalled) || strings.Join(c.ActiveStates, ",") != "renewal_stalled,agent_out_of_date,pending" {
+		t.Errorf("status %s active %v, want renewal_stalled still worst, agent_out_of_date between it and pending", c.Status, c.ActiveStates)
+	}
+}
+
+// TestListCanariesAgentOutOfDate is the end-to-end path: a heartbeat
+// carrying an old release version makes ListCanaries emit
+// agent_out_of_date, and BirdcageVersion (the birdcage_version JSON
+// field) is copied onto every canary from the birdcageVersion ListCanaries
+// was called with -- never from the agent's own report, and never left
+// empty just because this canary happens to be up to date.
+func TestListCanariesAgentOutOfDate(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt})
+
+		now := enrolledAt.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abc", AgentVersion: "1.0.0+aaaaaaaa",
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		canaries, err := ListCanaries(context.Background(), database, now, rangeDurations[DefaultRange], "1.2.3+bbbbbbbb")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanary(t, canaries, "canary-a")
+		if c.BirdcageVersion != "1.2.3+bbbbbbbb" {
+			t.Errorf("BirdcageVersion = %q, want %q", c.BirdcageVersion, "1.2.3+bbbbbbbb")
+		}
+		if c.Status != string(StateAgentOutOfDate) {
+			t.Errorf("Status = %q, want %q", c.Status, StateAgentOutOfDate)
+		}
+
+		// A heartbeat reporting the current version clears it.
+		later := now.Add(time.Minute)
+		if err := RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", later, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abd", AgentVersion: "1.2.3+cccccccc",
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+		canaries, err = ListCanaries(context.Background(), database, later, rangeDurations[DefaultRange], "1.2.3+bbbbbbbb")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c = findCanary(t, canaries, "canary-a")
+		if c.Status == string(StateAgentOutOfDate) {
+			t.Errorf("Status = %q after the agent updated, want cleared", c.Status)
+		}
+	})
+}

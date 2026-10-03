@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birdcage · round 1 · A · Aviary (fleet first)</title>
+<style>
+  :root {
+    --bg: #06080e; --bg-elevated: #0f1422; --bg-hover: rgba(160,185,230,.08);
+    --glass: rgba(15,20,34,.66);
+    --fg: #e9eefb; --fg-muted: #97a4c4; --fg-dim: #55628a;
+    --accent: #9db8e8;
+    --border: rgba(160,185,230,.13); --hair-2: rgba(160,185,230,.26);
+    --alarm: #ff5470; --alarm-bg: rgba(255,84,112,.12);
+    --warn: #f28a1e; --warn-bg: rgba(242,138,30,.12);
+    --log: #38bdf8;
+    --lane-lan: #3987e5; --lane-srv: #199e70; --lane-iot: #c98500; --lane-guest: #d76a9e;
+    --sans: -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 var(--sans); }
+  .scene { position: relative; width: 1600px; height: 1000px; overflow: hidden; background: var(--bg); margin: 0 auto 40px; border-bottom: 1px solid var(--hair-2); }
+  .scene-tag { position: absolute; right: 0; top: 0; z-index: 9; font: 11.5px var(--mono); color: var(--fg-dim); padding: 4px 10px; background: var(--bg-elevated); border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0 0 0 8px; }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--fg-muted); } .dim { color: var(--fg-dim); }
+
+  /* masthead */
+  .head { display: flex; align-items: center; justify-content: space-between; height: 64px; padding: 0 40px; }
+  .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: .06em; }
+  .mark .cage { color: var(--accent); font-weight: 600; }
+  .mark svg { width: 22px; height: 22px; }
+  .status { display: flex; align-items: center; gap: 22px; font: 13px var(--mono); color: var(--fg-muted); }
+  .status .live { color: var(--fg); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3ecf7e; margin-right: 8px; vertical-align: middle; box-shadow: 0 0 0 3px rgba(62,207,126,.14); }
+  .status .sweep { color: var(--alarm); }
+  .status .who { color: var(--fg-dim); }
+
+  /* body */
+  .main { padding: 6px 40px 0; display: flex; flex-direction: column; gap: 18px; }
+
+  /* the aviary: one card per canary */
+  .aviary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .canary { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 12px; position: relative; }
+  .canary.hot { border-color: rgba(255,84,112,.45); box-shadow: 0 0 0 1px rgba(255,84,112,.12) inset; }
+  .canary .top { display: flex; align-items: baseline; justify-content: space-between; }
+  .canary .name { font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+  .canary .name i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .canary .addr { font: 12px var(--mono); color: var(--fg-dim); }
+  .canary .n { font: 650 24px var(--mono); margin-top: 8px; }
+  .canary .n small { font: 12px var(--mono); color: var(--fg-muted); margin-left: 6px; }
+  .strip { display: grid; grid-template-columns: repeat(48, 1fr); gap: 1px; height: 22px; margin-top: 10px; align-items: end; }
+  .strip b { display: block; background: var(--accent); opacity: .85; border-radius: 1px 1px 0 0; min-height: 1px; }
+  .strip b.hot { background: var(--alarm); opacity: 1; }
+  .canary .foot { display: flex; justify-content: space-between; margin-top: 8px; font: 11.5px var(--mono); color: var(--fg-dim); }
+  .canary .foot .now { color: var(--alarm); }
+  .canary .foot .quiet { color: var(--fg-dim); }
+
+  /* filter bar */
+  .filters { display: flex; align-items: center; gap: 10px; font: 12.5px var(--mono); color: var(--fg-muted); }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; color: var(--fg-muted); background: transparent; }
+  .chip.on { border-color: var(--accent); color: var(--fg); background: rgba(157,184,232,.1); }
+  .chip.on::after { content: ' ×'; color: var(--fg-dim); }
+  .filters .sep { width: 1px; height: 18px; background: var(--hair-2); margin: 0 4px; }
+  .filters .search { margin-left: auto; border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; color: var(--fg-dim); min-width: 320px; }
+  .filters .search span { color: var(--fg); }
+
+  /* stream */
+  .stream { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: rgba(15,20,34,.35); }
+  table { width: 100%; border-collapse: collapse; font: 13px var(--mono); }
+  th { text-align: left; font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); padding: 10px 14px; border-bottom: 1px solid var(--hair-2); }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  tr.sweep td { background: rgba(255,84,112,.05); }
+  tr.sel td { background: var(--bg-hover); }
+  td.time { color: var(--fg-muted); width: 92px; }
+  td .lane { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  td.src { color: var(--fg); }
+  td.src .int { color: var(--warn); font-size: 11px; margin-left: 8px; border: 1px solid rgba(242,138,30,.4); border-radius: 4px; padding: 0 5px; }
+  td.svc { color: var(--fg); }
+  td.svc .port { color: var(--fg-dim); }
+  td.note { color: var(--fg-muted); font-family: var(--sans); font-size: 13px; }
+  td.note .tag { font: 11px var(--mono); border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
+  .tag.sweep { color: var(--alarm); background: var(--alarm-bg); }
+  .tag.repeat { color: var(--warn); background: var(--warn-bg); }
+  .tag.first { color: var(--log); background: rgba(56,189,248,.12); }
+  .tag.inside { color: var(--warn); background: var(--warn-bg); }
+  td.act { text-align: right; color: var(--fg-dim); }
+  td.act a { color: var(--accent); text-decoration: none; margin-left: 12px; }
+
+  /* footer legend */
+  .legend { position: absolute; bottom: 18px; left: 40px; right: 40px; display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--fg-dim); }
+  .legend .k { display: inline-flex; align-items: center; gap: 8px; margin-left: 22px; }
+  .legend .k i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* detail drawer (scene 3) */
+  .drawer { position: absolute; top: 64px; right: 40px; width: 560px; height: 880px; background: var(--glass); backdrop-filter: blur(14px); border: 1px solid var(--hair-2); border-radius: 12px; padding: 22px 24px; box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+  .drawer h2 { margin: 0; font-size: 19px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .drawer h2 i { width: 10px; height: 10px; border-radius: 50%; }
+  .drawer .sub { font: 12.5px var(--mono); color: var(--fg-muted); margin-top: 6px; }
+  .drawer .kv { display: grid; grid-template-columns: 120px 1fr; gap: 8px 14px; margin-top: 20px; font: 13px var(--mono); }
+  .drawer .kv dt { color: var(--fg-dim); } .drawer .kv dd { margin: 0; color: var(--fg); }
+  .drawer h3 { font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); margin: 26px 0 8px; }
+  .drawer pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font: 12px/1.55 var(--mono); color: var(--fg-muted); overflow: hidden; }
+  .drawer pre b { color: var(--fg); font-weight: 500; }
+  .visitor { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .visitor div { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 11.5px var(--mono); color: var(--fg-muted); white-space: nowrap; overflow: hidden; }
+  .visitor div b { display: block; color: var(--fg); font-weight: 600; margin-bottom: 2px; }
+  .visitor div.none { color: var(--fg-dim); border-style: dashed; }
+  .actions { display: flex; gap: 10px; margin-top: 22px; }
+  .btn { border: 1px solid var(--hair-2); border-radius: 8px; padding: 7px 12px; font: 12.5px var(--mono); color: var(--fg); white-space: nowrap; }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .btn.ghost { border-color: var(--border); color: var(--fg-dim); }
+  .scrim { position: absolute; inset: 0; background: rgba(6,8,14,.45); }
+
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .status .dot { animation: pulse 1.6s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .status .dot { animation: none; } }
+</style>
+</head>
+<body>
+
+<!-- ============ SCENE 1: start ============ -->
+<section class="scene" id="a-start" aria-label="Aviary — landing, sweep in progress">
+  <div class="scene-tag">A · Aviary · start</div>
+  <header class="head">
+    <div class="mark" aria-label="Birdcage">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg>
+      <span>BIRD<span class="cage">CAGE</span></span>
+    </div>
+    <div class="status">
+      <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+      <span class="sweep">▲ sweep in progress · 203.0.113.42 · 4/4 canaries</span>
+      <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+      <span class="who">tom (admin)</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="aviary">
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="addr">10.0.10.250</span></div>
+        <div class="n">5<small>today</small></div>
+        <div class="strip">
+          <b style="height:8%"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:18%"></b><b style="height:12%"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b>
+        </div>
+        <div class="foot"><span class="now">● 3 in the last 10 min</span><span>ssh · http</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="addr">10.0.20.250</span></div>
+        <div class="n">4<small>today</small></div>
+        <div class="strip">
+          <b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b>
+        </div>
+        <div class="foot"><span class="now">● 4 in the last 10 min</span><span>ssh · mysql</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="addr">10.0.30.250</span></div>
+        <div class="n">221<small>today</small></div>
+        <div class="strip">
+          <b style="height:40%"></b><b style="height:44%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:45%"></b><b style="height:39%"></b><b style="height:42%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:41%"></b><b style="height:38%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:45%"></b><b style="height:41%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:38%"></b><b style="height:42%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:41%"></b><b style="height:39%"></b><b style="height:43%"></b><b style="height:42%"></b><b style="height:40%"></b><b style="height:44%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:43%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:44%"></b><b style="height:41%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:42%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:43%"></b><b class="hot" style="height:100%"></b>
+        </div>
+        <div class="foot"><span class="now">● 1 in the last 10 min</span><span>smb steady since Sat</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="addr">10.0.40.250</span></div>
+        <div class="n">2<small>today</small></div>
+        <div class="strip">
+          <b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b>
+        </div>
+        <div class="foot"><span class="now">● 2 in the last 10 min</span><span>ssh</span></div>
+      </div>
+    </div>
+
+    <div class="filters">
+      <span class="dim">show</span>
+      <span class="chip on">all canaries</span>
+      <span class="chip">today</span>
+      <span class="sep"></span>
+      <span class="chip">canary</span><span class="chip">source</span><span class="chip">service</span><span class="chip">time</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+
+    <div class="stream">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">21:59:10</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:11:58</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">14:40:12</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time" style="color:var(--fg-dim)">yesterday 03:18</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">192.0.2.88</td><td class="svc">ftp <span class="port">21</span></td><td class="note">USER anonymous · one touch, gone</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span>232 hits today · 12 shown · <span class="muted">newest first</span></span>
+    <span>
+      <span class="k"><i style="background:var(--lane-lan)"></i>lan</span>
+      <span class="k"><i style="background:var(--lane-srv)"></i>srv</span>
+      <span class="k"><i style="background:var(--lane-iot)"></i>iot</span>
+      <span class="k"><i style="background:var(--lane-guest)"></i>guest</span>
+      <span class="k"><i style="background:var(--alarm)"></i>sweep</span>
+      <span class="k"><i style="background:var(--warn)"></i>repeat / from inside</span>
+    </span>
+  </div>
+</section>
+
+<!-- ============ SCENE 2: filtered to one visitor ============ -->
+<section class="scene" id="a-filter" aria-label="Aviary — filtered to one source IP">
+  <div class="scene-tag">A · Aviary · filter: source 203.0.113.42</div>
+  <header class="head">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg><span>BIRD<span class="cage">CAGE</span></span></div>
+    <div class="status">
+      <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+      <span class="sweep">▲ sweep in progress · 203.0.113.42 · 4/4 canaries</span>
+      <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+      <span class="who">tom (admin)</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="aviary">
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="addr">10.0.10.250</span></div>
+        <div class="n">2<small>from this source</small></div>
+        <div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div>
+        <div class="foot"><span class="now">● first touched 21:55</span><span>ssh</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="addr">10.0.20.250</span></div>
+        <div class="n">2<small>from this source</small></div>
+        <div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div>
+        <div class="foot"><span class="now">● 21:56 → 21:57</span><span>ssh · mysql</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="addr">10.0.30.250</span></div>
+        <div class="n">1<small>from this source</small></div>
+        <div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div>
+        <div class="foot"><span class="now">● 22:01</span><span>ssh</span></div>
+      </div>
+      <div class="canary hot">
+        <div class="top"><span class="name"><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="addr">10.0.40.250</span></div>
+        <div class="n">2<small>from this source</small></div>
+        <div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div>
+        <div class="foot"><span class="now">● 22:04 · latest</span><span>ssh</span></div>
+      </div>
+    </div>
+
+    <div class="filters">
+      <span class="dim">show</span>
+      <span class="chip">all canaries</span>
+      <span class="chip">today</span>
+      <span class="sep"></span>
+      <span class="chip on">source 203.0.113.42</span>
+      <span class="dim">7 hits · 4 canaries · 9 min · ssh, mysql</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+
+    <div class="stream">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span>7 hits from 203.0.113.42 · <span class="muted">never seen before tonight · not in CrowdSec</span></span>
+    <span><span class="k"><i style="background:var(--alarm)"></i>sweep</span><span class="k"><i style="background:var(--log)"></i>first seen</span></span>
+  </div>
+</section>
+
+<!-- ============ SCENE 3: one hit opened ============ -->
+<section class="scene" id="a-hit" aria-label="Aviary — one hit opened in a drawer">
+  <div class="scene-tag">A · Aviary · hit opened</div>
+  <header class="head">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 16 0v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" stroke="#9db8e8" stroke-width="1.6"/><path d="M8 5.5V19M12 4v15M16 5.5V19" stroke="#9db8e8" stroke-width="1.2" opacity=".8"/><circle cx="12" cy="11" r="1.6" fill="#ff5470"/></svg><span>BIRD<span class="cage">CAGE</span></span></div>
+    <div class="status">
+      <span class="live"><span class="dot"></span>LIVE · 4 canaries</span>
+      <span class="sweep">▲ sweep in progress · 203.0.113.42 · 4/4 canaries</span>
+      <span>today <span style="color:var(--fg)">232</span> hits · <span style="color:var(--fg)">4</span> visitors</span>
+      <span class="who">tom (admin)</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="aviary">
+      <div class="canary hot"><div class="top"><span class="name"><i style="background:var(--lane-lan)"></i>canary-lan</span><span class="addr">10.0.10.250</span></div><div class="n">5<small>today</small></div><div class="strip"><b style="height:8%"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:18%"></b><b style="height:12%"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div><div class="foot"><span class="now">● 3 in the last 10 min</span><span>ssh · http</span></div></div>
+      <div class="canary hot"><div class="top"><span class="name"><i style="background:var(--lane-srv)"></i>canary-srv</span><span class="addr">10.0.20.250</span></div><div class="n">4<small>today</small></div><div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div><div class="foot"><span class="now">● 4 in the last 10 min</span><span>ssh · mysql</span></div></div>
+      <div class="canary hot"><div class="top"><span class="name"><i style="background:var(--lane-iot)"></i>canary-iot</span><span class="addr">10.0.30.250</span></div><div class="n">221<small>today</small></div><div class="strip"><b style="height:40%"></b><b style="height:44%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:45%"></b><b style="height:39%"></b><b style="height:42%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:41%"></b><b style="height:38%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:45%"></b><b style="height:41%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:38%"></b><b style="height:42%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:41%"></b><b style="height:39%"></b><b style="height:43%"></b><b style="height:42%"></b><b style="height:40%"></b><b style="height:44%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:43%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:44%"></b><b style="height:41%"></b><b style="height:40%"></b><b style="height:43%"></b><b style="height:42%"></b><b style="height:38%"></b><b style="height:41%"></b><b style="height:44%"></b><b style="height:40%"></b><b style="height:42%"></b><b style="height:39%"></b><b style="height:43%"></b><b class="hot" style="height:100%"></b></div><div class="foot"><span class="now">● 1 in the last 10 min</span><span>smb steady since Sat</span></div></div>
+      <div class="canary hot"><div class="top"><span class="name"><i style="background:var(--lane-guest)"></i>canary-guest</span><span class="addr">10.0.40.250</span></div><div class="n">2<small>today</small></div><div class="strip"><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b style="height:0"></b><b class="hot" style="height:100%"></b></div><div class="foot"><span class="now">● 2 in the last 10 min</span><span>ssh</span></div></div>
+    </div>
+    <div class="filters">
+      <span class="dim">show</span><span class="chip on">all canaries</span><span class="chip">today</span><span class="sep"></span>
+      <span class="chip">canary</span><span class="chip">source</span><span class="chip">service</span><span class="chip">time</span>
+      <span class="search">filter <span>│</span> ip, service, canary…</span>
+    </div>
+    <div class="stream">
+      <table>
+        <thead><tr><th>time</th><th>canary</th><th>source</th><th>service</th><th>what happened</th><th></th></tr></thead>
+        <tbody>
+          <tr class="sweep"><td class="time">22:04:31</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt root / 123456</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:04:02</td><td><i class="lane" style="background:var(--lane-guest)"></i>canary-guest</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 4/4</span>login attempt admin / admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">22:01:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 3/4</span>login attempt root / toor</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">21:59:10</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:57:22</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">mysql <span class="port">3306</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>auth root, empty password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep sel"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#" style="color:var(--fg)">open ▾</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr class="sweep"><td class="time">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:11:58</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="scrim"></div>
+  <aside class="drawer" aria-label="Hit detail">
+    <h2><i style="background:var(--lane-srv)"></i>canary-srv <span class="dim" style="font-weight:400">·</span> <span class="mono" style="font-weight:500">ssh 22</span></h2>
+    <div class="sub">21:56:58 today · from <span style="color:var(--fg)">203.0.113.42</span> · <span style="color:var(--alarm)">sweep 2/4</span></div>
+
+    <dl class="kv">
+      <dt>source</dt><dd>203.0.113.42 <span class="dim">· 203.0.113.0/24 · AS64500 (documentation)</span></dd>
+      <dt>first seen</dt><dd>21:55:39 today <span class="dim">· canary-lan</span></dd>
+      <dt>touched</dt><dd>4 of 4 canaries <span class="dim">in 9 min</span></dd>
+      <dt>tried</dt><dd>root / password</dd>
+      <dt>crowdsec</dt><dd><span class="dim">no decision</span></dd>
+      <dt>mitigation</dt><dd><span class="dim">none yet · v1 wave 2</span></dd>
+    </dl>
+
+    <h3>this source across the fleet</h3>
+    <div class="visitor">
+      <div><b><i class="lane" style="background:var(--lane-lan);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></i>lan</b>2 · ssh · 21:55</div>
+      <div><b><i class="lane" style="background:var(--lane-srv);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></i>srv</b>2 · ssh+mysql · 21:57</div>
+      <div><b><i class="lane" style="background:var(--lane-iot);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></i>iot</b>1 · ssh · 22:01</div>
+      <div><b><i class="lane" style="background:var(--lane-guest);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px"></i>guest</b>2 · ssh · 22:04</div>
+    </div>
+
+    <h3>raw from opencanary</h3>
+    <pre>{"dst_host": "10.0.20.250", "dst_port": 22,
+ "local_time": "2026-09-12 21:56:58.114",
+ "logdata": {"LOCALVERSION": "SSH-2.0-OpenSSH_7.9p1",
+             "PASSWORD": "<b>password</b>", "USERNAME": "<b>root</b>",
+             "REMOTEVERSION": "SSH-2.0-libssh2_1.9.0"},
+ "logtype": 4002, "node_id": "<b>canary-srv</b>",
+ "src_host": "<b>203.0.113.42</b>", "src_port": 51822,
+ "utc_time": "2026-09-12 20:56:58.114"}</pre>
+
+    <div class="actions">
+      <span class="btn primary">lookback in mikroview ▸</span>
+      <span class="btn">filter to this source</span>
+      <span class="btn ghost">copy raw</span>
+    </div>
+    <p class="dim" style="font-size:12px;margin:18px 0 0">lookback asks mikroview for the firewall lines around 21:56:58 for 203.0.113.42 (mikroview#29), read-only, with birdcage's API token.</p>
+  </aside>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,22 @@
+Remote access - client setup notes
+
+Prepared by the IT team. Internal use.
+
+1. Install the VPN client from the software portal.
+2. Connect to the gateway named on your handover sheet. The lab
+   lab gateway is vpn-lab.example.invalid on the
+   documentation network 192.0.2.0/24.
+3. Your account name is your usual sign-in name. Credentials are not
+   written down in this document and never will be - ask the service
+   desk if yours has not been issued.
+4. Split tunnelling is off. Expect printing and the file shares to be
+   reachable only while the tunnel is up.
+
+Troubleshooting
+
+  - "gateway unreachable": check you are not already on the office
+    wireless, which routes there directly.
+  - "certificate not trusted": the device is missing the internal root
+    certificate. The service desk installs it; it is not attached here.
+
+Revision 4 - review due with the next firmware round.
