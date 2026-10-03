@@ -16,7 +16,9 @@ that keeps CodeQL, dependency review, and the manual countersigning
 workflow (#90) — no issues, no pull requests there. Countersigning is the
 one thing the mirror does that GitLab cannot: Sigstore's trusted issuer
 list has no entry for a self-hosted GitLab, so keyless signing is only
-available on GitHub, and the owner starts it by hand after a release. Local remote `gitlab` for the primary, `origin` for the
+available on GitHub, and the owner starts it by hand after a release. No GitHub
+credential on this host may have Actions write, so no agent can start
+it (#169; `docs/releasing.md`). Local remote `gitlab` for the primary, `origin` for the
 mirror; push and fetch with the `glab auth git-credential` helper form
 from the github-credentials skill. Issue numbers match across the two
 hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
