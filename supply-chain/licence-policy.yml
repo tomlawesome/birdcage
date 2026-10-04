@@ -232,6 +232,17 @@ python-bundled-assets:
   - opencanary@0.9.10 opencanary/modules/data/http/skin/basicLogin/ BSD-3-Clause
   # Thinkst's own plain login page (three HTML files); no third-party
   # notice or branding in them.
+  - opencanary@0.9.10 opencanary/modules/data/httpproxy/skin/squid/ Squid-error-template+CC-BY-2.5-stylesheet
+  # Squid 3.3.8's proxy-auth error page (auth.html): Squid's template with
+  # its stylesheet inline, marked "Creative Commons Attribution 2.5", and a
+  # background image hotlinked from squid-cache.org. The httpproxy lure is
+  # off, but the file ships. Owner, 2026-10-04: a known finding for Shrike
+  # to handle (#178), not investigated further here.
+  - opencanary@0.9.10 opencanary/modules/data/rdp/ unidentified-RDP-recordings
+  # Four .rss session recordings (default, login, login-failed,
+  # login-passreset) the enabled RDP lure plays back; binary, with no
+  # notice in them, and their origin and content are unidentified. Owner,
+  # 2026-10-04: a known finding for Shrike to handle (#178).
   - twisted@26.4.0 twisted/python/_pydoctortemplates/ MIT
   # Twisted's own API-docs templates; no third-party notice.
   - urllib3@2.7.0 urllib3/contrib/emscripten/ MIT
