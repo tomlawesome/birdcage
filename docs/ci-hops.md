@@ -145,8 +145,12 @@ request -- so a problem is visible *before* the promotion lands -- and
 again on the branch itself.
 
 `policy:promotion-hop` also lives at this hop: it refuses a merge
-request into `preview` from anything but `dev`, and into `main` from
-anything but `preview`.
+request into `preview` from anything but `dev` or a `hotfix/<name>`
+branch, and into `main` from anything but `preview`. A hotfix branch is
+cut from `preview` and carries one fix that cannot wait for an audit of
+everything newer on `dev` (#89, owner 2026-10-02); after the slash its
+name may use only letters, digits, `.`, `_` and `-`. Back-merge
+`preview` into `dev` afterwards as usual.
 
 ## Hop 3 -- publishing, on `preview` and on a `v*` tag
 

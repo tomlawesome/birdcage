@@ -131,7 +131,16 @@ policy:promotion-hop:
           [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "preview" ] || { echo "main only accepts merge requests from preview"; exit 1; }
           ;;
         preview)
-          [ "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" = "dev" ] || { echo "preview only accepts merge requests from dev"; exit 1; }
+          # A hotfix/<name> branch cut from preview carries a fix that cannot
+          # wait for an audit of dev's newer work (#89, owner 2026-10-02).
+          # The name is bounded as orbit's stable-promotion-policy.mjs does.
+          case "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" in
+            dev) ;;
+            hotfix/*)
+              printf '%s\n' "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" | grep -Eqx 'hotfix/[A-Za-z0-9._-]+' || { echo "hotfix branch name must be hotfix/<name> using A-Z a-z 0-9 . _ -"; exit 1; }
+              ;;
+            *) echo "preview only accepts merge requests from dev or hotfix/<name>"; exit 1 ;;
+          esac
           ;;
       esac
 
@@ -2899,6 +2908,9 @@ release:mirror-release:
     DOCKER_HOST: unix:///var/run/docker.sock
   <<: *mirror_login
   script:
+    # release:promote is allow_failure, and a failed allow_failure job still
+    # satisfies needs:, so this job starts even when promotion failed (#171).
+    - 'test -n "${RELEASE_TAG:-}" || { echo "no RELEASE_TAG: release:promote did not finish"; exit 1; }'
     - |
       set -eu
       for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
@@ -2933,6 +2945,9 @@ release:gitlab:
     - job: release:promote
       artifacts: true
   script:
+    # Same reason as release:mirror-release (#171): without this an empty
+    # tag reaches release-cli, because echo succeeds either way.
+    - 'test -n "${RELEASE_TAG:-}" && test -n "${RELEASE_COMMIT:-}" || { echo "no RELEASE_TAG/RELEASE_COMMIT: release:promote did not finish"; exit 1; }'
     - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
