@@ -26,6 +26,18 @@ mkpkg() {
   local pkgs="$1" name_version="$2" body="$3"
   mkdir -p "$pkgs/$name_version.dist-info"
   printf '%s\n' "$body" > "$pkgs/$name_version.dist-info/METADATA"
+  # pip always writes RECORD; an empty one means "installed no assets".
+  : > "$pkgs/$name_version.dist-info/RECORD"
+}
+
+# mkasset <packages_dir> <name-version> <path>
+# Installs <path> under the package and lists it in its RECORD, the way
+# pip does, so the bundled-asset check (#179) sees it.
+mkasset() {
+  local pkgs="$1" name_version="$2" path="$3"
+  mkdir -p "$pkgs/$(dirname "$path")"
+  printf 'x\n' > "$pkgs/$path"
+  printf '%s,sha256=x,2\n' "$path" >> "$pkgs/$name_version.dist-info/RECORD"
 }
 
 # expect <want-exit> <name> <packages_dir> <policy_file>
@@ -228,6 +240,76 @@ License-File: LICENSE'
 printf 'MIT licence text\n' > "$pkgs/mystery-0.1.0.dist-info/LICENSE"
 expect_grep 1 "a package with no licence field names its bundled licence file's path" \
   "$pkgs" "$good_policy" "bundled licence file(s): LICENSE"
+
+# --- inside packages (#179): vendored packages and bundled assets ---
+
+pkgs="$work/vendored-bad/pkgs"
+mkpkg "$pkgs" carrier-1.0.0 'Name: carrier
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs/carrier/_vendor" inner-2.0.0 'Name: inner
+Version: 2.0.0
+License-Expression: LGPL-3.0-only'
+expect_grep 1 "a vendored package with a disallowed licence is caught, named with its carrier" \
+  "$pkgs" "$good_policy" "inner@2.0.0 (vendored in carrier)"
+
+pkgs="$work/vendored-good/pkgs"
+mkpkg "$pkgs" carrier-1.0.0 'Name: carrier
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs/carrier/_vendor" inner-2.0.0 'Name: inner
+Version: 2.0.0
+License-Expression: BSD-3-Clause'
+expect 0 "a vendored package with an allowed licence passes" "$pkgs" "$good_policy"
+
+vendored_exception_policy="$work/vendored-exception-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+allow-python-package-licenses:
+  - inner@2.0.0 LGPL-3.0-only' > "$vendored_exception_policy"
+expect 0 "a named exception covers a vendored package by its own name@version" \
+  "$work/vendored-bad/pkgs" "$vendored_exception_policy"
+
+pkgs="$work/asset-unreviewed/pkgs"
+mkpkg "$pkgs" skinny-1.0.0 'Name: skinny
+Version: 1.0.0
+License-Expression: MIT'
+mkasset "$pkgs" skinny-1.0.0 skinny/skin/vendor-logo.png
+mkasset "$pkgs" skinny-1.0.0 skinny/skin/theme.css
+mkasset "$pkgs" skinny-1.0.0 skinny/own_module.py
+expect_grep 1 "an image or stylesheet with no review is caught, whatever the package declares" \
+  "$pkgs" "$good_policy" "skinny@1.0.0 skinny/skin/ (2 file(s))"
+
+asset_policy="$work/asset-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - skinny@1.0.0 skinny/skin/ Vendor-Logo-Reviewed' > "$asset_policy"
+expect_grep 0 "a reviewed asset directory passes, and is named in the summary" \
+  "$pkgs" "$asset_policy" "skinny/skin/ (2) — Vendor-Logo-Reviewed"
+
+pkgs="$work/asset-bumped/pkgs"
+mkpkg "$pkgs" skinny-1.1.0 'Name: skinny
+Version: 1.1.0
+License-Expression: MIT'
+mkasset "$pkgs" skinny-1.1.0 skinny/skin/vendor-logo.png
+expect 1 "a review recorded for a different version does not match; the assets are read again" \
+  "$pkgs" "$asset_policy"
+
+pkgs="$work/asset-stale/pkgs"
+mkpkg "$pkgs" skinny-1.0.0 'Name: skinny
+Version: 1.0.0
+License-Expression: MIT'
+expect_grep 1 "a review matching no installed file fails as stale, distinctly" \
+  "$pkgs" "$asset_policy" "stale python-bundled-assets"
+
+pkgs="$work/no-record/pkgs"
+mkpkg "$pkgs" norec-1.0.0 'Name: norec
+Version: 1.0.0
+License-Expression: MIT'
+rm "$pkgs/norec-1.0.0.dist-info/RECORD"
+expect_grep 1 "a package with no RECORD is caught, not treated as having no assets" \
+  "$pkgs" "$good_policy" "(no RECORD file)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

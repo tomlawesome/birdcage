@@ -145,6 +145,9 @@ allow-python-licenses:
   - MIT-0
   # cffi. Same permissive MIT-minus-attribution licence already allowed
   # for npm above.
+  - Apache-2.0
+  # importlib_metadata, vendored inside setuptools (#179). The SPDX form
+  # of the licence already allowed below as "Apache Software License".
   - Apache Software License
   # The Classifier form of Apache-2.0 -- needed by bcrypt, ntlmlib,
   # pyopenssl and requests, whose own raw License: fields disagree on
@@ -205,3 +208,34 @@ allow-python-package-licenses:
   # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
   # GPLv3 dependency in the image is the owner's call, not this policy
   # file's; the owner has accepted it (#95).
+
+# Reviewed bundled assets inside pip packages (#179), read by
+# read_asset_reviews() in scripts/licence-check-python.py. A package's
+# declared licence covers its own code; images, web pages, stylesheets,
+# scripts, feeds and fonts it carries have no licence field of their own
+# and are the usual vehicle for someone else's work -- OpenCanary's
+# nasLogin skin passed as "BSD" while carrying Synology's images and
+# Sencha's GPLv3 Ext JS stylesheets. Every such file a package installs
+# must sit under one of these entries.
+#
+# Format: "<name>@<version> <path-prefix> <licence or finding>". Exact
+# name@version, like the exceptions above: a version bump stops the entry
+# matching and the files get read again. An entry matching no installed
+# file is a failure ("stale -- delete it").
+python-bundled-assets:
+  - opencanary@0.9.10 opencanary/modules/data/http/skin/nasLogin/ Synology-DSM-images+Ext-JS-3.4-GPL-3.0
+  # Synology's DiskStation/RackStation login page: Synology logos and DSM
+  # image pack, plus Sencha Ext JS 3.4 stylesheets (GPLv3, confirmed from
+  # Sencha's own 3.4 release). Synology's branding policy needs written
+  # permission for this use, which we do not have. Owner, 2026-10-04: it
+  # stays in place until Shrike's own pages replace it (#178).
+  - opencanary@0.9.10 opencanary/modules/data/http/skin/basicLogin/ BSD-3-Clause
+  # Thinkst's own plain login page (three HTML files); no third-party
+  # notice or branding in them.
+  - twisted@26.4.0 twisted/python/_pydoctortemplates/ MIT
+  # Twisted's own API-docs templates; no third-party notice.
+  - urllib3@2.7.0 urllib3/contrib/emscripten/ MIT
+  # urllib3's own browser fetch worker; no third-party notice.
+  - setuptools@83.0.0 setuptools/tests/indexes/ MIT
+  # setuptools' own test fixture pages; no third-party notice.
+

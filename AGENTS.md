@@ -137,6 +137,12 @@ allow-list directly, the second because #101 removed the package
 itself. A version bump drops the exception and the gate fires again on
 the new version.
 
+The Python gate also looks inside each package (#179): vendored packages
+(a `.dist-info` below the top level) face the same rules, and every image,
+web page, stylesheet, script, feed or font a package installs must sit
+under a reviewed `python-bundled-assets:` entry -- those files carry no
+licence field, which is how OpenCanary's Synology skin passed as "BSD".
+
 ## Live testing is not optional
 
 Owner, 2026-09-19: "Every piece of the security infrastructure should be
