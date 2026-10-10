@@ -15,8 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"sync"
 	"time"
@@ -75,8 +75,16 @@ type Config struct {
 	// "optional" or empty. See AdminPasskeyRule.
 	AdminPasskeyOverride string
 	// SecureCookie sets the session cookie's Secure attribute (and its
-	// __Host- prefix): true whenever the dashboard serves TLS.
+	// __Host- prefix): true whenever the dashboard serves TLS itself or
+	// BIRDCAGE_PUBLIC_URL is https.
 	SecureCookie bool
+	// TrustedProxies are the peers a forwarding header is believed from
+	// (BIRDCAGE_TRUSTED_PROXIES). Empty, the default, means headers are
+	// ignored and the client is the connecting peer.
+	TrustedProxies []netip.Prefix
+	// ClientIPHeader is the forwarding header read for a trusted peer;
+	// empty means X-Forwarded-For. See ClientIP.
+	ClientIPHeader string
 
 	// DataDir is birdcage's data directory. The common-password list
 	// refresher and the country data keep their files beneath it. Empty
@@ -268,8 +276,10 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 		ProductName:     productName,
 		LoginPath:       "/",
 		Log:             log,
-		ClientIP:        clientIP,
-		AdminPasskey:    rule,
+		ClientIP: func(r *http.Request) string {
+			return ClientIP(r, cfg.TrustedProxies, cfg.ClientIPHeader)
+		},
+		AdminPasskey: rule,
 		// PasskeySignIn stays off, and UnusualSignIns at gauntlet's default
 		// (flag): ADR-0016 decisions 7 and 9.
 	}
@@ -485,17 +495,6 @@ func sweepTokens(ctx context.Context, g *gate.Gate, log *slog.Logger) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// clientIP is the address the login limiter and audit records use: the
-// connection's own. Birdcage terminates TLS itself and trusts no proxy
-// header.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr // a unix socket has no port to strip
-	}
-	return host
 }
 
 func trimSlash(s string) string {

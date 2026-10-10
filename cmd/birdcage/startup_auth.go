@@ -54,9 +54,11 @@ const (
 // secret file's contents, or their lengths.
 //
 // dataDir is where the common-password list and country data are kept;
-// secureCookie is whether the dashboard serves TLS itself.
-func loadAuthConfig(getenv func(string) string, dataDir string, secureCookie bool, configLog *slog.Logger) (auth.Config, error) {
-	cfg := auth.Config{DataDir: dataDir, SecureCookie: secureCookie}
+// servesTLS is whether the dashboard serves TLS itself; the session cookie
+// is Secure then, or when the public address is https (a TLS-terminating
+// proxy in front).
+func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, configLog *slog.Logger) (auth.Config, error) {
+	cfg := auth.Config{DataDir: dataDir, SecureCookie: servesTLS}
 	refuse := func(format string, args ...any) (auth.Config, error) {
 		return auth.Config{}, &startupError{configLog, fmt.Sprintf(format, args...)}
 	}
@@ -89,7 +91,27 @@ func loadAuthConfig(getenv func(string) string, dataDir string, secureCookie boo
 			return refuse("%s=%q is not a usable address; use the full address people type, such as https://birdcage.example.net", envPublicURL, raw)
 		}
 		cfg.PublicURL = raw
+		if u.Scheme == "https" {
+			cfg.SecureCookie = true
+		}
 		configLog.Info(fmt.Sprintf("%s=%s", envPublicURL, raw))
+	}
+
+	// Reverse proxy: which peers a forwarding header is believed from, and
+	// which header. A bad entry is refused, never skipped, so the operator
+	// is not left believing forwarded addresses are honoured.
+	if raw := getenv(envTrustedProxies); raw != "" {
+		proxies, err := parseTrustedProxies(raw)
+		if err != nil {
+			return refuse("%s=%q: %v", envTrustedProxies, raw, err)
+		}
+		cfg.TrustedProxies = proxies
+		configLog.Info(fmt.Sprintf("%s=%s", envTrustedProxies, raw))
+	}
+	cfg.ClientIPHeader = defaultClientIPHeader
+	if h := strings.TrimSpace(getenv(envClientIPHeader)); h != "" {
+		cfg.ClientIPHeader = h
+		configLog.Info(fmt.Sprintf("%s=%s", envClientIPHeader, h))
 	}
 
 	cfg.AdminPasskeyOverride = getenv(envAuthAdminPasskey)
