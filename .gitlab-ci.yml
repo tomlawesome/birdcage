@@ -61,7 +61,11 @@ variables:
   # inside its script (docker run/build/pull against its own daemon) still
   # needs its own `docker login` first -- see the jobs that do. Versions
   # unchanged from before this issue; only the source moved.
-  GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27
+  # Tag AND index digest (#188): the floating golang:1.27 moved from 1.27.1 to
+  # 1.27.2 under an open merge request and changed how coverage statements are
+  # counted, failing test:go on unchanged code. Bump tag and digest together,
+  # on purpose, with the coverage floors re-measured in the same change.
+  GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c
   NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
   PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
@@ -340,7 +344,7 @@ lint:agent-deps:
 # go1.27") on every commit, clean or not. GOTOOLCHAIN=local pins both
 # steps to $GOLANG_IMAGE's own go, which already satisfies govulncheck's
 # floor and matches go.mod exactly -- confirmed against the real
-# golang:1.27 image.
+# golang:1.27.2 image.
 #
 # A reachable vulnerability fails the job; an unreachable one is printed
 # only -- govulncheck's own default. Proved locally, not assumed: a
@@ -572,7 +576,7 @@ test:go:
     # This run sets BIRDCAGE_TEST_DATABASE_URL, so internal/db is
     # measured against real Postgres here and reads higher than it does
     # on a workstation, where the same tests fall back to SQLite.
-    # golang:1.27 ships python3 (3.13.5, verified), which the checker
+    # golang:1.27.2 ships python3 (3.13.5, verified), which the checker
     # needs.
     # #93: run the suite as a NON-ROOT user. internal/startcheck proves
     # birdcage refuses to start on unsafe file permissions, and those
