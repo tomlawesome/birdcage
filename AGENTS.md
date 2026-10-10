@@ -16,7 +16,9 @@ that keeps CodeQL, dependency review, and the manual countersigning
 workflow (#90) — no issues, no pull requests there. Countersigning is the
 one thing the mirror does that GitLab cannot: Sigstore's trusted issuer
 list has no entry for a self-hosted GitLab, so keyless signing is only
-available on GitHub, and the owner starts it by hand after a release. Local remote `gitlab` for the primary, `origin` for the
+available on GitHub, and the owner starts it by hand after a release. No GitHub
+credential on this host may have Actions write, so no agent can start
+it (#169; `docs/releasing.md`). Local remote `gitlab` for the primary, `origin` for the
 mirror; push and fetch with the `glab auth git-credential` helper form
 from the github-credentials skill. Issue numbers match across the two
 hosts up to #41 (recreated by hand on 2026-09-13); GitLab #29, #30 and
@@ -136,6 +138,12 @@ later dropped, the first because a version bump made it match the
 allow-list directly, the second because #101 removed the package
 itself. A version bump drops the exception and the gate fires again on
 the new version.
+
+The Python gate also looks inside each package (#179): vendored packages
+(a `.dist-info` below the top level) face the same rules, and every image,
+web page, stylesheet, script, feed or font a package installs must sit
+under a reviewed `python-bundled-assets:` entry -- those files carry no
+licence field, which is how OpenCanary's Synology skin passed as "BSD".
 
 ## Live testing is not optional
 

@@ -26,6 +26,18 @@ mkpkg() {
   local pkgs="$1" name_version="$2" body="$3"
   mkdir -p "$pkgs/$name_version.dist-info"
   printf '%s\n' "$body" > "$pkgs/$name_version.dist-info/METADATA"
+  # pip always writes RECORD; an empty one means "installed no assets".
+  : > "$pkgs/$name_version.dist-info/RECORD"
+}
+
+# mkasset <packages_dir> <name-version> <path>
+# Installs <path> under the package and lists it in its RECORD, the way
+# pip does, so the bundled-asset check (#179) sees it.
+mkasset() {
+  local pkgs="$1" name_version="$2" path="$3"
+  mkdir -p "$pkgs/$(dirname "$path")"
+  printf 'x\n' > "$pkgs/$path"
+  printf '%s,sha256=x,2\n' "$path" >> "$pkgs/$name_version.dist-info/RECORD"
 }
 
 # expect <want-exit> <name> <packages_dir> <policy_file>
@@ -228,6 +240,179 @@ License-File: LICENSE'
 printf 'MIT licence text\n' > "$pkgs/mystery-0.1.0.dist-info/LICENSE"
 expect_grep 1 "a package with no licence field names its bundled licence file's path" \
   "$pkgs" "$good_policy" "bundled licence file(s): LICENSE"
+
+# --- inside packages (#179): vendored packages and bundled assets ---
+
+pkgs="$work/vendored-bad/pkgs"
+mkpkg "$pkgs" carrier-1.0.0 'Name: carrier
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs/carrier/_vendor" inner-2.0.0 'Name: inner
+Version: 2.0.0
+License-Expression: LGPL-3.0-only'
+expect_grep 1 "a vendored package with a disallowed licence is caught, named with its carrier" \
+  "$pkgs" "$good_policy" "inner@2.0.0 (vendored in carrier)"
+
+pkgs="$work/vendored-good/pkgs"
+mkpkg "$pkgs" carrier-1.0.0 'Name: carrier
+Version: 1.0.0
+License-Expression: MIT'
+mkpkg "$pkgs/carrier/_vendor" inner-2.0.0 'Name: inner
+Version: 2.0.0
+License-Expression: BSD-3-Clause'
+expect 0 "a vendored package with an allowed licence passes" "$pkgs" "$good_policy"
+
+vendored_exception_policy="$work/vendored-exception-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+allow-python-package-licenses:
+  - inner@2.0.0 LGPL-3.0-only' > "$vendored_exception_policy"
+expect 0 "a named exception covers a vendored package by its own name@version" \
+  "$work/vendored-bad/pkgs" "$vendored_exception_policy"
+
+pkgs="$work/asset-unreviewed/pkgs"
+mkpkg "$pkgs" skinny-1.0.0 'Name: skinny
+Version: 1.0.0
+License-Expression: MIT'
+mkasset "$pkgs" skinny-1.0.0 skinny/skin/vendor-logo.png
+mkasset "$pkgs" skinny-1.0.0 skinny/skin/theme.css
+mkasset "$pkgs" skinny-1.0.0 skinny/own_module.py
+expect_grep 1 "an image or stylesheet with no review is caught, whatever the package declares" \
+  "$pkgs" "$good_policy" "skinny@1.0.0 skinny/skin/ (2 file(s))"
+
+asset_policy="$work/asset-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - skinny@1.0.0 skinny/skin/ Vendor-Logo-Reviewed' > "$asset_policy"
+expect_grep 0 "a reviewed asset directory passes, and is named in the summary" \
+  "$pkgs" "$asset_policy" "skinny/skin/ (2) — Vendor-Logo-Reviewed"
+
+pkgs="$work/asset-bumped/pkgs"
+mkpkg "$pkgs" skinny-1.1.0 'Name: skinny
+Version: 1.1.0
+License-Expression: MIT'
+mkasset "$pkgs" skinny-1.1.0 skinny/skin/vendor-logo.png
+expect 1 "a review recorded for a different version does not match; the assets are read again" \
+  "$pkgs" "$asset_policy"
+
+pkgs="$work/asset-stale/pkgs"
+mkpkg "$pkgs" skinny-1.0.0 'Name: skinny
+Version: 1.0.0
+License-Expression: MIT'
+expect_grep 1 "a review matching no installed file fails as stale, distinctly" \
+  "$pkgs" "$asset_policy" "stale python-bundled-assets"
+
+pkgs="$work/no-record/pkgs"
+mkpkg "$pkgs" norec-1.0.0 'Name: norec
+Version: 1.0.0
+License-Expression: MIT'
+rm "$pkgs/norec-1.0.0.dist-info/RECORD"
+expect_grep 1 "a package with no RECORD is caught, not treated as having no assets" \
+  "$pkgs" "$good_policy" "(no RECORD file)"
+
+# --- package names match after PEP 503 normalisation (#179) ---
+# A policy entry's package name matches the installed METADATA Name: once
+# both are normalised (lowercase; any run of "-", "_" or "." is one
+# separator). The version must still match exactly.
+
+# Twisted-shaped: METADATA says "Name: Twisted", the policy records it in
+# lowercase, as pip's own normalised name for it.
+pkgs="$work/norm-asset-case/pkgs"
+mkpkg "$pkgs" twisted-26.4.0 'Name: Twisted
+Version: 26.4.0
+License-Expression: MIT'
+mkasset "$pkgs" twisted-26.4.0 twisted/python/_pydoctortemplates/pydoctor.css
+mkasset "$pkgs" twisted-26.4.0 twisted/python/_pydoctortemplates/index.css
+
+# Pair (not vacuous): the same install with no review recorded is refused,
+# so the asset is really found and really needs an entry.
+expect_grep 1 "a mixed-case Name with bundled assets and no review entry is refused" \
+  "$pkgs" "$good_policy" "bundled asset file(s) with no python-bundled-assets review"
+
+norm_case_asset_policy="$work/norm-asset-case-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - twisted@26.4.0 twisted/python/_pydoctortemplates/ MIT' > "$norm_case_asset_policy"
+expect 0 "a lowercase python-bundled-assets entry matches a mixed-case Name" \
+  "$pkgs" "$norm_case_asset_policy"
+
+# Guard: a normalised-name match with a different version must still fail.
+norm_case_asset_bumped_policy="$work/norm-asset-case-bumped-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - twisted@26.4.1 twisted/python/_pydoctortemplates/ MIT' > "$norm_case_asset_bumped_policy"
+expect 1 "a normalised-name bundled-assets entry for a different version still does not match" \
+  "$pkgs" "$norm_case_asset_bumped_policy"
+
+# zope.interface-shaped: "." in the installed Name, "-" in the policy.
+pkgs="$work/norm-asset-punct/pkgs"
+mkpkg "$pkgs" zope.interface-7.2 'Name: zope.interface
+Version: 7.2
+License-Expression: MIT'
+mkasset "$pkgs" zope.interface-7.2 zope/interface/skin/logo.png
+expect_grep 1 "a dotted Name with bundled assets and no review entry is refused" \
+  "$pkgs" "$good_policy" "bundled asset file(s) with no python-bundled-assets review"
+
+norm_punct_asset_policy="$work/norm-asset-punct-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - zope-interface@7.2 zope/interface/skin/ MIT' > "$norm_punct_asset_policy"
+expect 0 "a hyphenated python-bundled-assets entry matches a dotted Name" \
+  "$pkgs" "$norm_punct_asset_policy"
+
+# Underscore against hyphen, and a mixed run of separators in the Name.
+pkgs="$work/norm-asset-underscore/pkgs"
+mkpkg "$pkgs" Foo_.-Bar-1.0.0 'Name: Foo_.-Bar
+Version: 1.0.0
+License-Expression: MIT'
+mkasset "$pkgs" Foo_.-Bar-1.0.0 foo_bar/skin/theme.css
+expect_grep 1 "a Name with a mixed run of separators and no review entry is refused" \
+  "$pkgs" "$good_policy" "bundled asset file(s) with no python-bundled-assets review"
+
+norm_run_asset_policy="$work/norm-asset-run-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+python-bundled-assets:
+  - foo-bar@1.0.0 foo_bar/skin/ MIT' > "$norm_run_asset_policy"
+expect 0 "a run of mixed separators in the Name is one separator when matching bundled-assets" \
+  "$pkgs" "$norm_run_asset_policy"
+
+# The same rule for allow-python-package-licenses:. The package is refused
+# on its licence without an exception (the pair), and passes with one whose
+# name differs only in case or punctuation.
+pkgs="$work/norm-exc-underscore/pkgs"
+mkpkg "$pkgs" Evil_Pkg-3.1.4 'Name: Evil_Pkg
+Version: 3.1.4
+License-Expression: GPL-3.0'
+expect 1 "a mixed-case, underscored Name with a disallowed licence and no exception is refused" \
+  "$pkgs" "$good_policy"
+
+norm_exc_policy="$work/norm-exc-policy.yml"
+printf '%s\n' 'allow-python-licenses:
+  - MIT
+allow-python-package-licenses:
+  - evil-pkg@3.1.4 GPL-3.0-only' > "$norm_exc_policy"
+expect 0 "a lowercase hyphenated licence exception matches an underscored mixed-case Name" \
+  "$pkgs" "$norm_exc_policy"
+
+pkgs="$work/norm-exc-dot/pkgs"
+mkpkg "$pkgs" evil.pkg-3.1.4 'Name: evil.pkg
+Version: 3.1.4
+License-Expression: GPL-3.0'
+expect 0 "a hyphenated licence exception matches a dotted Name" \
+  "$pkgs" "$norm_exc_policy"
+
+# Guard: a normalised-name match with a different version is still refused.
+pkgs="$work/norm-exc-wrong-version/pkgs"
+mkpkg "$pkgs" Evil_Pkg-3.1.5 'Name: Evil_Pkg
+Version: 3.1.5
+License-Expression: GPL-3.0'
+expect 1 "a normalised-name licence exception for a different version still does not match" \
+  "$pkgs" "$norm_exc_policy"
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

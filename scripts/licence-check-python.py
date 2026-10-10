@@ -62,17 +62,40 @@ again and the new version gets its own review. An exception that
 matches no installed package is itself a failure, so the list cannot
 accumulate stale, unneeded entries silently.
 
+A package's declared licence covers its own code, not everything it
+carries (#179). Two things inside a package are checked as well:
+
+  - Vendored packages: a *.dist-info directory found anywhere below the
+    top level (setuptools ships twelve under setuptools/_vendor/) is
+    checked by exactly the rules above, labelled with the package that
+    carries it. Its name@version is what an allow-python-package-licenses
+    exception must name.
+  - Bundled assets: every image, stylesheet, script, web page, feed or
+    font file a package installs (read from its RECORD, so only files
+    that package put there) must sit under a reviewed entry in the
+    policy's python-bundled-assets: list -- "<name>@<version>
+    <path-prefix> <licence>". These files carry no licence field at all,
+    which is how OpenCanary's nasLogin skin (Synology images, Sencha Ext
+    JS stylesheets) passed as "BSD" for a year. An unreviewed asset fails;
+    an entry matching no installed file is stale and fails too. A version
+    bump stops the entries matching, on purpose, the same as the
+    exceptions above.
+
 Usage: scripts/licence-check-python.py <packages_dir> <policy_file>
 Exit codes:
-  0 every installed package's licence is on the allow-list or matches a
-    named allow-python-package-licenses exception
+  0 every installed and vendored package's licence is on the allow-list
+    or matches a named allow-python-package-licenses exception, and every
+    bundled asset is under a reviewed python-bundled-assets entry
   1 a disallowed licence, a missing licence field, an unreadable
-    METADATA file, an empty/unparseable allow-list, or a named exception
-    that matched no installed package
+    METADATA or missing RECORD file, an empty/unparseable allow-list, an
+    unreviewed bundled asset, or a named exception or asset review that
+    matched nothing installed
   2 packages_dir does not exist (fail red, never quietly green, if the
     install step never ran)
 """
+import csv
 import os
+import re
 import sys
 
 
@@ -125,11 +148,11 @@ def read_package_allow_list(policy_file):
       - licence-check.sh's awk, anchored `/^allow-licenses:/`: does not
         match -- this key does not start with "allow-licenses:" at all.
 
-    Each entry is "<name>@<version> <SPDX-id>" -- name@version is
-    exactly the label name_and_version() below builds for an installed
-    package, so an entry matches only on an exact, full-string name and
-    version; bumping the package's version is enough to stop it
-    matching, which is intended (see the module docstring). Returns a
+    Each entry is "<name>@<version> <SPDX-id>" -- name@version is the
+    label name_and_version() below builds for an installed package. The
+    name matches after PEP 503 normalisation (match_key() below), the
+    version only exactly; bumping the package's version is enough to
+    stop it matching, which is intended (see the module docstring). Returns a
     dict of name@version -> SPDX id, or None if the policy file itself
     is unreadable.
     """
@@ -180,6 +203,99 @@ def find_dist_info_dirs(packages_dir):
         if os.path.isdir(path):
             dirs.append(path)
     return dirs
+
+
+# File types a package can carry that have no licence field of their own
+# and are the usual vehicle for someone else's work: images, web pages,
+# stylesheets, scripts, feeds and fonts. Python source, data and config
+# files are deliberately not on this list -- they are the package's own
+# code far more often than not, and listing them would drown the few
+# real findings in reviews of every package's own .txt and .json.
+ASSET_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".bmp", ".webp",
+    ".css", ".js", ".html", ".htm", ".rss",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".swf", ".mp3", ".wav", ".mp4",
+}
+
+
+def read_asset_reviews(policy_file):
+    """Pull the `python-bundled-assets:` list out of the policy YAML.
+
+    Each entry is "<name>@<version> <path-prefix> <licence>": a reviewed
+    directory (or file) of bundled assets inside one exact package
+    version, with the licence or finding recorded for it. Returns a list
+    of (name@version, prefix, licence) tuples, or None if the policy file
+    is unreadable. Same hand-rolled parsing as the readers above; the key
+    starts with "python-", so none of the three gates' allow-* prefix
+    matches can mistake it for their own.
+    """
+    if not os.path.isfile(policy_file):
+        return None
+    reviews = []
+    in_list = False
+    with open(policy_file) as f:
+        for line in f:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("python-bundled-assets:"):
+                in_list = True
+                continue
+            if in_list and stripped and not stripped[0].isspace():
+                break
+            if in_list:
+                text = stripped.strip()
+                if text.startswith("- "):
+                    entry = text[2:].split(" #", 1)[0].strip()
+                    parts = entry.split(None, 2)
+                    if len(parts) == 3:
+                        reviews.append((parts[0], parts[1], parts[2]))
+    return reviews
+
+
+def find_vendored_dist_info_dirs(packages_dir):
+    """Find dist-info directories nested inside installed packages.
+
+    Returns (path, carrier) pairs, carrier being the top-level directory
+    the vendored package sits in (e.g. "setuptools"). Top-level
+    dist-info directories are find_dist_info_dirs' job, not this one's.
+    """
+    found = []
+    if not os.path.isdir(packages_dir):
+        return found
+    for top in sorted(os.listdir(packages_dir)):
+        top_path = os.path.join(packages_dir, top)
+        if top.endswith(".dist-info") or not os.path.isdir(top_path):
+            continue
+        for root, dirs, _files in os.walk(top_path):
+            dirs.sort()
+            for d in list(dirs):
+                if d.endswith(".dist-info"):
+                    found.append((os.path.join(root, d), top))
+                    dirs.remove(d)
+    return found
+
+
+def installed_asset_paths(dist_info):
+    """Return the asset files a package installed, from its RECORD.
+
+    None if the package has no RECORD -- pip always writes one, so its
+    absence means the tree was not installed the way this gate assumes,
+    and the caller fails rather than treating it as "no assets".
+    """
+    record = os.path.join(dist_info, "RECORD")
+    if not os.path.isfile(record):
+        return None
+    paths = []
+    with open(record, encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            path = row[0]
+            if ".dist-info/" in path or "__pycache__" in path:
+                continue
+            if os.path.splitext(path)[1].lower() in ASSET_EXTENSIONS:
+                paths.append(path)
+    return paths
 
 
 def parse_metadata(path):
@@ -292,6 +408,19 @@ def find_bundled_licence_files(dist_info, header_lines):
     return found
 
 
+def match_key(label):
+    """The form a "<name>@<version>" label is compared in.
+
+    The name is normalised the way PEP 503 (packaging's
+    canonicalize_name) does -- lowercased, any run of "-", "_" or "."
+    made one "-" -- since METADATA keeps the project's own spelling
+    ("Twisted", "zope.interface") while the policy is written in
+    lowercase. The version is left exactly as written.
+    """
+    name, _, version = label.rpartition("@")
+    return f"{re.sub(r'[-_.]+', '-', name).lower()}@{version}"
+
+
 def name_and_version(header_lines, fallback):
     name = None
     version = None
@@ -340,33 +469,66 @@ def main(argv):
     counts = {}
     exceptions = []  # (label, spdx_id) pairs that passed by named exception
     used_exceptions = set()
+    exception_by_key = {match_key(entry): entry for entry in package_allowed}
 
-    for dist_info in find_dist_info_dirs(packages_dir):
+    asset_reviews = read_asset_reviews(policy_file) or []
+    used_reviews = set()
+    unreviewed_assets = {}  # (label, directory) -> file count
+    reviewed_assets = {}  # (label, prefix, licence) -> file count
+
+    to_check = [(d, None) for d in find_dist_info_dirs(packages_dir)]
+    to_check += find_vendored_dist_info_dirs(packages_dir)
+
+    for dist_info, carrier in to_check:
         metadata_path = os.path.join(dist_info, "METADATA")
         label_fallback = os.path.basename(dist_info)[: -len(".dist-info")]
+        shown = (lambda l: f"{l} (vendored in {carrier})") if carrier else (lambda l: l)
 
         if not os.path.isfile(metadata_path):
-            offenders.append((label_fallback, "(no METADATA file)", None))
+            offenders.append((shown(label_fallback), "(no METADATA file)", None))
             continue
 
         try:
             header_lines = parse_metadata(metadata_path)
         except (OSError, UnicodeDecodeError) as e:
-            offenders.append((label_fallback, "(unreadable METADATA)", str(e)))
+            offenders.append((shown(label_fallback), "(unreadable METADATA)", str(e)))
             continue
 
         label = name_and_version(header_lines, label_fallback)
+        key = match_key(label)
+
+        # Bundled assets: only a top-level package's RECORD is read, since
+        # it lists every file that package installed, vendored ones
+        # included. Checked before the licence verdict below so a package
+        # passing by named exception is still held to it.
+        if carrier is None:
+            assets = installed_asset_paths(dist_info)
+            if assets is None:
+                offenders.append((label, "(no RECORD file)", None))
+            else:
+                for path in assets:
+                    review = next(
+                        (r for r in asset_reviews if match_key(r[0]) == key and path.startswith(r[1])),
+                        None,
+                    )
+                    if review is None:
+                        where = (label, os.path.dirname(path))
+                        unreviewed_assets[where] = unreviewed_assets.get(where, 0) + 1
+                    else:
+                        used_reviews.add(review)
+                        reviewed_assets[review] = reviewed_assets.get(review, 0) + 1
 
         # A named, version-pinned exception passes as its recorded SPDX
         # id whatever the package's own metadata says or fails to say --
         # checked before candidates_of() below, so it also overrides a
         # GPL licence or a missing licence field, not just a borderline
-        # one. See read_package_allow_list's docstring for why an exact
-        # name@version match is the only kind this makes.
-        exception_licence = package_allowed.get(label)
-        if exception_licence is not None:
-            used_exceptions.add(label)
-            exceptions.append((label, exception_licence))
+        # one. See read_package_allow_list's docstring for why the version
+        # must match exactly.
+        entry = exception_by_key.get(key)
+        if entry is not None:
+            exception_licence = package_allowed[entry]
+            used_exceptions.add(entry)
+            exceptions.append((shown(label), exception_licence))
             continue
 
         candidates = candidates_of(header_lines)
@@ -378,12 +540,12 @@ def main(argv):
                 if licence_files
                 else None
             )
-            offenders.append((label, "(no licence field)", detail))
+            offenders.append((shown(label), "(no licence field)", detail))
             continue
 
         allowed_here = [c for c in candidates if c in allowed_set]
         if not allowed_here:
-            offenders.append((label, " OR ".join(candidates), None))
+            offenders.append((shown(label), " OR ".join(candidates), None))
             continue
 
         matched = allowed_here[0]
@@ -400,6 +562,30 @@ def main(argv):
             if detail:
                 line += f" ({detail})"
             print(line, file=sys.stderr)
+        return 1
+
+    if unreviewed_assets:
+        print(
+            f"licence-check-python: {sum(unreviewed_assets.values())} bundled "
+            "asset file(s) with no python-bundled-assets review -- images, "
+            "pages, stylesheets, scripts or fonts carry no licence field, so "
+            "each directory needs reading and recording:",
+            file=sys.stderr,
+        )
+        for (label, directory), count in sorted(unreviewed_assets.items()):
+            print(f"  {label} {directory}/ ({count} file(s))", file=sys.stderr)
+        return 1
+
+    stale_reviews = [r for r in asset_reviews if r not in used_reviews]
+    if stale_reviews:
+        print(
+            f"licence-check-python: {len(stale_reviews)} stale python-bundled-"
+            f"assets review(s) in {policy_file} matched no installed file -- "
+            "delete them:",
+            file=sys.stderr,
+        )
+        for name_version, prefix, licence in stale_reviews:
+            print(f"  {name_version} {prefix} {licence}", file=sys.stderr)
         return 1
 
     # An exception matching no installed package is stale: the package
@@ -436,6 +622,16 @@ def main(argv):
         )
         for label, licence in sorted(exceptions):
             print(f"  {label} — {licence}")
+
+    # Same reason as the exceptions above: say which bundled assets passed
+    # only because someone reviewed them.
+    if reviewed_assets:
+        print(
+            f"licence-check-python: {sum(reviewed_assets.values())} bundled "
+            "asset file(s) passed by recorded review (python-bundled-assets):"
+        )
+        for (name_version, prefix, licence), count in sorted(reviewed_assets.items()):
+            print(f"  {name_version} {prefix} ({count}) — {licence}")
 
     return 0
 

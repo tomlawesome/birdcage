@@ -192,7 +192,8 @@ server that issued it, so it names a version rather than a moving tag.
 5. **Countersign, on GitHub.** Run the "Countersign a released digest"
    workflow once, giving all six digests and the commit. It verifies the
    key-based evidence for each image against the GHCR mirror and signs
-   keyless only if that passes.
+   keyless only if that passes. Only the owner can start it: no GitHub
+   credential on the shared runner host has Actions write (#169).
 
 Two buttons for a complete release: one on GitLab, one on GitHub. The
 second cannot be folded into the first without giving away what it is
@@ -278,6 +279,14 @@ protected branches and tags — `preview`, `main`, `v*`):
 The countersigning workflow, on GitHub, needs nothing new: it reads and
 signs the GHCR mirror with the built-in `GITHUB_TOKEN`, the same as before
 GHCR was briefly dropped (note 22222) and restored (note 22233).
+
+Never give a GitHub credential stored on the runner host -- the agents'
+`gh` token, `GHCR_TOKEN`, the mirror-push token -- **Actions** write. The
+countersignature is worth something only because forging a release needs
+both that host and the owner's GitHub account; a host credential that can
+start the workflow makes it one compromise (#169). Check without running
+anything: dispatching `countersign.yml` against a ref that does not exist
+must answer 403, not 422.
 
 ### 2. The cosign key, on the runner host and never in GitLab
 

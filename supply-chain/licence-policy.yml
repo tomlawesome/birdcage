@@ -128,6 +128,10 @@ allow-npm-licenses:
 # carries "License-Expression: MIT" in its own METADATA -- unlike
 # 78.1.1, it matches the allow-python-licenses MIT entry above directly,
 # so its individual exception below was deleted rather than re-pinned.
+# #179 then dropped setuptools from the lock altogether: it vendors
+# autocommand (LGPLv3), and nothing the image runs imports it --
+# opencanary declares it but never imports it, and 83.0.0 no longer
+# ships pkg_resources. Owner, 2026-10-10: remove rather than except.
 #
 # ordereddict==1.1's individual exception below was deleted for a
 # different reason: the package itself is gone. It was a transitive pin
@@ -205,3 +209,43 @@ allow-python-package-licenses:
   # PUBLIC LICENSE / Version 3, 29 June 2007" -- GPL-3.0-only. Shipping a
   # GPLv3 dependency in the image is the owner's call, not this policy
   # file's; the owner has accepted it (#95).
+
+# Reviewed bundled assets inside pip packages (#179), read by
+# read_asset_reviews() in scripts/licence-check-python.py. A package's
+# declared licence covers its own code; images, web pages, stylesheets,
+# scripts, feeds and fonts it carries have no licence field of their own
+# and are the usual vehicle for someone else's work -- OpenCanary's
+# nasLogin skin passed as "BSD" while carrying Synology's images and
+# Sencha's GPLv3 Ext JS stylesheets. Every such file a package installs
+# must sit under one of these entries.
+#
+# Format: "<name>@<version> <path-prefix> <licence or finding>". Exact
+# name@version, like the exceptions above: a version bump stops the entry
+# matching and the files get read again. An entry matching no installed
+# file is a failure ("stale -- delete it").
+python-bundled-assets:
+  - opencanary@0.9.10 opencanary/modules/data/http/skin/nasLogin/ Synology-DSM-images+Ext-JS-3.4-GPL-3.0
+  # Synology's DiskStation/RackStation login page: Synology logos and DSM
+  # image pack, plus Sencha Ext JS 3.4 stylesheets (GPLv3, confirmed from
+  # Sencha's own 3.4 release). Synology's branding policy needs written
+  # permission for this use, which we do not have. Owner, 2026-10-04: it
+  # stays in place until Shrike's own pages replace it (#178).
+  - opencanary@0.9.10 opencanary/modules/data/http/skin/basicLogin/ BSD-3-Clause
+  # Thinkst's own plain login page (three HTML files); no third-party
+  # notice or branding in them.
+  - opencanary@0.9.10 opencanary/modules/data/httpproxy/skin/squid/ Squid-error-template+CC-BY-2.5-stylesheet
+  # Squid 3.3.8's proxy-auth error page (auth.html): Squid's template with
+  # its stylesheet inline, marked "Creative Commons Attribution 2.5", and a
+  # background image hotlinked from squid-cache.org. The httpproxy lure is
+  # off, but the file ships. Owner, 2026-10-04: a known finding for Shrike
+  # to handle (#178), not investigated further here.
+  - opencanary@0.9.10 opencanary/modules/data/rdp/ unidentified-RDP-recordings
+  # Four .rss session recordings (default, login, login-failed,
+  # login-passreset) the enabled RDP lure plays back; binary, with no
+  # notice in them, and their origin and content are unidentified. Owner,
+  # 2026-10-04: a known finding for Shrike to handle (#178).
+  - twisted@26.4.0 twisted/python/_pydoctortemplates/ MIT
+  # Twisted's own API-docs templates; no third-party notice.
+  - urllib3@2.7.0 urllib3/contrib/emscripten/ MIT
+  # urllib3's own browser fetch worker; no third-party notice.
+

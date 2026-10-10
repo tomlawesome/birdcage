@@ -129,7 +129,7 @@ The test now cancels once the server has answered a second poll, which the
 loop only starts after the first cycle's drop is logged. No sleep left.
 
 
-## TestSourceLimitersAllowBoundary (internal/enrol)
+## TestSourceLimitersAllowBoundary (internal/enrol) -- #170
 
 - 2026-09-23 · ed9668f · local `go test ./... -race` in a `golang:1.27`
   container reproducing the `test:go` conditions (real Postgres, non-root
@@ -145,6 +145,11 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   sharing the host) · same symptom, "allow() call 3001 = true, want false
   (burst exhausted)". Second sighting; still not diagnosed, still not
   touched.
+- 2026-10-03 · 4e0c378 · `test:go` on `main` pipeline 2006 (job 30280),
+  just after the v0.1.0 promotion; the same code passed `test:go` in
+  pipelines 1994 and 1995 · same symptom. Third sighting: #170 filed. Likely
+  cause there: the limiter refills 50 tokens a second from the real clock,
+  so a loop slower than about 20 ms gets one token back.
 
 ## e2e:agent-credentials:postgres -- step 3 (certificate_expired)
 
