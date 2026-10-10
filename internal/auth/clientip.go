@@ -28,13 +28,32 @@ const defaultClientIPHeader = "X-Forwarded-For"
 // address, or no header at all, falls back to the peer, never to something
 // the client chose.
 func ClientIP(r *http.Request, trusted []netip.Prefix, header string) string {
+	return ClientIPWith(r, trusted, false, header)
+}
+
+// unixPeer is the RemoteAddr net/http gives a request that arrived on a
+// unix-domain socket: it has no IP address to match against a prefix.
+const unixPeer = "@"
+
+// ClientIPWith is ClientIP with one more way for a peer to be trusted: when
+// trustUnix is true a unix-socket peer counts as a trusted proxy, even with
+// no address prefixes listed (BIRDCAGE_TRUSTED_PROXIES entry "unix"; only
+// processes allowed to open the socket file can connect). trustUnix never
+// makes a TCP peer trusted. Otherwise the walk is that of ClientIP.
+func ClientIPWith(r *http.Request, trusted []netip.Prefix, trustUnix bool, header string) string {
 	peer := peerHost(r)
-	if len(trusted) == 0 {
-		return peer
-	}
-	peerAddr, err := netip.ParseAddr(peer)
-	if err != nil || !isTrusted(trusted, peerAddr) {
-		return peer
+	if r.RemoteAddr == unixPeer {
+		if !trustUnix {
+			return peer
+		}
+	} else {
+		if len(trusted) == 0 {
+			return peer
+		}
+		peerAddr, err := netip.ParseAddr(peer)
+		if err != nil || !isTrusted(trusted, peerAddr) {
+			return peer
+		}
 	}
 	if header == "" {
 		header = defaultClientIPHeader

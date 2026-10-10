@@ -101,11 +101,12 @@ func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, 
 	// which header. A bad entry is refused, never skipped, so the operator
 	// is not left believing forwarded addresses are honoured.
 	if raw := getenv(envTrustedProxies); raw != "" {
-		proxies, err := parseTrustedProxies(raw)
+		proxies, trustUnix, err := parseTrustedProxies(raw)
 		if err != nil {
 			return refuse("%s=%q: %v", envTrustedProxies, raw, err)
 		}
 		cfg.TrustedProxies = proxies
+		cfg.TrustUnixSocket = trustUnix
 		configLog.Info(fmt.Sprintf("%s=%s", envTrustedProxies, raw))
 	}
 	cfg.ClientIPHeader = defaultClientIPHeader

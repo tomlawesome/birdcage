@@ -82,6 +82,10 @@ type Config struct {
 	// (BIRDCAGE_TRUSTED_PROXIES). Empty, the default, means headers are
 	// ignored and the client is the connecting peer.
 	TrustedProxies []netip.Prefix
+	// TrustUnixSocket trusts a proxy connected over the dashboard's unix
+	// socket (the entry "unix" in BIRDCAGE_TRUSTED_PROXIES). A unix peer has
+	// no IP address, so no prefix can match it. See ClientIPWith.
+	TrustUnixSocket bool
 	// ClientIPHeader is the forwarding header read for a trusted peer;
 	// empty means X-Forwarded-For. See ClientIP.
 	ClientIPHeader string
@@ -277,7 +281,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 		LoginPath:       "/",
 		Log:             log,
 		ClientIP: func(r *http.Request) string {
-			return ClientIP(r, cfg.TrustedProxies, cfg.ClientIPHeader)
+			return ClientIPWith(r, cfg.TrustedProxies, cfg.TrustUnixSocket, cfg.ClientIPHeader)
 		},
 		AdminPasskey: rule,
 		// PasskeySignIn stays off, and UnusualSignIns at gauntlet's default

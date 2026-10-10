@@ -291,6 +291,15 @@ BIRDCAGE_CLIENT_IP_HEADER=X-Forwarded-For # the default
   is only text the client sent, so believing one unconditionally would let
   anyone get a fresh, empty limit for every request by varying it, which
   deletes the limiter. List only proxies you actually operate.
+- **`unix`**: an entry for when birdcage listens on a unix socket
+  (`BIRDCAGE_HTTP_ADDR=unix://...`) and the proxy connects through that
+  socket. A unix-socket connection has no IP address, so no IP or CIDR entry
+  can match it; without `unix` every visitor behind such a proxy still shares
+  one limit. List it alongside any addresses (`unix,10.0.0.0/8`). It trusts
+  only connections over the socket, never a TCP peer. Birdcage creates the
+  socket file mode 0660, so only processes allowed to open that file (its
+  owner and group) can connect; keep the socket's group to the proxy and
+  birdcage.
 - **`BIRDCAGE_CLIENT_IP_HEADER`**: the header to read, only for a peer in
   the list. Defaults to `X-Forwarded-For`, which nginx, Caddy, Traefik,
   HAProxy, Cloudflare and the cloud load balancers all set. Use

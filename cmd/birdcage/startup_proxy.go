@@ -9,7 +9,7 @@ import (
 // Reverse-proxy settings (issue #8 items 13-14, ADR-0016 decision 4).
 const (
 	// envTrustedProxies lists the peers a forwarding header is believed
-	// from: comma-separated bare IPs, CIDRs, or private. Empty by default,
+	// from: comma-separated bare IPs, CIDRs, private, or unix. Empty by default,
 	// and empty means forwarding headers are ignored. Optional.
 	envTrustedProxies = "BIRDCAGE_TRUSTED_PROXIES"
 	// envClientIPHeader names the header read for a trusted peer. Defaults
@@ -29,13 +29,19 @@ var privateProxyRanges = []string{
 }
 
 // parseTrustedProxies turns the comma-separated setting into prefixes. A
-// bare address is a single-host prefix; blank entries are skipped; any entry
-// that is not an address, a CIDR or private is an error, never skipped.
-func parseTrustedProxies(value string) ([]netip.Prefix, error) {
+// bare address is a single-host prefix; blank entries are skipped; the entry
+// unix (item 15) trusts a proxy on the unix socket and adds no prefix; any
+// other entry that is not an address, a CIDR or private is an error, never
+// skipped.
+func parseTrustedProxies(value string) (prefixes []netip.Prefix, trustUnix bool, err error) {
 	var out []netip.Prefix
 	for _, raw := range strings.Split(value, ",") {
 		entry := strings.TrimSpace(raw)
 		if entry == "" {
+			continue
+		}
+		if strings.EqualFold(entry, "unix") {
+			trustUnix = true
 			continue
 		}
 		if strings.EqualFold(entry, "private") {
@@ -50,10 +56,10 @@ func parseTrustedProxies(value string) ([]netip.Prefix, error) {
 		}
 		addr, err := netip.ParseAddr(entry)
 		if err != nil {
-			return nil, fmt.Errorf("%q is neither an IP address, a CIDR nor private", entry)
+			return nil, false, fmt.Errorf("%q is neither an IP address, a CIDR, private nor unix", entry)
 		}
 		addr = addr.Unmap()
 		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
 	}
-	return out, nil
+	return out, trustUnix, nil
 }
