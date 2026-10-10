@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
@@ -68,6 +70,10 @@ func loadAuthConfig(getenv func(string) string, dataDir string, secureCookie boo
 	}
 	key, err := readSecretFile(envAuthKeyFile, keyFile, false)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return refuse("%v. Make one with `head -c 32 /dev/urandom > key`, mount it read-only, and set %s to its path. "+
+				"Back it up apart from the database: losing it loses every account", err, envAuthKeyFile)
+		}
 		return refuse("%v", err)
 	}
 	if len(key) < persist.MinKeyBytes {
