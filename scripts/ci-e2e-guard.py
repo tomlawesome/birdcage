@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Refuse a .gitlab-ci.yml that lets the live checks be skipped.
 
-AGENTS.md says every piece of the security infrastructure is live
-tested on every change that affects it. A rule in a document is a note
+docs/testing.md ("Live testing is not optional") says every piece of the
+security infrastructure is live tested on every change that affects it. A rule in a document is a note
 to whoever reads it; this is the same rule as a red job.
 
 What it refuses, and why each one matters:
@@ -179,7 +179,7 @@ def check(path):
     if not isinstance(stages, list) or STAGE not in stages:
         problems.append(
             f"`{STAGE}` is missing from `stages:`. The live checks in "
-            f"AGENTS.md ('Live testing is not optional') have nowhere "
+            f"docs/testing.md ('Live testing is not optional') have nowhere "
             f"to run, and every pipeline would still pass.")
         jobs = {}
     else:
@@ -252,7 +252,7 @@ def check(path):
               file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
-        print("\nSee AGENTS.md, 'Live testing is not optional', and "
+        print("\nSee docs/testing.md, 'Live testing is not optional', and "
               "issue #78. If a check genuinely has to change, change "
               "this guard deliberately and say why.", file=sys.stderr)
         return 1

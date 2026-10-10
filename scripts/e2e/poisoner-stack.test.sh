@@ -16,7 +16,7 @@ STACK="$HERE/stack.sh"
 POISONER_STACK="$HERE/poisoner-stack.sh"
 export E2E_PREFIX="birdcage-e2e-poisonerselftest"
 # The fixture image comes from the private fixtures project, pulled by
-# digest (AGENTS.md, "Attack-tool fixtures"); the harness never builds it.
+# digest (docs/testing.md, "Attack-tool fixtures"); the harness never builds it.
 : "${E2E_POISONER_FIXTURE_IMAGE:?set E2E_POISONER_FIXTURE_IMAGE to the poisoner-fixture image from the fixtures project}"
 
 fail=0
@@ -72,7 +72,7 @@ check "$?" "1" "up exits 1 without E2E_STACK/E2E_NET/E2E_BIRDCAGE/E2E_CANARY set
 echo "== down cleans up after a run killed half way =="
 # Roughly what an interrupted `up` leaves: one volume created, the
 # containers never started. (The fixture image is pulled, never built,
-# so it is not a leftover -- AGENTS.md, "Attack-tool fixtures".)
+# so it is not a leftover -- docs/testing.md, "Attack-tool fixtures".)
 docker volume create "$E2E_PREFIX-poisoner-log" >/dev/null
 [ -n "$(leftovers)" ] && echo "ok - the partial run really did leave objects behind" \
   || { echo "FAIL - the partial-run fixture created nothing"; fail=1; }

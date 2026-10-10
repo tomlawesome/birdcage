@@ -65,7 +65,7 @@ Secret scanning is a local gitleaks pre-commit gate plus the
 patterns aren't available on this plan.
 
 A change to any of this lands with its live check in the same merge
-request, not a follow-up issue (AGENTS.md, "Live testing is not
+request, not a follow-up issue (docs/testing.md, "Live testing is not
 optional").
 
 ## Security by design

@@ -201,7 +201,7 @@ lint:licences-python:
 # expects to be attacked. No birdcage server package may reach it --
 # ADR-0008 decision 4.
 # ---------------------------------------------------------------------------
-# The live checks in AGENTS.md ("Live testing is not optional") are only
+# The live checks in docs/testing.md ("Live testing is not optional") are only
 # worth having if they cannot be quietly switched off. This job is that
 # rule as a red pipeline: it refuses an e2e stage that is missing, empty,
 # allowed to fail, manual, or ruled out of merge requests. Its own tests
@@ -330,8 +330,8 @@ lint:agent-deps:
     - scripts/agent-deps-check.sh ./cmd/nightjar
 
 # govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
-# CI-only tool, never linked into birdcage (AGENTS.md, "Approved third-
-# party modules"). Installed from source and run against this project's
+# CI-only tool, never linked into birdcage (supply-chain/dependency-inventory.md,
+# "Approved third-party modules"). Installed from source and run against this project's
 # own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
 # module download the same way it does for golangci-lint above.
 #
@@ -584,8 +584,8 @@ test:go:
     # the mode bits they set, so the refusal would "pass" without ever
     # being exercised. This image runs as root, so until now those two
     # tests ran only on whoever happened to run the suite locally. A
-    # check that looks enforced and is not is the thing AGENTS.md's live
-    # testing rule exists to prevent.
+    # check that looks enforced and is not is the thing the live testing
+    # rule (docs/testing.md) exists to prevent.
     #
     # Root is still needed for the setup above -- apt-get, and capturing
     # the server certificate -- so only the test run drops privileges.
@@ -621,7 +621,7 @@ test:go:
 # image plus the Go tarball pinned to go.mod's version, since both are
 # needed in one job. SQLite only -- Postgres at the preview bar is #7's.
 #
-# Firefox (#83, AGENTS.md "Browser journeys run in Firefox"): the owner
+# Firefox (#83, docs/ci-hops.md, `test:smoke`): the owner
 # browses on Firefox, so that is the bar every change has to clear. The
 # engine is resolved once, by frontend/e2e/browser.mjs -- BIRDCAGE_BROWSER
 # below is set explicitly rather than relying on that module's default, so
@@ -1348,7 +1348,7 @@ test:image:nightjar:
 # on its own, this stage puts them together: birdcage serving real TLS,
 # a canary enrolled by the very `docker run` command the product printed,
 # and a real hit travelling from OpenCanary to the dashboard's API.
-# AGENTS.md's "Live testing is not optional" is what this stage is for.
+# docs/testing.md's "Live testing is not optional" is what this stage is for.
 #
 # Everything lives in scripts/e2e/ rather than here, so the same run
 # happens on a workstation -- which is how anyone debugs a red job:
@@ -2083,7 +2083,7 @@ e2e:poisoner:
     # The poisoner fixture. Attack tooling is never built in this
     # repository (its mirror is public): the private fixtures project
     # builds, scans and publishes it, and this pin is the whole of what
-    # lives here (AGENTS.md, "Attack-tool fixtures"). Moving the pin is
+    # lives here (docs/testing.md, "Attack-tool fixtures"). Moving the pin is
     # the version check -- a one-line change, not a rebuild per pipeline.
     # The pull uses this job's token, so the fixtures project must list
     # this project under its job-token permissions (#127).

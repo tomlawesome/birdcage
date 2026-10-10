@@ -275,7 +275,7 @@ at "the proof does not defend against a stolen credential".
 - **Bounded network scan of birdcage's own address** (the issue's
   candidate). Rejected: Nightjar has no network scanner and no capability
   to run one; adding one puts a probing tool in a privileged host-reading
-  image (AGENTS.md forbids building attack tooling here); and a service
+  image (docs/testing.md, "Attack-tool fixtures", forbids building attack tooling here); and a service
   that invites its own agents to scan it is a signal the honeypot side
   must then learn to ignore.
 - **Operator-chosen safe target.** Rejected: everything above, plus a
@@ -915,7 +915,7 @@ once per token the operator minted.
 
 ## Implementation outline
 
-Two MRs, each with its live journey (AGENTS.md: a change to enrolment
+Two MRs, each with its live journey (docs/testing.md, "Live testing is not optional": a change to enrolment
 lands with its journey). Commit messages `Refs #116`.
 
 **MR 1 -- proof, cap and stages** (no dependency on #8):

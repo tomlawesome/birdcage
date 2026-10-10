@@ -2,8 +2,8 @@
 // journey runs in. Issue #83: the owner browses on Firefox, so Firefox is
 // the bar every change has to clear; Safari (WebKit in Playwright) and
 // Edge (Chromium with the msedge channel) only widen it at the `preview`
-// -> `main` promotion (docs/ci-hops.md, "Hop 2"). AGENTS.md's "Browser
-// journeys run in Firefox" line is the standing rule this resolves.
+// -> `main` promotion (docs/ci-hops.md, "Hop 2"). The standing rule
+// (Firefox is the bar, see docs/testing.md) is what this resolves.
 //
 // This does not apply to frontend/scripts/band-compare.mjs and
 // below-band-compare.mjs: those pixel-compare the rendered page against

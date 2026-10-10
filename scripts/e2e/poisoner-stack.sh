@@ -27,9 +27,10 @@
 #
 # The fixture image is not built here or anywhere in this repository:
 # attack tooling is built, scanned and kept current in the private
-# fixtures project and pulled by digest (AGENTS.md, "Attack-tool
-# fixtures"). E2E_POISONER_FIXTURE_IMAGE names that image; the CI job sets it,
-# and a developer sets it after logging in to the fixtures registry.
+# fixtures project and pulled by digest (docs/testing.md,
+# "Attack-tool fixtures"). E2E_POISONER_FIXTURE_IMAGE names that image; the
+# CI job sets it, and a developer sets it after logging in to the fixtures
+# registry.
 #
 #   eval "$(scripts/e2e/stack.sh up)"
 #   eval "$(scripts/e2e/poisoner-stack.sh up)"
@@ -279,7 +280,7 @@ wait_for_line() { # wait_for_line <container> <substring>
 # and tagged it before this runs, so this is the developer's path.
 ensure_fixture() {
   [ -n "$FIXTURE_IMAGE" ] \
-    || die "set E2E_POISONER_FIXTURE_IMAGE to the fixtures project's poisoner-fixture image (AGENTS.md, Attack-tool fixtures)"
+    || die "set E2E_POISONER_FIXTURE_IMAGE to the fixtures project's poisoner-fixture image (docs/testing.md, Attack-tool fixtures)"
   if docker image inspect "$FIXTURE_IMAGE" >/dev/null 2>&1; then
     log "$FIXTURE_IMAGE already present"
     return 0
