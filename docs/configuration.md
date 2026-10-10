@@ -254,9 +254,9 @@ reach anything. A restart signs everyone out.
 | --- | --- | --- |
 | `BIRDCAGE_AUTH_KEY_FILE` | **yes** | Path to a file of at least 32 bytes that every sign-in store is sealed under. Birdcage will not start without it. |
 | `BIRDCAGE_PUBLIC_URL` | no | The address people type to reach the dashboard, such as `https://birdcage.example.net`. Passkeys and SSO are built from it; without it both stay off. |
-| `BIRDCAGE_AUTH_ADMIN_PASSKEY` | no | `required` or `optional`; overrides the admin-passkey rule below. Any other value is refused. |
-| `BIRDCAGE_GEOIP_IPINFO_TOKEN_FILE` | no | Path to a file holding your IPinfo access token. Turns on country lookup, using IPinfo's free Lite data. |
-| `BIRDCAGE_GEOIP_MAXMIND_ACCOUNT_ID` and `BIRDCAGE_GEOIP_MAXMIND_LICENCE_KEY_FILE` | no | Your MaxMind account ID, and the path to a file holding its licence key. Turns on country lookup, using MaxMind's free GeoLite2 data. Both or neither. |
+| `BIRDCAGE_AUTH_ADMIN_PASSKEY` | no | `required` or `optional`; overrides the admin-passkey rule below. Matched without regard to case and ignoring spaces around it. Any other value is refused, and so is `required` where browsers cannot make a passkey (see below). |
+| `BIRDCAGE_GEOIP_IPINFO_TOKEN_FILE` | no | Path to a file holding your IPinfo access token. Turns on country lookup, using IPinfo's free Lite data. Not together with MaxMind: setting both is refused with "choose one country provider". |
+| `BIRDCAGE_GEOIP_MAXMIND_ACCOUNT_ID` and `BIRDCAGE_GEOIP_MAXMIND_LICENCE_KEY_FILE` | no | Your MaxMind account ID, and the path to a file holding its licence key. Turns on country lookup, using MaxMind's free GeoLite2 data. Both or neither, and not together with IPinfo: setting both providers is refused with "choose one country provider". |
 | `BIRDCAGE_OIDC_ISSUER`, `BIRDCAGE_OIDC_CLIENT_ID`, `BIRDCAGE_OIDC_CLIENT_SECRET_FILE` | no | Single sign-on through an OpenID Connect provider you run. All three or none, and `BIRDCAGE_PUBLIC_URL` must be set, because the redirect address is built from it. The secret is a path to a file. |
 
 Secrets are only ever given as the path to a file, never as a value, so
@@ -295,9 +295,22 @@ a phone, laptop or security key) follows the address:
   (passkeys are then off), because browsers cannot make a passkey in those
   cases and the block could never lift.
 
-`BIRDCAGE_AUTH_ADMIN_PASSKEY` overrides this. `optional` waives the rule on
-an https domain. `required` is refused when passkeys are not wired, since
-no admin could meet it. Users and viewers are never affected.
+`BIRDCAGE_AUTH_ADMIN_PASSKEY` overrides this. The value is matched exactly
+as follows: surrounding spaces are ignored, and case does not matter
+(`Required` and ` REQUIRED ` both mean `required`). Empty, or only spaces,
+means the setting is not set and the default above applies. Anything other
+than `required` or `optional` (`true`, `yes`, `1`) is refused at start-up.
+
+- `optional` waives the rule on an https domain.
+- `required` makes every admin hold a passkey. It is refused at start-up,
+  with an error naming `BIRDCAGE_AUTH_ADMIN_PASSKEY` and
+  `BIRDCAGE_PUBLIC_URL`, unless browsers can make a passkey for the public
+  address: an `https://` address on a domain name, or `http://localhost`.
+  So it is refused when `BIRDCAGE_PUBLIC_URL` is not set, is an IP address
+  (`127.0.0.1` included), or is plain `http://` on any other name, because
+  no admin could meet it.
+
+Users and viewers are never affected.
 
 ### Country lookup
 
