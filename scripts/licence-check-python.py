@@ -95,6 +95,7 @@ Exit codes:
 """
 import csv
 import os
+import re
 import sys
 
 
@@ -147,11 +148,11 @@ def read_package_allow_list(policy_file):
       - licence-check.sh's awk, anchored `/^allow-licenses:/`: does not
         match -- this key does not start with "allow-licenses:" at all.
 
-    Each entry is "<name>@<version> <SPDX-id>" -- name@version is
-    exactly the label name_and_version() below builds for an installed
-    package, so an entry matches only on an exact, full-string name and
-    version; bumping the package's version is enough to stop it
-    matching, which is intended (see the module docstring). Returns a
+    Each entry is "<name>@<version> <SPDX-id>" -- name@version is the
+    label name_and_version() below builds for an installed package. The
+    name matches after PEP 503 normalisation (match_key() below), the
+    version only exactly; bumping the package's version is enough to
+    stop it matching, which is intended (see the module docstring). Returns a
     dict of name@version -> SPDX id, or None if the policy file itself
     is unreadable.
     """
@@ -407,6 +408,19 @@ def find_bundled_licence_files(dist_info, header_lines):
     return found
 
 
+def match_key(label):
+    """The form a "<name>@<version>" label is compared in.
+
+    The name is normalised the way PEP 503 (packaging's
+    canonicalize_name) does -- lowercased, any run of "-", "_" or "."
+    made one "-" -- since METADATA keeps the project's own spelling
+    ("Twisted", "zope.interface") while the policy is written in
+    lowercase. The version is left exactly as written.
+    """
+    name, _, version = label.rpartition("@")
+    return f"{re.sub(r'[-_.]+', '-', name).lower()}@{version}"
+
+
 def name_and_version(header_lines, fallback):
     name = None
     version = None
@@ -455,6 +469,7 @@ def main(argv):
     counts = {}
     exceptions = []  # (label, spdx_id) pairs that passed by named exception
     used_exceptions = set()
+    exception_by_key = {match_key(entry): entry for entry in package_allowed}
 
     asset_reviews = read_asset_reviews(policy_file) or []
     used_reviews = set()
@@ -480,6 +495,7 @@ def main(argv):
             continue
 
         label = name_and_version(header_lines, label_fallback)
+        key = match_key(label)
 
         # Bundled assets: only a top-level package's RECORD is read, since
         # it lists every file that package installed, vendored ones
@@ -492,12 +508,12 @@ def main(argv):
             else:
                 for path in assets:
                     review = next(
-                        (r for r in asset_reviews if r[0] == label and path.startswith(r[1])),
+                        (r for r in asset_reviews if match_key(r[0]) == key and path.startswith(r[1])),
                         None,
                     )
                     if review is None:
-                        key = (label, os.path.dirname(path))
-                        unreviewed_assets[key] = unreviewed_assets.get(key, 0) + 1
+                        where = (label, os.path.dirname(path))
+                        unreviewed_assets[where] = unreviewed_assets.get(where, 0) + 1
                     else:
                         used_reviews.add(review)
                         reviewed_assets[review] = reviewed_assets.get(review, 0) + 1
@@ -506,11 +522,12 @@ def main(argv):
         # id whatever the package's own metadata says or fails to say --
         # checked before candidates_of() below, so it also overrides a
         # GPL licence or a missing licence field, not just a borderline
-        # one. See read_package_allow_list's docstring for why an exact
-        # name@version match is the only kind this makes.
-        exception_licence = package_allowed.get(label)
-        if exception_licence is not None:
-            used_exceptions.add(label)
+        # one. See read_package_allow_list's docstring for why the version
+        # must match exactly.
+        entry = exception_by_key.get(key)
+        if entry is not None:
+            exception_licence = package_allowed[entry]
+            used_exceptions.add(entry)
             exceptions.append((shown(label), exception_licence))
             continue
 
