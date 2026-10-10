@@ -16,9 +16,10 @@ import (
 // per-canary settings (segment profile, bait names, pace floor/ceiling,
 // working hours) without a container restart. There is no dashboard
 // write path -- owner, 2026-09-26: the dashboard API stays read-only
-// until login exists (#8), so this CLI, run on the birdcage host, is the
-// only door onto store.SetCanarySettings today. The canary page (#134)
-// waits on that login before it can offer the same write.
+// (sign-in exists, #8, but a read API token is answered by the same
+// handler), so this CLI, run on the birdcage host, is the only door onto
+// store.SetCanarySettings. The canary page (#134) cannot offer the same
+// write until that ruling changes.
 func runAgentSettings(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: birdcage agent settings <show|set> <agent_id> [<key>=<value> ...]")

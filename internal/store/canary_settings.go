@@ -271,7 +271,7 @@ func upsertCanarySetting(ctx context.Context, conn db.Conn, canaryID string, key
 // birdcage's one write path onto canary_settings today: `birdcage agent
 // settings set` (cmd/birdcage/agentsettings.go) -- there is no dashboard
 // write path, deliberately (owner, 2026-09-26: the dashboard API stays
-// read-only until login exists, #8; dashboardRoutes' own doc comment is
+// read-only, #8; dashboardRouteSpecs' own doc comment is
 // the enforced half of that).
 //
 // kind is the canary's own agentkind.Kind, checked against

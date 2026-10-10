@@ -51,8 +51,7 @@ func loadCrowdsecConfig(log *slog.Logger) (crowdsec.Config, bool) {
 
 // runCrowdsec dispatches `birdcage crowdsec <add> ...` (ADR-0014,
 // decision 2): the one operator door onto a CrowdSec ban. There is no
-// dashboard write path (the API stays read-only until login exists,
-// #8), and there is deliberately no `remove`: add-only is a property of
+// dashboard write path (the API stays read-only, #8), and there is deliberately no `remove`: add-only is a property of
 // this binary, not a setting (ADR-0014, decision 3).
 func runCrowdsec(args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {

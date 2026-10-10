@@ -386,9 +386,9 @@ func (s *Service) CountryLookupEnabled() bool { return s.geo != nil }
 // account or token routes. Call Wrap once, before serving.
 //
 // Each request dashboard receives carries api.WithCredentialCheck: a
-// function that asks again whether the request's credential is still valid, so a
-// long-lived response (the event stream) can end after sign-out or a
-// token revoke. The answer comes from gauntlet itself: the check sends a
+// function that asks again whether the request's credential is still
+// valid, so a long-lived response (the event stream) can end after
+// sign-out or a token revoke. The answer comes from gauntlet itself: the check sends a
 // copy of the request through the same gate and reports whether it was
 // let through, so every rule gauntlet applies at the door (session
 // expiry, ended sessions, revoked or expired tokens, a forced password

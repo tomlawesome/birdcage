@@ -9,7 +9,8 @@
 // endpoint mux, never the canary_tokens model" -- so cmd/birdcage/main.go
 // serves it from its own *http.Server, never mounted alongside, or
 // reachable from, the ingest submux's bearer-token routes
-// (internal/ingest) or the dashboard's requireAuth seam (internal/api),
+// (internal/ingest) or the dashboard's sign-in gate (internal/api,
+// internal/auth),
 // the same structural isolation internal/ingest's own package doc claims
 // for itself.
 package enrol

@@ -13,7 +13,7 @@ import (
 // runFindings dispatches `birdcage findings <list|accept> ...` (issue
 // #109). Like `birdcage agent settings` (cmd/birdcage/agentsettings.go,
 // issue #124), this exists because the dashboard API stays read-only
-// until login exists (#134, owner 2026-09-26): store.AcceptFinding is
+// (#134, owner 2026-09-26): store.AcceptFinding is
 // otherwise unreachable from outside the store package. `list` is a
 // convenience for an operator to see what they are accepting, not a
 // requirement of the issue.
@@ -75,7 +75,8 @@ func runFindingsList(args []string) error {
 // -- there is no dashboard route, per dashboardRouteSpecs' own read-only
 // rule. accepted_by is the operator's own name/identifier, recorded
 // plainly (not derived from any credential -- this CLI runs on the
-// birdcage host with no login system to attribute to yet).
+// birdcage host, not through a sign-in, so no account is on hand to
+// attribute to).
 func runFindingsAccept(args []string) error {
 	if len(args) != 4 {
 		return errors.New("usage: birdcage findings accept <agent_id> <target> <vulnerability_id> <accepted_by>")

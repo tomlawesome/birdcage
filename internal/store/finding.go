@@ -236,8 +236,7 @@ func reopenFinding(ctx context.Context, conn findingConn, id int64, o ObservedFi
 // AcceptFinding is the operator's acceptance decision (ADR-0010 decision
 // 4: "acceptance carries who and when and survives rescans"). Store
 // method only -- no dashboard route: the dashboard API stays read-only
-// until login exists (#134, the same rule agentsettings.go's own
-// comment states), and no CLI pattern reaches a single finding the way
+// (#134, the same rule agentsettings.go's own comment states), and no CLI pattern reaches a single finding the way
 // `birdcage agent settings` reaches a named key, so cmd/birdcage/finding.go
 // adds the minimal `birdcage findings accept` CLI this method needs
 // rather than inventing a settings-shaped key for it.

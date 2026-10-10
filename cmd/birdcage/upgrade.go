@@ -107,8 +107,8 @@ func cliUpgradeConfig(getenv func(string) string) (api.UpgradeConfig, error) {
 //
 // A CLI on the birdcage host rather than a button on the canary page:
 // minting is a state change, and the dashboard API stays read-only
-// until login exists (owner, 2026-09-26, #8) -- the same reason `agent
-// settings set` is a CLI. It also keeps minting away from anything an
+// (owner, 2026-09-26, #8: a read API token is answered by the same
+// handler) -- the same reason `agent settings set` is a CLI. It also keeps minting away from anything an
 // agent credential can reach, so a copied credential can never open a
 // window for itself.
 //
