@@ -47,10 +47,16 @@ on their own listeners and never pass through the dashboard's sign-in.
    (neither path exists in birdcage today). Every existing dashboard route
    needs a signed-in session or a read API token, any role. The frontend
    assets stay reachable without a session (the sign-in screen is one of
-   them). Config: cookie `birdcage_session`, `SecureCookie` true whenever
-   the dashboard serves TLS, CSRF header value `birdcage`, product name
-   `birdcage`, client address from the connection (birdcage terminates
-   TLS itself and trusts no proxy headers).
+   them). Config: cookie `birdcage_session`, CSRF header value `birdcage`,
+   product name `birdcage`. `SecureCookie` is true whenever the dashboard
+   serves TLS itself or `BIRDCAGE_PUBLIC_URL` is https. The client address
+   is the connection's own unless `BIRDCAGE_TRUSTED_PROXIES` (bare IPs,
+   CIDRs or `private`; empty by default, which ignores forwarding headers)
+   names the connecting peer, and then it is read from
+   `BIRDCAGE_CLIENT_IP_HEADER` (default `X-Forwarded-For`), walked right
+   to left past trusted entries; the first untrusted entry wins. Amended
+   by owner answer 25a on 2026-10-10: behind a reverse proxy, as mikroview
+   (ai/mikroview#1287); this replaces "trusts no proxy headers".
 5. **Admin passkey (ruling 1, settles #180).** Required when
    `BIRDCAGE_PUBLIC_URL` is an https URL on a domain name and passkeys are
    wired; optional otherwise. `BIRDCAGE_AUTH_ADMIN_PASSKEY`

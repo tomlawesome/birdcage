@@ -258,12 +258,69 @@ reach anything. A restart signs everyone out.
 | `BIRDCAGE_GEOIP_IPINFO_TOKEN_FILE` | no | Path to a file holding your IPinfo access token. Turns on country lookup, using IPinfo's free Lite data. Not together with MaxMind: setting both is refused with "choose one country provider". |
 | `BIRDCAGE_GEOIP_MAXMIND_ACCOUNT_ID` and `BIRDCAGE_GEOIP_MAXMIND_LICENCE_KEY_FILE` | no | Your MaxMind account ID, and the path to a file holding its licence key. Turns on country lookup, using MaxMind's free GeoLite2 data. Both or neither, and not together with IPinfo: setting both providers is refused with "choose one country provider". |
 | `BIRDCAGE_OIDC_ISSUER`, `BIRDCAGE_OIDC_CLIENT_ID`, `BIRDCAGE_OIDC_CLIENT_SECRET_FILE` | no | Single sign-on through an OpenID Connect provider you run. All three or none, and `BIRDCAGE_PUBLIC_URL` must be set, because the redirect address is built from it. The secret is a path to a file. |
+| `BIRDCAGE_TRUSTED_PROXIES` | no | The reverse proxies whose forwarding header is believed. Empty by default. See [Running behind a reverse proxy](#running-behind-a-reverse-proxy). |
+| `BIRDCAGE_CLIENT_IP_HEADER` | no | The header read for a trusted proxy. Defaults to `X-Forwarded-For`. |
 
 Secrets are only ever given as the path to a file, never as a value, so
 they stay out of process listings and environment dumps. Mount the files
 read-only. Surrounding whitespace (a trailing newline) is ignored in the
 token, licence-key and client-secret files; the key file is used exactly as
 it is. None of them is ever logged.
+
+### Running behind a reverse proxy
+
+Birdcage rate-limits failed sign-ins per client address as well as per
+account, and records that address in the sign-in history. Behind a reverse
+proxy every request arrives carrying the *proxy's* address, so without
+configuration all your users share one limit and one attacker's failed
+attempts lock everybody out.
+
+`BIRDCAGE_TRUSTED_PROXIES` tells birdcage which peers it may believe a
+forwarding header from:
+
+```
+BIRDCAGE_TRUSTED_PROXIES=private          # or 10.0.0.0/8,172.20.0.5
+BIRDCAGE_CLIENT_IP_HEADER=X-Forwarded-For # the default
+```
+
+- **`BIRDCAGE_TRUSTED_PROXIES`**: comma-separated bare IPs, CIDRs, or the
+  shorthand `private` (loopback, RFC 1918, CGNAT `100.64.0.0/10`,
+  link-local and IPv6 ULA `fc00::/7`, which is where a proxy sharing your
+  LAN or a Docker network lands). **Empty by default, and empty means
+  forwarding headers are ignored entirely.** That is deliberate: a header
+  is only text the client sent, so believing one unconditionally would let
+  anyone get a fresh, empty limit for every request by varying it, which
+  deletes the limiter. List only proxies you actually operate.
+- **`BIRDCAGE_CLIENT_IP_HEADER`**: the header to read, only for a peer in
+  the list. Defaults to `X-Forwarded-For`, which nginx, Caddy, Traefik,
+  HAProxy, Cloudflare and the cloud load balancers all set. Use
+  `X-Real-IP` or `CF-Connecting-IP` for a proxy that sets another; a
+  header holding one address works unchanged.
+
+The header is read **right to left**, skipping entries that are themselves
+trusted proxies, and the first untrusted address is the client. The
+direction matters: each hop appends the address it saw, so the right-most
+entries were written by your own proxies, while anything further left could
+have been forged by the client before the request arrived. If every entry
+is a trusted proxy, the left-most is used. If an entry is not an address,
+or the header is missing, or the connecting peer is not in the list,
+birdcage uses the connecting peer's own address rather than anything the
+client chose.
+
+A bad entry in the list stops birdcage starting, naming the setting; it is
+never skipped, because a skipped entry would leave you believing forwarded
+addresses were being honoured when they were not.
+
+### The session cookie is Secure on https
+
+The session cookie carries the `Secure` attribute, and the `__Host-`
+prefix with it, whenever birdcage serves TLS itself (the minted or your
+own certificate) **or** `BIRDCAGE_PUBLIC_URL` is an `https://` address. The
+second case is the usual one behind a TLS-terminating proxy: birdcage
+listens on plain HTTP, and the browser still talks https to the proxy. With
+a plain listener and no `https://` public URL the cookie is not Secure, and
+a browser would refuse a Secure cookie over plain http anyway. So behind a
+proxy, set `BIRDCAGE_PUBLIC_URL` to the https address people type.
 
 ### The key file: back it up
 
@@ -812,8 +869,8 @@ row in `audit_log` with the address as its target.
 See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
 variables, ["CrowdSec"](#crowdsec) above for the `BIRDCAGE_CROWDSEC_*`
 variables, ["Sign-in"](#sign-in) above for `BIRDCAGE_AUTH_KEY_FILE`,
-`BIRDCAGE_PUBLIC_URL`, `BIRDCAGE_AUTH_ADMIN_PASSKEY`, `BIRDCAGE_GEOIP_*` and
-`BIRDCAGE_OIDC_*`, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
+`BIRDCAGE_PUBLIC_URL`, `BIRDCAGE_AUTH_ADMIN_PASSKEY`, `BIRDCAGE_TRUSTED_PROXIES`,
+`BIRDCAGE_CLIENT_IP_HEADER`, `BIRDCAGE_GEOIP_*` and `BIRDCAGE_OIDC_*`, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
 `BIRDCAGE_HTTP_TLS_CERT`, `BIRDCAGE_HTTP_TLS_KEY` and
 `BIRDCAGE_DASHBOARD_HOST`, and
 [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_INGEST_ADDR`
