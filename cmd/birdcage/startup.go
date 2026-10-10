@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/auth"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/enrol"
@@ -253,6 +254,11 @@ type startupConfig struct {
 	// test fixture that needs a certificate to reach half-life and
 	// expiry in minutes.
 	testClientCertTTL time.Duration
+
+	// auth is the sign-in layer's settings (issue #8, ADR-0016), read
+	// and checked by loadAuthConfig. Its secrets are held here only
+	// until auth.Open takes them.
+	auth auth.Config
 }
 
 // loadStartupConfig resolves every environment variable the
@@ -382,6 +388,12 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 		return startupConfig{}, &startupError{configLog, fmt.Sprintf("%s: %v", envInternalRanges, err)}
 	}
 	cfg.internalRanges = internalRanges
+
+	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), configLog)
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.auth = authCfg
 
 	return cfg, nil
 }

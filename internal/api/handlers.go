@@ -176,7 +176,7 @@ type scansResponse struct {
 
 // handleScans serves GET /api/scans (#108 slice 1): the minimal
 // read-back of every recorded Nightjar scan receipt, same auth posture
-// as GET /api/alerts (issue #8's requireAuth seam, not yet filled in).
+// as GET /api/alerts (the sign-in gate, issue #8).
 // No filtering or paging -- #109 adds those once there is a findings
 // table worth either over; this slice only has to prove a snapshot
 // landed.
@@ -206,11 +206,11 @@ type findingsResponse struct {
 // handleFindings serves GET /api/findings[?agent_id=], issue #109's
 // read-back of the findings store -- the filter-and-page-over
 // scan_snapshots' own handleScans comment named as its own follow-up.
-// Read-only, same auth posture as every other dashboard route (#8's
-// requireAuth seam, not yet filled in); there is no write route here --
+// Read-only, same auth posture as every other dashboard route (the
+// sign-in gate, #8); there is no write route here --
 // acceptance is the store method and CLI `birdcage findings accept`
 // (cmd/birdcage/finding.go), not an API call, per the dashboard's
-// read-only-until-login rule (dashboardRouteSpecs' own comment).
+// read-only rule (dashboardRouteSpecs' own comment).
 func (h *handler) handleFindings(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agent_id")
 	findings, err := store.ListFindings(r.Context(), h.db, store.FindingFilter{AgentID: agentID})

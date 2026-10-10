@@ -10,8 +10,8 @@ import (
 // connection birdcage holds open and writes to whenever an alert is
 // stored, so an already-open dashboard sees a hit the moment it lands
 // instead of waiting for its next 30s poll (frontend/src/App.svelte's
-// REFRESH_MS). Registered behind the same requireAuth seam as every
-// other dashboard route (see newHandlerWithHub) -- never on the ingest
+// REFRESH_MS). Registered behind the same sign-in gate as every
+// other dashboard route (see newHandlerWithHub; the gate is internal/auth) -- never on the ingest
 // mux.
 //
 // Headers and behaviour here are the fail-closed choices issue #44's
