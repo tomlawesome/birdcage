@@ -19,13 +19,13 @@ set -euo pipefail
 # protected CI/CD variable is settable outside the repository entirely.
 # --version/--sha256/--url are flags, written at the call site, and every
 # call site lives in .gitlab-ci.yml or a test under scripts/.
-GO_VERSION="go1.27.1"
-# SHA-256 of go1.27.1.linux-amd64.tar.gz, copied from
-#   https://go.dev/dl/?mode=json&include=all
-# fetched 2026-09-30; archive size 70553950 bytes. Cross-checked the same
+GO_VERSION="go1.27.2"
+# SHA-256 of go1.27.2.linux-amd64.tar.gz, copied from
+#   https://go.dev/dl/?mode=json
+# fetched 2026-10-10; archive size 70590635 bytes. Cross-checked the same
 # day by separately downloading the archive and hashing it locally -- the
 # two matched.
-GO_ARCHIVE_SHA256="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
+GO_ARCHIVE_SHA256="ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5"
 
 GO_URL=""
 

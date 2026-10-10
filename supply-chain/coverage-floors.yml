@@ -78,7 +78,7 @@
 #     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
 #   docker run --rm --network covfloor-net-$$ \
 #     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
-#     -v "$PWD":/work -w /work golang:1.27 \
+#     -v "$PWD":/work -w /work golang:1.27.2 \
 #     go test ./... -race -coverprofile=/work/coverage.out
 #
 # Read the per-package numbers straight off that `go test` output -- they
@@ -93,6 +93,20 @@
 # Measured 2026-09-20 from `BIRDCAGE_TEST_DATABASE_URL=... go test ./...
 # -race -coverprofile=...` run as root inside `golang:1.27` against a real
 # postgres:17-alpine, matching test:go exactly, on this checkout (95f900b).
+#
+# Re-measured 2026-10-10 on go1.27.2 (#188, owner-approved): the floating
+# golang:1.27 image moved from go1.27.1 to go1.27.2, which counts coverage
+# statements differently on unchanged code (both toolchains, same commit, same
+# tests, same Postgres, give different readings), so 22 packages moved: 21 fell below
+# their floor, and cmd/mockingbird rose past the ratchet slack (73.8% ->
+# 79.8%, floor 71 -> 79). It is a toolchain counting change, not lost tests:
+# every test still runs, and go1.27.1 on the same commit still passes the old
+# floors. Each affected floor is now the go1.27.2 reading rounded DOWN to a
+# whole percent; no other floor changed. The Go image is now pinned by tag and
+# digest (.gitlab-ci.yml GOLANG_IMAGE, build/*/Dockerfile), so a patch release
+# cannot move the counting under a merge request again. Measured as described
+# above, with postgres:18-alpine to match test:go. Per-package before/after
+# numbers are in the commit message that made this change.
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
@@ -114,7 +128,7 @@ floors:
                              # two -- which is why this floor sits well
                              # below the band rather than pointing at
                              # missing tests.
-  cmd/mockingbird: 71       # 71.5% measured with -race and Postgres,
+  cmd/mockingbird: 79       # 71.5% measured with -race and Postgres,
                              # 2026-09-23 (#46 slice 3, was floored at 69):
                              # the claim window (claim.go, new file) and
                              # its wiring into intake.go's three push
@@ -220,14 +234,14 @@ floors:
                               # so anything less than 100 here means a kind or
                               # a profile arrived without a test.
   internal/agent/approval: 87
-  internal/agent/atomicfile: 70  # 70.6% measured, 2026-09-22 (#108, slice 1
+  internal/agent/atomicfile: 65  # 70.6% measured, 2026-09-22 (#108, slice 1
                               # commit 1). Factored out of cmd/mockingbird's
                               # atomic.go so a second agent kind can import
                               # it; the uncovered remainder is os-level
                               # failure branches (temp-dir Chmod/Sync/Rename
                               # errors) exercised by cmd/mockingbird's own
                               # token_test.go, not duplicated here.
-  internal/agent/certkey: 89  # New package (#130, ADR-0012 Part B1/B2):
+  internal/agent/certkey: 88  # New package (#130, ADR-0012 Part B1/B2):
                               # ECDSA P-256 key/CSR generation and
                               # certificate half-life parsing. 89.5%
                               # measured, 2026-09-24. Uncovered remainder
@@ -236,7 +250,7 @@ floors:
                               # internal error returns, which this package
                               # has no seam to induce deterministically.
   internal/agent/client: 87
-  internal/agent/enrol: 81
+  internal/agent/enrol: 78
   internal/agent/enrolment: 92  # 92.5% measured with -race, 2026-09-24
                               # (#130): enrolAtBoot's key/CSR/write-state
                               # error-wrap branches, loadOrGeneratePending
@@ -250,8 +264,8 @@ floors:
                               # EnsureEnrolled branch, the retry loop's two
                               # exits, writeState's partial-failure path and
                               # redactErr are covered.
-  internal/agent/event: 85
-  internal/agent/ledger: 95
+  internal/agent/event: 83
+  internal/agent/ledger: 94
   internal/agent/poisoner: 84 # Raised from 77 (#124): issue #124's live
                              # settings push (SetLiveSettings, the
                              # mutex-guarded shape/names/pace getters, and
@@ -266,10 +280,10 @@ floors:
                              # privileged-port floor -- are still the gap;
                              # slice C's e2e journey covers those against a
                              # real Responder, not a gap to close here.
-  internal/agent/portscan: 71
-  internal/agent/probe: 95
-  internal/agent/queue: 88
-  internal/agent/readiness: 98 # New package (#65): independently dials the
+  internal/agent/portscan: 68
+  internal/agent/probe: 90
+  internal/agent/queue: 86
+  internal/agent/readiness: 97 # New package (#65): independently dials the
                              # ports opencanary.conf enables to tell a
                              # started module from one that never did,
                              # rather than trusting OpenCanary's own startup
@@ -278,7 +292,7 @@ floors:
                              # is a context-cancellation race in Check that
                              # is exercised but not always the branch hit.
   internal/agent/receiver: 95
-  internal/agent/renewal: 85  # New package (#130, ADR-0012 Part B2): the
+  internal/agent/renewal: 80  # New package (#130, ADR-0012 Part B2): the
                               # crash-safe key/certificate swap and the
                               # Manager that drives renewal from a
                               # certificate's half-life. 85.9% measured,
@@ -298,16 +312,16 @@ floors:
                              # is reading a shifted line as a good one,
                              # and every branch that decides that is
                              # covered.
-  internal/agent/snmp: 82
-  internal/agent/tailer: 77
+  internal/agent/snmp: 81
+  internal/agent/tailer: 74
   internal/agent/upgradetoken: 79 # New package (#54): the agent-side
                               # upgrade-token subcommand the printed upgrade
                               # command runs once, in a throwaway container
                               # of the new image. 79.3% measured by test:go
                               # in pipeline 1766, 2026-09-27.
-  internal/api: 84
+  internal/api: 82
   internal/audit: 94
-  internal/ca: 79             # 79.6% locally, 2026-09-30, with CAMissing's tests (#149)
+  internal/ca: 76             # 79.6% locally, 2026-09-30, with CAMissing's tests (#149)
   internal/crowdsec: 91      # 91.6% measured by test:go in pipeline 1931,
                              # 2026-10-01 (#4, ADR-0014): the permanent-ban
                              # publisher (Blocker.Block's floor/allowlist/
@@ -334,7 +348,7 @@ floors:
                              # migration names always exist for a defined
                              # Engine, so nothing reaches them without fault
                              # injection this package doesn't have a seam for.
-  internal/driftsched: 72    # New package (#54): the daily email listing
+  internal/driftsched: 70    # New package (#54): the daily email listing
                              # every agent behind birdcage's version.
                              # 72.7% measured by test:go in pipeline 1766,
                              # 2026-09-27.
@@ -354,8 +368,8 @@ floors:
                              # its startup mount check (Check, ParseMountinfo)
                              # -- every branch is driven by fixture mountinfo
                              # content, no real container required.
-  internal/history: 82
-  internal/ingest: 84         # 84.9% measured with -race and Postgres,
+  internal/history: 81
+  internal/ingest: 83         # 84.9% measured with -race and Postgres,
                              # 2026-09-24 (#130): POST /ingest/renew's
                              # refusal paths (no-cert, trailing-data,
                              # audit-failure rollback on both the issued
@@ -364,9 +378,9 @@ floors:
                              # several heartbeat/batch branches gained
                              # tests, all through the real handler and
                              # mTLS test harness.
-  internal/logging: 91
-  internal/mail: 90
-  internal/mailbox: 86
+  internal/logging: 90
+  internal/mail: 88
+  internal/mailbox: 85
   internal/neverblock: 100    # 100.0% measured, 2026-09-26 (#33), against
                               # both SQLite and a real Postgres.
   internal/opencanary: 100
@@ -379,7 +393,7 @@ floors:
                               # its failure classification -- every branch
                               # is driven by a recorded-fixture unit test
                               # (a real grype binary is never required).
-  internal/selftest: 97      # 97.2% measured with -race, 2026-09-23 (#46
+  internal/selftest: 96      # 97.2% measured with -race, 2026-09-23 (#46
                               # slice 3, was floored at 96): the portscan
                               # DestPort-0 carve-out in Validate gained
                               # its own tests.

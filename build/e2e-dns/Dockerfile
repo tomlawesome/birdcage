@@ -50,7 +50,7 @@
 # dependency-proxy pins (refs #128, .gitlab-ci.yml's ALPINE_IMAGE and
 # GOLANG_IMAGE) as build args.
 ARG BASE_IMAGE=alpine:3.24
-ARG GO_IMAGE=golang:1.27
+ARG GO_IMAGE=golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c
 FROM ${GO_IMAGE} AS signer
 WORKDIR /src
 COPY go.mod go.sum ./
