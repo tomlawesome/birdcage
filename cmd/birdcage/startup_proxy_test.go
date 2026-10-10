@@ -12,6 +12,7 @@ import (
 // loadStartupConfig leaves in startupConfig.auth:
 //
 //	TrustedProxies []netip.Prefix  (from BIRDCAGE_TRUSTED_PROXIES)
+//	TrustUnixSocket bool           (item 15: the entry "unix" in BIRDCAGE_TRUSTED_PROXIES)
 //	ClientIPHeader string          (from BIRDCAGE_CLIENT_IP_HEADER, default X-Forwarded-For)
 //	SecureCookie   bool            (listener serves TLS, or BIRDCAGE_PUBLIC_URL is https)
 const (
@@ -181,5 +182,78 @@ func TestLoadStartupConfigSecureCookieWithAnOperatorCertificate(t *testing.T) {
 	}
 	if !cfg.auth.SecureCookie {
 		t.Error("auth.SecureCookie = false with an operator certificate, want true")
+	}
+}
+
+// TestLoadStartupConfigTrustedProxiesUnix is item 15: the entry unix trusts a
+// proxy connected over the unix socket. It is accepted alone and beside IPs,
+// CIDRs and private, in any position and any letter case, and it adds no
+// address to the trusted prefixes (it is not an IP entry).
+func TestLoadStartupConfigTrustedProxiesUnix(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		unix    bool
+		inside  []string
+		outside []string
+	}{
+		{"unix alone", "unix", true, nil, []string{"127.0.0.1", "10.0.0.1", "::1", "192.0.2.5"}},
+		{"unix with spaces", "  unix ", true, nil, []string{"127.0.0.1"}},
+		{"unix in capitals", "UNIX", true, nil, []string{"127.0.0.1"}},
+		{"unix beside a bare address", "unix,192.0.2.5", true, []string{"192.0.2.5"}, []string{"127.0.0.1", "192.0.2.6"}},
+		{"unix after a CIDR", "198.51.100.0/24, unix", true, []string{"198.51.100.9"}, []string{"127.0.0.1"}},
+		{"unix beside private", "private,unix", true, []string{"127.0.0.1", "10.1.2.3", "::1"}, []string{"8.8.8.8"}},
+		{"unix first, then private and an address", "unix, private, 203.0.113.9", true, []string{"10.1.2.3", "203.0.113.9"}, []string{"203.0.113.10"}},
+		{"no unix entry: not trusted", "private,192.0.2.5", false, []string{"10.1.2.3"}, []string{"8.8.8.8"}},
+		{"private does not include unix", "private", false, []string{"127.0.0.1"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadStartupConfig(startupEnv(t, map[string]string{testEnvTrustedProxies: tc.value}), discardLog(), discardLog(), discardLog(), discardLog())
+			if err != nil {
+				t.Fatalf("loadStartupConfig with %s=%q: %v", testEnvTrustedProxies, tc.value, err)
+			}
+			if cfg.auth.TrustUnixSocket != tc.unix {
+				t.Errorf("%s=%q: auth.TrustUnixSocket = %v, want %v", testEnvTrustedProxies, tc.value, cfg.auth.TrustUnixSocket, tc.unix)
+			}
+			for _, a := range tc.inside {
+				if !covers(cfg.auth.TrustedProxies, a) {
+					t.Errorf("%s=%q: %s is not trusted, want it trusted (list %v)", testEnvTrustedProxies, tc.value, a, cfg.auth.TrustedProxies)
+				}
+			}
+			for _, a := range tc.outside {
+				if covers(cfg.auth.TrustedProxies, a) {
+					t.Errorf("%s=%q: %s is trusted, want it not trusted (list %v)", testEnvTrustedProxies, tc.value, a, cfg.auth.TrustedProxies)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadStartupConfigTrustUnixSocketOffByDefault: with no setting, a
+// unix-socket peer is not trusted.
+func TestLoadStartupConfigTrustUnixSocketOffByDefault(t *testing.T) {
+	cfg, err := loadStartupConfig(startupEnv(t, map[string]string{testEnvHTTPAddr: "unix:///run/birdcage/http.sock"}), discardLog(), discardLog(), discardLog(), discardLog())
+	if err != nil {
+		t.Fatalf("loadStartupConfig: %v", err)
+	}
+	if cfg.auth.TrustUnixSocket {
+		t.Error("auth.TrustUnixSocket = true with no BIRDCAGE_TRUSTED_PROXIES, want false")
+	}
+}
+
+// TestLoadStartupConfigStillRefusesABadEntryBesideUnix: unix does not loosen
+// the check on the other entries.
+func TestLoadStartupConfigStillRefusesABadEntryBesideUnix(t *testing.T) {
+	for _, value := range []string{"unix, bogus", "bogus,unix", "unix:/run/birdcage/http.sock", "unixsocket", "unix,10.0.0.0/33"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := loadStartupConfig(startupEnv(t, map[string]string{testEnvTrustedProxies: value}), discardLog(), discardLog(), discardLog(), discardLog())
+			if err == nil {
+				t.Fatalf("loadStartupConfig with %s=%q = nil error, want a refusal", testEnvTrustedProxies, value)
+			}
+			if !strings.Contains(err.Error(), testEnvTrustedProxies) {
+				t.Errorf("error = %q, want it to name %s", err.Error(), testEnvTrustedProxies)
+			}
+		})
 	}
 }

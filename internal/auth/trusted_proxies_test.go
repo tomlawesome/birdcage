@@ -2,10 +2,13 @@ package auth_test
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
 
+	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/auth"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
@@ -21,6 +24,19 @@ import (
 //
 // ClientIP returns the address alone (no port), in the form
 // netip.Addr.String gives.
+//
+// Item 15 (a proxy connected over the dashboard's unix socket) adds, with
+// ClientIP unchanged:
+//
+//	auth.Config.TrustUnixSocket bool
+//	auth.ClientIPWith(r *http.Request, trusted []netip.Prefix, trustUnix bool, header string) string
+//
+// A unix-socket peer has no IP address. Go's http server sets its
+// RemoteAddr to "@" (checked against net/http with a unix listener); an
+// unnamed peer is reported as-is, so ClientIPWith returns "@" when it
+// falls back to the peer. trustUnix means the entry "unix" is in
+// BIRDCAGE_TRUSTED_PROXIES and trusts that peer, and only that peer.
+const unixPeer = "@"
 
 func prefixes(t *testing.T, list ...string) []netip.Prefix {
 	t.Helper()
@@ -41,12 +57,13 @@ func prefixes(t *testing.T, list ...string) []netip.Prefix {
 func TestClientIPResolution(t *testing.T) {
 	const xff = "X-Forwarded-For"
 	cases := []struct {
-		name    string
-		peer    string
-		trusted []string
-		header  string
-		lines   map[string][]string
-		want    string
+		name      string
+		peer      string
+		trusted   []string
+		trustUnix bool
+		header    string
+		lines     map[string][]string
+		want      string
 	}{
 		{
 			name: "no trusted proxies: the header is ignored",
@@ -148,6 +165,113 @@ func TestClientIPResolution(t *testing.T) {
 			lines: map[string][]string{xff: {"2001:db8::5"}},
 			want:  "2001:db8::5",
 		},
+		{
+			name: "unix peer, unix trusted: the header names the client",
+			peer: unixPeer, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted and nothing else: still believed",
+			peer: unixPeer, trusted: nil, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted beside an address list",
+			peer: unixPeer, trusted: []string{"10.0.0.0/8"}, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix not trusted, no list: the header is ignored",
+			peer: unixPeer, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  unixPeer,
+		},
+		{
+			name: "unix peer, unix not trusted, an address list: the header is ignored",
+			peer: unixPeer, trusted: []string{"10.0.0.0/8", "127.0.0.0/8", "::1/128"}, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  unixPeer,
+		},
+		{
+			name: "unix peer, unix trusted: a forged left-most entry is not believed",
+			peer: unixPeer, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"6.6.6.6, 1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted: trusted address entries on the right are skipped",
+			peer: unixPeer, trusted: []string{"10.0.0.0/8"}, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"6.6.6.6, 1.2.3.4, 10.0.0.7"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted: a chain of only trusted entries gives the left-most",
+			peer: unixPeer, trusted: []string{"10.0.0.0/8"}, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"10.0.0.5, 10.0.0.7"}},
+			want:  "10.0.0.5",
+		},
+		{
+			name: "unix peer, unix trusted: several header lines read as one list",
+			peer: unixPeer, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"6.6.6.6", "1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted, no header: the peer",
+			peer: unixPeer, trustUnix: true, header: xff,
+			want: unixPeer,
+		},
+		{
+			name: "unix peer, unix trusted, an entry that is not an address: the peer",
+			peer: unixPeer, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"unknown"}},
+			want:  unixPeer,
+		},
+		{
+			name: "unix peer, unix trusted: another header name is the one read",
+			peer: unixPeer, trustUnix: true, header: "X-Real-IP",
+			lines: map[string][]string{"X-Real-Ip": {"1.2.3.4"}, xff: {"6.6.6.6"}},
+			want:  "1.2.3.4",
+		},
+		{
+			name: "unix peer, unix trusted: an IPv6 client",
+			peer: unixPeer, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"2001:db8::5"}},
+			want:  "2001:db8::5",
+		},
+		{
+			name: "unix trusted does not make an untrusted TCP peer trusted",
+			peer: "192.0.2.10:5000", trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "192.0.2.10",
+		},
+		{
+			name: "unix trusted does not make an untrusted TCP peer trusted, beside an address list",
+			peer: "192.0.2.10:5000", trusted: []string{"10.0.0.0/8"}, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "192.0.2.10",
+		},
+		{
+			name: "unix trusted does not make a loopback TCP peer trusted",
+			peer: "127.0.0.1:5000", trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "127.0.0.1",
+		},
+		{
+			name: "unix trusted does not make an IPv6 TCP peer trusted",
+			peer: "[::1]:5000", trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "::1",
+		},
+		{
+			name: "unix trusted leaves a trusted TCP peer trusted",
+			peer: "10.0.0.1:5000", trusted: []string{"10.0.0.0/8"}, trustUnix: true, header: xff,
+			lines: map[string][]string{xff: {"1.2.3.4"}},
+			want:  "1.2.3.4",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,9 +285,15 @@ func TestClientIPResolution(t *testing.T) {
 					r.Header.Add(name, v)
 				}
 			}
-			got := auth.ClientIP(r, prefixes(t, tc.trusted...), tc.header)
+			got := auth.ClientIPWith(r, prefixes(t, tc.trusted...), tc.trustUnix, tc.header)
 			if got != tc.want {
-				t.Errorf("ClientIP(peer %s, trusted %v, header %q, lines %v) = %q, want %q", tc.peer, tc.trusted, tc.header, tc.lines, got, tc.want)
+				t.Errorf("ClientIPWith(peer %s, trusted %v, trustUnix %v, header %q, lines %v) = %q, want %q", tc.peer, tc.trusted, tc.trustUnix, tc.header, tc.lines, got, tc.want)
+			}
+			if !tc.trustUnix {
+				// ClientIP is ClientIPWith with unix not trusted.
+				if plain := auth.ClientIP(r, prefixes(t, tc.trusted...), tc.header); plain != tc.want {
+					t.Errorf("ClientIP(peer %s, trusted %v, header %q, lines %v) = %q, want %q", tc.peer, tc.trusted, tc.header, tc.lines, plain, tc.want)
+				}
 			}
 		})
 	}
@@ -319,5 +449,91 @@ func TestClientIPHeaderNamesTheHeaderRead(t *testing.T) {
 	}
 	if status := oneFailedSignIn(t, base, "c", map[string]string{"X-Real-IP": "198.51.100.1", "X-Forwarded-For": "7.7.7.7"}); status != http.StatusTooManyRequests {
 		t.Errorf("same X-Real-IP, different X-Forwarded-For: status %d, want 429 (only X-Real-IP is read)", status)
+	}
+}
+
+// startUnixPeerSystem is startSystemWith for a server whose every request
+// reaches the sign-in gate with the RemoteAddr Go's http server gives a unix
+// listener ("@"), as if a proxy had connected over BIRDCAGE_HTTP_ADDR=unix://.
+// The test server itself still listens on TCP; only the peer address the
+// service sees is replaced, and that is the one thing under test.
+func startUnixPeerSystem(t *testing.T, database *db.DB, cfg auth.Config) *system {
+	t.Helper()
+	logger, capture := newLogCapture()
+	svc, err := auth.Open(t.Context(), database, cfg, logger)
+	if err != nil {
+		t.Fatalf("auth.Open: %v", err)
+	}
+	t.Cleanup(svc.Close)
+	mux := http.NewServeMux()
+	mux.Handle("/api/", api.NewHandler(database, nil, "test"))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<!doctype html><title>birdcage frontend stand-in</title>")
+	})
+	gate := svc.Wrap(mux)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = unixPeer
+		gate.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	sys := &system{svc: svc, log: capture, server: server, database: database}
+	sys.registerFirstAdmin(t, newClient(t))
+	return sys
+}
+
+// TestClientsBehindATrustedUnixSocketProxyHaveSeparateLimiterBuckets: with
+// TrustUnixSocket set and the peer a unix-socket connection, the client
+// named by X-Forwarded-For gets its own limiter bucket.
+func TestClientsBehindATrustedUnixSocketProxyHaveSeparateLimiterBuckets(t *testing.T) {
+	database := openDatabase(t)
+	sys := startUnixPeerSystem(t, database, auth.Config{Key: testKey('a'), TrustUnixSocket: true, ClientIPHeader: "X-Forwarded-For"})
+	base := sys.server.URL
+	clientA := map[string]string{"X-Forwarded-For": "198.51.100.1"}
+	clientB := map[string]string{"X-Forwarded-For": "198.51.100.2"}
+
+	before, limited := failedSignIns(t, base, "a", clientA, 12)
+	if !limited {
+		t.Fatalf("client A was never limited after %d failed sign-ins; the limiter must still work behind a unix-socket proxy", before)
+	}
+	if status := oneFailedSignIn(t, base, "b", clientB); status != http.StatusUnauthorized {
+		t.Errorf("client B after client A was limited: status %d, want 401 (its own bucket)", status)
+	}
+	if status := oneFailedSignIn(t, base, "a-again", clientA); status != http.StatusTooManyRequests {
+		t.Errorf("client A after being limited: status %d, want 429", status)
+	}
+}
+
+// TestUnixSocketPeerIsOneClientWithoutTrustUnixSocket: without the unix
+// entry (the default), a unix-socket peer is one client whatever the header
+// says, even with address entries listed: the header is ignored.
+func TestUnixSocketPeerIsOneClientWithoutTrustUnixSocket(t *testing.T) {
+	database := openDatabase(t)
+	sys := startUnixPeerSystem(t, database, auth.Config{Key: testKey('a'), TrustedProxies: loopbackProxies(t), ClientIPHeader: "X-Forwarded-For"})
+	base := sys.server.URL
+
+	before, limited := failedSignIns(t, base, "a", map[string]string{"X-Forwarded-For": "198.51.100.1"}, 12)
+	if !limited {
+		t.Fatalf("no 429 after %d failed sign-ins from a unix-socket peer", before)
+	}
+	if status := oneFailedSignIn(t, base, "b", map[string]string{"X-Forwarded-For": "198.51.100.2"}); status != http.StatusTooManyRequests {
+		t.Errorf("a different X-Forwarded-For from an untrusted unix-socket peer: status %d, want 429 (the header must be ignored)", status)
+	}
+}
+
+// TestTrustUnixSocketDoesNotTrustATCPPeer: TrustUnixSocket makes only the
+// unix-socket peer trusted. The test server's own TCP connection (loopback)
+// is not, so the header is ignored and client A's failures limit client B.
+func TestTrustUnixSocketDoesNotTrustATCPPeer(t *testing.T) {
+	database := openDatabase(t)
+	sys := startRegistered(t, database, auth.Config{Key: testKey('a'), TrustUnixSocket: true, ClientIPHeader: "X-Forwarded-For"})
+	base := sys.server.URL
+
+	before, limited := failedSignIns(t, base, "a", map[string]string{"X-Forwarded-For": "198.51.100.1"}, 12)
+	if !limited {
+		t.Fatalf("no 429 after %d failed sign-ins from a TCP peer", before)
+	}
+	if status := oneFailedSignIn(t, base, "b", map[string]string{"X-Forwarded-For": "198.51.100.2"}); status != http.StatusTooManyRequests {
+		t.Errorf("a different X-Forwarded-For from a TCP peer with only unix trusted: status %d, want 429 (the header must be ignored)", status)
 	}
 }
