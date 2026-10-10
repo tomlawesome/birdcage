@@ -29,6 +29,7 @@ import (
 	"github.com/tomlawesome/gauntlet/passkey"
 	"github.com/tomlawesome/gauntlet/persist"
 
+	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/authstore"
 	"github.com/tomlawesome/birdcage/internal/db"
 )
@@ -370,31 +371,73 @@ func (s *Service) Close() {
 // so country is recorded with each sign-in.
 func (s *Service) CountryLookupEnabled() bool { return s.geo != nil }
 
-// Wrap puts sign-in in front of api. Everything under /api/ needs a
-// signed-in session, or a read API token as a bearer; gauntlet's own
-// routes (/api/auth/ and /api/tokens) are served beside it. Everything
-// outside /api/ -- the frontend, whose sign-in screen must load without a
-// session -- passes straight to api.
+// Wrap puts sign-in in front of dashboard, the dashboard API handler.
+// Everything under /api/ needs a signed-in session, or a read API token
+// as a bearer; gauntlet's own routes (/api/auth/ and /api/tokens) are
+// served beside it. Everything outside /api/ -- the frontend, whose
+// sign-in screen must load without a session -- passes straight to
+// dashboard.
 //
-// A bearer token of kind api is answered by api itself, so it reaches
-// exactly the read-only dashboard routes and never gauntlet's account or
-// token routes. Call Wrap once, before serving.
-func (s *Service) Wrap(api http.Handler) http.Handler {
-	s.gate.Handle(gauntlet.TokenKindAPI, api)
+// A bearer token of kind api is answered by dashboard itself, so it
+// reaches exactly the read-only dashboard routes and never gauntlet's
+// account or token routes. Call Wrap once, before serving.
+//
+// Each request dashboard receives carries api.WithCredentialCheck: a
+// function that asks again whether the request's credential is still valid, so a
+// long-lived response (the event stream) can end after sign-out or a
+// token revoke. The answer comes from gauntlet itself: the check sends a
+// copy of the request through the same gate and reports whether it was
+// let through, so every rule gauntlet applies at the door (session
+// expiry, ended sessions, revoked or expired tokens, a forced password
+// change) applies here too, and nothing is duplicated. As with any
+// request through the gate, a passing check keeps a session from timing
+// out through inactivity.
+func (s *Service) Wrap(dashboard http.Handler) http.Handler {
+	var protected http.Handler
+
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := r.Context().Value(probeKey{}).(*probe); ok {
+			// A re-check that got past the gate: say so, send nothing.
+			p.passed = true
+			return
+		}
+		check := func() bool {
+			p := &probe{}
+			pr := r.Clone(context.WithValue(r.Context(), probeKey{}, p))
+			pr.Method, pr.Body, pr.ContentLength = http.MethodGet, http.NoBody, 0
+			protected.ServeHTTP(&discardResponse{header: http.Header{}}, pr)
+			return p.passed
+		}
+		dashboard.ServeHTTP(w, r.WithContext(api.WithCredentialCheck(r.Context(), check)))
+	})
+	s.gate.Handle(gauntlet.TokenKindAPI, guarded)
 
 	routes := s.gate.Routes()
 	inner := http.NewServeMux()
 	inner.Handle("/api/auth/", routes)
 	inner.Handle("/api/tokens", routes)
 	inner.Handle("/api/tokens/", routes)
-	inner.Handle("/api/", api)
-	protected := s.gate.Protect(inner)
+	inner.Handle("/api/", guarded)
+	protected = s.gate.Protect(inner)
 
 	outer := http.NewServeMux()
 	outer.Handle("/api/", protected)
-	outer.Handle("/", api)
+	outer.Handle("/", dashboard)
 	return outer
 }
+
+// probeKey marks a credential re-check travelling through the gate; its
+// value is the *probe the re-check reads the outcome from.
+type probeKey struct{}
+
+type probe struct{ passed bool }
+
+// discardResponse takes whatever the gate writes to refuse a re-check.
+type discardResponse struct{ header http.Header }
+
+func (d *discardResponse) Header() http.Header         { return d.header }
+func (d *discardResponse) Write(b []byte) (int, error) { return len(b), nil }
+func (d *discardResponse) WriteHeader(int)             {}
 
 // geoConfig builds the country-data settings, or reports false when no
 // provider is configured.
