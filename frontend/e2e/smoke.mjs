@@ -26,8 +26,16 @@
 //
 // Browser: resolved once, by ./browser.mjs (issue #83) -- BIRDCAGE_BROWSER
 // selects it, default firefox.
+//
+// Sign-in (issue #8, ADR-0016): the dashboard API answers nothing without
+// a signed-in session. birdcage gets a fresh sign-in key file in this
+// run's temporary directory; once it is up, ./signin.mjs creates the
+// first admin from the setup code in its log, enrols an authenticator
+// app and signs in, and the browser starts with that session cookie
+// already set -- the sign-in screens are a later slice of #8.
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { getFreePorts } from './ports.mjs'
+import { setupCodeFrom, signInFirstAdmin, writeAuthKeyFile } from './signin.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -163,6 +171,9 @@ async function main() {
   const { pin, token } = parseEnrolOutput(enrolOutput)
   ok(`minted a deploy token, pin=${pin.slice(0, 8)}...`)
 
+  // 32 fresh random bytes, mode 0400, removed with workDir at the end.
+  const authKeyFile = writeAuthKeyFile(workDir)
+
   console.log(`\nstarting ${BIRDCAGE_BIN} on 127.0.0.1:${httpPort}...`)
   const birdcage = spawn(BIRDCAGE_BIN, [], {
     cwd: repoRoot,
@@ -170,6 +181,7 @@ async function main() {
       ...sharedEnv,
       BIRDCAGE_HTTP_ADDR: `127.0.0.1:${httpPort}`,
       BIRDCAGE_INGEST_ADDR: `127.0.0.1:${ingestPort}`,
+      BIRDCAGE_AUTH_KEY_FILE: authKeyFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -184,7 +196,19 @@ async function main() {
   let failure = null
   let browser = null
   try {
-    await waitForServer(`http://127.0.0.1:${httpPort}/`)
+    const base = `http://127.0.0.1:${httpPort}`
+    await waitForServer(`${base}/`)
+
+    step('signing in: the first admin, from the setup code birdcage logged (issue #8)')
+    // birdcage writes the code once its sign-in layer has opened, which
+    // is before the listener the wait above just reached.
+    let setupCode = null
+    for (let i = 0; i < 50 && !setupCode; i++) {
+      setupCode = setupCodeFrom(birdcageLog)
+      if (!setupCode) await new Promise((r) => setTimeout(r, 200))
+    }
+    if (!setupCode) throw new Error('birdcage never logged a setup code for the first admin')
+    const session = await signInFirstAdmin(base, setupCode, ok)
 
     console.log(`launching ${resolveBrowserName()}...`)
     browser = await launchBrowser()
@@ -194,7 +218,11 @@ async function main() {
     // together near the right edge on every run -- exactly the crowding
     // the label-collapse assertion below needs to be a real check rather
     // than a check that happens to have nothing to catch.
-    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+    const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } })
+    // Signed in before the first page load: the session cookie goes into
+    // the browser context, so every API call and the event stream carry it.
+    await context.addCookies([{ name: session.name, value: session.value, url: base }])
+    const page = await context.newPage()
 
     // Captured for the whole test, but only *enforced* up to the
     // deliberate-failure journey at the end: killing birdcage on purpose
@@ -206,7 +234,7 @@ async function main() {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     step('every top-level view renders against the live API with no console error')
-    await page.goto(`http://127.0.0.1:${httpPort}/`)
+    await page.goto(`${base}/`)
     await page.waitForSelector('.hero', { timeout: 10000 })
     const hero = (await page.textContent('.hero'))?.trim()
     const tileCount = await page.locator('.tile').count()
@@ -380,7 +408,9 @@ async function main() {
   }
 
   if (!ok_) {
-    console.error('\nbirdcage log:\n' + birdcageLog)
+    // The one-time setup code is blanked: until the first admin exists,
+    // it is what makes whoever reads it the admin.
+    console.error('\nbirdcage log:\n' + birdcageLog.replace(/with setup code [A-Za-z0-9-]+/g, 'with setup code <redacted>'))
     console.error(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`)
     process.exit(1)
   }

@@ -15,7 +15,7 @@
     "compare:below-band": "node scripts/below-band-compare.mjs",
     "compare:canary": "node scripts/canary-compare.mjs",
     "smoke": "node e2e/smoke.mjs",
-    "test:e2e-helpers": "node e2e/ports.test.mjs && node e2e/smoke.test.mjs"
+    "test:e2e-helpers": "node e2e/ports.test.mjs && node e2e/smoke.test.mjs && node e2e/signin.test.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
