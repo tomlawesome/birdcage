@@ -1,10 +1,38 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+// StreamRecheckInterval is how often an open /api/stream asks whether
+// the credential it was opened with is still good, ending the stream if
+// not (issue #8, review fix 11). Without it a stream opened by a session
+// or read token would outlive its sign-out or revoke for as long as the
+// connection stayed up. It is read when a stream opens, so changing it
+// affects only streams opened afterwards. A variable only so tests can
+// shorten it.
+var StreamRecheckInterval = 30 * time.Second
+
+type credentialCheckKey struct{}
+
+// WithCredentialCheck returns ctx carrying check, the sign-in layer's
+// answer to "is the credential this request came in with still valid?".
+// handleStream calls it on every StreamRecheckInterval tick. The check
+// belongs to the layer that issued the credential (internal/auth, over
+// gauntlet), so validity has one source of truth and this package holds
+// none of it. Without one in the request's context, a stream is never
+// re-checked.
+func WithCredentialCheck(ctx context.Context, check func() bool) context.Context {
+	return context.WithValue(ctx, credentialCheckKey{}, check)
+}
+
+func credentialCheck(ctx context.Context) func() bool {
+	check, _ := ctx.Value(credentialCheckKey{}).(func() bool)
+	return check
+}
 
 // handleStream serves GET /api/stream (#44): a server-sent-events
 // connection birdcage holds open and writes to whenever an alert is
@@ -23,6 +51,11 @@ import (
 //   - A full subscriber cap in the hub returns 503 here rather than
 //     accepting an unbounded number of held-open connections -- the
 //     dashboard's poll keeps working regardless.
+//   - Every StreamRecheckInterval the sign-in layer is asked, through
+//     the check in the request context, whether the session or token
+//     the stream was opened with is still valid, and the stream ends
+//     when it is not. The browser's EventSource then reconnects and is
+//     turned away at the gate.
 //   - The client disconnecting (request context canceled) unsubscribes
 //     and ends the handler; nothing is left running.
 //   - Every write carries a deadline. Without one, a client that stops
@@ -72,8 +105,20 @@ func (h *handler) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	var recheck <-chan time.Time
+	check := credentialCheck(r.Context())
+	if check != nil && StreamRecheckInterval > 0 {
+		ticker := time.NewTicker(StreamRecheckInterval)
+		defer ticker.Stop()
+		recheck = ticker.C
+	}
+
 	for {
 		select {
+		case <-recheck:
+			if !check() {
+				return
+			}
 		case <-r.Context().Done():
 			return
 		case payload, open := <-ch:
