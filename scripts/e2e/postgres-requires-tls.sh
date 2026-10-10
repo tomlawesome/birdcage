@@ -20,6 +20,7 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 PREFIX="${E2E_PREFIX:-birdcage-e2e-tls-refusal}"
 IMAGE="$PREFIX-birdcage-image"
 NAME="$PREFIX-birdcage"
+KEY_VOL="$PREFIX-key"
 
 STEP=0
 step() { STEP=$((STEP + 1)); echo "step $STEP ($1): starting"; }
@@ -30,6 +31,7 @@ echo "== postgres-requires-tls =="
 cleanup() {
   docker rm --force "$NAME" >/dev/null 2>&1 || true
   docker image rm --force "$IMAGE" >/dev/null 2>&1 || true
+  docker volume rm --force "$KEY_VOL" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -37,6 +39,24 @@ step "build the shipped image"
 docker build --quiet --file "$REPO_ROOT/build/birdcage/Dockerfile" --tag "$IMAGE" "$REPO_ROOT" >/dev/null \
   || fail "building $IMAGE failed"
 ok "built $IMAGE"
+
+step "make a sign-in key"
+# Start-up asks for the sign-in key (#8, BIRDCAGE_AUTH_KEY_FILE) before
+# it looks at DATABASE_URL, so without one this would only ever see the
+# missing-key refusal. 32 fresh random bytes, made inside a container
+# straight into a volume (never the host, a log or the repository),
+# owned by the image's uid 1000, readable by it alone, mounted
+# read-only. $ALPINE_IMAGE is CI's dependency-proxy pin (refs #128).
+docker volume create "$KEY_VOL" >/dev/null || fail "creating $KEY_VOL failed"
+docker run --rm --volume "$KEY_VOL:/key" "${ALPINE_IMAGE:-alpine:3.24}" sh -c '
+set -eu
+umask 077
+head -c 32 /dev/urandom > /key/auth.key
+[ "$(wc -c < /key/auth.key)" -eq 32 ]
+chown 1000:1000 /key/auth.key
+chmod 400 /key/auth.key
+' || fail "making the sign-in key failed"
+ok "made a 32-byte key in $KEY_VOL"
 
 step "start birdcage with a plaintext-permitting DATABASE_URL"
 # sslmode=disable named explicitly rather than left unset: pgx's own
@@ -58,6 +78,8 @@ output="$(docker run --rm --name "$NAME" \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --cap-drop ALL --security-opt no-new-privileges \
   --pids-limit 64 --memory 256m \
+  --volume "$KEY_VOL:/auth:ro" \
+  --env BIRDCAGE_AUTH_KEY_FILE=/auth/auth.key \
   --env DATABASE_URL="postgres://postgres:refused@nowhere.invalid:5432/birdcage?sslmode=disable" \
   --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 \
   --env BIRDCAGE_DB_PATH=/tmp/birdcage.db \
