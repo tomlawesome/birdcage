@@ -111,11 +111,12 @@ type Service struct {
 	closeOnce sync.Once
 }
 
-// Open builds the sign-in layer over database. It logs the one-time
-// setup code (and, if they are due, the emergency unlock and escape
-// codes) on log, as gauntlet does by default, when there is no account
-// yet. It refuses a short key, a key that cannot open the stored
-// documents, and any setting gauntlet refuses.
+// Open builds the sign-in layer over database. When there is no account
+// yet it logs the one-time setup code on log, and the emergency unlock
+// code if one is due, in gauntlet's own words, but only once everything
+// below has opened: an Open that fails logs no code. It refuses a short
+// key, a key that cannot open the stored documents, and any setting
+// gauntlet refuses.
 //
 // Background work starts only once everything has opened: a daily token
 // sweep, the common-password list refresher when DataDir is set, and the
@@ -161,9 +162,15 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if err != nil {
 		return fail(fmt.Errorf("auth: seal accounts: %w", err))
 	}
+	// The setup and unlock codes are held until Open has fully succeeded
+	// (below), so an operator never copies a code from a process that
+	// then refused to start.
+	codes := &heldCodes{log: log}
 	users, err := gauntlet.OpenStore(accountsDoc, gauntlet.Options{
 		Log:               log,
 		ProductName:       productName,
+		OnSetupCode:       gauntlet.SetupCodeFunc(codes.setup),
+		OnUnlockCode:      gauntlet.UnlockCodeFunc(codes.unlock),
 		PasswordBlocklist: passwordList, // nil: gauntlet's built-in list
 		// BreachCheck stays nil: no Have I Been Pwned lookups (ADR-0016 decision 6).
 	})
@@ -279,7 +286,62 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if geo != nil {
 		s.loop(func() { geo.Run(loopCtx) })
 	}
+	codes.release()
 	return s, nil
+}
+
+// heldCodes keeps the one-time setup and unlock codes gauntlet announces
+// while the accounts store opens, and writes them to the log only once
+// Open has fully succeeded, in the words gauntlet's own default log line
+// uses. If Open fails they are never written. After release, a code
+// gauntlet announces later (it re-issues the setup code if a reload finds
+// no accounts) is logged at once.
+type heldCodes struct {
+	log *slog.Logger
+
+	mu       sync.Mutex
+	released bool
+	held     []func()
+}
+
+func (h *heldCodes) setup(code string) {
+	h.announce(func() {
+		h.log.Warn(fmt.Sprintf("no account exists yet -- create the first admin with setup code %s (valid until an account exists or this process restarts)", code))
+	})
+}
+
+func (h *heldCodes) unlock(username, code string) {
+	h.announce(func() {
+		h.log.Warn(fmt.Sprintf("sign-in for the admin account %q is disabled after %d failed attempts in a row, and no other admin can unlock it -- "+
+			"lift the disable with unlock code %s (valid until the account is unlocked or this process restarts; "+
+			"the admin then signs in with their existing password and second factor). "+
+			"Without it the disable lifts itself %s after it began",
+			username, gauntlet.MaxConsecutiveLoginFailures, code, gauntlet.LoginDisableDuration))
+	})
+}
+
+func (h *heldCodes) announce(write func()) {
+	h.mu.Lock()
+	if !h.released {
+		h.held = append(h.held, write)
+		h.mu.Unlock()
+		return
+	}
+	h.mu.Unlock()
+	write()
+}
+
+// release writes every held code, in the order announced, and lets later
+// ones through.
+func (h *heldCodes) release() {
+	h.mu.Lock()
+	h.released = true
+	held := h.held
+	h.held = nil
+	h.mu.Unlock()
+	for _, write := range held {
+		write()
+	}
 }
 
 // loop runs fn in the background until Close.
