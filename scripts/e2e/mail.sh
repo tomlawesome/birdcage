@@ -121,7 +121,7 @@ outbox_row() {
 
 # api_mail prints GET /api/mail's body.
 api_mail() {
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/mail'"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/mail'"
 }
 
 # The whole-journey cap on one attempt: the history tick that notices the

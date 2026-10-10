@@ -34,6 +34,11 @@
 #     certificates birdcage's own CA mints, and BIRDCAGE_ADVERTISE_HOST
 #     is the container name, so the canary reaches birdcage at the
 #     address that certificate actually covers.
+#   - The dashboard needs a sign-in (#8, ADR-0016): birdcage starts
+#     with a fresh sign-in key, and `up` creates the first admin from
+#     the setup code it logs, signs in with a password and an
+#     authenticator code, and mints the read API token every journey
+#     carries (sign_in below) -- the same steps an operator takes.
 #   - The canary is enrolled by running the `docker run` command
 #     `birdcage canary enrol` printed, not a hand-written equivalent --
 #     see run_printed_command below for the three things the test
@@ -70,6 +75,10 @@ WORK_VOL="$E2E_PREFIX-work"
 PG="$E2E_PREFIX-postgres"
 STATE_VOL="$E2E_PREFIX-state"
 LOG_VOL="$E2E_PREFIX-log"
+# The sign-in key (#8, ADR-0016): its own volume, mounted read-only into
+# birdcage and into nothing else -- not even the helper, which mounts
+# every other volume.
+KEY_VOL="$E2E_PREFIX-key"
 
 # Default tags are prefixed, which is also what makes `down` safe to
 # let remove them: it only ever deletes an image tag beginning with
@@ -136,6 +145,13 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 log() { echo "stack: $*" >&2; }
 die() { echo "stack: $*" >&2; exit 1; }
 
+# birdcage_log shows birdcage's log on stderr for a failure, with the
+# one-time setup code (#8) blanked: until the first admin exists, that
+# code is what makes whoever reads it the admin.
+birdcage_log() {
+  docker logs "$BIRDCAGE" 2>&1 | sed 's/with setup code [A-Za-z0-9-]*/with setup code <redacted>/' >&2 || true
+}
+
 # ---------------------------------------------------------------------
 # helper -- one throwaway container with curl, openssl and sqlite, on
 # the stack's network, holding every volume a journey needs to look
@@ -144,7 +160,7 @@ die() { echo "stack: $*" >&2; exit 1; }
 #
 # Mounts: /tls (the throwaway dashboard CA and leaf), /work (this
 # harness's own scratch: the enrolment output, birdcage's CA
-# certificate), /data (birdcage's data directory, read-only -- the
+# certificate, the dashboard API token's header file), /data (birdcage's data directory, read-only -- the
 # SQLite database and the CA live here), /state (the canary's state
 # directory, read-only -- its bearer token and client certificate).
 # ---------------------------------------------------------------------
@@ -164,6 +180,17 @@ helper_in() {
   docker run --rm --interactive \
     --volume "$WORK_VOL:/work" \
     "$HELPER_IMAGE" sh -c "$*"
+}
+
+# helper_script is helper with a script on stdin rather than a command
+# line: `sh -s -- <args>` reads it. For sign_in below, whose script is
+# two files of this checkout that the helper container cannot otherwise
+# see (under a remote Docker socket there is no shared filesystem).
+helper_script() {
+  docker run --rm --interactive --network "$NET" \
+    --volume "$TLS_VOL:/tls:ro" \
+    --volume "$WORK_VOL:/work" \
+    "$HELPER_IMAGE" sh -s -- "$@"
 }
 
 build_helper_image() {
@@ -240,6 +267,27 @@ chown 1000:1000 /tls/server.pem /tls/server-key.pem /tls/dashboard-ca.pem
 chmod 644 /tls/server.pem /tls/dashboard-ca.pem
 chmod 600 /tls/server-key.pem
 " || die "generating the throwaway dashboard CA and leaf failed"
+}
+
+# ---------------------------------------------------------------------
+# generate_auth_key -- the sign-in key birdcage seals its accounts and
+# API tokens under (#8, BIRDCAGE_AUTH_KEY_FILE): 32 fresh random bytes
+# per run, made inside a container straight into KEY_VOL, so they never
+# touch the host, a log or the repository. Owned by uid 1000 (the
+# birdcage image's user), readable by it alone, and mounted read-only.
+# A restart of birdcage (restart_birdcage, lifecycle.sh) reuses the same
+# volume, so the accounts and the journeys' token survive it, as they
+# would for an operator.
+# ---------------------------------------------------------------------
+generate_auth_key() {
+  docker run --rm --volume "$KEY_VOL:/key" "$HELPER_IMAGE" sh -c "
+set -eu
+umask 077
+head -c 32 /dev/urandom > /key/auth.key
+[ \"\$(wc -c < /key/auth.key)\" -eq 32 ]
+chown 1000:1000 /key/auth.key
+chmod 400 /key/auth.key
+" || die "generating the sign-in key failed"
 }
 
 # build_postgres_tls_image builds a one-line derived Postgres image
@@ -372,6 +420,8 @@ start_birdcage() {
     --pids-limit 128 --memory 512m --cpus 1.0 \
     --volume "$DATA_VOL:/var/lib/birdcage" \
     --volume "$TLS_VOL:/tls:ro" \
+    --volume "$KEY_VOL:/auth:ro" \
+    --env BIRDCAGE_AUTH_KEY_FILE=/auth/auth.key \
     --env BIRDCAGE_HTTP_ADDR=:8080 \
     "${dashboard_env[@]}" \
     --env BIRDCAGE_INGEST_ADDR=:8443 \
@@ -400,16 +450,19 @@ start_birdcage() {
     dashboard_cacert=/work/birdcage-ca.pem
   fi
 
+  # GET /api/auth/session is the one route that answers without a
+  # credential both before the first admin exists and after (#8): the
+  # rest of /api/ answers 503 until setup and 401 after it.
   local attempt
   for attempt in $(seq 1 60); do
-    if helper "curl -sS --cacert $dashboard_cacert https://$BIRDCAGE:8080/api/alerts" 2>/dev/null | grep -q '"alerts"'; then
+    if helper "curl -sS --cacert $dashboard_cacert https://$BIRDCAGE:8080/api/auth/session" 2>/dev/null | grep -q '"setupRequired"'; then
       log "dashboard answered over TLS on attempt $attempt"
       return 0
     fi
     sleep 1
   done
-  log "the dashboard never answered GET /api/alerts over TLS; birdcage log follows"
-  docker logs "$BIRDCAGE" >&2 || true
+  log "the dashboard never answered GET /api/auth/session over TLS; birdcage log follows"
+  birdcage_log
   die "birdcage did not become ready"
 }
 
@@ -440,6 +493,45 @@ restart_birdcage() {
 # build_postgres_tls_image already wrote the CA there.
 postgres_url() {
   printf 'postgres://postgres:e2e@%s:5432/birdcage?sslmode=verify-full&sslrootcert=/tls/postgres-ca.pem' "$PG"
+}
+
+# dashboard_cacert names, inside the helper, the CA a dashboard call
+# trusts: the throwaway one in cert mode, birdcage's own in own-ca mode.
+dashboard_cacert() {
+  case "$E2E_DASHBOARD_MODE" in
+    own-ca) echo /work/birdcage-ca.pem ;;
+    *) echo /tls/dashboard-ca.pem ;;
+  esac
+}
+
+# ---------------------------------------------------------------------
+# sign_in -- birdcage's dashboard needs a sign-in (#8, ADR-0016), so
+# before any journey can read it this creates the first admin with the
+# one-time setup code birdcage logged, enrols an authenticator app,
+# signs in and mints the read API token every journey carries
+# (scripts/e2e/first-admin.sh, which also checks the 503 before setup
+# and the refused wrong code -- the only moment either can be seen).
+# The token ends up in /work/dashboard-auth as a header line; journey.sh's
+# DASHBOARD_AUTH points curl at it.
+#
+# The setup code goes from birdcage's log to the work volume through a
+# pipe, never a command line or this script's output; first-admin.sh
+# deletes it as it reads it.
+# ---------------------------------------------------------------------
+sign_in() {
+  local code="" attempt
+  for attempt in $(seq 1 30); do
+    code="$(docker logs "$BIRDCAGE" 2>&1 | sed -n 's/.*with setup code \([A-Za-z0-9-]*\).*/\1/p' | tail -1)"
+    [ -n "$code" ] && break
+    sleep 1
+  done
+  [ -n "$code" ] || die "birdcage never logged a setup code for the first admin"
+  printf '%s\n' "$code" | helper_in "umask 077; cat > /work/setup-code" \
+    || die "could not hand the setup code to the helper"
+  code=""
+  cat "$REPO_ROOT/scripts/e2e/totp.sh" "$REPO_ROOT/scripts/e2e/first-admin.sh" \
+    | helper_script "https://$BIRDCAGE:8080" "$(dashboard_cacert)" >&2 \
+    || { log "signing in to the dashboard failed; birdcage log follows"; birdcage_log; die "the first admin could not sign in"; }
 }
 
 # copy_birdcage_ca puts birdcage's *own* CA certificate (the one that
@@ -664,11 +756,12 @@ up() {
 
   docker network create "$NET" >/dev/null || die "creating network $NET failed"
   local vol
-  for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL"; do
+  for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL" "$KEY_VOL"; do
     docker volume create "$vol" >/dev/null || die "creating volume $vol failed"
   done
 
   generate_tls
+  generate_auth_key
   if [ "$E2E_BACKEND" = postgres ] && [ -z "${E2E_DATABASE_URL:-}" ]; then
     build_postgres_tls_image
     start_postgres
@@ -676,6 +769,7 @@ up() {
   fi
   start_birdcage
   copy_birdcage_ca
+  sign_in
   start_holder
   enrol_canary
   run_printed_command
@@ -683,9 +777,10 @@ up() {
   wait_for_enrolment
 
   # The environment every journey consumes. Nothing secret is printed:
-  # the deploy token and the canary's bearer token stay in volumes, and
-  # a journey that needs one asks for it (`stack.sh deploy-token`, or
-  # reads /state inside `stack.sh helper`).
+  # the deploy token, the canary's bearer token and the dashboard API
+  # token stay in volumes, and a journey that needs one asks for it
+  # (`stack.sh deploy-token`, reads /state inside `stack.sh helper`, or
+  # hands curl journey.sh's DASHBOARD_AUTH).
   cat <<EOF
 export E2E_PREFIX=$E2E_PREFIX
 export E2E_STACK=$REPO_ROOT/scripts/e2e/stack.sh
@@ -734,7 +829,7 @@ down() {
   cleanup_step "birdcage container" docker rm --force "$BIRDCAGE"
   cleanup_step "postgres container" docker rm --force "$PG"
   local vol
-  for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL"; do
+  for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL" "$KEY_VOL"; do
     cleanup_step "volume $vol" docker volume rm --force "$vol"
   done
   cleanup_step "network $NET" docker network rm "$NET"

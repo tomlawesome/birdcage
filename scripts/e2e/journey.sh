@@ -70,6 +70,15 @@ fail() {
 E2E_HELPER_TIMEOUT="${E2E_HELPER_TIMEOUT:-20}"
 helper() { timeout "$E2E_HELPER_TIMEOUT" "$E2E_STACK" helper "$@"; }
 
+# DASHBOARD_AUTH signs a dashboard API call (#8): every route under
+# /api/ answers 401 without a credential. It is curl's `-H @file`, the
+# header line `Authorization: Bearer <read API token>` that stack.sh's
+# sign_in left in the work volume, so the token is read inside the
+# helper and never appears on a command line or in a log:
+#
+#   helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts'"
+DASHBOARD_AUTH='-H @/work/dashboard-auth'
+
 # poll retries a command until it succeeds, bounded. The bound is part
 # of the failure message the caller writes, so a journey never waits
 # forever and never reports "it failed" without saying how long it
