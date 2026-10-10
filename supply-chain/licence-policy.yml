@@ -128,6 +128,10 @@ allow-npm-licenses:
 # carries "License-Expression: MIT" in its own METADATA -- unlike
 # 78.1.1, it matches the allow-python-licenses MIT entry above directly,
 # so its individual exception below was deleted rather than re-pinned.
+# #179 then dropped setuptools from the lock altogether: it vendors
+# autocommand (LGPLv3), and nothing the image runs imports it --
+# opencanary declares it but never imports it, and 83.0.0 no longer
+# ships pkg_resources. Owner, 2026-10-10: remove rather than except.
 #
 # ordereddict==1.1's individual exception below was deleted for a
 # different reason: the package itself is gone. It was a transitive pin
@@ -145,9 +149,6 @@ allow-python-licenses:
   - MIT-0
   # cffi. Same permissive MIT-minus-attribution licence already allowed
   # for npm above.
-  - Apache-2.0
-  # importlib_metadata, vendored inside setuptools (#179). The SPDX form
-  # of the licence already allowed below as "Apache Software License".
   - Apache Software License
   # The Classifier form of Apache-2.0 -- needed by bcrypt, ntlmlib,
   # pyopenssl and requests, whose own raw License: fields disagree on
@@ -247,6 +248,4 @@ python-bundled-assets:
   # Twisted's own API-docs templates; no third-party notice.
   - urllib3@2.7.0 urllib3/contrib/emscripten/ MIT
   # urllib3's own browser fetch worker; no third-party notice.
-  - setuptools@83.0.0 setuptools/tests/indexes/ MIT
-  # setuptools' own test fixture pages; no third-party notice.
 
