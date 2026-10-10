@@ -6,7 +6,7 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/tomlawesome/gauntlet v0.4.1
+	github.com/tomlawesome/gauntlet v0.4.2
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0

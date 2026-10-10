@@ -61,8 +61,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/tinylib/msgp v1.6.4 h1:mOwYbyYDLPj35mkA2BjjYejgJk9BuHxDdvRnb6v2ZcQ=
 github.com/tinylib/msgp v1.6.4/go.mod h1:RSp0LW9oSxFut3KzESt5Voq4GVWyS+PSulT77roAqEA=
-github.com/tomlawesome/gauntlet v0.4.1 h1:z4k3N4NmwEERwt8pFe/L7SliGTB9lwckLI9C+hnEMj0=
-github.com/tomlawesome/gauntlet v0.4.1/go.mod h1:ps9ZjgV55DkVxv7U5MRXPL2P5F6gvPsiWi3pdFbNG38=
+github.com/tomlawesome/gauntlet v0.4.2 h1:U36Deu0ipk9QycjuEEUVL4fVlIE2pWd3jyHxDbnjd2c=
+github.com/tomlawesome/gauntlet v0.4.2/go.mod h1:ps9ZjgV55DkVxv7U5MRXPL2P5F6gvPsiWi3pdFbNG38=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=

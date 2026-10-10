@@ -34,6 +34,11 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
+// sessionIdle is how long a session may sit unused before it ends
+// (ADR-0016 decision 6). It is a variable only so tests can shorten it,
+// through export_test.go.
+var sessionIdle = gauntlet.MaxSessionIdle
+
 const (
 	// productName is the deployment's name in authenticator-app and
 	// passkey prompts, and a word no password may be.
@@ -218,7 +223,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if err != nil {
 		return fail(fmt.Errorf("auth: login limiter: %w", err))
 	}
-	sessions := gauntlet.NewSessionStore(gauntlet.MaxSessionIdle, gauntlet.MaxSessionLifetime)
+	sessions := gauntlet.NewSessionStore(sessionIdle, gauntlet.MaxSessionLifetime)
 
 	deps := gate.Deps{Users: users, Sessions: sessions, Tokens: tokens, Limiter: limiter, SignIns: signIns}
 
@@ -403,29 +408,16 @@ func (s *Service) CountryLookupEnabled() bool { return s.geo != nil }
 // Each request dashboard receives carries api.WithCredentialCheck: a
 // function that asks again whether the request's credential is still
 // valid, so a long-lived response (the event stream) can end after
-// sign-out or a token revoke. The answer comes from gauntlet itself: the check sends a
-// copy of the request through the same gate and reports whether it was
-// let through, so every rule gauntlet applies at the door (session
-// expiry, ended sessions, revoked or expired tokens, a forced password
-// change) applies here too, and nothing is duplicated. As with any
-// request through the gate, a passing check keeps a session from timing
-// out through inactivity.
+// sign-out or a token revoke. The answer comes from gauntlet itself:
+// the check calls (*gate.Gate).StillSignedIn, which applies every rule
+// the gate applies at the door (session expiry, ended sessions, revoked
+// or expired tokens, a forced password change) and so nothing is
+// duplicated here. Unlike a request through the gate, it changes
+// nothing: it does not extend the session's idle expiry, so an open
+// stream idles its session out like any other client (#190).
 func (s *Service) Wrap(dashboard http.Handler) http.Handler {
-	var protected http.Handler
-
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := r.Context().Value(probeKey{}).(*probe); ok {
-			// A re-check that got past the gate: say so, send nothing.
-			p.passed = true
-			return
-		}
-		check := func() bool {
-			p := &probe{}
-			pr := r.Clone(context.WithValue(r.Context(), probeKey{}, p))
-			pr.Method, pr.Body, pr.ContentLength = http.MethodGet, http.NoBody, 0
-			protected.ServeHTTP(&discardResponse{header: http.Header{}}, pr)
-			return p.passed
-		}
+		check := func() bool { return s.gate.StillSignedIn(r) == nil }
 		dashboard.ServeHTTP(w, r.WithContext(api.WithCredentialCheck(r.Context(), check)))
 	})
 	s.gate.Handle(gauntlet.TokenKindAPI, guarded)
@@ -436,26 +428,13 @@ func (s *Service) Wrap(dashboard http.Handler) http.Handler {
 	inner.Handle("/api/tokens", routes)
 	inner.Handle("/api/tokens/", routes)
 	inner.Handle("/api/", guarded)
-	protected = s.gate.Protect(inner)
+	protected := s.gate.Protect(inner)
 
 	outer := http.NewServeMux()
 	outer.Handle("/api/", protected)
 	outer.Handle("/", dashboard)
 	return outer
 }
-
-// probeKey marks a credential re-check travelling through the gate; its
-// value is the *probe the re-check reads the outcome from.
-type probeKey struct{}
-
-type probe struct{ passed bool }
-
-// discardResponse takes whatever the gate writes to refuse a re-check.
-type discardResponse struct{ header http.Header }
-
-func (d *discardResponse) Header() http.Header         { return d.header }
-func (d *discardResponse) Write(b []byte) (int, error) { return len(b), nil }
-func (d *discardResponse) WriteHeader(int)             {}
 
 // geoConfig builds the country-data settings, or reports false when no
 // provider is configured.

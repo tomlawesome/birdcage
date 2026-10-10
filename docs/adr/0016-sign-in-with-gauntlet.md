@@ -1,4 +1,4 @@
-# ADR-0016: Sign-in through gauntlet v0.4.1, stored as sealed documents in birdcage's own database
+# ADR-0016: Sign-in through gauntlet v0.4.2, stored as sealed documents in birdcage's own database
 
 **Status:** Accepted (owner rulings 2026-10-10 on #8)
 **Date:** 2026-10-10
@@ -13,7 +13,7 @@ The dashboard has no sign-in: `requireAuth` (`internal/api/api.go`) is a
 placeholder that lets every request through, and the dashboard API is kept
 read-only so that this costs nothing worse than a read (#124, #135).
 ADR-0005 moved authentication into gauntlet, which is now released
-(v0.4.1) and ready to embed. Gauntlet owns no database: each app saves its
+(v0.4.2) and ready to embed. Gauntlet owns no database: each app saves its
 stores through a `persist.Backend` it writes over its own storage.
 
 The canary side is untouched: enrolment (`/enrol/*`, one-time enrolment
@@ -22,7 +22,7 @@ on their own listeners and never pass through the dashboard's sign-in.
 
 ## Decisions
 
-1. **Dependency.** `github.com/tomlawesome/gauntlet` v0.4.1, fetched from
+1. **Dependency.** `github.com/tomlawesome/gauntlet` v0.4.2, fetched from
    the Git host, never through proxy.golang.org or sum.golang.org:
    `GOPRIVATE=github.com/tomlawesome/*` locally and in every CI job that
    resolves modules. Modules gauntlet brings in are approved by reference
@@ -67,9 +67,12 @@ on their own listeners and never pass through the dashboard's sign-in.
    maximums (1 hour idle, 1 day total). API tokens expire after a year;
    `Gate.SweepTokens` runs daily. The common-password list refresher is
    on (gauntlet ADR-0007; the outbound fetch is documented); Have I Been
-   Pwned is off. Birdcage issues no gauntlet ingest tokens: canaries keep
-   their own credentials, so ruling 4's "ingest tokens never expire" has
-   nothing to apply to.
+   Pwned is off. An open `/api/stream` is re-checked through
+   `Gate.StillSignedIn` (gauntlet v0.4.2), which asks whether `Protect`
+   would still admit the request but extends nothing, so an open tab
+   idles out like any other client (#190). Birdcage issues no gauntlet
+   ingest tokens: canaries keep their own credentials, so ruling 4's
+   "ingest tokens never expire" has nothing to apply to.
 7. **History, passkey-alone, SSO roles (rulings 8-10).** Sign-in history
    is recorded from the start (the page waits on #189); passkey-alone
    sign-in and SSO group roles are off.

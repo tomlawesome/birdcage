@@ -54,7 +54,9 @@ func credentialCheck(ctx context.Context) func() bool {
 //   - Every StreamRecheckInterval the sign-in layer is asked, through
 //     the check in the request context, whether the session or token
 //     the stream was opened with is still valid, and the stream ends
-//     when it is not. The browser's EventSource then reconnects and is
+//     when it is not. The check only reads: it does not extend a
+//     session's idle expiry, so an open stream does not keep a session
+//     signed in (#190). The browser's EventSource then reconnects and is
 //     turned away at the gate.
 //   - The client disconnecting (request context canceled) unsubscribes
 //     and ends the handler; nothing is left running.
