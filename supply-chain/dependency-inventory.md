@@ -341,6 +341,7 @@ review's brief:
 | 194 | `python:3.13-slim-trixie` | 3.13-slim-trixie | 3.13.13-slim-trixie is the current patch, but Python 3.14 is now the latest major release line (endoflife.date, verified). | PSF-2.0 (CPython) + Debian's licences | direct | Python Software Foundation, image built by the Docker Official Images team | very high (mainstream, widely deployed) | Build-only -- build stage, discarded before the runtime image | Predates the rule -- not individually recorded |
 | 230 | `golang:1.27.2-alpine` (by digest) (holder's build stage) | 1.27.2-alpine, pinned by index digest (#188) | 1.27.2-alpine (current, 2026-10-10) | BSD-3-Clause (Go) + Alpine's own licences | direct | Go team (Google), image built by the Docker Official Images team | very high (mainstream, widely deployed) | Build-only -- build stage in `build/holder/Dockerfile`, discarded before the `scratch` runtime image | Predates the rule -- not individually recorded |
 | 231 | `golang:1.27.2-alpine` (by digest) (nightjar's build stage) | 1.27.2-alpine, pinned by index digest (#188) | 1.27.2-alpine (current, 2026-10-10) | BSD-3-Clause (Go) + Alpine's own licences | direct | Go team (Google), image built by the Docker Official Images team | very high (mainstream, widely deployed) | Build-only -- build stage in `build/nightjar/Dockerfile`, discarded before the distroless runtime image (row 192) | Predates the rule -- not individually recorded |
+| 232 | `git (apk package, birdcage's Go build stage)` | `2.54.0-r0`, pinned exactly -- `apk add --no-cache git=2.54.0-r0` in the `backend` stage of `build/birdcage/Dockerfile` | `2.54.0-r0` -- current in Alpine 3.24's `main` repository, read with `apk policy git` in the stage's own pinned `golang:1.27.2-alpine` image, 2026-10-10 | GPL-2.0-only | direct | Git project (Software Freedom Conservancy), packaged by Alpine Linux | very high (mainstream, widely deployed) | Build-only -- lets `go mod download` fetch `github.com/tomlawesome/gauntlet` from its Git host with `GOPRIVATE` set, never through proxy.golang.org (ADR-0016 decision 1); the runtime stage copies only `/out/birdcage` and `/var/lib/birdcage`, so git never ships. `scripts/go-fetch-guard.py` (`lint:ci`) refuses git in any other image or in a final stage | Approved -- #8, owner, 2026-10-10 (answer 3a): "if git doesn't end up in any user images, that's fine" |
 
 ### E. CI runner images, `.gitlab-ci.yml` (not shipped -- only run the pipeline's own jobs)
 
@@ -449,13 +450,14 @@ birdcage nor shipped in any image -- the same footing as `golangci-lint`
 
 ## Summary, by approval status
 
-231 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
+232 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
 3 in section F, 2 in section J, 2 in section K, 2 more in section D found in this
-review -- holder's and nightjar's own golang build stages).
+review -- holder's and nightjar's own golang build stages -- and 1 more in section D
+for #8: git in birdcage's Go build stage, row 232).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 9 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28) |
+| Approved, with issue number | 10 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 51 (every other **direct** dependency, including `debian:trixie-slim`, row 224, and holder's/nightjar's golang build stages, rows 230-231) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 223) |

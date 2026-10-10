@@ -234,6 +234,11 @@ lint:ci:
     # is the record; this is the check that it is still true.
     - python3 scripts/action-pins-check.py
     - scripts/action-pins-check.test.sh
+    # The image builds' half of GOPRIVATE above (ADR-0016 decision 1, #8):
+    # every Go build stage under build/ keeps the owner's modules off
+    # proxy.golang.org, and only birdcage's build stage carries git.
+    - python3 scripts/go-fetch-guard.py
+    - scripts/go-fetch-guard.test.sh
 
 # ---------------------------------------------------------------------------
 # Every scripts/*.test.sh, in one job (#100). Before this, three of the
