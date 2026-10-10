@@ -93,7 +93,11 @@ func loadAuthConfig(getenv func(string) string, dataDir string, secureCookie boo
 	}
 
 	cfg.AdminPasskeyOverride = getenv(envAuthAdminPasskey)
-	if _, err := auth.AdminPasskeyRule(cfg.PublicURL, cfg.PublicURL != "", cfg.AdminPasskeyOverride); err != nil {
+	// "required" is refused here, not at the first sign-in, when browsers
+	// cannot make a passkey for the public address (an IP address, or
+	// plain http on a name other than localhost): no admin could ever
+	// satisfy it.
+	if _, err := auth.AdminPasskeyRule(cfg.PublicURL, auth.PasskeysUsable(cfg.PublicURL), cfg.AdminPasskeyOverride); err != nil {
 		return refuse("%v", err)
 	}
 	if cfg.AdminPasskeyOverride != "" {

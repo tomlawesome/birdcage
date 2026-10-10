@@ -6,8 +6,20 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tomlawesome/gauntlet"
 	"github.com/tomlawesome/gauntlet/gate"
+	"github.com/tomlawesome/gauntlet/passkey"
 )
+
+// PasskeysUsable reports whether browsers can make passkeys for
+// publicURL, by asking gauntlet's passkey package the same question the
+// sign-in layer asks when it is opened: an https address on a domain name,
+// or http on localhost. An empty URL, an IP address and plain http
+// elsewhere are not.
+func PasskeysUsable(publicURL string) bool {
+	rp, err := passkey.New(passkey.Config{PublicURL: publicURL, DisplayName: productName})
+	return err == nil && rp.Status() == gauntlet.PasskeyStatusReady
+}
 
 // AdminPasskeyRule decides whether every admin must hold a passkey
 // (ADR-0016 decision 5, which settles #180).
@@ -19,9 +31,9 @@ import (
 // address, plain http, or no public URL at all (passkeys not wired).
 //
 // override is BIRDCAGE_AUTH_ADMIN_PASSKEY: "required", "optional", or
-// empty for the default above. "required" while passkeys are not wired
-// is an error, because no admin could ever satisfy it. Any other value
-// is an error.
+// empty for the default above. "required" while passkeys are not usable
+// (passkeysWired false: see PasskeysUsable) is an error, because no admin
+// could ever satisfy it. Any other value is an error.
 func AdminPasskeyRule(publicURL string, passkeysWired bool, override string) (gate.AdminPasskeyRule, error) {
 	switch strings.ToLower(strings.TrimSpace(override)) {
 	case "":
@@ -33,7 +45,8 @@ func AdminPasskeyRule(publicURL string, passkeysWired bool, override string) (ga
 		return gate.AdminPasskeyOptional, nil
 	case "required":
 		if !passkeysWired {
-			return "", fmt.Errorf("BIRDCAGE_AUTH_ADMIN_PASSKEY=required needs passkeys, which are wired only when BIRDCAGE_PUBLIC_URL is set; set it, or use optional")
+			return "", fmt.Errorf("BIRDCAGE_AUTH_ADMIN_PASSKEY=required needs passkeys that browsers can make, which need BIRDCAGE_PUBLIC_URL to be an https address on a domain name (or http://localhost); it is %s. Set it to one, or use BIRDCAGE_AUTH_ADMIN_PASSKEY=optional",
+				describePublicURL(publicURL))
 		}
 		return gate.AdminPasskeyRequired, nil
 	default:
@@ -50,4 +63,12 @@ func httpsOnDomainName(publicURL string) bool {
 	}
 	host := u.Hostname()
 	return host != "" && net.ParseIP(host) == nil
+}
+
+// describePublicURL words the setting for an error message.
+func describePublicURL(publicURL string) string {
+	if publicURL == "" {
+		return "not set"
+	}
+	return fmt.Sprintf("%q", publicURL)
 }

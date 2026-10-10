@@ -210,14 +210,17 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 
 	deps := gate.Deps{Users: users, Sessions: sessions, Tokens: tokens, Limiter: limiter, SignIns: signIns}
 
-	// Passkeys are wired only when there is a public URL to anchor them to.
-	passkeysWired := cfg.PublicURL != ""
-	if passkeysWired {
+	// Passkeys are wired only when there is a public URL to anchor them to;
+	// they work only where browsers can make them (an IP address or plain
+	// http cannot), which is what the admin passkey rule asks about.
+	passkeysWired := false
+	if cfg.PublicURL != "" {
 		rp, err := passkey.New(passkey.Config{PublicURL: cfg.PublicURL, DisplayName: productName})
 		if err != nil {
 			return fail(fmt.Errorf("auth: passkeys: %w", err))
 		}
 		deps.Passkeys = rp
+		passkeysWired = rp.Status() == gauntlet.PasskeyStatusReady
 	}
 	rule, err := AdminPasskeyRule(cfg.PublicURL, passkeysWired, cfg.AdminPasskeyOverride)
 	if err != nil {
