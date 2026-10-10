@@ -250,6 +250,9 @@ first account is always an admin. Accounts that use a password must also
 add a second factor (an authenticator app or a passkey) before they can
 reach anything. A restart signs everyone out.
 
+Sign-in and account events (sign-ins, failed sign-ins, API token creation
+and revocation, and the like) are written to the audit log.
+
 | Setting | Needed | What it does |
 | --- | --- | --- |
 | `BIRDCAGE_AUTH_KEY_FILE` | **yes** | Path to a file of at least 32 bytes that every sign-in store is sealed under. Birdcage will not start without it. |

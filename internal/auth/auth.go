@@ -284,6 +284,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 			return ClientIPWith(r, cfg.TrustedProxies, cfg.TrustUnixSocket, cfg.ClientIPHeader)
 		},
 		AdminPasskey: rule,
+		Audit:        auditor{db: database, log: log},
 		// PasskeySignIn stays off, and UnusualSignIns at gauntlet's default
 		// (flag): ADR-0016 decisions 7 and 9.
 	}
