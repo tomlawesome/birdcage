@@ -21,7 +21,7 @@ not this table -- is the live figure.
 ## Approved third-party modules (the ledger)
 
 This is the single record of what the owner has approved; the rows below
-carry the evidence. The global rule (dependencies-and-data skill) is: no
+carry the evidence. The owner's rule is: no
 third-party module without the owner's explicit approval, on its issue, with
 provenance. Approved for this project, with the issue that records the
 decision:
@@ -473,7 +473,7 @@ container in `e2e:poisoner` and is never linked into or copied into any
 shipped image -- the same footing as `grype`, which the owner did approve
 explicitly (the ledger above, #108). Two things worth a decision:
 
-- The rule (dependencies-and-data skill) is "no third-party module without the owner's explicit
+- The owner's rule is "no third-party module without the owner's explicit
   approval". This was added on the coordinator's direction for #86 slice C,
   which is not the owner's approval. It needs either that approval or a
   recorded exception.

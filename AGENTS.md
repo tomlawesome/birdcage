@@ -6,8 +6,8 @@ Outside pull requests are not accepted at all — see `CONTRIBUTING.md`.
 
 GitLab-first: `gitlab.tomlawson.io/ai/birdcage` (project 51, default branch
 `dev`) holds branches, merge requests, issues and the gate
-(`.gitlab-ci.yml`). Remote `gitlab` is primary; `origin` is the GitHub mirror
-`tomlawesome/birdcage`, which keeps CodeQL, dependency review and the manual
+(`.gitlab-ci.yml`). Remote `gitlab` is primary; `origin` is the read-only GitHub
+mirror `tomlawesome/birdcage`, which keeps CodeQL, dependency review and the manual
 countersigning workflow (#90). It has no issues and no pull requests.
 Countersigning runs only on GitHub, because Sigstore's issuer list has no
 self-hosted GitLab; the owner starts it by hand after a release. No GitHub credential on this
@@ -33,7 +33,8 @@ Procedure: `docs/releasing.md`. Two rules, enforced by
 `scripts/ci-release-guard.py`: no job both judges an artefact and ships it,
 and exactly one job may sign. The version lives in `VERSION` and is read
 only through `scripts/release-version.sh`. Licence gates:
-`scripts/licence-check*.sh`, policy in `supply-chain/licence-policy.yml`.
+`scripts/licence-check.sh` (Go), `-npm.sh`, `-python.sh` (OpenCanary image);
+policy and owner-accepted exceptions in `supply-chain/licence-policy.yml`.
 
 The Python gate also looks inside each package (#179): vendored packages
 (a `.dist-info` below the top level) face the same rules, and every image,

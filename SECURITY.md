@@ -386,7 +386,7 @@ only at the point that text is displayed, per surface:
 Two scanners run in the `lint` stage of `.gitlab-ci.yml`, on every merge
 request and on `dev`. Neither is linked into birdcage or shipped in any
 image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
-"Approved third-party modules").
+"Approved third-party modules (the ledger)").
 
 - **`lint:govulncheck`** (issue #51) runs `govulncheck ./...` against the
   Go toolchain version `go.mod` names, checking the module graph and the
