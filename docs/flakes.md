@@ -195,5 +195,8 @@ loop only starts after the first cycle's drop is logged. No sleep left.
   `scripts/e2e/startup-refusals.sh` on a shared host · step 1 (sign-in key
   unset) was killed by its 15 s `timeout` although the container had
   already logged the refusal; the same image exits in about a second when
-  run alone, and the rerun straight after passed all five steps. The first
-  `docker run` of the session on a busy daemon, most likely.
+  run alone, and the rerun straight after passed all five steps. Cause
+  unknown: a slow first `docker run` on a busy daemon would fit, but so
+  would a real hang -- birdcage logging its refusal and then not exiting
+  -- so a refusal outliving the 15 s bound again is not to be waved off as
+  this flake without looking.

@@ -17,7 +17,7 @@
 // document's title and detail only, which gauntlet never puts a secret
 // in.
 import { createHmac, randomBytes } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const USERNAME = 'e2e-admin'
@@ -33,6 +33,32 @@ export function writeAuthKeyFile(dir) {
   const path = join(dir, 'auth.key')
   writeFileSync(path, randomBytes(32), { mode: 0o400 })
   return path
+}
+
+/** Removes dir (and the sign-in key in it) on every way out the process
+ * can handle: a normal exit, process.exit after an error, and SIGINT or
+ * SIGTERM, which would otherwise end Node without running any cleanup.
+ * A signal exits with 128 + its number, as a shell reports it. proc is
+ * process, or a stand-in for the tests. Returns the cleanup, which is
+ * safe to call more than once. */
+export function removeOnExit(dir, proc = process) {
+  const remove = () => rmSync(dir, { recursive: true, force: true })
+  proc.on('exit', remove)
+  for (const [signal, number] of [['SIGINT', 2], ['SIGTERM', 15]]) {
+    proc.on(signal, () => {
+      remove()
+      proc.exit(128 + number)
+    })
+  }
+  return remove
+}
+
+/** birdcage's log with the one-time setup and unlock codes blanked: the
+ * setup code makes whoever reads it the first admin, and the unlock code
+ * (logged after repeated failed admin sign-ins) lifts that admin's
+ * disable. Same pattern as scripts/e2e/stack.sh's birdcage_log. */
+export function redactCodes(log) {
+  return log.replace(/with (setup|unlock) code [A-Za-z0-9-]+/g, 'with $1 code <redacted>')
 }
 
 /** The setup code from birdcage's log line ("... with setup code

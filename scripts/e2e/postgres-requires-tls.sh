@@ -25,7 +25,14 @@ KEY_VOL="$PREFIX-key"
 STEP=0
 step() { STEP=$((STEP + 1)); echo "step $STEP ($1): starting"; }
 ok() { echo "  ok   $*"; }
-fail() { echo "step $STEP FAILED: $*" >&2; exit 1; }
+# Messages below quote birdcage's whole output, so the one-time setup
+# and unlock codes (#8) it may log are blanked first, as stack.sh's
+# birdcage_log does: either one hands whoever reads it an admin account.
+fail() {
+  printf 'step %s FAILED: %s\n' "$STEP" "$*" \
+    | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2
+  exit 1
+}
 
 echo "== postgres-requires-tls =="
 cleanup() {

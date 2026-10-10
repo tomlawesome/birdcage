@@ -1007,8 +1007,8 @@ test:image:birdcage:
         fi
         sleep 1
         if [ "$attempt" = 20 ]; then
-          echo "/api/auth/session never answered; container log follows (setup code blanked)"
-          docker logs "$APP" 2>&1 | sed 's/with setup code [A-Za-z0-9-]*/with setup code <redacted>/'
+          echo "/api/auth/session never answered; container log follows (setup and unlock codes blanked)"
+          docker logs "$APP" 2>&1 | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g'
           exit 1
         fi
       done

@@ -146,10 +146,12 @@ log() { echo "stack: $*" >&2; }
 die() { echo "stack: $*" >&2; exit 1; }
 
 # birdcage_log shows birdcage's log on stderr for a failure, with the
-# one-time setup code (#8) blanked: until the first admin exists, that
-# code is what makes whoever reads it the admin.
+# one-time setup and unlock codes (#8) blanked: until the first admin
+# exists, the setup code makes whoever reads it the admin, and the
+# unlock code (logged after repeated failed admin sign-ins) lifts that
+# admin's sign-in disable.
 birdcage_log() {
-  docker logs "$BIRDCAGE" 2>&1 | sed 's/with setup code [A-Za-z0-9-]*/with setup code <redacted>/' >&2 || true
+  docker logs "$BIRDCAGE" 2>&1 | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2 || true
 }
 
 # ---------------------------------------------------------------------
@@ -740,7 +742,7 @@ wait_for_enrolment() {
   log "opencanary log follows"
   docker logs "$OPENCANARY" >&2 || true
   log "birdcage log follows"
-  docker logs "$BIRDCAGE" >&2 || true
+  birdcage_log
   die "enrolment never completed"
 }
 

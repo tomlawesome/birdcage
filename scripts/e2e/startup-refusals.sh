@@ -29,11 +29,16 @@ step() {
   echo "step $STEP_NUMBER ($STEP_NAME): starting"
 }
 ok() { echo "  ok   $*"; }
+# redact blanks the one-time setup and unlock codes (#8) birdcage logs,
+# as stack.sh's birdcage_log does: either one hands whoever reads the
+# output an admin account. Both the message (which can quote the
+# output) and the output itself go through it.
+redact() { sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g'; }
 fail() {
   local message="$1" name="$2" log="$3"
-  echo "step $STEP_NUMBER ($STEP_NAME) FAILED: $message" >&2
+  printf 'step %s (%s) FAILED: %s\n' "$STEP_NUMBER" "$STEP_NAME" "$message" | redact >&2
   echo "--- container output ($name) ---" >&2
-  printf '%s\n' "$log" >&2
+  printf '%s\n' "$log" | redact >&2
   exit 1
 }
 

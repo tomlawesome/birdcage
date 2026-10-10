@@ -35,9 +35,9 @@
 // already set -- the sign-in screens are a later slice of #8.
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { getFreePorts } from './ports.mjs'
-import { setupCodeFrom, signInFirstAdmin, writeAuthKeyFile } from './signin.mjs'
+import { redactCodes, removeOnExit, setupCodeFrom, signInFirstAdmin, writeAuthKeyFile } from './signin.mjs'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -109,6 +109,10 @@ function parseEnrolOutput(output) {
 
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), 'birdcage-smoke-'))
+  // The sign-in key lands in workDir, so it goes on every way out: the
+  // early process.exit refusals below, a throw caught by main().catch,
+  // and Ctrl-C or a CI cancel's SIGTERM -- not only the finally below.
+  const removeWorkDir = removeOnExit(workDir)
   const caDir = join(workDir, 'ca')
 
   // Postgres (issue #81) when DATABASE_URL is set -- must already carry
@@ -171,7 +175,7 @@ async function main() {
   const { pin, token } = parseEnrolOutput(enrolOutput)
   ok(`minted a deploy token, pin=${pin.slice(0, 8)}...`)
 
-  // 32 fresh random bytes, mode 0400, removed with workDir at the end.
+  // 32 fresh random bytes, mode 0400, removed with workDir on the way out.
   const authKeyFile = writeAuthKeyFile(workDir)
 
   console.log(`\nstarting ${BIRDCAGE_BIN} on 127.0.0.1:${httpPort}...`)
@@ -404,13 +408,13 @@ async function main() {
   } finally {
     if (browser) await browser.close()
     birdcage.kill()
-    rmSync(workDir, { recursive: true, force: true })
+    removeWorkDir()
   }
 
   if (!ok_) {
-    // The one-time setup code is blanked: until the first admin exists,
-    // it is what makes whoever reads it the admin.
-    console.error('\nbirdcage log:\n' + birdcageLog.replace(/with setup code [A-Za-z0-9-]+/g, 'with setup code <redacted>'))
+    // The one-time setup and unlock codes are blanked: either one hands
+    // whoever reads the log an admin account.
+    console.error('\nbirdcage log:\n' + redactCodes(birdcageLog))
     console.error(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`)
     process.exit(1)
   }

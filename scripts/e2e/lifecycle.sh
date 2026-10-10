@@ -240,8 +240,10 @@ docker stop "$E2E_BIRDCAGE" >/dev/null || fail "could not stop $E2E_BIRDCAGE" "$
 helper "{ printf 'USER x\\r\\nPASS y\\r\\nQUIT\\r\\n'; sleep 2; } | nc -w 5 $E2E_CANARY 21" >/dev/null \
   || fail "the FTP login attempt could not be sent to $E2E_CANARY:21 while birdcage was down" "$E2E_CANARY"
 docker start "$E2E_BIRDCAGE" >/dev/null || fail "could not start $E2E_BIRDCAGE again" "$E2E_BIRDCAGE"
-poll 60 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=ftp'" \
-  || fail "the dashboard never answered GET /api/alerts again after restarting birdcage" "$E2E_BIRDCAGE"
+# "Back" means 200: a bare curl exits 0 for a 401 or a 503 too, which
+# would count a birdcage that answers but refuses this session as back.
+poll 60 helper "curl -sS -o /dev/null -w '%{http_code}' --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=ftp' | grep -qx 200" \
+  || fail "the dashboard never answered GET /api/alerts with 200 again after restarting birdcage" "$E2E_BIRDCAGE"
 # A plain poll (journey.sh) only checks exit status, and `stack.sh query`
 # exits 0 for any successful SELECT regardless of the count it returns --
 # this needs the count itself, so it polls by hand instead.

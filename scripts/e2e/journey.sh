@@ -52,7 +52,10 @@ fail() {
   local container
   for container in "${@:-$E2E_BIRDCAGE}"; do
     echo "--- docker logs $container ---" >&2
-    docker logs "$container" >&2 || echo "(no log: $container does not exist)" >&2
+    # Setup and unlock codes (#8) blanked, as stack.sh's birdcage_log
+    # does: either one hands whoever reads the log an admin account.
+    { docker logs "$container" 2>&1 || echo "(no log: $container does not exist)"; } \
+      | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2
   done
   exit 1
 }
