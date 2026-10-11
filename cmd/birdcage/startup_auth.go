@@ -194,7 +194,7 @@ func readSecretFile(setting, path string, trim bool) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s=%q cannot be read: %w", setting, path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxSecretFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s=%q cannot be read: %w", setting, path, err)

@@ -65,7 +65,7 @@ func (s *system) signInCookies(t *testing.T, secret string) []*http.Cookie {
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		payload, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("POST %s: status %d, want 200; body=%s", path, resp.StatusCode, payload)

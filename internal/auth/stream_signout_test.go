@@ -63,7 +63,7 @@ func openEventStream(t *testing.T, client *http.Client, base string, header map[
 	}
 	go func() {
 		defer close(s.done)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 	}()
 	return s

@@ -216,7 +216,7 @@ func call(t *testing.T, c *http.Client, method, url string, body any, header map
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if strings.HasSuffix(url, "/api/stream") {
 		// An event stream never ends; the status line is all there is to read.
 		return resp.StatusCode, nil
