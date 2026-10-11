@@ -27,7 +27,12 @@ on their own listeners and never pass through the dashboard's sign-in.
    `GOPRIVATE=github.com/tomlawesome/*` locally and in every CI job that
    resolves modules. Modules gauntlet brings in are approved by reference
    to gauntlet's own approved-modules list (owner, 2026-10-10, #8);
-   birdcage's ledger gains an entry saying so.
+   birdcage's ledger gains an entry saying so. Birdcage treats gauntlet
+   as a dependency (owner, 2026-10-11): birdcage's reviews and release
+   audits cover where birdcage meets gauntlet -- the settings it passes,
+   the storage backend, the audit and client-address hooks, the stream
+   re-check, how its routes sit in front of the dashboard -- and not
+   gauntlet's own code, which gauntlet's project audits.
 2. **Storage (owner, 9a).** Each gauntlet store -- `accounts`, `tokens`,
    `signins` -- is one sealed document in a new table, `auth_documents`
    (migration 0029, SQLite and Postgres): `name` (primary key), `payload`
