@@ -15,11 +15,15 @@ import (
 //
 // The session idle limit is read when auth.Open builds the session store, so
 // each test sets it (auth.SetSessionIdle, export_test.go) BEFORE startSystem.
-// The limit is long enough that registering and signing in finish well inside
-// it, and short enough that the tests stay quick. The re-check interval is the
+// The limit applies to every gap between requests while the first admin
+// registers and signs in, and one of those gaps (confirming the authenticator
+// app, which prepares the recovery codes) takes about 2.5 s under -race on a
+// quiet machine and went past an earlier 3 s limit on a loaded CI runner. 15 s
+// is several times that, so setup cannot idle out, while each test stays
+// bounded at about the limit plus a few seconds. The re-check interval is the
 // shared testRecheck from stream_signout_test.go.
 const (
-	testIdleLimit = 3 * time.Second
+	testIdleLimit = 15 * time.Second
 	// testIdleSlack is generous scheduling slack on a busy runner.
 	testIdleSlack = 3 * time.Second
 )
@@ -54,11 +58,13 @@ func TestStreamRecheckDoesNotExtendTheSession(t *testing.T) {
 	admin := sys.signInFirstAdmin(t)
 	base := sys.server.URL
 
-	opened := time.Now()
+	// Count from when the stream has opened: the session was last used by
+	// that request, which the server handled before answering it.
 	_ = openEventStream(t, admin, base, nil)
+	opened := time.Now()
 
-	// Well past the idle limit, with roughly a dozen re-checks in between and
-	// no other request from the client.
+	// Well past the idle limit, with dozens of re-checks in between and no
+	// other request from the client.
 	time.Sleep(time.Until(opened.Add(testIdleLimit + time.Second)))
 
 	status, body := call(t, admin, http.MethodGet, base+"/api/stats", nil, nil)
@@ -80,7 +86,7 @@ func TestStreamStaysOpenWhileTheSessionIsWithinItsIdleLimit(t *testing.T) {
 
 	stream := openEventStream(t, admin, sys.server.URL, nil)
 
-	// Six re-check intervals, about half the idle limit.
+	// Six re-check intervals, well inside the idle limit.
 	if stream.waitEnded(6 * testRecheck) {
 		t.Errorf("the stream ended within %s of opening, inside the %s idle limit, want it open while the session is valid", 6*testRecheck, testIdleLimit)
 	}
