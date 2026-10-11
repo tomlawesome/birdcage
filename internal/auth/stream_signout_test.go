@@ -18,7 +18,7 @@ import (
 // on every tick of this interval (the keep-alive tick), as ai/mikroview#375
 // does, and ends the stream when the check fails. internal/api exports no way
 // to shorten the real interval today, so these tests set it to a few hundred
-// milliseconds before any stream is opened.
+// milliseconds before the test server starts (see shortenRecheck).
 const (
 	testRecheck   = 250 * time.Millisecond
 	testEndWithin = 3 * time.Second // generous: one interval plus scheduling slack
@@ -30,7 +30,11 @@ type openStream struct {
 	done   chan struct{} // closed when the response body ends or breaks
 }
 
-// shortenRecheck sets api.StreamRecheckInterval for the test.
+// shortenRecheck sets api.StreamRecheckInterval for the test. Call it BEFORE
+// startSystem: cleanups run last-registered-first, so the restore then runs
+// after the test server's Close, which waits for every stream handler to
+// return. Restoring earlier writes the variable while a handler that read it
+// may still be running, which the race detector reports.
 func shortenRecheck(t *testing.T) {
 	t.Helper()
 	old := api.StreamRecheckInterval
@@ -111,10 +115,10 @@ func (s *system) mintReadTokenWithID(t *testing.T, client *http.Client) (value, 
 // admin revoking that token (DELETE /api/tokens/{id}). A second stream, opened
 // with the admin's own session, is still open when the first has ended.
 func TestStreamOpenedWithAReadTokenEndsWhenTheTokenIsRevoked(t *testing.T) {
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 	base := sys.server.URL
 
 	token, id := sys.mintReadTokenWithID(t, admin)
@@ -136,10 +140,10 @@ func TestStreamOpenedWithAReadTokenEndsWhenTheTokenIsRevoked(t *testing.T) {
 // with a session ends within one recheck interval of that session signing out
 // (POST /api/auth/logout).
 func TestStreamOpenedWithASessionEndsWhenTheSessionSignsOut(t *testing.T) {
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 	base := sys.server.URL
 
 	token, _ := sys.mintReadTokenWithID(t, admin)
@@ -162,10 +166,10 @@ func TestStreamOpenedWithASessionEndsWhenTheSessionSignsOut(t *testing.T) {
 // still open after several recheck intervals, so the recheck does not just
 // close every stream.
 func TestStreamsStayOpenWhileTheirCredentialsAreValid(t *testing.T) {
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 	base := sys.server.URL
 
 	token, _ := sys.mintReadTokenWithID(t, admin)

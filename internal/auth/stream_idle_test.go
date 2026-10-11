@@ -29,10 +29,10 @@ const (
 // passed, because the re-checks do not extend it.
 func TestStreamEndsOnceTheSessionHasIdledOut(t *testing.T) {
 	auth.SetSessionIdle(t, testIdleLimit)
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 
 	opened := time.Now()
 	stream := openEventStream(t, admin, sys.server.URL, nil)
@@ -48,10 +48,10 @@ func TestStreamEndsOnceTheSessionHasIdledOut(t *testing.T) {
 // dashboard request with the same cookie answers 401.
 func TestStreamRecheckDoesNotExtendTheSession(t *testing.T) {
 	auth.SetSessionIdle(t, testIdleLimit)
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 	base := sys.server.URL
 
 	opened := time.Now()
@@ -73,10 +73,10 @@ func TestStreamRecheckDoesNotExtendTheSession(t *testing.T) {
 // all inside the idle limit, and the stream is still open.
 func TestStreamStaysOpenWhileTheSessionIsWithinItsIdleLimit(t *testing.T) {
 	auth.SetSessionIdle(t, testIdleLimit)
+	shortenRecheck(t)
 	database := openDatabase(t)
 	sys := startSystem(t, database, testKey('a'))
 	admin := sys.signInFirstAdmin(t)
-	shortenRecheck(t)
 
 	stream := openEventStream(t, admin, sys.server.URL, nil)
 
