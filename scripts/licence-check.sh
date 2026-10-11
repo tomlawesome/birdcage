@@ -10,7 +10,9 @@ set -euo pipefail
 # A library passes when its licence is on allow-licenses:, or when its
 # exact library path, module version and licence match an entry under
 # allow-go-module-licenses: (owner-accepted exceptions, #8). Anything else
-# fails, and so does an entry that matched nothing (a stale exception).
+# fails, and so does an entry that matched nothing (a stale exception),
+# and so does any dependency a go.mod `replace` directive swaps out: the
+# version go list reports for it is the one replaced, not the code built.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 POLICY_FILE="${POLICY_FILE:-$SCRIPT_DIR/../supply-chain/licence-policy.yml}"
@@ -63,21 +65,32 @@ go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
 GOROOT="$(go env GOROOT)"
 export GOROOT
 
-# --ignore excludes only Birdcage's own module path from the report; it
-# does not add Birdcage's own licence to the allow-list above, and
-# Birdcage's own licence is not thereby "allowed" for any dependency that
-# happens to share it. (There is no LICENSE file at the repository root at
-# the time of writing -- check it if one is added later.)
-if ! go-licenses report ./... --ignore github.com/tomlawesome/birdcage > "$work/report.csv"; then
+# Birdcage's own packages are left out of the report here, exactly: the
+# module path itself and the packages under it, nothing else. Not with
+# go-licenses' --ignore, which drops every library whose path merely
+# starts with the string, so a dependency named birdcage-sdk would vanish
+# unchecked. Leaving them out does not add Birdcage's own licence to the
+# allow-list, nor allow it for any dependency that shares it. go-licenses
+# logs a "no license found" error for each of Birdcage's own packages,
+# whose licence it cannot identify; exactly those lines are dropped and
+# every other line it logs is passed through.
+SELF_MODULE=github.com/tomlawesome/birdcage
+if ! go-licenses report ./... > "$work/report-all.csv" 2> "$work/report.err"; then
+  cat "$work/report.err" >&2
   echo "licence-check: go-licenses report failed" >&2
   exit 1
 fi
+self_re="$(printf '%s' "$SELF_MODULE" | sed 's/[.]/[.]/g')"
+grep -vE "Error identifying license for \"$self_re(/[^\"]*)?\": no license found\$" "$work/report.err" >&2 || true
+awk -F, -v self="$SELF_MODULE" '$1 == self || index($1, self "/") == 1 { next } { print }' \
+  "$work/report-all.csv" > "$work/report.csv"
 
 # The module and version each linked package comes from -- the same build
 # list go-licenses reads. A library's version is its module's version.
 # Birdcage itself (the main module, which has no version) is left out,
-# as it is from the report.
-if ! go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{end}}{{end}}' ./... > "$work/deps"; then
+# as it is from the report. A replaced module carries " => <path>
+# [<version>]" after its own, and fails below.
+if ! go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{with .Replace}} => {{.Path}} {{.Version}}{{end}}{{end}}{{end}}' ./... > "$work/deps"; then
   echo "licence-check: go list failed" >&2
   exit 1
 fi
@@ -113,6 +126,10 @@ awk -v allowed="$ALLOWED_LICENSES" -v q="'" '
     next
   }
   phase == "mod" {
+    if (NF >= 3 && $3 == "=>") {
+      print "licence-check: module " $1 " " $2 " is replaced by " $4 (NF >= 5 ? " " $5 : "") " (go.mod replace) -- the version checked would not be the code built; replaced dependencies are not allowed" > "/dev/stderr"
+      bad = 1; modver[$1] = $2; next
+    }
     if (NF != 2) {
       print "licence-check: unreadable go list line: " $0 > "/dev/stderr"
       bad = 1; next
