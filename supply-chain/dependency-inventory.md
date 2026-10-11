@@ -31,9 +31,13 @@ decision:
 - `github.com/emersion/go-msgauth` (dkim) — agent-side signature check;
   #54, 2026-09-19. Brings `emersion/go-message`, `emersion/go-sasl`,
   `emersion/go-milter` (module only, never linked) as the same author.
-- `golang.org/x/crypto/argon2` (package of an already-present module),
-  `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2` -- login through the
-  shared `gauntlet` module; #8, 2026-09-26. `go-webauthn` is not yet approved.
+- `github.com/tomlawesome/gauntlet` (the owner's own sign-in module,
+  Apache-2.0), fetched from its Git host, never through proxy.golang.org
+  (ADR-0016 decision 1). The modules it brings in -- among them
+  `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2`, `go-webauthn` and
+  `golang.org/x/crypto/argon2` -- are approved by reference to gauntlet's
+  own approved-modules list; owner, 2026-10-10, #8 (answer 4a), replacing
+  the narrower approval of 2026-09-26.
 - `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
   for the owner's review on #73.
 
@@ -49,6 +53,13 @@ Shipped as a binary in an agent image, never linked into birdcage:
   rebuilt on every Alpine security update to it. No apk licence gate exists,
   so this entry and row 226 below are the record; GPLv3 in a shipped image
   has the owner's precedent in `hpfeeds@3.0.0`.
+
+Build-only, never shipped:
+
+- `git` (Alpine package) -- only in `build/birdcage/Dockerfile`'s Go build
+  stage, so gauntlet can be fetched from its Git host; never in a shipped
+  image (`scripts/go-fetch-guard.py` holds both). Owner, 2026-10-10, #8
+  (answer 3a); row 233.
 
 CI-only tools, never linked or shipped:
 
