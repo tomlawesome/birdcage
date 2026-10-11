@@ -401,6 +401,6 @@ Four things in particular to watch on the first cut:
   `release:mirror-preview` and the countersigning workflow is run against
   it.
 
-Per AGENTS.md, a release path that has never run is not a release path. The
+A release path that has never run is not a release path. The
 first `preview` merge after the setup above is the run that proves it, and
 until then this document describes an intention.

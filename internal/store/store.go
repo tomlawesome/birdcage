@@ -165,8 +165,8 @@ func NormalizeLimit(limit int) int {
 //
 // Every TEXT timestamp column in this package (alerts.received_at,
 // canaries.enrolled_at/last_heartbeat_at, heartbeats.at) goes through
-// this one function rather than each growing its own comparison, per
-// AGENTS.md's "reuse the mechanism, don't invent a second one".
+// this one function rather than each growing its own comparison: reuse the
+// mechanism, don't invent a second one.
 func timeCompare(engine db.Engine, column, op string) string {
 	if engine == db.Postgres {
 		return column + "::timestamptz " + op + " ?::timestamptz"

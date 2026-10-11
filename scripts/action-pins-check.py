@@ -39,7 +39,7 @@ Scope: GitHub Actions `uses:` pins only (issue #27). Container images
 pinned by digest were considered and left out -- .gitlab-ci.yml has
 exactly one (E2E_POISONER_FIXTURE_DIGEST), and it is a private fixture
 image with no public source to verify a licence against, already governed
-by its own documented control (AGENTS.md, "Attack-tool fixtures"; the pin
+by its own documented control (docs/testing.md, "Attack-tool fixtures"; the pin
 itself is the version check). Folding it into this schema would misrepresent
 a pin that is not an action and has no licence to record.
 

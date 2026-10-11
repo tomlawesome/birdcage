@@ -36,7 +36,7 @@ func (e Engine) String() string {
 // $2, ..." style first when Engine is Postgres -- every query in this
 // codebase is written with "?", the SQLite convention, and modernc's
 // SQLite driver accepts "$1"-style just as well (verified empirically
-// rather than assumed, per AGENTS.md), so a single rebind at this one
+// rather than assumed), so a single rebind at this one
 // seam is enough to make every caller's SQL portable without a
 // per-query dialect branch.
 type DB struct {

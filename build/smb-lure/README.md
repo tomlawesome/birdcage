@@ -43,7 +43,7 @@ behaviour rather than a nuisance.
 
 Samba is GPL-3.0-or-later. It ships here unmodified, in its own image,
 linked into nothing of ours — the same shape as `grype` in the scanner
-image (AGENTS.md, "Shipped as a binary in an agent image").
+image (`supply-chain/dependency-inventory.md`, the ledger's "Shipped as a binary in an agent image" entry).
 
 ## Run it beside the canary
 

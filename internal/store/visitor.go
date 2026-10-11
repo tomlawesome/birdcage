@@ -3,8 +3,8 @@
 // and summarized with what it tried against which canaries. Kind
 // classification and "tried" extraction are both pure Go functions (see
 // classifyKind and triedFor) with their own table tests -- SQL's only job
-// here is fetching rows (alertsInRange, store.go), per AGENTS.md's
-// "reuse the mechanism, don't invent a second one" and the issue's own
+// here is fetching rows (alertsInRange, store.go), reusing
+// the existing mechanism rather than inventing a second one, and the issue's own
 // "kind classification is in Go, not SQL" rule.
 package store
 

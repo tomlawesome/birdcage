@@ -313,7 +313,7 @@ decision; a wrong CA, an `http://` URL and a wrong password each fail
 closed with nothing added. Jobs `e2e:crowdsec` (gate) and
 `e2e:crowdsec:postgres` (higher bar), per `docs/ci-hops.md`. The
 CrowdSec image is a CI-only fixture, never shipped and never linked;
-it is listed for the owner in `AGENTS.md` under CI-only tools.
+it is listed for the owner in `supply-chain/dependency-inventory.md` under CI-only tools.
 
 ## Failure modes
 

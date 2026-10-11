@@ -8,14 +8,77 @@ named in that issue: `go.mod`/`go.sum`, `frontend/package.json` +
 `build/opencanary/requirements.txt` (+ `requirements.in`), `.gitlab-ci.yml`
 and `.github/workflows/*.yml`.
 
-Nothing here changes a dependency. Owner decisions on individual rows still
-belong on issue #73; this file is the durable record those decisions can
-point at. The scheduled staleness check named in that issue's addendum
+Nothing in the tables changes a dependency. Owner decisions on individual rows
+still belong on issue #73; this file is the durable record those decisions can
+point at, and its ledger (next section) is the approval list: nothing else
+holds it. The scheduled staleness check named in that issue's addendum
 (2026-09-19: *"Third party dependencies must be checked for staleness
 regularly by CI"*) is `audit:staleness` (#139, docs/ci-hops.md): every
 "Latest upstream" cell below is a dated snapshot, current only as of the
 date this file says, and that job's `staleness-report.md` artifact --
 not this table -- is the live figure.
+
+## Approved third-party modules (the ledger)
+
+This is the single record of what the owner has approved; the rows below
+carry the evidence. The owner's rule is: no
+third-party module without the owner's explicit approval, on its issue, with
+provenance. Approved for this project, with the issue that records the
+decision:
+
+- `golang.org/x/net` (bpf) and `golang.org/x/sys` — Go team; #65, 2026-09-19.
+- `github.com/emersion/go-imap/v2` — approval mailbox; #54, 2026-09-19.
+- `github.com/emersion/go-msgauth` (dkim) — agent-side signature check;
+  #54, 2026-09-19. Brings `emersion/go-message`, `emersion/go-sasl`,
+  `emersion/go-milter` (module only, never linked) as the same author.
+- `golang.org/x/crypto/argon2` (package of an already-present module),
+  `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2` -- login through the
+  shared `gauntlet` module; #8, 2026-09-26. `go-webauthn` is not yet approved.
+- `github.com/jackc/pgx/v5`, `modernc.org/sqlite` — predate the rule; listed
+  for the owner's review on #73.
+
+Shipped as a binary in an agent image, never linked into birdcage:
+
+- `grype` (Anchore) — the scanner agent's engine, Apache-2.0; owner,
+  2026-09-22, #108. Chosen over Trivy against a verified comparison; the
+  reasoning is in ADR-0010, "Engine: Grype". Its vulnerability database is
+  fetched at runtime and cached, never vendored.
+- `samba-server` (Samba Team, via Alpine) — the SMB lure's whole reason to
+  exist, GPL-3.0-or-later; owner, 2026-09-23, #87 decision 1 ("Real Samba on
+  Alpine"). Pinned to an exact apk version in `build/smb-lure/Dockerfile` and
+  rebuilt on every Alpine security update to it. No apk licence gate exists,
+  so this entry and row 226 below are the record; GPLv3 in a shipped image
+  has the owner's precedent in `hpfeeds@3.0.0`.
+
+CI-only tools, never linked or shipped:
+
+- `golang.org/x/vuln` (govulncheck) -- Go team, BSD-3-Clause; owner,
+  2026-09-27, #51. Installed at CI time in `lint:govulncheck`; never
+  imported by any package birdcage builds.
+- `gitleaks` (gitleaks project) -- MIT; owner, 2026-09-27, #28. The
+  released binary, checksum-verified by `scripts/ensure-gitleaks.sh`,
+  never the commercially-licensed `gitleaks-action`; installed at CI
+  time in `lint:gitleaks`.
+- `python3` (Alpine package, Python Software Foundation) -- the release
+  jobs' evidence judge in `scripts/verify-validation-evidence.sh`; owner,
+  2026-09-30, #158. Installed via `RELEASE_APK_PACKAGES`, never shipped.
+- `crowdsecurity/crowdsec` container image (CrowdSec SAS, MIT) -- the
+  real Local API `e2e:crowdsec` runs `birdcage crowdsec add` against,
+  pinned by digest in `scripts/e2e/crowdsec-stack.sh` (v1.8.1); #4,
+  ADR-0014. **Proposed, awaiting the owner's approval on #4.** A CI
+  fixture only: never linked, never shipped, and nothing in it phones
+  out (the journey disables the agent, the central-API client and the
+  hub download).
+
+Frontend (`frontend/package.json`), dev-only, never shipped:
+
+- `@vitest/coverage-v8` -- the coverage plugin of the test runner the
+  project already uses, by the same team (vitest-dev) and peer-pinned to
+  the exact vitest version, so not a new third party to trust. MIT.
+  Owner, 2026-09-20: *"it's not really a third party. It's a plugin by
+  the exact same team."* #74.
+
+Anything else goes to the owner first, on the issue, with provenance.
 
 ## Methodology
 
@@ -52,10 +115,9 @@ review's brief:
 - **Shipped / dev-CI-only** -- which artefact, if any, carries this
   dependency to a user: the `birdcage` binary, the `mockingbird` image, or
   neither (dev tooling, CI runner, build stage, release/signing step).
-- **Approval status** -- read directly against `AGENTS.md`'s "Approved
-  third-party modules" section as it stands on this branch, not a judgement
-  call. Three states: **Approved -- #N** (recorded there by name), **Predates
-  the rule -- flagged on #73** (the two rows AGENTS.md itself names as
+- **Approval status** -- read directly against the approved-module
+  ledger above, not a judgement call. Three states: **Approved -- #N** (recorded there by name), **Predates
+  the rule -- flagged on #73** (the two rows the ledger itself names as
   pending this review: `pgx/v5`, `modernc.org/sqlite`), and **Predates the
   rule -- not individually recorded** (everything else that is `direct`:
   original-architecture choices -- the Postgres/SQLite drivers aside -- that
@@ -66,7 +128,7 @@ review's brief:
 
 ### A. Go module (`go.mod`, `go.sum`)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | `github.com/emersion/go-imap/v2` | v2.0.0-beta.8 | v2.0.0-beta.8 (proxy.golang.org, verified -- already current) | MIT | direct | emersion (independent OSS maintainer, GitHub handle "emersion") | high (the standard choice for its niche) | Shipped -- linked into the birdcage and/or mockingbird Go binary | Approved -- #54 |
 | 2 | `github.com/emersion/go-msgauth` | v0.7.0 | v0.7.0 | MIT | direct | emersion | moderate (established, purpose-fit, not mainstream-scale) | Shipped -- linked into the birdcage and/or mockingbird Go binary | Approved -- #54 |
@@ -92,9 +154,9 @@ review's brief:
 | 22 | `modernc.org/mathutil` | v1.7.1 | v1.7.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 | 23 | `modernc.org/memory` | v1.11.0 | v1.12.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 
-### B. Frontend, `frontend/package.json` + `package-lock.json` -- all dev-only, never shipped (see AGENTS.md)
+### B. Frontend, `frontend/package.json` + `package-lock.json` -- all dev-only, never shipped (see the ledger above)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 24 | `@asamuzakjp/css-color` | 6.0.7 | 7.0.0 | MIT | transitive | asamuzakjp (independent maintainer) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 25 | `@asamuzakjp/dom-selector` | 8.3.2 | 9.2.1 | MIT | transitive | asamuzakjp (independent maintainer) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
@@ -229,7 +291,7 @@ review's brief:
 
 ### C. OpenCanary, `build/opencanary/requirements.txt` (uv-compiled from `requirements.in`, hash-pinned; moved out of the mockingbird image by issue #132, unchanged otherwise)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 154 | `attrs` | 26.1.0 | 26.1.0 | MIT | transitive | attrs community (Hynek Schlawack) | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
 | 155 | `automat` | 25.4.16 | 25.4.16 | MIT | transitive | Twisted Matrix Labs / Glyph Lefkowitz | small utility (popularity tracks its direct parent) | Shipped -- installed into /opt/opencanary in the opencanary image (build/opencanary -- moved out of mockingbird by issue #132) | n/a -- transitive |
@@ -270,7 +332,7 @@ review's brief:
 
 ### D. Container base images (`build/birdcage/Dockerfile`, `build/mockingbird/Dockerfile`, `build/holder/Dockerfile`, `build/nightjar/Dockerfile`)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 190 | `node:26-alpine` | 26-alpine (resolves to 26.9.0-alpine, verified via Docker Hub) | 26.9.0-alpine (current -- Node 26 is still on the "Current" release line, not yet LTS) | MIT (Node.js) | direct | OpenJS Foundation (Node.js), image built by the Docker Official Images team | very high (mainstream, widely deployed) | Build-only -- build stage, discarded before the runtime image | Predates the rule -- not individually recorded |
 | 191 | `golang:1.27.2-alpine` (by digest) | 1.27.2-alpine, pinned by index digest (#188) | 1.27.2-alpine (current, 2026-10-10) | BSD-3-Clause (Go) + Alpine's own licences | direct | Go team (Google), image built by the Docker Official Images team | very high (mainstream, widely deployed) | Build-only -- build stage, discarded before the runtime image | Predates the rule -- not individually recorded |
@@ -282,7 +344,7 @@ review's brief:
 
 ### E. CI runner images, `.gitlab-ci.yml` (not shipped -- only run the pipeline's own jobs)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 195 | `alpine:3.24` | 3.24 (floating minor) | 3.24.2 is the current patch (already what the floating tag resolves to). | MIT (Alpine) | direct | Alpine Linux project | very high (mainstream, widely deployed) | **Shipped** -- corrected 2026-09-23 (#87). It is the runtime base of `build/smb-lure/Dockerfile`, so it now ships. It remains a CI runner image here, and is build-only in `build/nightjar/Dockerfile`, whose `grype` stage uses it and is discarded before that image's distroless runtime. | Predates the rule -- not individually recorded |
 | 196 | `golang:1.27.2` (by digest) | 1.27.2, pinned by index digest (#188; the floating `1.27` tag moved to 1.27.2 under open merge requests) | 1.27.2 is current (go.dev/dl, 2026-10-10). | BSD-3-Clause (Go) | direct | Go team (Google), Docker Official Images | very high (mainstream, widely deployed) | CI-only -- CI runner/service image, never shipped | Predates the rule -- not individually recorded |
@@ -293,7 +355,7 @@ review's brief:
 
 ### F. Fetched at build or test time (not base images, but named artifacts pulled in by the pipeline)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 201 | `golangci-lint` | v2.13.2 (`go install .../golangci-lint/v2@v2.13.2` in `lint:go`) | v2.13.2 (verified via GitHub releases API) -- already current. | GPL-3.0 | direct | golangci-lint community (OSS org) | very high (mainstream, widely deployed) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
 | 202 | `go1.27.2 (tarball)` | go1.27.2.linux-amd64.tar.gz, fetched by `curl` from go.dev/dl in `test:smoke` | go1.27.2 is current (go.dev/dl, verified 2026-10-10) -- already current, matching the Dockerfiles' pinned Go. | BSD-3-Clause (Go) | direct | Go team (Google) | moderate (established, purpose-fit, not mainstream-scale) | CI/release-only -- fetched at build/test/release time, never shipped | Predates the rule -- not individually recorded |
@@ -306,7 +368,7 @@ review's brief:
 
 ### G. GitHub Actions, `.github/workflows/*.yml` (CodeQL + dependency review mirror only -- GitLab is where the gate actually runs)
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 207 | `actions/checkout` | v7.0.1 (commit `3d3c42e...`, verified that commit tags v7.0.1) | v7.0.1 -- already current (GitHub releases API, verified). | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- GitHub Actions mirror pipeline only | Predates the rule -- not individually recorded |
 | 208 | `github/codeql-action/init` | v4.37.6 (commit `5595ccaf9...`) | v4.38.1 is current (GitHub tags API, verified) -- several patch/minor releases behind. | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- GitHub Actions mirror pipeline only | Predates the rule -- not individually recorded |
@@ -324,7 +386,7 @@ disagrees with its recorded version.
 
 The 2026-09-20 table covered `.gitlab-ci.yml`'s `image:` and `services:` lines fairly completely, but missed several packages fetched inline inside job scripts, one CI image, and a whole GitHub Actions workflow file that did not exist (or was not read) at review time. Numbering continues from 211.
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 211 | `registry.gitlab.com/gitlab-org/release-cli:latest` | `latest` (floating, no digest pin) | No newer tagged release found; upstream project is in maintenance mode -- GitLab's own docs point new work at `glab` instead. | MIT | direct | GitLab | high (bundled with every GitLab installation) | CI-only -- `release:gitlab` job image, never shipped | Predates the rule -- not individually recorded |
 | 212 | `openssl (apk package)` | unpinned -- `apk add --no-cache openssl` in several `e2e:*`/`test:go` jobs | Unverified -- Alpine package index version not checked this session. | Apache-2.0 | direct | OpenSSL project | very high (mainstream, widely deployed) | CI-only -- generates test/e2e TLS material, never shipped | Predates the rule -- not individually recorded |
@@ -346,9 +408,9 @@ itself on the operator's own device, into the `nightjar-grype-db` volume
 It is listed here only so the feed itself, and the trust an operator places
 in it, is not invisible to this inventory.
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
-| 221 | `grype` (Anchore) | v0.119.0, `linux_amd64`, SHA-256 `3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b` -- pinned by both the version and the checksum in `build/nightjar/Dockerfile`'s `GRYPE_VERSION`/`GRYPE_SHA256` build args, verified against the release's own `grype_0.119.0_checksums.txt` and against a fresh download of the artefact itself (matched) | v0.119.0 -- current (GitHub releases API, verified 2026-09-22, same release the #108 engine-decision comment compared against) | Apache-2.0 | direct | Anchore | high (13k GitHub stars, ~147 contributors -- #108's own comparison record) | Shipped -- copied into the Nightjar runtime image as a pinned binary, never linked into any Go binary (AGENTS.md's approved-modules list) | Approved -- #108, 2026-09-22 |
+| 221 | `grype` (Anchore) | v0.119.0, `linux_amd64`, SHA-256 `3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b` -- pinned by both the version and the checksum in `build/nightjar/Dockerfile`'s `GRYPE_VERSION`/`GRYPE_SHA256` build args, verified against the release's own `grype_0.119.0_checksums.txt` and against a fresh download of the artefact itself (matched) | v0.119.0 -- current (GitHub releases API, verified 2026-09-22, same release the #108 engine-decision comment compared against) | Apache-2.0 | direct | Anchore | high (13k GitHub stars, ~147 contributors -- #108's own comparison record) | Shipped -- copied into the Nightjar runtime image as a pinned binary, never linked into any Go binary (the ledger above) | Approved -- #108, 2026-09-22 |
 | 222 | Grype's vulnerability database | Not pinned by this repository at all -- fetched and refreshed by Grype itself at runtime into the `nightjar-grype-db` volume (`GRYPE_DB_CACHE_DIR`), never vendored or baked into the image. Grype's own default fail-closed behaviour (refuses a database older than five days) is kept unmodified. | N/A -- a live feed, not a versioned release this inventory tracks | Grype's own database build is Apache-2.0 per ADR-0010's engine comparison; the underlying vulnerability advisories it aggregates carry their own upstream licences (NVD, distro security trackers, GitHub advisories), which this repository never redistributes since the feed is fetched directly by the operator's own Nightjar instance, not by birdcage | direct (a runtime feed, not a code dependency) | Anchore (aggregates upstream vulnerability sources) | n/a -- not a popularity-ranked artefact | Runtime feed only -- never shipped in any image or binary | n/a -- a runtime feed, not a dependency in the sense this inventory otherwise tracks; recorded per this section's own header |
 
 ### J. `build/smb-lure/Dockerfile` (#87: the SMB lure's own image)
@@ -360,15 +422,15 @@ generates the share content in a build stage which is then discarded.
 The base image is `alpine:3.24`, row 195 above -- which this image is the
 reason to have corrected from "never shipped" to shipped.
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-23) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-23) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
-| 226 | `samba-server` (apk package) | `4.23.8-r0`, pinned exactly in `build/smb-lure/Dockerfile` | `4.23.8-r0` -- current in Alpine 3.24's `main` repository, read from `apk policy samba` in the image itself, 2026-09-23. Samba's own current release line is 4.23.x. | GPL-3.0-or-later | direct | Samba Team, packaged by Alpine Linux | very high (mainstream, widely deployed -- it is what the NAS this image imitates actually runs) | Shipped -- it is the service the image exists to run. Unmodified upstream, in its own container, linked into no binary of ours: the same shape as `grype` in the scanner image (AGENTS.md, "Shipped as a binary in an agent image, never linked into birdcage") | Approved -- #87, owner, 2026-09-23 ("Real Samba on Alpine", decision 1). GPLv3 in a shipped image has the owner's precedent in `hpfeeds@3.0.0` (`supply-chain/licence-policy.yml`) |
+| 226 | `samba-server` (apk package) | `4.23.8-r0`, pinned exactly in `build/smb-lure/Dockerfile` | `4.23.8-r0` -- current in Alpine 3.24's `main` repository, read from `apk policy samba` in the image itself, 2026-09-23. Samba's own current release line is 4.23.x. | GPL-3.0-or-later | direct | Samba Team, packaged by Alpine Linux | very high (mainstream, widely deployed -- it is what the NAS this image imitates actually runs) | Shipped -- it is the service the image exists to run. Unmodified upstream, in its own container, linked into no binary of ours: the same shape as `grype` in the scanner image (the ledger above, "Shipped as a binary in an agent image, never linked into birdcage") | Approved -- #87, owner, 2026-09-23 ("Real Samba on Alpine", decision 1). GPLv3 in a shipped image has the owner's precedent in `hpfeeds@3.0.0` (`supply-chain/licence-policy.yml`) |
 | 227 | `python3` (apk package) | `3.14.8-r0`, pinned exactly in `build/smb-lure/Dockerfile` | `3.14.8-r0` -- current in Alpine 3.24's `main`, read from `apk policy python3` in the image, 2026-10-02 (#165: Alpine dropped 3.14.7-r1) | PSF-2.0 (CPython) + Alpine's own licences | direct | Python Software Foundation, packaged by Alpine Linux | very high (mainstream, widely deployed) | Build-only -- runs `make-bait.py` in a stage that is discarded; no Python reaches the shipped image | Predates the rule -- not individually recorded (a build-stage tool, the same footing as row 191) |
 
 There is no licence gate covering apk packages. `scripts/licence-check.sh`
 covers Go modules, `-npm` covers npm and `-python` covers the pip packages
 in the mockingbird image; nothing reads an Alpine package's licence. So row
-226's GPL-3.0-or-later is recorded and approved here and in AGENTS.md, and
+226's GPL-3.0-or-later is recorded and approved here and in the ledger above, and
 is not enforced by CI. Worth closing if a third apk-pinned shipped package
 ever appears.
 
@@ -379,7 +441,7 @@ birdcage nor shipped in any image -- the same footing as `golangci-lint`
 (row 201). Owner approval for both is recorded on their issues,
 2026-09-27.
 
-| # | Dependency | Pinned | Latest upstream (verified 2026-09-27) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status (AGENTS.md) |
+| # | Dependency | Pinned | Latest upstream (verified 2026-09-27) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
 | 228 | `golang.org/x/vuln` (govulncheck) | v1.8.0, `go install .../govulncheck@v1.8.0` in `lint:govulncheck`, verified by the Go checksum database like every other module download | v1.8.0 -- current (`proxy.golang.org/golang.org/x/vuln/@latest`, verified 2026-09-27) | BSD-3-Clause | direct | Go team (golang.org/x) | high (the standard Go vulnerability scanner, maintained by the language team) | CI-only -- installed and run in `lint:govulncheck`, never imported by any package birdcage builds | Approved -- #51, owner, 2026-09-27 |
 | 229 | `gitleaks` (gitleaks project) | v8.30.1, checksum-pinned (archive and extracted-binary SHA-256) in `scripts/ensure-gitleaks.sh`, verified against the release's own `gitleaks_8.30.1_checksums.txt` and against a fresh download of the archive itself (matched) | v8.30.1 -- current (GitHub releases API, verified 2026-09-27) | MIT | direct | gitleaks project (Zachary Rice and contributors) | high (the standard OSS secret-scanning tool; this project's own pre-commit gate already uses it) | CI-only -- installed and run in `lint:gitleaks`, never linked or shipped. The released binary, not the commercially-licensed `gitleaks-action` | Approved -- #28, owner, 2026-09-27 |
@@ -409,9 +471,9 @@ landed `build/nightjar/Dockerfile`, the manifest this row was waiting on.
 (row 223), GPL-3.0, built from upstream v3.2.2.0. It runs in a sibling
 container in `e2e:poisoner` and is never linked into or copied into any
 shipped image -- the same footing as `grype`, which the owner did approve
-explicitly (AGENTS.md, #108). Two things worth a decision:
+explicitly (the ledger above, #108). Two things worth a decision:
 
-- AGENTS.md's rule is "no third-party module without the owner's explicit
+- The owner's rule is "no third-party module without the owner's explicit
   approval". This was added on the coordinator's direction for #86 slice C,
   which is not the owner's approval. It needs either that approval or a
   recorded exception.
@@ -440,7 +502,7 @@ missing. Not fixed here because it is not this change's to fix.
 **Unapproved and shipped, same footing as `x/net`/`x/sys` but never recorded:**
 `golang.org/x/crypto` and `golang.org/x/time` are direct Go dependencies,
 linked into the shipped binary, from the same Go-team family as `x/net` and
-`x/sys` -- but unlike those two, neither is named in AGENTS.md's approved
+`x/sys` -- but unlike those two, neither is named in the ledger's approved
 list. Worth either an explicit approval or a note that Go-team `x/*`
 extensions are self-evidently fine as a category.
 
