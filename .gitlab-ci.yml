@@ -1330,6 +1330,9 @@ test:image:nightjar:
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
       echo https://127.0.0.1:1 > /s/ingest-url &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
+    # The daemon is the dind service, whose Alpine root lacks /etc/gshadow; a
+    # real host has both files, so create them rather than loosen the mount list (#193).
+    - docker run --rm -v /etc:/e "$ALPINE_IMAGE" sh -c 'touch /e/shadow /e/gshadow'
     # No published port, no --cap-add, no --sysctl (#108 section 4): the
     # printed run command's exact flag set, mask list included, so this
     # job would fail if a future edit ever let the two drift apart.
