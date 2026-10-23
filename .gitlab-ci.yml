@@ -139,6 +139,11 @@ variables:
 # GitLab derives a service's hostname from its image name, and a cache path
 # would otherwise leave `tcp://docker:2375` unresolvable.
 #
+# The runner expands variables in a service's `name` but not in `command:` or
+# `entrypoint:`, so the flags go through `sh -c`, where the shell expands them;
+# a literal in `command:` made the daemon exit with "insecure registry … is not
+# valid" on the first run (ai/agent-infra#31).
+#
 # The e2e jobs used to ask for the `big` lane (8 CPU / 18 GB) because they run
 # four to six containers at once; the `docker` runner has to be sized for that
 # (see the comments on those jobs).
@@ -148,11 +153,10 @@ variables:
     - name: ${CI_IMAGE_CACHE_DOCKERHUB}/library/docker:29.6.2-dind@sha256:bfec1f5159c63a81ca6fdedbd81404d2c0e16378ed0feec3bb3fbf3998847659
       alias: docker
       pull_policy: if-not-present
-      command:
-        - "--registry-mirror=http://$CI_IMAGE_CACHE_DOCKERHUB"
-        - "--insecure-registry=$CI_IMAGE_CACHE_DOCKERHUB"
-        - "--insecure-registry=$CI_IMAGE_CACHE_GHCR"
-        - "--insecure-registry=$CI_IMAGE_CACHE_MCR"
+      entrypoint:
+        - /bin/sh
+        - -c
+        - exec dockerd-entrypoint.sh --registry-mirror="http://$CI_IMAGE_CACHE_DOCKERHUB" --insecure-registry="$CI_IMAGE_CACHE_DOCKERHUB" --insecure-registry="$CI_IMAGE_CACHE_GHCR" --insecure-registry="$CI_IMAGE_CACHE_MCR"
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
