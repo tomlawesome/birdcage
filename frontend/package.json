@@ -21,7 +21,7 @@
     "@testing-library/svelte": "^5.4.2",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.6.3",
-    "@vitest/coverage-v8": "5.0.2",
+    "@vitest/coverage-v8": "5.0.5",
     "jsdom": "^30.0.1",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.63.0",
@@ -30,6 +30,6 @@
     "svelte-check": "^4.7.6",
     "typescript": "~6.0.3",
     "vite": "^8.3.0",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.5"
   }
 }
