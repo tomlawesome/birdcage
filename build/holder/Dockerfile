@@ -20,7 +20,7 @@
 # never binds a socket, never forks and is never PID 1 for anything but
 # itself, so none of the flags the canary or the lure need apply here.
 
-FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
