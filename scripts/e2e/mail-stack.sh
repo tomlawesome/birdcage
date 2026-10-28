@@ -94,7 +94,7 @@ build_dns_image() {
   # The same two pins as above: CI's dependency-proxy images when set
   # (refs #128), the Dockerfile's own defaults on a workstation.
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
-    --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c}" \
+    --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69}" \
     --file "$REPO_ROOT/build/e2e-dns/Dockerfile" --tag "$DNS_IMAGE" "$REPO_ROOT" >/dev/null \
     || die "building $DNS_IMAGE failed"
 }
