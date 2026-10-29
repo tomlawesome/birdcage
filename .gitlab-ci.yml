@@ -343,6 +343,17 @@ lint:scripts:
       fi
       echo "all $found script suites passed"
 
+# The flake log blocks a third sighting with no issue or still in the merge
+# gate, and a malformed sighting (#196, ai/agent-infra#30). The quarantine list
+# is scripts/quarantine.txt, the same file test:go skips by.
+lint:flake-check:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: *gate
+  needs: []
+  script:
+    - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
+
 # The release scripts' own tests, run on the image the release jobs use,
 # with exactly the packages they install (RELEASE_APK_PACKAGES). lint:scripts
 # runs every suite on a Python image, which is how #158 slipped through:
@@ -666,6 +677,10 @@ test:go:
     # (was ~500-550s, hitting go test's 10m per-package default under a
     # busy runner) plus every other package, so a genuinely hung test
     # still fails the job instead of running forever.
+    # Tests listed in scripts/quarantine.txt (#196) are skipped here and run
+    # by test:go:quarantine, which does not block. The pattern comes from
+    # that same file, so the skip list and the flake check's list cannot drift.
+    - QUARANTINE_SKIP=$(sh scripts/ci/quarantine-pattern.sh)
     - >-
       su tester -c "cd '$CI_PROJECT_DIR' &&
       HOME=/home/tester
@@ -673,11 +688,28 @@ test:go:
       GOMODCACHE=/tmp/gotest/mod
       GOFLAGS='$GOFLAGS'
       BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
-      go test ./... -race -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
+      go test ./... -race -skip '$QUARANTINE_SKIP' -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
     # Read back as root: the profile is tester-owned but world-readable,
     # and nothing below writes to it.
     - go tool cover -func=/tmp/gotest/coverage.out | tail -1
     - python3 scripts/coverage-floor.py /tmp/gotest/coverage.out
+
+# Go tests in scripts/quarantine.txt (#196): a flake with three sightings
+# and an issue leaves the merge gate (test:go skips it) and runs here instead,
+# where a failure is visible but blocks nothing. Not an e2e job, so the live
+# checks stay blocking. SQLite only; add a Postgres service here if a
+# quarantined test ever needs one.
+test:go:quarantine:
+  stage: test
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  needs: []
+  allow_failure: true
+  script:
+    - |
+      pattern=$(sh scripts/ci/quarantine-pattern.sh)
+      [ -n "$pattern" ] || { echo "scripts/quarantine.txt lists no test; nothing to run"; exit 0; }
+      go test ./... -race -run "$pattern" -timeout=20m
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
