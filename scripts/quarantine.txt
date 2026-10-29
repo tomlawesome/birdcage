@@ -1,0 +1,6 @@
+# Go tests kept out of the merge gate (docs/flakes.md, third sighting).
+# One test name per line. This one file is both what `test:go` skips
+# (scripts/ci/quarantine-pattern.sh) and what flake-check.sh is given as
+# --quarantined, so the two cannot drift. Each name must also appear in its
+# docs/flakes.md heading.
+TestSourceLimitersAllowBoundary
