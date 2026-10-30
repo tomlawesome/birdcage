@@ -364,9 +364,9 @@ gitdb==4.0.12 \
     --hash=sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571 \
     --hash=sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf
     # via gitpython
-gitpython==3.1.62 \
-    --hash=sha256:1791de66309bc0c7cfca40bf8d2e3de7ca091cbf94e6051be1ad0722c61062af \
-    --hash=sha256:7002251225e10e29d2e1f49e6532613fe5d5d9f0b6f1f02997a52b38fe56899e
+gitpython==3.2.1 \
+    --hash=sha256:0f1229ec5c057bdabdeeda8bda4f17bda679ab33dbccc00f24e6a480553c8613 \
+    --hash=sha256:d66b0832aa8755c1a84892937282df0befb16c97e5a64aeebd68be9c5e323f53
     # via opencanary
 hpfeeds==3.0.0 \
     --hash=sha256:e78ea3c7ed51aa9f72350076d60da447927108fda75433044de6d6e08fb4ca10
@@ -487,7 +487,10 @@ ntlmlib==0.72 \
 opencanary==0.9.10 \
     --hash=sha256:5d745ed88ca92db0096c6811af0a893461df9ec6672bdd0bc58fc28114752486 \
     --hash=sha256:7cfa77d861577a2cf8a415ef852fe8f03216497104e6b23ff05a0abd5b6e3b72
-    # via -r build/opencanary/requirements.in
+    # via -r requirements.in
+ordereddict==1.1 \
+    --hash=sha256:1c35b4ac206cef2d24816c89f89cf289dd3d38cf7c449bb3fab7bf6d43f01b1f
+    # via ntlmlib
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
@@ -527,12 +530,6 @@ service-identity==21.1.0 \
     --hash=sha256:6e6c6086ca271dc11b033d17c3a8bea9f24ebff920c587da090afc9519419d34 \
     --hash=sha256:f0b0caac3d40627c3c04d7a51b6e06721857a0e10a8775f2d1d7e72901b3a7db
     # via opencanary
-setuptools==83.0.0 \
-    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
-    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
-    # via
-    #   opencanary
-    #   zope-interface
 simplejson==3.16.0 \
     --hash=sha256:067a7177ddfa32e1483ba5169ebea1bc2ea27f224853211ca669325648ca5642 \
     --hash=sha256:2fc546e6af49fb45b93bbe878dea4c48edc34083729c0abd09981fe55bdf7f91 \
