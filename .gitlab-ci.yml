@@ -52,39 +52,37 @@ variables:
   SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
   HOLDER_MIRROR_REPO: ghcr.io/tomlawesome/holder
   OPENCANARY_MIRROR_REPO: ghcr.io/tomlawesome/opencanary
-  # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
-  # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
-  # was failing e2e and test:go before they ever ran. Same bytes, cached on
-  # the GitLab server instead of re-crossing the WAN every job. `library/`
-  # is Docker Hub's own namespace for an official, unprefixed image.
-  # Job `image:`/`services:` pulls are authenticated to the proxy by the
-  # runner automatically; a job that pulls one of these on its own account
-  # inside its script (docker run/build/pull against its own daemon) still
-  # needs its own `docker login` first -- see the jobs that do. Versions
-  # unchanged from before this issue; only the source moved.
+  # Docker Hub images the pipeline pulls repeatedly, named plainly (refs
+  # ai/agent-infra#14, #65): the runner hosts' Docker daemons mirror Docker
+  # Hub through the runner image cache, so these need no prefix and no login,
+  # and Docker Hub's anonymous-pull limit (#128) never sees the repeats. A
+  # daemon the runner does not own -- the dind service (.dind_service) -- is
+  # told about the cache on its own command line, so a `docker run`, `build`
+  # or Compose pull inside a job goes through it too. Digests are the same
+  # through the cache. Versions unchanged; only the source moved.
   # Tag AND index digest (#188): the floating golang:1.27 moved from 1.27.1 to
   # 1.27.2 under an open merge request and changed how coverage statements are
   # counted, failing test:go on unchanged code. Bump tag and digest together,
   # on purpose, with the coverage floors re-measured in the same change.
-  GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69
-  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
-  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
+  GOLANG_IMAGE: golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69
+  NODE_IMAGE: node:26-trixie
+  PYTHON_ALPINE_IMAGE: python:3.14-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
-  PYTHON_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-slim-trixie
-  ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/alpine:3.24
-  DOCKER_CLI_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/docker:29-cli
+  PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
+  ALPINE_IMAGE: alpine:3.24
+  DOCKER_CLI_IMAGE: docker:29-cli
   # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
   # now the one Postgres pin in this file, used by both test:go's service
   # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
   # separate call sites (one env var, one script default) rather than
   # unified, so a future major-version bump is one line here.
-  POSTGRES18_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:18-alpine
+  POSTGRES18_IMAGE: postgres:18-alpine
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
-  DEBIAN_TRIXIE_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/debian:trixie-slim
+  DEBIAN_TRIXIE_SLIM_IMAGE: debian:trixie-slim
   # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
   # and what test:release-scripts installs to run their tests there.
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
@@ -1008,13 +1006,6 @@ test:image:birdcage:
     - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    # This job's alpine probe container is pulled by this job's own daemon
-    # call (docker run against $ALPINE_IMAGE), not by GitLab's runner-level
-    # image auth -- that only covers this job's own image:/services:.
-    # $ALPINE_IMAGE already names the dependency proxy, but a pull still
-    # needs a credential for it (refs #128). --password-stdin only, never
-    # echoed.
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1087,7 +1078,6 @@ test:image:mockingbird:
     - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1198,7 +1188,6 @@ test:image:opencanary:
     - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
@@ -1335,7 +1324,6 @@ test:image:nightjar:
     - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1481,7 +1469,6 @@ e2e:enrol-and-hit:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1538,7 +1525,6 @@ e2e:enrol-and-hit:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1599,7 +1585,6 @@ e2e:agent-credentials:
   before_script:
     - *dind_ready
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
@@ -1638,7 +1623,6 @@ e2e:agent-credentials:postgres:
   before_script:
     - *dind_ready
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
@@ -1685,7 +1669,6 @@ e2e:smb:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1739,7 +1722,6 @@ e2e:smb-lure:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1820,7 +1802,6 @@ e2e:smb-lure:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1900,7 +1881,6 @@ e2e:mail:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1950,7 +1930,6 @@ e2e:mail:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1999,7 +1978,6 @@ e2e:dashboard-own-ca:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2044,7 +2022,6 @@ e2e:snmp:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2097,7 +2074,6 @@ e2e:portscan:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2166,7 +2142,6 @@ e2e:poisoner:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2223,16 +2198,15 @@ e2e:crowdsec:
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
-    # The fixture is pulled through the dependency proxy (#128), by the
-    # digest the stack script holds.
-    E2E_REGISTRY_PREFIX: $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
+    # The fixture is pulled by the digest the stack script holds, from
+    # Docker Hub by name; the job's daemon mirrors Docker Hub through the
+    # runner image cache (.dind_service).
   before_script:
     - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. jq reads cscli's
     # JSON on this host (scripts/e2e/crowdsec.sh says why).
     - apk add --no-cache bash jq >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2273,7 +2247,6 @@ e2e:crowdsec:postgres:
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
-    E2E_REGISTRY_PREFIX: $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
   before_script:
     - *dind_ready
     # The scripts are bash (`set -eu`, arrays); docker:29-cli ships
@@ -2281,7 +2254,6 @@ e2e:crowdsec:postgres:
     # build_postgres_tls_image (#84), which builds the one-line derived
     # Postgres image this backend needs; jq for scripts/e2e/crowdsec.sh.
     - apk add --no-cache bash openssl jq >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2357,7 +2329,6 @@ e2e:scanner:
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2411,7 +2382,6 @@ e2e:smb:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2459,7 +2429,6 @@ e2e:snmp:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2502,7 +2471,6 @@ e2e:dashboard-own-ca:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2550,7 +2518,6 @@ e2e:scanner:postgres:
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers

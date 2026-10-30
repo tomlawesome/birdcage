@@ -13,7 +13,7 @@
 # real smbd), the thing under test here is the canary container itself
 # -- this image only ever runs `snmpget` against it.
 # BASE_IMAGE defaults to the plain Docker Hub tag for a workstation
-# build; scripts/e2e/snmp.sh passes CI's dependency-proxy pin (refs
+# build; scripts/e2e/snmp.sh passes CI's image pin (refs
 # #128, .gitlab-ci.yml's DEBIAN_TRIXIE_SLIM_IMAGE) as a build arg.
 ARG BASE_IMAGE=debian:trixie-slim
 FROM ${BASE_IMAGE}

@@ -738,7 +738,11 @@ def image_ci_vars(ci_doc):
     level and also not real pins).
     """
     out = {}
-    prefix = "${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/"
+    # Docker Hub images are named plainly (the runner's Docker mirrors Docker
+    # Hub through the image cache, ai/agent-infra#14); the one prefix still
+    # understood is the Docker Hub cache host. $CI_IMAGE_CACHE_GHCR / _MCR
+    # names are not Docker Hub images and fall to the "$" skip below.
+    prefixes = ("${CI_IMAGE_CACHE_DOCKERHUB}/", "$CI_IMAGE_CACHE_DOCKERHUB/")
     variables = ci_doc.get("variables") if isinstance(ci_doc, dict) else None
     if not isinstance(variables, dict):
         return out
@@ -747,8 +751,10 @@ def image_ci_vars(ci_doc):
             continue
         if var == "GOLANG_IMAGE":
             continue
-        if value.startswith(prefix):
-            value = value[len(prefix):]
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                value = value[len(prefix):]
+                break
         if value.startswith("library/"):
             value = value[len("library/"):]
         if "$" in value or ":" not in value:

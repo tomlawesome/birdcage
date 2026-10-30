@@ -78,7 +78,7 @@ build_mail_image() {
     return 0
   fi
   log "building $MAIL_IMAGE from build/e2e-mail/Dockerfile"
-  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # --build-arg BASE_IMAGE: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
     --file "$REPO_ROOT/build/e2e-mail/Dockerfile" --tag "$MAIL_IMAGE" "$REPO_ROOT" >/dev/null \
@@ -91,7 +91,7 @@ build_dns_image() {
     return 0
   fi
   log "building $DNS_IMAGE from build/e2e-dns/Dockerfile"
-  # The same two pins as above: CI's dependency-proxy images when set
+  # The same two pins as above: CI's image pins when set
   # (refs #128), the Dockerfile's own defaults on a workstation.
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
     --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69}" \

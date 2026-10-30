@@ -70,7 +70,7 @@ build_samba_image() {
     return 0
   fi
   log "building $SAMBA_IMAGE from build/e2e-samba/Dockerfile"
-  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # --build-arg BASE_IMAGE: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
   docker build --build-arg BASE_IMAGE="${DEBIAN_TRIXIE_SLIM_IMAGE:-debian:trixie-slim}" \
     --file "$REPO_ROOT/build/e2e-samba/Dockerfile" --tag "$SAMBA_IMAGE" "$REPO_ROOT" >/dev/null \
@@ -94,7 +94,7 @@ write_smb_conf() {
     || die "writing the overriding opencanary.conf failed"
   # Fails loudly rather than silently shipping the stock conf (smb
   # disabled) if either sed pattern ever stops matching the file it is
-  # editing. ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin
+  # editing. ${ALPINE_IMAGE:-alpine:3.24}: CI's image pin
   # (refs #128, .gitlab-ci.yml) when set, the plain Docker Hub tag on a
   # workstation.
   docker run --rm --volume "$SMB_CONF_VOL:/out:ro" "${ALPINE_IMAGE:-alpine:3.24}" \
