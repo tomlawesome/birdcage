@@ -47,7 +47,7 @@
 #
 # BASE_IMAGE and GO_IMAGE default to the plain Docker Hub tags for a
 # workstation build; scripts/e2e/mail-stack.sh passes CI's
-# dependency-proxy pins (refs #128, .gitlab-ci.yml's ALPINE_IMAGE and
+# image pins (refs #128, .gitlab-ci.yml's ALPINE_IMAGE and
 # GOLANG_IMAGE) as build args.
 ARG BASE_IMAGE=alpine:3.24
 ARG GO_IMAGE=golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69

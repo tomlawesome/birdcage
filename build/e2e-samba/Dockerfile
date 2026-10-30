@@ -15,7 +15,7 @@
 # smb.conf's comment); something has to be listening on /dev/log for
 # that call to go anywhere.
 # BASE_IMAGE defaults to the plain Docker Hub tag for a workstation
-# build; scripts/e2e/smb-stack.sh passes CI's dependency-proxy pin
+# build; scripts/e2e/smb-stack.sh passes CI's image pin
 # (refs #128, .gitlab-ci.yml's DEBIAN_TRIXIE_SLIM_IMAGE) as a build arg.
 ARG BASE_IMAGE=debian:trixie-slim
 FROM ${BASE_IMAGE}

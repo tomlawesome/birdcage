@@ -92,7 +92,7 @@ build_image() {
 # container refuses to start -- docs/enrolment.md's own trap).
 write_fixture_file() { # write_fixture_file <path-under-/host> [mode]
   local path="$1" mode="${2:-644}"
-  # ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin (refs #128,
+  # ${ALPINE_IMAGE:-alpine:3.24}: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the plain Docker Hub tag on a workstation.
   docker run --rm --interactive --volume "$FIXTURE_VOL:/host" "${ALPINE_IMAGE:-alpine:3.24}" sh -c "
 set -eu
