@@ -88,8 +88,49 @@ variables:
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
   RELEASE_APK_PACKAGES: bash curl python3
 
+# Batch intake (ai/agent-infra#114): a merge request into batch-a or batch-b
+# runs the static checks only, and a chore/catchup-* one into a batch also
+# gets catchup-check. The shared snippets set BATCH_INTAKE and CATCHUP_CHECK in
+# the workflow rules below; the first rules of `.gate` and `.higher_bar` stop
+# every heavy job when either is set. Static checks take `.static_gate`, which
+# has no such rule, so they run on every merge request as before.
+include:
+  - project: ai/agent-infra
+    ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
+    file: scripts/batch-intake/ci-template.yml
+  - project: ai/agent-infra
+    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
+    file: scripts/catchup-check/ci-template.yml
+
+# Which pipelines are created. Before the batch snippets there was no
+# `workflow:`, so GitLab's default applied: a pipeline for every source (push,
+# merge request, schedule, web, api, tag), kept only if a job's own rules
+# select it. The last rule says exactly that, so nothing changes for any
+# pipeline except the two batch merge-request kinds, which the snippets'
+# rules (first, as they require) mark with a variable and let through.
+workflow:
+  rules:
+    - !reference [.catchup-check, workflow_rules]
+    - !reference [.batch-intake, workflow_rules]
+    - when: always
+
+# The static checks: the merge-request and branch gate as it always was.
+.static_gate: &static_gate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The heavy jobs' gate: `.static_gate` behind the batch-intake and catch-up
+# stops. scripts/ci-e2e-guard.py requires every e2e job to use this or
+# `.higher_bar`.
 .gate: &gate
   rules:
+    - !reference [.batch-intake, job_rule]
+    - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -104,6 +145,8 @@ variables:
 # jobs still run at these hops too, because `*gate` names them as well.
 .higher_bar: &higher_bar
   rules:
+    - !reference [.batch-intake, job_rule]
+    - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
@@ -215,7 +258,7 @@ policy:promotion-hop:
 lint:go:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   script:
     - go build ./...
     - go vet ./...
@@ -233,7 +276,7 @@ lint:go:
 lint:licences:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   script:
     - scripts/licence-check.sh
 
@@ -253,7 +296,7 @@ lint:licences:
 lint:licences-python:
   stage: lint
   image: $PYTHON_SLIM_IMAGE
-  <<: *gate
+  <<: *static_gate
   script:
     - scripts/licence-check-python.test.sh
     - scripts/licence-check-python.sh
@@ -272,7 +315,7 @@ lint:licences-python:
 lint:ci:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
-  <<: *gate
+  <<: *static_gate
   needs: []
   before_script:
     - apk add --no-cache bash >/dev/null
@@ -312,7 +355,7 @@ lint:ci:
 lint:scripts:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
-  <<: *gate
+  <<: *static_gate
   needs: []
   before_script:
     # curl is not padding: ensure-cosign.sh downloads with it, and its suite
@@ -347,7 +390,7 @@ lint:scripts:
 lint:flake-check:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: *gate
+  <<: *static_gate
   needs: []
   script:
     - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
@@ -361,7 +404,7 @@ lint:flake-check:
 test:release-scripts:
   stage: lint
   image: $DOCKER_CLI_IMAGE
-  <<: *gate
+  <<: *static_gate
   needs: []
   before_script:
     - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
@@ -393,7 +436,7 @@ test:release-scripts:
 lint:agent-deps:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   script:
     # Once per agent binary (ADR-0009 decision 6) -- each kind's own
     # allowed set, checked separately so one kind's fence cannot cover
@@ -426,7 +469,7 @@ lint:agent-deps:
 lint:govulncheck:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: *gate
+  <<: *static_gate
   script:
     - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
     - GOTOOLCHAIN=local govulncheck ./...
@@ -450,7 +493,7 @@ lint:govulncheck:
 lint:gitleaks:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   variables:
     GIT_DEPTH: 0
   before_script:
