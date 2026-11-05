@@ -101,6 +101,14 @@ include:
   - project: ai/agent-infra
     ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
     file: scripts/catchup-check/ci-template.yml
+  # Dev landing (ai/agent-infra#113, owner 2026-11-05: "Secrets scanning and
+  # similar very fast checks should happen on merge to dev. Five minutes.
+  # Max."): a push to dev runs only the fast checks (`.fast_gate`, 5 minute
+  # timeout) plus the GitHub mirror. Every other job takes `.dev-landing`'s
+  # job_rule first, through `.static_gate`, `.gate` and `.higher_bar`.
+  - project: ai/agent-infra
+    ref: 1dca70057bd93f68ded22c6b159f315c987c1663  # dev-landing/v1
+    file: scripts/dev-landing/ci-template.yml
 
 # Which pipelines are created. Before the batch snippets there was no
 # `workflow:`, so GitLab's default applied: a pipeline for every source (push,
@@ -110,13 +118,31 @@ include:
 # rules (first, as they require) mark with a variable and let through.
 workflow:
   rules:
+    - !reference [.dev-landing, workflow_rules]
     - !reference [.catchup-check, workflow_rules]
     - !reference [.batch-intake, workflow_rules]
     - when: always
 
-# The static checks: the merge-request and branch gate as it always was.
+# The static checks: the merge-request and branch gate as it always was,
+# behind the dev-landing stop (a push to dev runs only `.fast_gate` jobs).
 .static_gate: &static_gate
   rules:
+    - !reference [.dev-landing, job_rule]
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The fast checks (ai/agent-infra#113): the same pipelines as `.static_gate`,
+# and also the push that lands on dev, where each must finish within 5 minutes
+# (`extends: .dev-landing-check` sets the timeout). Only checks that took
+# under 40 seconds on recent dev pipelines belong here. Never `needs:` a job
+# that is skipped on that push.
+.fast_gate: &fast_gate
+  rules:
+    - !reference [.dev-landing-check, rules]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -129,6 +155,7 @@ workflow:
 # `.higher_bar`.
 .gate: &gate
   rules:
+    - !reference [.dev-landing, job_rule]
     - !reference [.batch-intake, job_rule]
     - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -145,6 +172,7 @@ workflow:
 # jobs still run at these hops too, because `*gate` names them as well.
 .higher_bar: &higher_bar
   rules:
+    - !reference [.dev-landing, job_rule]
     - !reference [.batch-intake, job_rule]
     - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -315,7 +343,8 @@ lint:licences-python:
 lint:ci:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
-  <<: *static_gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   before_script:
     - apk add --no-cache bash >/dev/null
@@ -390,7 +419,8 @@ lint:scripts:
 lint:flake-check:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: *static_gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   script:
     - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
@@ -404,7 +434,8 @@ lint:flake-check:
 test:release-scripts:
   stage: lint
   image: $DOCKER_CLI_IMAGE
-  <<: *static_gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   before_script:
     - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
@@ -436,7 +467,8 @@ test:release-scripts:
 lint:agent-deps:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*static_gate, *git_safe]
+  extends: .dev-landing-check
+  <<: [*fast_gate, *git_safe]
   script:
     # Once per agent binary (ADR-0009 decision 6) -- each kind's own
     # allowed set, checked separately so one kind's fence cannot cover
@@ -493,7 +525,8 @@ lint:govulncheck:
 lint:gitleaks:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*static_gate, *git_safe]
+  extends: .dev-landing-check
+  <<: [*fast_gate, *git_safe]
   variables:
     GIT_DEPTH: 0
   before_script:
