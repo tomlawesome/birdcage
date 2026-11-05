@@ -96,10 +96,10 @@ variables:
 # has no such rule, so they run on every merge request as before.
 include:
   - project: ai/agent-infra
-    ref: batch-intake/v1
+    ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
     file: scripts/batch-intake/ci-template.yml
   - project: ai/agent-infra
-    ref: catchup-check/v1
+    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
     file: scripts/catchup-check/ci-template.yml
 
 # Which pipelines are created. Before the batch snippets there was no
