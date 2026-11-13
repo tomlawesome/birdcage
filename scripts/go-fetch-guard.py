@@ -350,9 +350,23 @@ def check_dockerfile(text, path, problems):
 
 
 def tracked_dockerfiles():
-    """(root, [repo-relative path]) for the repository at the cwd."""
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
+    """(root, [repo-relative path]) for the repository at the cwd.
+
+    Where git itself is not installed (lint:ci's image has none), every
+    Dockerfile-named file under the cwd is read instead, skipping .git
+    and node_modules: a CI checkout holds only tracked files there.
+    """
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True)
+    except FileNotFoundError:
+        root = os.getcwd()
+        found = []
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in (".git", "node_modules")]
+            found += [os.path.relpath(os.path.join(dirpath, f), root)
+                      for f in files if is_dockerfile(f)]
+        return root, sorted(found)
     if top.returncode != 0:
         raise OSError(top.stderr.strip() or "not a git repository")
     root = top.stdout.strip()

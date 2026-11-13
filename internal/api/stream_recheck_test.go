@@ -35,7 +35,6 @@ type recheckStream struct {
 	done    chan struct{} // closed when the handler returns
 	lines   chan string
 	eof     chan struct{} // closed when the body reaches EOF
-	handled atomic.Bool
 }
 
 // openRecheckStream opens GET /api/stream against the real handler. When
