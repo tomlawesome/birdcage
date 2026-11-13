@@ -145,14 +145,16 @@ expect_red "a build directory with no Dockerfiles fails red, not green" "$work/e
 
 # ---- Repository-wide scan (spec items 1-7) ----------------------------
 # These cases build a git repository, `git add` the files so they are
-# tracked, and run the guard from its root the way CI does.
+# tracked, and run the guard from its root the way CI does. Where git is
+# not installed (lint:ci's image), they are plain files: the guard then
+# reads every Dockerfile under the checkout, which is what CI has.
 repo_root="$(cd "$here/.." && pwd)"
 repo="$work/repo"
 genv='ENV GOPRIVATE=github.com/tomlawesome/*'
 
 repo_new() {
   rm -rf "$repo"; mkdir -p "$repo"
-  git -C "$repo" init -q 2>/dev/null
+  if command -v git >/dev/null; then git -C "$repo" init -q 2>/dev/null; fi
   put build/birdcage/Dockerfile "${1:-$birdcage_good}"
   put build/holder/Dockerfile "$holder_good"
 }
@@ -160,7 +162,7 @@ put() { mkdir -p "$repo/$(dirname "$1")"; printf '%s\n' "$2" > "$repo/$1"; }
 # expect_repo <want-exit> <name> <needle>
 expect_repo() {
   local want="$1" name="$2" needle="$3" got=0 out ok=1
-  git -C "$repo" add -A
+  if command -v git >/dev/null; then git -C "$repo" add -A; fi
   out="$(cd "$repo" && python3 "$guard" 2>&1)" || got=$?
   if [ "$want" = 0 ]; then [ "$got" = 0 ] || ok=0; else [ "$got" != 0 ] || ok=0; fi
   if [ -n "$needle" ] && ! grep -qF -- "$needle" <<<"$out"; then ok=0; fi

@@ -28,13 +28,13 @@ func setRecheckInterval(t *testing.T, d time.Duration) {
 }
 
 type recheckStream struct {
-	hub     *stream.Hub
-	db      *db.DB
-	resp    *http.Response
-	cancel  context.CancelFunc
-	done    chan struct{} // closed when the handler returns
-	lines   chan string
-	eof     chan struct{} // closed when the body reaches EOF
+	hub    *stream.Hub
+	db     *db.DB
+	resp   *http.Response
+	cancel context.CancelFunc
+	done   chan struct{} // closed when the handler returns
+	lines  chan string
+	eof    chan struct{} // closed when the body reaches EOF
 }
 
 // openRecheckStream opens GET /api/stream against the real handler. When
