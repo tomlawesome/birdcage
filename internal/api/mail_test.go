@@ -149,7 +149,7 @@ func TestHandleMailReportsFailure(t *testing.T) {
 	}
 }
 
-// The route lives behind the same requireAuth seam as every other
+// The route lives behind the same sign-in gate as every other
 // dashboard read, and answers only GET.
 func TestHandleMailIsOnTheDashboardRouter(t *testing.T) {
 	database := openTempDB(t)

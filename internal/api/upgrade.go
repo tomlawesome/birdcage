@@ -60,7 +60,8 @@ func (c UpgradeConfig) Usable() bool {
 // The page carries no command itself (issue #54, ADR-0012's B4
 // amendment): every command carries a freshly minted single-use token,
 // and minting is a state change the dashboard API cannot make while it
-// is read-only (owner, 2026-09-26, until #8's login). `birdcage agent
+// is read-only (owner, 2026-09-26: sign-in, #8, does not change that,
+// since a read API token is answered by the same handler). `birdcage agent
 // upgrade-command <id>` on the birdcage host mints it and prints the
 // command.
 func (h *handler) upgradeAvailable(c store.Canary) bool {

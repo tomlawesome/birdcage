@@ -39,7 +39,7 @@ set -eu
 # proof the alert was attributed to the canary that sent it, not just that
 # a poisoner event landed somewhere.
 poisoner_alert_count() { # poisoner_alert_count <canary-id>
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=poisoner&instance=$1' | jq '.alerts | length'"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=poisoner&instance=$1' | jq '.alerts | length'"
 }
 
 poisoner_seen() { # poisoner_seen <canary-id>
@@ -74,7 +74,7 @@ step "the answer reaches birdcage as a poisoner alert for this canary"
 poll 60 poisoner_seen "$POISONER_CANARY_ID" \
   || fail "no poisoner alert reached birdcage for $POISONER_CANARY_ID after 60 attempts" "$POISONER_CANARY"
 
-alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=poisoner&instance=$POISONER_CANARY_ID' \
+alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=poisoner&instance=$POISONER_CANARY_ID' \
   | jq -c '.alerts[0] | {service, source_ip, name: (.raw | fromjson | .logdata.NAME), protocol: (.raw | fromjson | .logdata.PROTOCOL), mac: (.raw | fromjson | .logdata.MAC)}'")"
 ok "alert: $alert"
 

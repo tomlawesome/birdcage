@@ -53,6 +53,12 @@ ARG BASE_IMAGE=alpine:3.24
 ARG GO_IMAGE=golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
 FROM ${GO_IMAGE} AS signer
 WORKDIR /src
+# GOPRIVATE keeps the owner's modules (github.com/tomlawesome/gauntlet)
+# off proxy.golang.org and sum.golang.org, as in every Go build stage
+# here (ADR-0016 decision 1; scripts/go-fetch-guard.py, lint:ci). The
+# signer never links gauntlet, and only `go build` fetches, so only what
+# it uses is fetched.
+ENV GOPRIVATE=github.com/tomlawesome/*
 COPY go.mod go.sum ./
 COPY cmd/e2e-dkim-sign/ ./cmd/e2e-dkim-sign/
 RUN CGO_ENABLED=0 go build -trimpath -o /out/e2e-dkim-sign ./cmd/e2e-dkim-sign

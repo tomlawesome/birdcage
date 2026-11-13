@@ -82,7 +82,7 @@ poisoned_answer_count() {
 # separate helper containers joined by an outer pipe (untested, and this
 # journey has no need to be the first thing that tries it).
 setting_field() { # setting_field <key> <jq-field>
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canary?id=$POISONER_CANARY_ID&range=15m' | jq -r '.facts.settings[]? | select(.key==\"$1\") | .$2'"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canary?id=$POISONER_CANARY_ID&range=15m' | jq -r '.facts.settings[]? | select(.key==\"$1\") | .$2'"
 }
 
 setting_confirmed() { [ "$(setting_field "$1" confirmed 2>/dev/null || true)" = "true" ]; } # setting_confirmed <key>

@@ -28,6 +28,11 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
+  # gauntlet is fetched from its Git host, never through proxy.golang.org
+  # or sum.golang.org: the first lookup there records a version for good,
+  # which is publishing it (ADR-0016 decision 1). GOPRIVATE turns both off
+  # for the owner's modules; go.sum still pins the exact content.
+  GOPRIVATE: "github.com/tomlawesome/*"
   # Where the six images are published (#90, #125, #126, #132).
   # Deliberately NOT named BIRDCAGE_IMAGE: that is the environment
   # variable scripts/verify-validation-evidence.sh reads to know which
@@ -362,6 +367,12 @@ lint:ci:
     # is the record; this is the check that it is still true.
     - python3 scripts/action-pins-check.py
     - scripts/action-pins-check.test.sh
+    # The image builds' half of GOPRIVATE above (ADR-0016 decision 1, #8):
+    # every Go build stage in any tracked Dockerfile keeps the owner's
+    # modules off proxy.golang.org, and only birdcage's build stage
+    # carries git.
+    - python3 scripts/go-fetch-guard.py
+    - scripts/go-fetch-guard.test.sh
 
 # ---------------------------------------------------------------------------
 # Every scripts/*.test.sh, in one job (#100). Before this, three of the
@@ -407,6 +418,12 @@ lint:scripts:
         if bash "$suite"; then :; else failed="$failed $suite"; fi
       done
       [ "$found" -gt 0 ] || { echo "no scripts/*.test.sh found at all"; exit 1; }
+      # One scripts/e2e suite runs here too: the authenticator-code maths
+      # every journey's sign-in rests on (#8), which needs no docker. The
+      # rest of scripts/e2e/*.test.sh drive a real stack.
+      found=$((found + 1))
+      echo "--- scripts/e2e/totp.test.sh"
+      if sh scripts/e2e/totp.test.sh; then :; else failed="$failed scripts/e2e/totp.test.sh"; fi
       if [ -n "$failed" ]; then
         echo "failed suites:$failed"
         exit 1
@@ -761,6 +778,7 @@ test:go:
       GOCACHE=/tmp/gotest/cache
       GOMODCACHE=/tmp/gotest/mod
       GOFLAGS='$GOFLAGS'
+      GOPRIVATE='$GOPRIVATE'
       BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
       go test ./... -race -skip '$QUARANTINE_SKIP' -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
     # Read back as root: the profile is tester-owned but world-readable,
@@ -1105,31 +1123,48 @@ test:image:birdcage:
         exit 1
       fi
       echo "version stamped: $got"
+    # The sign-in key birdcage will not start without (#8,
+    # BIRDCAGE_AUTH_KEY_FILE): 32 fresh random bytes made inside a
+    # container straight into a volume of this job's own, so they never
+    # reach the job log, the job container or the repository; owned by
+    # the image's uid 1000, readable by it alone, and mounted read-only.
+    - docker volume create "$APP-key" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-key:/key" "$ALPINE_IMAGE" sh -c
+      'set -eu; umask 077; head -c 32 /dev/urandom > /key/auth.key;
+      [ "$(wc -c < /key/auth.key)" -eq 32 ];
+      chown 1000:1000 /key/auth.key; chmod 400 /key/auth.key'
     - >-
       docker run --detach --name "$APP"
       --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
       --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m
       --tmpfs /var/lib/birdcage:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      --volume "$APP-key:/auth:ro" --env BIRDCAGE_AUTH_KEY_FILE=/auth/auth.key
       --cap-drop ALL --security-opt no-new-privileges
       --pids-limit 64 --memory 256m --cpus 0.5
       "$APP"
+    # GET /api/auth/session answers without a credential (#8): a fresh
+    # birdcage with no admin yet says setup is required, which proves the
+    # sign-in layer opened with the key as well as that the image serves.
+    # The rest of /api/ answers 503 until the first admin exists.
     - |
       for attempt in $(seq 1 20); do
         if docker run --rm --network "container:$APP" "$ALPINE_IMAGE" \
-             wget -q -O - http://127.0.0.1:8080/api/alerts 2>/dev/null | grep -q '"alerts"'; then
-          echo "/api/alerts answered on attempt $attempt"
+             wget -q -O - http://127.0.0.1:8080/api/auth/session 2>/dev/null | grep -q '"setupRequired":true'; then
+          echo "/api/auth/session answered setup required on attempt $attempt"
           break
         fi
         sleep 1
         if [ "$attempt" = 20 ]; then
-          echo "/api/alerts never answered; container log follows"
-          docker logs "$APP"
+          echo "/api/auth/session never answered; container log follows (setup and unlock codes blanked)"
+          docker logs "$APP" 2>&1 | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g'
           exit 1
         fi
       done
   after_script:
     - docker rm --force "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
     - docker image rm "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm --force "birdcage-test-$CI_JOB_ID-key" >/dev/null 2>&1 || true
 
 # The agent fails closed without a token and client certificate in its
 # state directory, so the job mints throwaway ones into a named volume
@@ -2367,6 +2402,10 @@ e2e:postgres-requires-tls:
     # The script is bash (`set -eu`, case statements over multi-line
     # output); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
+    # The script makes its sign-in key (#8) in an $ALPINE_IMAGE
+    # container, a pull through the dependency proxy that needs this
+    # job's own login (refs #128). --password-stdin only, never echoed.
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/e2e/postgres-requires-tls.sh
 

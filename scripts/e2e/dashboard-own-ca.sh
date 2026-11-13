@@ -52,7 +52,7 @@ case "$sans" in
 esac
 
 step "a client that trusts birdcage's CA completes a request over HTTPS"
-trusted="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem https://$E2E_BIRDCAGE:8080/api/alerts")" \
+trusted="$(helper "curl -sS -w '\nhttp=%{http_code}' --cacert /work/birdcage-ca.pem $DASHBOARD_AUTH https://$E2E_BIRDCAGE:8080/api/alerts")" \
   || fail "the request with birdcage's own CA trusted could not be sent: $trusted"
 case "$trusted" in
   *http=200*'"alerts"'*|*'"alerts"'*http=200*) ok "200 with an alerts body, trusting birdcage's CA" ;;

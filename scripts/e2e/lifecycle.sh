@@ -35,15 +35,15 @@ step "GET /api/canaries shows the canary ok with a recent heartbeat, once its fi
 # instant: pipeline 1521 read "pending" 29 s after the mint. Three
 # minutes is the bound; a canary still pending after that has a
 # self-test target that never matched, and the failure prints which.
-poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
-  || fail "canary $E2E_CANARY_ID never became ok within 180 s of its first self-test (self_test names the target that did not answer): $(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" "$E2E_BIRDCAGE"
-canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
+poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
+  || fail "canary $E2E_CANARY_ID never became ok within 180 s of its first self-test (self_test names the target that did not answer): $(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" "$E2E_BIRDCAGE"
+canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
   || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
 case "$canary_json" in
   *'"status":"ok"'*) ;;
   *) fail "canary $E2E_CANARY_ID is not ok: $canary_json" "$E2E_BIRDCAGE" ;;
 esac
-recent="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -r --arg id '$E2E_CANARY_ID' '(.canaries[] | select(.id == \$id) | .last_heartbeat_at) as \$hb | if \$hb == null then \"absent\" elif (\$hb | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\")) then \"present\" else \"malformed\" end'")" \
+recent="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -r --arg id '$E2E_CANARY_ID' '(.canaries[] | select(.id == \$id) | .last_heartbeat_at) as \$hb | if \$hb == null then \"absent\" elif (\$hb | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\")) then \"present\" else \"malformed\" end'")" \
   || fail "could not read last_heartbeat_at" "$E2E_BIRDCAGE"
 case "$recent" in
   present) ;;
@@ -138,13 +138,13 @@ step "POST /api/heartbeat no longer exists on the dashboard listener (issue #135
 # over the ingest listener's own POST /ingest/heartbeat (mTLS + token),
 # which is exactly what the step above already proved is landing for
 # $E2E_CANARY_ID.
-removed="$(helper "curl -sS -o /dev/null -w 'http=%{http_code}' --cacert /tls/dashboard-ca.pem -X POST '$BIRDCAGE_URL/api/heartbeat' -d '{\"canary\":\"$E2E_CANARY_ID\"}'")" \
+removed="$(helper "curl -sS -o /dev/null -w 'http=%{http_code}' --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH -X POST '$BIRDCAGE_URL/api/heartbeat' -d '{\"canary\":\"$E2E_CANARY_ID\"}'")" \
   || fail "POST /api/heartbeat did not run" "$E2E_BIRDCAGE"
 case "$removed" in
   http=404|http=405) ;;
   *) fail "POST /api/heartbeat = $removed, want http=404 or http=405 (the route must not exist)" "$E2E_BIRDCAGE" ;;
 esac
-still_recent="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -r --arg id '$E2E_CANARY_ID' '(.canaries[] | select(.id == \$id) | .last_heartbeat_at) as \$hb | if \$hb == null then \"absent\" elif (\$hb | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\")) then \"present\" else \"malformed\" end'")" \
+still_recent="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -r --arg id '$E2E_CANARY_ID' '(.canaries[] | select(.id == \$id) | .last_heartbeat_at) as \$hb | if \$hb == null then \"absent\" elif (\$hb | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\")) then \"present\" else \"malformed\" end'")" \
   || fail "could not read last_heartbeat_at" "$E2E_BIRDCAGE"
 [ "$still_recent" = "present" ] \
   || fail "last_heartbeat_at is $still_recent after the dashboard route was probed -- the real agent's heartbeat must keep landing over /ingest/heartbeat" "$E2E_BIRDCAGE"
@@ -155,7 +155,7 @@ ok "POST /api/heartbeat: $removed (route removed), and $E2E_CANARY_ID's last_hea
 # changed by comparing against these.
 sessions_before="$("$E2E_STACK" birdcage canary enrol --status | grep -Fc "$(printf '\tname=%s\tlane=' "$E2E_CANARY_NAME")")" \
   || fail "could not count enrolment sessions named $E2E_CANARY_NAME"
-canaries_before="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
+canaries_before="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
   || fail "could not count canaries"
 serial_before="$(helper 'openssl x509 -in /state/client.pem -noout -serial')" \
   || fail "could not read the client certificate serial" "$E2E_CANARY"
@@ -197,11 +197,11 @@ set_heartbeat_interval() {
 set_heartbeat_interval 1 || fail "could not shorten the canary's heartbeat interval"
 
 docker stop "$E2E_CANARY" >/dev/null || fail "could not stop $E2E_CANARY" "$E2E_CANARY"
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"silent\"'" \
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"silent\"'" \
   || fail "the canary never read silent after $((3 * 1))s of silence (30 attempts)" "$E2E_BIRDCAGE"
 
 docker start "$E2E_CANARY" >/dev/null || fail "could not start $E2E_CANARY again" "$E2E_CANARY"
-poll 60 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
+poll 60 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
   || fail "the canary never returned to ok after restarting" "$E2E_BIRDCAGE" "$E2E_CANARY"
 ok "silent while stopped, ok again once restarted"
 
@@ -220,7 +220,7 @@ sessions_after="$("$E2E_STACK" birdcage canary enrol --status | grep -Fc "$(prin
   || fail "could not count enrolment sessions named $E2E_CANARY_NAME after restart"
 [ "$sessions_after" = "$sessions_before" ] \
   || fail "the number of enrolment sessions named $E2E_CANARY_NAME changed ($sessions_before -> $sessions_after): a new session was minted" "$E2E_BIRDCAGE"
-canaries_after="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
+canaries_after="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
   || fail "could not count canaries after restart" "$E2E_BIRDCAGE"
 [ "$canaries_after" = "$canaries_before" ] \
   || fail "the number of canaries changed ($canaries_before -> $canaries_after): a new canary was registered" "$E2E_BIRDCAGE"
@@ -240,8 +240,10 @@ docker stop "$E2E_BIRDCAGE" >/dev/null || fail "could not stop $E2E_BIRDCAGE" "$
 helper "{ printf 'USER x\\r\\nPASS y\\r\\nQUIT\\r\\n'; sleep 2; } | nc -w 5 $E2E_CANARY 21" >/dev/null \
   || fail "the FTP login attempt could not be sent to $E2E_CANARY:21 while birdcage was down" "$E2E_CANARY"
 docker start "$E2E_BIRDCAGE" >/dev/null || fail "could not start $E2E_BIRDCAGE again" "$E2E_BIRDCAGE"
-poll 60 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=ftp'" \
-  || fail "the dashboard never answered GET /api/alerts again after restarting birdcage" "$E2E_BIRDCAGE"
+# "Back" means 200: a bare curl exits 0 for a 401 or a 503 too, which
+# would count a birdcage that answers but refuses this session as back.
+poll 60 helper "curl -sS -o /dev/null -w '%{http_code}' --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=ftp' | grep -qx 200" \
+  || fail "the dashboard never answered GET /api/alerts with 200 again after restarting birdcage" "$E2E_BIRDCAGE"
 # A plain poll (journey.sh) only checks exit status, and `stack.sh query`
 # exits 0 for any successful SELECT regardless of the count it returns --
 # this needs the count itself, so it polls by hand instead.

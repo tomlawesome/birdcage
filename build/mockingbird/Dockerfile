@@ -47,8 +47,14 @@
 # CI job lint:agent-deps): no server package can be linked in here.
 FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS agent
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
+# No `go mod download` layer: that fetches every module in go.mod,
+# github.com/tomlawesome/gauntlet included, which this binary never
+# links (only cmd/birdcage does). `go build` fetches just what it uses.
+# GOPRIVATE keeps the owner's modules off proxy.golang.org and
+# sum.golang.org (ADR-0016 decision 1); with no git in this image, a
+# future need for one of them fails this build rather than going via
+# the public proxy. scripts/go-fetch-guard.py (lint:ci) holds this.
+ENV GOPRIVATE=github.com/tomlawesome/*
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/mockingbird ./cmd/mockingbird

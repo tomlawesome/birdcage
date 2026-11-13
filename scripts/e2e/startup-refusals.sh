@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # startup-refusals.sh -- issue #78 journey C: birdcage refuses to start,
 # loudly and for the right reason, against a handful of bad
-# configurations. Runs the birdcage image alone, before scripts/e2e/
+# configurations -- first the three ways the sign-in key can be wrong
+# (#8), then the rest with a good key, so each meets its own refusal. Runs the birdcage image alone, before scripts/e2e/
 # stack.sh up brings up the rest of the stack -- nothing here needs a
 # network, a database volume or a second container.
 #
@@ -28,11 +29,16 @@ step() {
   echo "step $STEP_NUMBER ($STEP_NAME): starting"
 }
 ok() { echo "  ok   $*"; }
+# redact blanks the one-time setup and unlock codes (#8) birdcage logs,
+# as stack.sh's birdcage_log does: either one hands whoever reads the
+# output an admin account. Both the message (which can quote the
+# output) and the output itself go through it.
+redact() { sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g'; }
 fail() {
   local message="$1" name="$2" log="$3"
-  echo "step $STEP_NUMBER ($STEP_NAME) FAILED: $message" >&2
+  printf 'step %s (%s) FAILED: %s\n' "$STEP_NUMBER" "$STEP_NAME" "$message" | redact >&2
   echo "--- container output ($name) ---" >&2
-  printf '%s\n' "$log" >&2
+  printf '%s\n' "$log" | redact >&2
   exit 1
 }
 
@@ -44,6 +50,32 @@ fail() {
 # a message landing on either still counts.
 refuseTimeout=15
 refusal_count=0
+
+# The sign-in key (#8, ADR-0016) is the first thing start-up asks for:
+# with none, every other refusal below would be the missing-key one
+# instead of its own. So this journey makes a volume holding a good key
+# (32 fresh random bytes, made inside a container, owned by the image's
+# uid 1000 and readable by it alone) and a short one (16 bytes), mounts
+# it read-only, and points every run except the key's own at the good
+# one. Removed on the way out, whatever happens.
+KEY_VOL="${E2E_PREFIX:-birdcage-e2e}-startup-refusal-key"
+cleanup_key() { docker volume rm --force "$KEY_VOL" >/dev/null 2>&1 || true; }
+trap cleanup_key EXIT
+cleanup_key
+docker volume create "$KEY_VOL" >/dev/null
+# $ALPINE_IMAGE is CI's dependency-proxy pin (refs #128); a workstation
+# pulls the plain tag, as scripts/e2e/stack.sh's helper does.
+docker run --rm --volume "$KEY_VOL:/key" "${ALPINE_IMAGE:-alpine:3.24}" sh -c '
+set -eu
+umask 077
+head -c 32 /dev/urandom > /key/auth.key
+head -c 16 /dev/urandom > /key/short.key
+[ "$(wc -c < /key/auth.key)" -eq 32 ] && [ "$(wc -c < /key/short.key)" -eq 16 ]
+chown 1000:1000 /key/auth.key /key/short.key
+chmod 400 /key/auth.key /key/short.key
+'
+KEY_MOUNT=(--volume "$KEY_VOL:/auth:ro")
+GOOD_KEY=("${KEY_MOUNT[@]}" --env BIRDCAGE_AUTH_KEY_FILE=/auth/auth.key)
 run_refused() {
   local name="$1" want_substring="$2"
   shift 2
@@ -76,12 +108,30 @@ run_refused() {
   esac
 }
 
+step "no sign-in key file set is refused"
+# cmd/birdcage/startup_auth.go: BIRDCAGE_AUTH_KEY_FILE is required, and
+# its absence is the refusal a bare `docker run` of the image meets
+# first, before anything below is even looked at.
+run_refused "sign-in key unset" \
+  "BIRDCAGE_AUTH_KEY_FILE is not set"
+
+step "a sign-in key file that is not there is refused"
+run_refused "sign-in key file missing" \
+  "cannot be read" \
+  "${KEY_MOUNT[@]}" --env BIRDCAGE_AUTH_KEY_FILE=/auth/no-such.key
+
+step "a sign-in key under 32 bytes is refused"
+run_refused "sign-in key too short" \
+  "holds 16 bytes; it must hold at least 32" \
+  "${KEY_MOUNT[@]}" --env BIRDCAGE_AUTH_KEY_FILE=/auth/short.key
+
 step "a missing data directory is refused"
 # internal/startcheck.WritableDir proves the data directory before the
 # database ever opens (issue #70) -- BIRDCAGE_DB_PATH pointed at a
 # directory the image never created and no volume supplies one.
 run_refused "missing data directory" \
   "is not usable by this process" \
+  "${GOOD_KEY[@]}" \
   --env BIRDCAGE_DB_PATH=/no-such-directory/birdcage.db
 
 step "a missing certificate where one is required is refused"
@@ -91,6 +141,7 @@ step "a missing certificate where one is required is refused"
 # there before the listener ever binds to it.
 run_refused "missing certificate" \
   "is not usable by this process" \
+  "${GOOD_KEY[@]}" \
   --env BIRDCAGE_HTTP_TLS_CERT=/tls/does-not-exist.pem \
   --env BIRDCAGE_HTTP_TLS_KEY=/tls/does-not-exist-key.pem
 

@@ -53,6 +53,11 @@ don't rely on that as the only safeguard).
 
 ## Backup and restore
 
+Alongside the database, back up the sign-in key file
+(`BIRDCAGE_AUTH_KEY_FILE`) **separately** from it, and the CA directory
+(below). Losing the key file loses every account -- see
+[Sign-in](#sign-in).
+
 ### SQLite
 
 The whole database is one file (`BIRDCAGE_DB_PATH`, default `birdcage.db`).
@@ -226,6 +231,209 @@ nothing birdcage doesn't already build for itself.
 
 An address that isn't valid at all -- no port, or a `unix://` path that
 isn't absolute -- refuses to start rather than guessing what was meant.
+
+## Sign-in
+
+The dashboard needs a sign-in
+([issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8),
+ADR-0016). Everything under `/api/` answers `401` without a signed-in
+session or a read API token; the dashboard's own files load without one,
+so the sign-in screen can. The canary listeners (enrolment and ingest) are
+separate and never use it: canaries keep their own credentials.
+
+Accounts, API tokens and the sign-in history are kept in your birdcage
+database (the `auth_documents` table), on SQLite or Postgres alike, and
+sealed with a key that is **not** in the database. The first time birdcage
+starts with no accounts it writes a one-time setup code to its log (look
+for `with setup code`); creating the first admin needs that code, and the
+first account is always an admin. Accounts that use a password must also
+add a second factor (an authenticator app or a passkey) before they can
+reach anything. A restart signs everyone out.
+
+Sign-in and account events (sign-ins, failed sign-ins, API token creation
+and revocation, and the like) are written to the audit log.
+
+| Setting | Needed | What it does |
+| --- | --- | --- |
+| `BIRDCAGE_AUTH_KEY_FILE` | **yes** | Path to a file of at least 32 bytes that every sign-in store is sealed under. Birdcage will not start without it. |
+| `BIRDCAGE_PUBLIC_URL` | no | The address people type to reach the dashboard, such as `https://birdcage.example.net`. Passkeys and SSO are built from it; without it both stay off. |
+| `BIRDCAGE_AUTH_ADMIN_PASSKEY` | no | `required` or `optional`; overrides the admin-passkey rule below. Matched without regard to case and ignoring spaces around it. Any other value is refused, and so is `required` where browsers cannot make a passkey (see below). |
+| `BIRDCAGE_GEOIP_IPINFO_TOKEN_FILE` | no | Path to a file holding your IPinfo access token. Turns on country lookup, using IPinfo's free Lite data. Not together with MaxMind: setting both is refused with "choose one country provider". |
+| `BIRDCAGE_GEOIP_MAXMIND_ACCOUNT_ID` and `BIRDCAGE_GEOIP_MAXMIND_LICENCE_KEY_FILE` | no | Your MaxMind account ID, and the path to a file holding its licence key. Turns on country lookup, using MaxMind's free GeoLite2 data. Both or neither, and not together with IPinfo: setting both providers is refused with "choose one country provider". |
+| `BIRDCAGE_OIDC_ISSUER`, `BIRDCAGE_OIDC_CLIENT_ID`, `BIRDCAGE_OIDC_CLIENT_SECRET_FILE` | no | Single sign-on through an OpenID Connect provider you run. All three or none, and `BIRDCAGE_PUBLIC_URL` must be set, because the redirect address is built from it. The secret is a path to a file. |
+| `BIRDCAGE_TRUSTED_PROXIES` | no | The reverse proxies whose forwarding header is believed. Empty by default. See [Running behind a reverse proxy](#running-behind-a-reverse-proxy). |
+| `BIRDCAGE_CLIENT_IP_HEADER` | no | The header read for a trusted proxy. Defaults to `X-Forwarded-For`. |
+
+Secrets are only ever given as the path to a file, never as a value, so
+they stay out of process listings and environment dumps. Mount the files
+read-only. Surrounding whitespace (a trailing newline) is ignored in the
+token, licence-key and client-secret files; the key file is used exactly as
+it is. None of them is ever logged.
+
+### Running behind a reverse proxy
+
+Birdcage rate-limits failed sign-ins per client address as well as per
+account, and records that address in the sign-in history. Behind a reverse
+proxy every request arrives carrying the *proxy's* address, so without
+configuration all your users share one limit and one attacker's failed
+attempts lock everybody out.
+
+`BIRDCAGE_TRUSTED_PROXIES` tells birdcage which peers it may believe a
+forwarding header from:
+
+```
+BIRDCAGE_TRUSTED_PROXIES=private          # or 10.0.0.0/8,172.20.0.5
+BIRDCAGE_CLIENT_IP_HEADER=X-Forwarded-For # the default
+```
+
+- **`BIRDCAGE_TRUSTED_PROXIES`**: comma-separated bare IPs, CIDRs, or the
+  shorthand `private` (loopback, RFC 1918, CGNAT `100.64.0.0/10`,
+  link-local and IPv6 ULA `fc00::/7`, which is where a proxy sharing your
+  LAN or a Docker network lands). **Empty by default, and empty means
+  forwarding headers are ignored entirely.** That is deliberate: a header
+  is only text the client sent, so believing one unconditionally would let
+  anyone get a fresh, empty limit for every request by varying it, which
+  deletes the limiter. List only proxies you actually operate.
+- **`unix`**: an entry for when birdcage listens on a unix socket
+  (`BIRDCAGE_HTTP_ADDR=unix://...`) and the proxy connects through that
+  socket. A unix-socket connection has no IP address, so no IP or CIDR entry
+  can match it; without `unix` every visitor behind such a proxy still shares
+  one limit. List it alongside any addresses (`unix,10.0.0.0/8`). It trusts
+  only connections over the socket, never a TCP peer. Birdcage creates the
+  socket file mode 0660, so only processes allowed to open that file (its
+  owner and group) can connect; keep the socket's group to the proxy and
+  birdcage.
+- **`BIRDCAGE_CLIENT_IP_HEADER`**: the header to read, only for a peer in
+  the list. Defaults to `X-Forwarded-For`, which nginx, Caddy, Traefik,
+  HAProxy, Cloudflare and the cloud load balancers all set. Use
+  `X-Real-IP` or `CF-Connecting-IP` for a proxy that sets another; a
+  header holding one address works unchanged.
+
+The header is read **right to left**, skipping entries that are themselves
+trusted proxies, and the first untrusted address is the client. The
+direction matters: each hop appends the address it saw, so the right-most
+entries were written by your own proxies, while anything further left could
+have been forged by the client before the request arrived. If every entry
+is a trusted proxy, the left-most is used. If an entry is not an address,
+or the header is missing, or the connecting peer is not in the list,
+birdcage uses the connecting peer's own address rather than anything the
+client chose.
+
+A bad entry in the list stops birdcage starting, naming the setting; it is
+never skipped, because a skipped entry would leave you believing forwarded
+addresses were being honoured when they were not.
+
+### The session cookie is Secure on https
+
+The session cookie carries the `Secure` attribute, and the `__Host-`
+prefix with it, whenever birdcage serves TLS itself (the minted or your
+own certificate) **or** `BIRDCAGE_PUBLIC_URL` is an `https://` address. The
+second case is the usual one behind a TLS-terminating proxy: birdcage
+listens on plain HTTP, and the browser still talks https to the proxy. With
+a plain listener and no `https://` public URL the cookie is not Secure, and
+a browser would refuse a Secure cookie over plain http anyway. So behind a
+proxy, set `BIRDCAGE_PUBLIC_URL` to the https address people type.
+
+### The key file: back it up
+
+Make a key and mount it read-only:
+
+```
+head -c 32 /dev/urandom > key
+chmod 0400 key
+```
+
+**Losing this file loses every account.** The accounts are sealed under it
+and cannot be opened without it; there is no recovery and no way to reset
+it. Back it up **separately from the database**: a backup that holds both
+together gives whoever reads it everything. Changing the file to a
+different one has the same effect as losing it: birdcage refuses to start
+rather than treat the existing accounts as empty and offer a new setup
+code.
+
+### Admin passkeys
+
+Whether every admin must hold a passkey (a hardware-backed sign-in kept on
+a phone, laptop or security key) follows the address:
+
+- **Required** when `BIRDCAGE_PUBLIC_URL` is an `https://` address on a
+  domain name. An admin without a passkey is held at a screen that lets
+  them register one, and nothing else, until they do. An authenticator app
+  alone does not lift it.
+- **Optional** otherwise: an IP address, plain `http://`, or no public URL
+  (passkeys are then off), because browsers cannot make a passkey in those
+  cases and the block could never lift.
+
+`BIRDCAGE_AUTH_ADMIN_PASSKEY` overrides this. The value is matched exactly
+as follows: surrounding spaces are ignored, and case does not matter
+(`Required` and ` REQUIRED ` both mean `required`). Empty, or only spaces,
+means the setting is not set and the default above applies. Anything other
+than `required` or `optional` (`true`, `yes`, `1`) is refused at start-up.
+
+- `optional` waives the rule on an https domain.
+- `required` makes every admin hold a passkey. It is refused at start-up,
+  with an error naming `BIRDCAGE_AUTH_ADMIN_PASSKEY` and
+  `BIRDCAGE_PUBLIC_URL`, unless browsers can make a passkey for the public
+  address: an `https://` address on a domain name, or `http://localhost`.
+  So it is refused when `BIRDCAGE_PUBLIC_URL` is not set, is an IP address
+  (`127.0.0.1` included), or is plain `http://` on any other name, because
+  no admin could meet it.
+
+Users and viewers are never affected.
+
+### Country lookup
+
+With no country provider configured, nothing is looked up and birdcage
+starts as usual. With one, each sign-in is recorded with its country. The
+lookup happens in a file kept on your server: no address is ever sent to
+the provider. The only request out is a daily check for a new file, to
+IPinfo (`ipinfo.io`) or MaxMind (`download.maxmind.com`), carrying your
+token or licence key. The file is kept in `geoip/` beside the database;
+it is the provider's public data, downloaded again on demand, so **leave it
+out of backups**. Both providers ask that their data is credited wherever
+a country is shown; the sign-in history page will carry that credit.
+
+### The common-password list: an outbound fetch
+
+When someone sets a password, birdcage refuses the most common ones. The
+list built into gauntlet is used from the start; birdcage also fetches a
+newer one:
+
+- **What:** a signed list of the 10,000 most common passwords (stored as
+  hashes), with its checksum and its signature: three files.
+- **From where:** `https://github.com/tomlawesome/gauntlet/releases/download/pwned-top10k-current/`
+  (HTTPS only; redirects must also be HTTPS).
+- **How often:** once at start-up, then about once a day.
+- **What is checked:** the list is used only if its checksum matches and
+  its signature verifies against a key built into birdcage, and it is newer
+  than the one in use. Anything else is ignored and logged as a warning; a
+  failed fetch just leaves the list as it was.
+- **What is sent:** nothing beyond an ordinary request, so GitHub sees your
+  server's address. No account, password or setting leaves birdcage.
+- **Kept in:** `passwords/` beside the database, so a restart starts from
+  the newest list it had.
+
+Birdcage does not use Have I Been Pwned or any other live password
+lookup.
+
+### What lives where
+
+| Thing | Where | Back it up? |
+| --- | --- | --- |
+| Accounts, tokens, sign-in history | `auth_documents` table in the database, sealed | Yes, with the database |
+| The key they are sealed under | `BIRDCAGE_AUTH_KEY_FILE` | Yes, **apart from the database** |
+| Country data | `geoip/` beside the database | No |
+| Common-password list | `passwords/` beside the database | No |
+
+"Beside the database" means the directory that holds `BIRDCAGE_DB_PATH`
+(the working directory when it is left at its default), which must be
+writable, as for the database itself.
+
+### Commands that only touch the database
+
+`birdcage agent`, `settings`, `findings`, `approval` and the other
+one-shot commands open the database and nothing else. They do not read the
+key file, open the sign-in stores, or write a setup code.
 
 ## Running as a different user
 
@@ -672,7 +880,9 @@ row in `audit_log` with the address as its target.
 
 See ["Outbound mail"](#outbound-mail) above for the `BIRDCAGE_MAIL_*`
 variables, ["CrowdSec"](#crowdsec) above for the `BIRDCAGE_CROWDSEC_*`
-variables, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
+variables, ["Sign-in"](#sign-in) above for `BIRDCAGE_AUTH_KEY_FILE`,
+`BIRDCAGE_PUBLIC_URL`, `BIRDCAGE_AUTH_ADMIN_PASSKEY`, `BIRDCAGE_TRUSTED_PROXIES`,
+`BIRDCAGE_CLIENT_IP_HEADER`, `BIRDCAGE_GEOIP_*` and `BIRDCAGE_OIDC_*`, ["Dashboard TLS"](#dashboard-tls) above for `BIRDCAGE_HTTP_ADDR`,
 `BIRDCAGE_HTTP_TLS_CERT`, `BIRDCAGE_HTTP_TLS_KEY` and
 `BIRDCAGE_DASHBOARD_HOST`, and
 [SECURITY.md](../SECURITY.md#network-exposure) for `BIRDCAGE_INGEST_ADDR`

@@ -54,10 +54,13 @@ needs to compile against a fresh clone — never commit a real build there.
 For day-to-day frontend work, run the dev server against a real backend on
 loopback `:8080` -- the dashboard refuses to start as plain HTTP on
 anything else (issue #63, see [SECURITY.md](SECURITY.md#network-exposure)),
-so a local run needs `BIRDCAGE_HTTP_ADDR` set explicitly:
+so a local run needs `BIRDCAGE_HTTP_ADDR` set explicitly. It also needs a
+sign-in key file (see [Sign-in](docs/configuration.md#sign-in)); make a
+throwaway one for local work:
 
 ```
-BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/birdcage
+head -c 32 /dev/urandom > /tmp/birdcage-dev.key
+BIRDCAGE_AUTH_KEY_FILE=/tmp/birdcage-dev.key BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/birdcage
 ```
 
 ```
