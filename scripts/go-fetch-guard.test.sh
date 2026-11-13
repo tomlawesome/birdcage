@@ -82,7 +82,7 @@ fixture "$birdcage_good" "${holder_good/ENV GOPRIVATE=github.com\/tomlawesome\/\
 ENV GOPRIVATE=}"
 expect 1 "a later ENV that empties GOPRIVATE is caught" "GOPRIVATE ''"
 
-fixture "$birdcage_good" "${holder_good/ENV GOPRIVATE=github.com\/tomlawesome\/\*/ENV GOFLAGS=-mod=readonly GOPRIVATE=\"example.com/x,github.com/tomlawesome\"}"
+fixture "$birdcage_good" "${holder_good/ENV GOPRIVATE=github.com\/tomlawesome\/\*/ENV CGO_ENABLED=0 GOPRIVATE=\"example.com/x,github.com/tomlawesome\"}"
 expect 0 "a wider pattern in a list, in a multi-key ENV, passes" ""
 
 fixture "$birdcage_good" "${holder_good/ENV GOPRIVATE=github.com\/tomlawesome\/\*/ENV GOPRIVATE github.com/*}"
