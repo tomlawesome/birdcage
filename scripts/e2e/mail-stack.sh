@@ -94,7 +94,7 @@ build_dns_image() {
   # The same two pins as above: CI's image pins when set
   # (refs #128), the Dockerfile's own defaults on a workstation.
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
-    --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69}" \
+    --build-arg GO_IMAGE="${GOLANG_IMAGE:-golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d}" \
     --file "$REPO_ROOT/build/e2e-dns/Dockerfile" --tag "$DNS_IMAGE" "$REPO_ROOT" >/dev/null \
     || die "building $DNS_IMAGE failed"
 }

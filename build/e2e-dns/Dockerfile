@@ -50,7 +50,7 @@
 # image pins (refs #128, .gitlab-ci.yml's ALPINE_IMAGE and
 # GOLANG_IMAGE) as build args.
 ARG BASE_IMAGE=alpine:3.24
-ARG GO_IMAGE=golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69
+ARG GO_IMAGE=golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
 FROM ${GO_IMAGE} AS signer
 WORKDIR /src
 # GOPRIVATE keeps the owner's modules (github.com/tomlawesome/gauntlet)
