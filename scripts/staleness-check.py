@@ -101,12 +101,21 @@ def require_yaml():
         raise SystemExit(2)
 
 
+def _ci_loader():
+    """SafeLoader that accepts GitLab's `!reference [job, key]` tag."""
+    class Loader(yaml.SafeLoader):
+        pass
+    Loader.add_constructor(
+        "!reference", lambda l, n: {"!reference": l.construct_sequence(n)})
+    return Loader
+
+
 def load_gitlab_ci(path):
     """The parsed .gitlab-ci.yml, cached per path within one run."""
     if path not in _GITLAB_CI_CACHE:
         require_yaml()
         with open(path) as f:
-            _GITLAB_CI_CACHE[path] = yaml.safe_load(f) or {}
+            _GITLAB_CI_CACHE[path] = yaml.load(f, Loader=_ci_loader()) or {}
     return _GITLAB_CI_CACHE[path]
 
 

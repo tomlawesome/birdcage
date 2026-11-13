@@ -63,6 +63,17 @@ import sys
 STAGE = "e2e"
 
 
+def _loader(yaml):
+    """A SafeLoader that accepts GitLab's `!reference [job, key]` tag, kept
+    as a one-key mapping so a rules list that uses it still compares equal to
+    the anchor it came from."""
+    class Loader(yaml.SafeLoader):
+        pass
+    Loader.add_constructor(
+        "!reference", lambda l, n: {"!reference": l.construct_sequence(n)})
+    return Loader
+
+
 def load(path):
     try:
         import yaml
@@ -73,7 +84,7 @@ def load(path):
         raise SystemExit(2)
     try:
         with open(path) as f:
-            doc = yaml.safe_load(f)
+            doc = yaml.load(f, Loader=_loader(yaml))
     except (OSError, yaml.YAMLError) as err:
         print(f"ci-e2e-guard: cannot read {path}: {err}", file=sys.stderr)
         raise SystemExit(2)
