@@ -17,7 +17,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- backend build ----------------------------------------------------------
-FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS backend
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS backend
 WORKDIR /src
 # github.com/tomlawesome/gauntlet (sign-in, #8) is fetched from its Git
 # host, never through proxy.golang.org or sum.golang.org: the first
@@ -26,14 +26,14 @@ WORKDIR /src
 # modules; go.sum still pins the exact content. Fetching direct needs
 # git, which this Alpine image lacks, so it is added here -- this stage
 # only. Pinned to the exact version in alpine 3.24's `main` repository
-# on 2026-10-10 (read with `apk policy git` on this exact image); owner,
+# on 2026-11-13 (read with `apk policy git` on this exact image); owner,
 # 2026-10-10, on #8 (answer 3a). It never reaches the shipped image: the
 # runtime stage copies only /out/birdcage and /var/lib/birdcage from here.
-# The pin fails this build loudly once 2.54.0-r0 leaves the repository,
+# The pin fails this build loudly once 2.54.1-r0 leaves the repository,
 # which forces a deliberate bump. scripts/go-fetch-guard.py (lint:ci)
 # refuses a Go build stage without GOPRIVATE, and git anywhere else.
 ENV GOPRIVATE=github.com/tomlawesome/*
-RUN apk add --no-cache git=2.54.0-r0
+RUN apk add --no-cache git=2.54.1-r0
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

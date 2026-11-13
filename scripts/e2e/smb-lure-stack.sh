@@ -107,7 +107,7 @@ build_client_image() {
     return 0
   fi
   log "building $CLIENT_IMAGE from build/e2e-smbclient/Dockerfile"
-  # --build-arg BASE_IMAGE: CI's dependency-proxy pin (refs #128,
+  # --build-arg BASE_IMAGE: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the Dockerfile's own default on a workstation.
   docker build --build-arg BASE_IMAGE="${ALPINE_IMAGE:-alpine:3.24}" \
     --file "$REPO_ROOT/build/e2e-smbclient/Dockerfile" --tag "$CLIENT_IMAGE" "$REPO_ROOT" >/dev/null \
@@ -322,7 +322,7 @@ smbclient() {
 # the same view the canary agent has. Used only when something failed.
 audit_log() {
   echo "--- $AUDIT_VOL /audit/smb.log ---"
-  # ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin (refs #128,
+  # ${ALPINE_IMAGE:-alpine:3.24}: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the plain Docker Hub tag on a workstation.
   docker run --rm --volume "$AUDIT_VOL:/audit:ro" "${ALPINE_IMAGE:-alpine:3.24}" cat /audit/smb.log 2>/dev/null || true
 }

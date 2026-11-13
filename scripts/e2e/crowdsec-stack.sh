@@ -38,9 +38,9 @@ set -eu
 # own architecture is pulled. Move this to move the version -- and
 # re-read ADR-0014's advisory table when you do, since the pin is what
 # keeps the journey off a LAPI with a known flaw (every one listed there
-# is fixed by 1.8.0). E2E_REGISTRY_PREFIX is CI's dependency-proxy
-# prefix (#128); unset on a workstation, where Docker Hub is pulled
-# directly.
+# is fixed by 1.8.0). E2E_REGISTRY_PREFIX is an optional registry
+# override; unset (CI and workstation alike), Docker Hub is named directly
+# and CI's daemon pulls it through the runner image cache.
 CROWDSEC_IMAGE_REF="crowdsecurity/crowdsec@sha256:0f2523fa61ef507f15d953045cface490cc880670c62f2755ced17524107f71a"
 CROWDSEC_IMAGE="${E2E_REGISTRY_PREFIX:-docker.io}/$CROWDSEC_IMAGE_REF"
 

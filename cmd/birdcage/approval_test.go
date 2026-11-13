@@ -75,10 +75,14 @@ func writeEML(t *testing.T, body string) string {
 	return path
 }
 
-const unsignedReply = "From: Birdcage Admin <admin@example.net>\r\n" +
+// unsignedReply is dated when the test binary starts, not on a fixed day:
+// runApprovalCheck refuses a message older than checkMaxAge (thirty days)
+// before it looks at the signature, so a fixed date made these tests fail
+// for staleness once the calendar moved past it (#195, from 2026-10-19).
+var unsignedReply = "From: Birdcage Admin <admin@example.net>\r\n" +
 	"To: birdcage@example.net\r\n" +
 	"Subject: Re: [birdcage u-2026-09-19-7f3a] upgrade mockingbird\r\n" +
-	"Date: Fri, 19 Sep 2026 10:00:00 +0000\r\n" +
+	"Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n" +
 	"Message-ID: <reply-1@example.net>\r\n" +
 	"\r\n" +
 	"Yes, go ahead.\r\n"
@@ -179,10 +183,10 @@ func TestApprovalCheckUsage(t *testing.T) {
 
 // approvalReply builds a raw .eml-shaped message with a Date close
 // enough to time.Now() to pass approvalHandler's one-hour
-// approvalMaxAge (unlike this file's unsignedReply constant, which is
-// dated for runApprovalCheck's much wider thirty-day checkMaxAge and
-// would otherwise be rejected here for being stale rather than for
-// whatever the test is actually trying to prove).
+// approvalMaxAge, the same way unsignedReply above is dated for
+// runApprovalCheck's wider thirty-day checkMaxAge: a stale date would be
+// rejected for its age rather than for whatever the test is trying to
+// prove.
 func approvalReply(from, subject, messageID string) []byte {
 	date := time.Now().UTC().Format(time.RFC1123Z)
 	return []byte("From: " + from + "\r\n" +

@@ -326,5 +326,31 @@ PYEOF
 then echo "ok   owner modules never reach the Go proxy (recorded URLs, helpers refuse)"; pass=$((pass + 1))
 else echo "FAIL owner modules never reach the Go proxy"; fail=$((fail + 1)); fi
 
+# image_ci_vars reads plain Docker Hub names (what .gitlab-ci.yml uses now),
+# the Docker Hub cache prefix, and skips ghcr.io / mcr.microsoft.com names
+# given through $CI_IMAGE_CACHE_GHCR / _MCR (not Docker Hub images, ai/agent-infra#65).
+got="$(python3 - "$check" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("staleness_check", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps(mod.image_ci_vars({"variables": {
+    "NODE_IMAGE": "node:26-trixie",
+    "ALPINE_IMAGE": "library/alpine:3.24",
+    "CACHED_IMAGE": "${CI_IMAGE_CACHE_DOCKERHUB}/library/postgres:18-alpine",
+    "CACHED2_IMAGE": "$CI_IMAGE_CACHE_DOCKERHUB/debian:trixie-slim",
+    "GHCR_IMAGE": "$CI_IMAGE_CACHE_GHCR/owner/tool:1.0",
+    "MCR_IMAGE": "$CI_IMAGE_CACHE_MCR/playwright:v1",
+    "GOLANG_IMAGE": "golang:1.27.3",
+}}), sort_keys=True))
+PY
+)"
+want='{"ALPINE_IMAGE": "alpine:3.24", "CACHED2_IMAGE": "debian:trixie-slim", "CACHED_IMAGE": "postgres:18-alpine", "NODE_IMAGE": "node:26-trixie"}'
+if [ "$got" = "$want" ]; then
+  pass=$((pass + 1)); echo "ok   image_ci_vars: plain names and cache prefixes"
+else
+  fail=$((fail + 1)); echo "FAIL image_ci_vars: got $got"
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

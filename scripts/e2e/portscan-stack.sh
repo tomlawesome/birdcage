@@ -334,7 +334,7 @@ up() {
   NEG_CANARY_ID="$(wait_for_provision "$NEG_NAME" "$NEG_CANARY")"
   wait_for_line "$NEG_CANARY" "port-scan detection is OFF"
 
-  # ${ALPINE_IMAGE:-alpine:3.24}: CI's dependency-proxy pin (refs #128,
+  # ${ALPINE_IMAGE:-alpine:3.24}: CI's image pin (refs #128,
   # .gitlab-ci.yml) when set, the plain Docker Hub tag on a workstation.
   docker run --detach --name "$SWEEPER" --network "$E2E_NET" --init \
     --pids-limit 32 --memory 64m --cpus 0.25 \

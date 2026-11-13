@@ -12,7 +12,8 @@
 # branches -- in practice, the push a merge makes.
 #
 # Runner lanes (ai/agent-infra#3): `big` is 8 CPU / 18 GB, `light` is
-# 4 CPU / 6 GB. A job with no matching tag does not run at all.
+# 4 CPU / 6 GB. A job with no matching tag does not run at all. Jobs that need
+# a Docker daemon use `docker` instead (.dind, below; ai/birdcage#193).
 
 stages:
   - lint
@@ -56,39 +57,37 @@ variables:
   SMB_LURE_MIRROR_REPO: ghcr.io/tomlawesome/smb-lure
   HOLDER_MIRROR_REPO: ghcr.io/tomlawesome/holder
   OPENCANARY_MIRROR_REPO: ghcr.io/tomlawesome/opencanary
-  # Docker Hub images the pipeline pulls repeatedly, routed through GitLab's
-  # group dependency proxy (refs #128): Docker Hub's anonymous-pull limit
-  # was failing e2e and test:go before they ever ran. Same bytes, cached on
-  # the GitLab server instead of re-crossing the WAN every job. `library/`
-  # is Docker Hub's own namespace for an official, unprefixed image.
-  # Job `image:`/`services:` pulls are authenticated to the proxy by the
-  # runner automatically; a job that pulls one of these on its own account
-  # inside its script (docker run/build/pull against its own daemon) still
-  # needs its own `docker login` first -- see the jobs that do. Versions
-  # unchanged from before this issue; only the source moved.
+  # Docker Hub images the pipeline pulls repeatedly, named plainly (refs
+  # ai/agent-infra#14, #65): the runner hosts' Docker daemons mirror Docker
+  # Hub through the runner image cache, so these need no prefix and no login,
+  # and Docker Hub's anonymous-pull limit (#128) never sees the repeats. A
+  # daemon the runner does not own -- the dind service (.dind_service) -- is
+  # told about the cache on its own command line, so a `docker run`, `build`
+  # or Compose pull inside a job goes through it too. Digests are the same
+  # through the cache. Versions unchanged; only the source moved.
   # Tag AND index digest (#188): the floating golang:1.27 moved from 1.27.1 to
   # 1.27.2 under an open merge request and changed how coverage statements are
   # counted, failing test:go on unchanged code. Bump tag and digest together,
   # on purpose, with the coverage floors re-measured in the same change.
-  GOLANG_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c
-  NODE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/node:26-trixie
-  PYTHON_ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.14-alpine
+  GOLANG_IMAGE: golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69
+  NODE_IMAGE: node:26-trixie
+  PYTHON_ALPINE_IMAGE: python:3.14-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
-  PYTHON_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/python:3.13-slim-trixie
-  ALPINE_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/alpine:3.24
-  DOCKER_CLI_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/docker:29-cli
+  PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
+  ALPINE_IMAGE: alpine:3.24
+  DOCKER_CLI_IMAGE: docker:29-cli
   # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
   # now the one Postgres pin in this file, used by both test:go's service
   # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
   # separate call sites (one env var, one script default) rather than
   # unified, so a future major-version bump is one line here.
-  POSTGRES18_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/postgres:18-alpine
+  POSTGRES18_IMAGE: postgres:18-alpine
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
-  DEBIAN_TRIXIE_SLIM_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/library/debian:trixie-slim
+  DEBIAN_TRIXIE_SLIM_IMAGE: debian:trixie-slim
   # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
   # and what test:release-scripts installs to run their tests there.
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
@@ -119,6 +118,68 @@ variables:
 .git_safe: &git_safe
   before_script:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
+
+# Every job that talks to a Docker daemon runs on the shared `docker` runner
+# (privileged, no host socket) against a throwaway Docker-in-Docker service of
+# its own, so no job can reach another job's containers or read their
+# variables through a shared daemon (ai/birdcage#193, ai/agent-infra#31;
+# OWASP Docker Security Cheat Sheet, rule 1). The service dies with the job,
+# so nothing is left on the runner and an image is never "still there" from an
+# earlier job: build:images pushes each image to this project's registry and
+# every later job pulls it back by digest (scripts/ci-ensure-image.sh).
+#
+# Split in two: `.dind_service` is the daemon and its client settings, `.dind`
+# adds the pinned docker client image. A job that must keep an image of its own
+# would take the service alone.
+#
+# 29.6.2 is held on purpose, as in ai/orbit (ai/orbit#827): 29.7.0 can skip a
+# blob it wrongly thinks the registry has, so a push fails with "blob unknown
+# to registry" (moby/moby#53293).
+#
+# The daemon is pointed at the runner's image cache (ai/agent-infra#14): plain
+# Docker Hub names stay unchanged and pulls inside the job are local.
+# $CI_IMAGE_CACHE_* are set on the runner, not here. `alias: docker` because
+# GitLab derives a service's hostname from its image name, and a cache path
+# would otherwise leave `tcp://docker:2375` unresolvable.
+#
+# The runner expands variables in a service's `name` but not in `command:` or
+# `entrypoint:`, so the flags go through `sh -c`, where the shell expands them;
+# a literal in `command:` made the daemon exit with "insecure registry … is not
+# valid" on the first run (ai/agent-infra#31).
+#
+# The e2e jobs used to ask for the `big` lane (8 CPU / 18 GB) because they run
+# four to six containers at once; the `docker` runner has to be sized for that
+# (see the comments on those jobs).
+.dind_service:
+  tags: [docker]
+  services:
+    - name: ${CI_IMAGE_CACHE_DOCKERHUB}/library/docker:29.6.2-dind@sha256:bfec1f5159c63a81ca6fdedbd81404d2c0e16378ed0feec3bb3fbf3998847659
+      alias: docker
+      pull_policy: if-not-present
+      entrypoint:
+        - /bin/sh
+        - -c
+        - exec dockerd-entrypoint.sh --registry-mirror="http://$CI_IMAGE_CACHE_DOCKERHUB" --insecure-registry="$CI_IMAGE_CACHE_DOCKERHUB" --insecure-registry="$CI_IMAGE_CACHE_GHCR" --insecure-registry="$CI_IMAGE_CACHE_MCR"
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+
+.dind:
+  extends: .dind_service
+  image:
+    name: ${CI_IMAGE_CACHE_DOCKERHUB}/library/docker:29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144
+    pull_policy: if-not-present
+
+# The service daemon takes about 15 seconds to answer after the job starts, so
+# the first line of a job that uses it waits for it. Each job lists it itself,
+# because every job sets its own before_script or script and an array there
+# replaces the template's.
+.dind_ready: &dind_ready |
+  for _ in $(seq 1 60); do
+    docker info > /dev/null 2>&1 && break
+    sleep 1
+  done
+  docker info > /dev/null 2>&1 || { echo "the dind service daemon is not reachable at ${DOCKER_HOST}"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # POLICY -- the promotion order. This is the gate GitHub's branch-policy.yml
@@ -296,6 +357,17 @@ lint:scripts:
       fi
       echo "all $found script suites passed"
 
+# The flake log blocks a third sighting with no issue or still in the merge
+# gate, and a malformed sighting (#196, ai/agent-infra#30). The quarantine list
+# is scripts/quarantine.txt, the same file test:go skips by.
+lint:flake-check:
+  stage: lint
+  image: $GOLANG_IMAGE
+  <<: *gate
+  needs: []
+  script:
+    - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
+
 # The release scripts' own tests, run on the image the release jobs use,
 # with exactly the packages they install (RELEASE_APK_PACKAGES). lint:scripts
 # runs every suite on a Python image, which is how #158 slipped through:
@@ -360,7 +432,7 @@ lint:agent-deps:
 # go1.27") on every commit, clean or not. GOTOOLCHAIN=local pins both
 # steps to $GOLANG_IMAGE's own go, which already satisfies govulncheck's
 # floor and matches go.mod exactly -- confirmed against the real
-# golang:1.27.2 image.
+# golang:1.27.3 image.
 #
 # A reachable vulnerability fails the job; an unreachable one is printed
 # only -- govulncheck's own default. Proved locally, not assumed: a
@@ -592,7 +664,7 @@ test:go:
     # This run sets BIRDCAGE_TEST_DATABASE_URL, so internal/db is
     # measured against real Postgres here and reads higher than it does
     # on a workstation, where the same tests fall back to SQLite.
-    # golang:1.27.2 ships python3 (3.13.5, verified), which the checker
+    # golang:1.27.3 ships python3 (3.13.5, verified), which the checker
     # needs.
     # #93: run the suite as a NON-ROOT user. internal/startcheck proves
     # birdcage refuses to start on unsafe file permissions, and those
@@ -619,6 +691,10 @@ test:go:
     # (was ~500-550s, hitting go test's 10m per-package default under a
     # busy runner) plus every other package, so a genuinely hung test
     # still fails the job instead of running forever.
+    # Tests listed in scripts/quarantine.txt (#196) are skipped here and run
+    # by test:go:quarantine, which does not block. The pattern comes from
+    # that same file, so the skip list and the flake check's list cannot drift.
+    - QUARANTINE_SKIP=$(sh scripts/ci/quarantine-pattern.sh)
     - >-
       su tester -c "cd '$CI_PROJECT_DIR' &&
       HOME=/home/tester
@@ -627,11 +703,28 @@ test:go:
       GOFLAGS='$GOFLAGS'
       GOPRIVATE='$GOPRIVATE'
       BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
-      go test ./... -race -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
+      go test ./... -race -skip '$QUARANTINE_SKIP' -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
     # Read back as root: the profile is tester-owned but world-readable,
     # and nothing below writes to it.
     - go tool cover -func=/tmp/gotest/coverage.out | tail -1
     - python3 scripts/coverage-floor.py /tmp/gotest/coverage.out
+
+# Go tests in scripts/quarantine.txt (#196): a flake with three sightings
+# and an issue leaves the merge gate (test:go skips it) and runs here instead,
+# where a failure is visible but blocks nothing. Not an e2e job, so the live
+# checks stay blocking. SQLite only; add a Postgres service here if a
+# quarantined test ever needs one.
+test:go:quarantine:
+  stage: test
+  image: $GOLANG_IMAGE
+  <<: [*gate, *git_safe]
+  needs: []
+  allow_failure: true
+  script:
+    - |
+      pattern=$(sh scripts/ci/quarantine-pattern.sh)
+      [ -n "$pattern" ] || { echo "scripts/quarantine.txt lists no test; nothing to run"; exit 0; }
+      go test ./... -race -run "$pattern" -timeout=20m
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
@@ -781,10 +874,9 @@ test:smoke:postgres:
 # The two shipped images (#69), built and run as validation only -- nothing
 # here pushes to a registry; publishing is a separate job with its own
 # credentials (git-and-delivery skill, "Validation and publication are
-# separate jobs"). Same shape as mikroview's test:container: the runner
-# host's rootless Docker socket, names carrying $CI_JOB_ID so parallel
-# pipelines never collide, and probes over --network container: rather
-# than --publish, which would race other jobs for host ports.
+# separate jobs"). Same shape as mikroview's test:container: a Docker-in-Docker
+# service of the job's own (.dind), names carrying $CI_JOB_ID, and probes over
+# --network container: rather than --publish.
 # ---------------------------------------------------------------------------
 # The images are built ONCE, here, and every later job uses those exact
 # bytes (#90). Before this job existed, `test:image:birdcage` built its own
@@ -793,16 +885,16 @@ test:smoke:postgres:
 # source and called it validated. Now the image that answers the checks is
 # the image whose digest gets published.
 #
-# How the bytes reach the later jobs: every job here talks to the same
-# Docker daemon on the runner host (DOCKER_HOST below, as the existing jobs
-# already do), so an image built in this job is normally still in that
-# daemon's store for the rest of the pipeline. No `docker save` artifact is
-# needed, which matters because the mockingbird image is a few hundred
-# megabytes and this runs on every branch.
+# How the bytes reach the later jobs: through this project's registry, by
+# digest, below. Since ai/birdcage#193 every job has a Docker daemon of its
+# own that dies with it, so an image built here is never in a later job's
+# store; no `docker save` artifact is used instead, because the mockingbird
+# image is a few hundred megabytes and this runs on every branch.
 #
-# That daemon is SHARED across every pipeline running on this host at once
-# (#112), which the prune two paragraphs down was not written for: it used
-# to assume the local tag it just built was the only copy, so deleting every
+# Before that, the daemon was SHARED across every pipeline running on the
+# runner host at once (#112), and the prune that used to run here (since
+# removed) was not written for that: it assumed the local tag it just built
+# was the only copy, so deleting every
 # other pipeline's tag was harmless because "harmless" meant "self-healing
 # for a runner that only ever has one pipeline on it". On a shared daemon it
 # instead deletes whatever another still-running pipeline is mid-e2e-stage
@@ -851,27 +943,14 @@ test:smoke:postgres:
 # version.sh is the only place that string is decided.
 build:images:
   stage: test
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs: []
-  variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
   before_script:
+    - *dind_ready
     # bash for scripts/release-version.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
   script:
-    # Build images from earlier pipelines are pruned here rather than in an
-    # after_script somewhere: a later job cannot know whether the pipeline
-    # still needs them, and a cancelled pipeline never reaches its cleanup
-    # at all. #145: the prune used to list only the local repo name, so it
-    # removed the local "<name>-build:<pipeline id>" tag and left the
-    # registry-named "${CI_REGISTRY_IMAGE}/<name>-build:ci-<pipeline id>"
-    # tag on the same image, which kept the image alive for good. On the
-    # runner host on 2026-09-27, 268 of 305 images were this project's
-    # build images this left behind. scripts/ci-prune-build-images.sh has
-    # the fixed loop and its own header for the age rule, the busybox
-    # `date -D` parsing, and the failure posture.
-    - scripts/ci-prune-build-images.sh
     - |
       set -eu
       stamp="$(scripts/release-version.sh --stamp "$CI_COMMIT_SHA")"
@@ -933,24 +1012,17 @@ build:images:
 
 test:image:birdcage:
   stage: test
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
       artifacts: true
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     APP: birdcage-test-$CI_JOB_ID
   before_script:
+    - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    # This job's alpine probe container is pulled by this job's own daemon
-    # call (docker run against $ALPINE_IMAGE), not by GitLab's runner-level
-    # image auth -- that only covers this job's own image:/services:.
-    # $ALPINE_IMAGE already names the dependency proxy, but a pull still
-    # needs a credential for it (refs #128). --password-stdin only, never
-    # echoed.
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1029,18 +1101,17 @@ test:image:birdcage:
 # containers is #48's/#132's end-to-end test, not this job's.
 test:image:mockingbird:
   stage: test
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
       artifacts: true
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     APP: mockingbird-test-$CI_JOB_ID
   before_script:
+    - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1138,20 +1209,19 @@ test:image:mockingbird:
 # journeys.
 test:image:opencanary:
   stage: test
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
       artifacts: true
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     APP: opencanary-test-$CI_JOB_ID
     APP_HOLDER: opencanary-test-holder-$CI_JOB_ID
     APP_SINK: opencanary-test-sink-$CI_JOB_ID
   before_script:
+    - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$HOLDER_BUILD_IMAGE" "$HOLDER_BUILD_DIGEST"
@@ -1277,18 +1347,17 @@ test:image:opencanary:
 # itself was fine."
 test:image:nightjar:
   stage: test
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
       artifacts: true
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     APP: nightjar-test-$CI_JOB_ID
   before_script:
+    - *dind_ready
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned the local tag
     # between when it was built and now (#112) -- this recovers it from the
@@ -1315,6 +1384,9 @@ test:image:nightjar:
       rm /s/ca-key.pem && echo ci-throwaway-token > /s/token &&
       echo https://127.0.0.1:1 > /s/ingest-url &&
       chown -R 65532:65532 /s && chmod 600 /s/*'
+    # The daemon is the dind service, whose Alpine root lacks /etc/gshadow; a
+    # real host has both files, so create them rather than loosen the mount list (#193).
+    - docker run --rm -v /etc:/e "$ALPINE_IMAGE" sh -c 'touch /e/shadow /e/gshadow'
     # No published port, no --cap-add, no --sysctl (#108 section 4): the
     # printed run command's exact flag set, mask list included, so this
     # job would fail if a future edit ever let the two drift apart.
@@ -1410,7 +1482,7 @@ test:image:nightjar:
 # behind either way.
 e2e:enrol-and-hit:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1420,19 +1492,17 @@ e2e:enrol-and-hit:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1465,7 +1535,7 @@ e2e:enrol-and-hit:
 # not held up behind the slower one.
 e2e:enrol-and-hit:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1475,9 +1545,7 @@ e2e:enrol-and-hit:postgres:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -1485,12 +1553,12 @@ e2e:enrol-and-hit:postgres:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1529,7 +1597,7 @@ e2e:enrol-and-hit:postgres:
 # step of a lifecycle the others already stood up.
 e2e:agent-credentials:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
@@ -1537,9 +1605,7 @@ e2e:agent-credentials:
   # agent-renewal.sh and agent-expiry.sh both poll for several minutes
   # of real half-life and expiry; nothing here is CPU-bound, but the
   # wall clock means this job runs longest of the e2e stage.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-cred-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
@@ -1551,8 +1617,8 @@ e2e:agent-credentials:
     # of minutes rather than the real seven days (docs/configuration.md).
     E2E_CLIENT_CERT_TTL: 4m
   before_script:
+    - *dind_ready
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
@@ -1575,14 +1641,12 @@ e2e:agent-credentials:
 # cannot.
 e2e:agent-credentials:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs:
     - job: build:images
       artifacts: true
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-cred-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -1591,8 +1655,8 @@ e2e:agent-credentials:postgres:
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_CLIENT_CERT_TTL: 4m
   before_script:
+    - *dind_ready
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
@@ -1616,7 +1680,7 @@ e2e:agent-credentials:postgres:
 # fast as they were.
 e2e:smb:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1628,19 +1692,17 @@ e2e:smb:
   # Mockingbird tag is the one build:images already built) and runs a
   # Samba server plus a second canary alongside the base stack's four
   # containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1670,7 +1732,7 @@ e2e:smb:
 # and the path -- across a restart of the canary.
 e2e:smb-lure:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points the harness at
   # (#98), so the journey tests the bytes that would ship -- including the
@@ -1682,9 +1744,7 @@ e2e:smb-lure:
   # and the canary are all tags build:images already built) and runs a
   # second canary, the holder and the lure alongside the base stack's
   # four containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-lure-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
@@ -1692,10 +1752,10 @@ e2e:smb-lure:
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1749,7 +1809,7 @@ e2e:smb-lure:
 # and a parallel branch editing the same file has one place to merge.
 e2e:smb-lure:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points the harness at
   # (#98), so the journey tests the bytes that would ship -- including the
@@ -1761,9 +1821,7 @@ e2e:smb-lure:postgres:
   # and the canary are all tags build:images already built) and runs a
   # second canary, the holder and the lure alongside the base stack's
   # four containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-lure-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -1772,12 +1830,12 @@ e2e:smb-lure:postgres:
     E2E_SMB_LURE_IMAGE: $SMB_LURE_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1835,7 +1893,7 @@ e2e:smb-lure:postgres:
 # stack run rather than a line added to another job.
 e2e:mail:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1846,19 +1904,17 @@ e2e:mail:
   # Builds two extra images (the Alpine mail server, and the test DNS
   # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
   # runs them beside the base stack's containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-mail-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1883,7 +1939,7 @@ e2e:mail:
 # time comparison, so the engine is in the path being tested.
 e2e:mail:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1894,9 +1950,7 @@ e2e:mail:postgres:
   # Builds two extra images (the Alpine mail server, and the test DNS
   # server with the DKIM signer, from $GOLANG_IMAGE and $ALPINE_IMAGE) and
   # runs them beside the base stack's containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-mail-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -1904,12 +1958,12 @@ e2e:mail:postgres:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1936,7 +1990,7 @@ e2e:mail:postgres:
 # third line added to that job instead.
 e2e:dashboard-own-ca:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1946,9 +2000,7 @@ e2e:dashboard-own-ca:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -1956,10 +2008,10 @@ e2e:dashboard-own-ca:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -1983,7 +2035,7 @@ e2e:dashboard-own-ca:
 # remove their own images.
 e2e:snmp:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -1993,19 +2045,17 @@ e2e:snmp:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2035,7 +2085,7 @@ e2e:snmp:
 # combination that looked plausible and was tried and rejected).
 e2e:portscan:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2047,19 +2097,17 @@ e2e:portscan:
   # canaries and a sweep container), using the images build:images
   # already built; the light lane's 4 CPU / 6 GB is not enough headroom
   # for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-portscan-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2095,7 +2143,7 @@ e2e:portscan:
 # wire, which is the only place that could disagree with our code.
 e2e:poisoner:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2106,9 +2154,7 @@ e2e:poisoner:
   # Four containers at once (birdcage, the base canary, this journey's own
   # canary and Responder), and Responder is a Python process that binds a
   # dozen sockets; the light lane's 4 CPU / 6 GB is not enough headroom.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-poisoner-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
@@ -2126,10 +2172,10 @@ e2e:poisoner:
     # project (#127). Move this digest to move the version -- the check.
     E2E_POISONER_FIXTURE_DIGEST: registry.tomlawson.io/ai/birdcage-fixtures/poisoner-fixture@sha256:d57449276d70bd1209888c43d8bac274c7b50563fc8d85ad5498ed90ea7c7033
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2170,7 +2216,7 @@ e2e:poisoner:
 # reading of the API; this is the check that can disagree with it.
 e2e:crowdsec:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2180,23 +2226,21 @@ e2e:crowdsec:
       artifacts: true
   # Runs the LAPI container beside the base stack's; the light lane's
   # 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-crowdsec-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
-    # The fixture is pulled through the dependency proxy (#128), by the
-    # digest the stack script holds.
-    E2E_REGISTRY_PREFIX: $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
+    # The fixture is pulled by the digest the stack script holds, from
+    # Docker Hub by name; the job's daemon mirrors Docker Hub through the
+    # runner image cache (.dind_service).
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. jq reads cscli's
     # JSON on this host (scripts/e2e/crowdsec.sh says why).
     - apk add --no-cache bash jq >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2220,7 +2264,7 @@ e2e:crowdsec:
 # a read of audit_log, so the engine is in the path being tested.
 e2e:crowdsec:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2230,23 +2274,20 @@ e2e:crowdsec:postgres:
       artifacts: true
   # Runs the LAPI container beside the base stack's; the light lane's
   # 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-crowdsec-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
-    E2E_REGISTRY_PREFIX: $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
   before_script:
+    - *dind_ready
     # The scripts are bash (`set -eu`, arrays); docker:29-cli ships
     # busybox ash only. openssl is for scripts/e2e/stack.sh's
     # build_postgres_tls_image (#84), which builds the one-line derived
     # Postgres image this backend needs; jq for scripts/e2e/crowdsec.sh.
     - apk add --no-cache bash openssl jq >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2274,13 +2315,13 @@ e2e:crowdsec:postgres:
 # dials (see scripts/e2e/postgres-requires-tls.sh).
 e2e:postgres-requires-tls:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   needs: []
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-tls-refusal-$CI_JOB_ID
   before_script:
+    - *dind_ready
     # The script is bash (`set -eu`, case statements over multi-line
     # output); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
@@ -2302,7 +2343,7 @@ e2e:postgres-requires-tls:
 # tag it built from this exact commit (commit 94945df).
 e2e:scanner:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *gate
   # build:images' dotenv names the tags this job points the stack at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2314,9 +2355,7 @@ e2e:scanner:
   # and runs the base stack's four containers plus three Nightjar
   # instances in turn; the light lane's 4 CPU / 6 GB is not enough
   # headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-scanner-$CI_JOB_ID
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
     E2E_MOCKINGBIRD_IMAGE: $MOCKINGBIRD_BUILD_IMAGE
@@ -2324,10 +2363,10 @@ e2e:scanner:
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2355,7 +2394,7 @@ e2e:scanner:
 # worth every branch.
 e2e:smb:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2367,9 +2406,7 @@ e2e:smb:postgres:
   # Mockingbird tag is the one build:images already built) and runs a
   # Samba server plus a second canary alongside the base stack's four
   # containers.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-smb-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -2377,12 +2414,12 @@ e2e:smb:postgres:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2406,7 +2443,7 @@ e2e:smb:postgres:
 # bar (#91, docs/ci-hops.md) rather than every merge request.
 e2e:snmp:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2416,9 +2453,7 @@ e2e:snmp:postgres:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-snmp-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -2426,12 +2461,12 @@ e2e:snmp:postgres:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2449,7 +2484,7 @@ e2e:snmp:postgres:
 # bar (#91, docs/ci-hops.md) rather than every merge request.
 e2e:dashboard-own-ca:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points stack.sh at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2459,9 +2494,7 @@ e2e:dashboard-own-ca:postgres:
       artifacts: true
   # Runs four containers at once, using the images build:images already
   # built; the light lane's 4 CPU / 6 GB is not enough headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-dash-pg-$CI_JOB_ID
     E2E_DASHBOARD_MODE: own-ca
     E2E_BACKEND: postgres
@@ -2470,12 +2503,12 @@ e2e:dashboard-own-ca:postgres:
     E2E_OPENCANARY_IMAGE: $OPENCANARY_BUILD_IMAGE
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2496,7 +2529,7 @@ e2e:dashboard-own-ca:postgres:
 # the receipt was written, not in how Nightjar scanned.
 e2e:scanner:postgres:
   stage: e2e
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   <<: *higher_bar
   # build:images' dotenv names the tags this job points the stack at
   # (#98), so the journey tests the bytes that would ship, not a second
@@ -2508,9 +2541,7 @@ e2e:scanner:postgres:
   # and runs the base stack's four containers plus three Nightjar
   # instances in turn; the light lane's 4 CPU / 6 GB is not enough
   # headroom for that.
-  tags: [big]
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     E2E_PREFIX: birdcage-e2e-scanner-pg-$CI_JOB_ID
     E2E_BACKEND: postgres
     E2E_BIRDCAGE_IMAGE: $BIRDCAGE_BUILD_IMAGE
@@ -2519,12 +2550,12 @@ e2e:scanner:postgres:
     E2E_HOLDER_IMAGE: $HOLDER_BUILD_IMAGE
     E2E_NIGHTJAR_IMAGE: $NIGHTJAR_BUILD_IMAGE
   before_script:
+    - *dind_ready
     # The scripts are bash (arrays, and `set -u` around optional
     # variables); docker:29-cli ships busybox ash only. openssl is for
     # scripts/e2e/stack.sh's build_postgres_tls_image (#84), which builds
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
-    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     # A concurrent pipeline's build:images may have pruned one of these
     # local tags between when it was built and now (#112) -- this recovers
@@ -2625,7 +2656,7 @@ e2e:scanner:postgres:
 
 release:push:
   stage: release
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   # A cancelled publish leaves a pushed digest with no evidence, or a commit
   # that can never be released because its anchor half-exists. The next push
   # must not cancel this one.
@@ -2637,10 +2668,9 @@ release:push:
   # publishing -- and it still inherits build:images' dotenv. Listing jobs
   # here would be a second copy of the gate, free to fall out of step with
   # the real one.
-  variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
   <<: *registry_login
   script:
+    - *dind_ready
     - |
       set -eu
       mkdir -p .birdcage-release
@@ -2762,7 +2792,7 @@ release:attest:
 
 release:preview:
   stage: release
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
@@ -2770,10 +2800,9 @@ release:preview:
     - job: release:push
       artifacts: true
     - job: release:attest
-  variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
   <<: *registry_login
   script:
+    - *dind_ready
     - |
       set -eu
       for pair in "${BIRDCAGE_RELEASE_REPO}|${RELEASE_BIRDCAGE_DIGEST}" "${MOCKINGBIRD_RELEASE_REPO}|${RELEASE_MOCKINGBIRD_DIGEST}" "${NIGHTJAR_RELEASE_REPO}|${RELEASE_NIGHTJAR_DIGEST}" "${SMB_LURE_RELEASE_REPO}|${RELEASE_SMB_LURE_DIGEST}" "${HOLDER_RELEASE_REPO}|${RELEASE_HOLDER_DIGEST}" "${OPENCANARY_RELEASE_REPO}|${RELEASE_OPENCANARY_DIGEST}"; do
@@ -2815,16 +2844,15 @@ release:preview:
 # afterwards.
 release:mirror-preview:
   stage: release
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "preview"
   needs:
     - job: release:preview
-  variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
   <<: *mirror_login
   script:
+    - *dind_ready
     - |
       set -eu
       for pair in "${BIRDCAGE_RELEASE_REPO}|${BIRDCAGE_MIRROR_REPO}" "${MOCKINGBIRD_RELEASE_REPO}|${MOCKINGBIRD_MIRROR_REPO}" "${NIGHTJAR_RELEASE_REPO}|${NIGHTJAR_MIRROR_REPO}" "${SMB_LURE_RELEASE_REPO}|${SMB_LURE_MIRROR_REPO}" "${HOLDER_RELEASE_REPO}|${HOLDER_MIRROR_REPO}" "${OPENCANARY_RELEASE_REPO}|${OPENCANARY_MIRROR_REPO}"; do
@@ -2862,7 +2890,7 @@ release:mirror-preview:
 # and says which candidates it looked at.
 release:promote:
   stage: release
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   interruptible: false
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
@@ -2879,11 +2907,11 @@ release:promote:
   # of `main`'s own pipeline has passed. Cutting a release while the gate
   # on `main` is red should not be one click away.
   variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
     # Every parent has to be reachable for scripts/release-candidate.sh.
     GIT_DEPTH: 0
   <<: *registry_login
   script:
+    - *dind_ready
     - apk add --no-cache git >/dev/null
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - |
@@ -2939,17 +2967,16 @@ release:promote:
 # succeeded; GitLab holds it exactly like release:gitlab below.
 release:mirror-release:
   stage: release
-  image: $DOCKER_CLI_IMAGE
+  extends: .dind
   interruptible: false
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
   needs:
     - job: release:promote
       artifacts: true
-  variables:
-    DOCKER_HOST: unix:///var/run/docker.sock
   <<: *mirror_login
   script:
+    - *dind_ready
     # release:promote is allow_failure, and a failed allow_failure job still
     # satisfies needs:, so this job starts even when promotion failed (#171).
     - 'test -n "${RELEASE_TAG:-}" || { echo "no RELEASE_TAG: release:promote did not finish"; exit 1; }'
