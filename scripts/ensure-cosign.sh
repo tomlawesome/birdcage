@@ -23,13 +23,13 @@ set -euo pipefail
 # A flag has to be written at the call site, and every call site lives in
 # .gitlab-ci.yml, which is on supply-chain/policy-files.txt -- so weakening
 # the pin moves the policy version and cannot pass unnoticed.
-COSIGN_VERSION="v3.1.3"
+COSIGN_VERSION="v3.1.4"
 # SHA-256 of cosign-linux-amd64 (the linux-amd64 release binary), copied
 # from the release's own checksums file:
-#   https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign_checksums.txt
-# fetched 2026-09-20. Cross-checked the same day by separately downloading
+#   https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign_checksums.txt
+# fetched 2026-11-14. Cross-checked the same day by separately downloading
 # cosign-linux-amd64 itself and hashing it locally -- the two matched.
-COSIGN_LINUX_AMD64_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+COSIGN_LINUX_AMD64_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 
 # What this pin is, and is not: it is trust-on-first-use. We looked at what
 # GitHub served for this URL once, on the date above, and wrote the hash
