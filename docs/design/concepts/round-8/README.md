@@ -105,4 +105,16 @@ were taller than their content, R's passed spine was transparent over
 the dimmed dashboard, and R's refusal note wrapped. The capture script
 freezes the caret so a blink is never caught hidden.
 
-## Verdicts
+## Owner verdicts
+
+2026-11-14: "The doors looks interesting, not a fan of the other ideas.
+But it needs development, so that it's jaw dropping, awesome, visually
+sumptuous, rich in character, high fidelity, stunning."
+
+- **R, the doors: carried forward**, not yet ratified. Round 9 develops
+  it to high fidelity; the build waits for that round's verdict.
+- **P, on the line: dropped.** The open choice about its dropped-line
+  refusal falls away with it.
+- **Q, the log: dropped.**
+- Still open: R's filled button (shown again in round 9) and skipping
+  the second factor after an idle timeout.
