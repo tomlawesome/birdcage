@@ -151,7 +151,7 @@
   .t .d1 { left: 300px; top: 20px; transform-origin: left center; opacity: 0; z-index: 4; }
   .t .d2 { left: 300px; top: 20px; z-index: 3; transform-origin: left center; }
   .t .f1 { left: 150px; top: 30px; transform: rotate(-4deg); }
-  .t .n2 { left: 308px; top: 20px; width: 760px; height: 463px; z-index: 2; }
+  .t .n2 { left: 308px; top: 20px; width: 760px; height: 463px; z-index: 2; opacity: 0; }
   .t .nc { left: 316px; top: 20px; width: 760px; height: 470px; z-index: 1; }
   .t .nc .tab::before { transform-origin: center; }
   .t .light { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: radial-gradient(circle, rgba(233,238,251,.9), rgba(157,184,232,.35) 30%, rgba(157,184,232,.08) 55%, transparent 70%); opacity: 0; z-index: 5; }
@@ -164,7 +164,7 @@
     @keyframes m-d2 { 0%, 30% { opacity: 0; transform: translate(7px,7px); } 36%, 56% { opacity: 1; transform: none; } 59% { transform: translateY(-14px); } 65%, 100% { opacity: 0; transform: translate(-200px, 10px) rotateY(-180deg); } }
     .t .nc { animation: m-nc 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-nc { 0%, 64% { transform: none; } 70%, 100% { transform: translate(-14px,-14px); } }
     .t .light { animation: m-light 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-light { 0%, 68% { opacity: 0; transform: scale(1); } 72% { opacity: 1; transform: scale(8); } 84% { opacity: 1; transform: scale(150); } 94%, 100% { opacity: 0; transform: scale(150); } }
-    .t .into { animation: m-into 12s infinite; } @keyframes m-into { 0%, 76% { opacity: 0; } 82%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+    .stage.t .into b { color: #0d1120; } .stage.t .into i { color: #0d1120; font-size: 11px; } .t .into { animation: m-into 12s infinite; } @keyframes m-into { 0%, 76% { opacity: 0; } 82%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
   }
 
   .stage { position: relative; width: 1440px; height: 900px; margin: 0 auto; overflow: hidden; background: var(--void); }

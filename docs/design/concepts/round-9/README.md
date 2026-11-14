@@ -32,8 +32,10 @@ through. Now it must also be a thing worth looking at.
 - **Nothing the cage has seen is shown before sign-in.** The only data
   on the page is the visitor's own address and birdcage's version.
 - **The limiter** is the gauntlet design's: five refusals per name and
-  per address in five minutes; passkey and SSO are not counted; `wren`
-  can still sign in.
+  per address in five minutes; passkey and SSO are not counted; other names and
+  addresses are not held up. The page never names another account:
+  round 8's "wren included" told a visitor who is not signed in that
+  the account exists, and is removed.
 - **Session rules corrected.** Round 8's copy said sessions end "after a
   day idle"; the real rules (ADR-0016 §6, gauntlet v0.4.2) are: a session
   ends after one hour unused and after one day whatever happens. Within
@@ -75,7 +77,7 @@ loop. Under `prefers-reduced-motion: reduce` the page is a still of
 5. recovery codes, shown once — `<x>-codes`
 6. timed out — dashboard behind, dimmed; password alone to carry on (#190) — `<x>-timeout`
 7. refused — a wrong password, four tries left — `<x>-refused`
-8. too many tries — five refusals, a 4 min 12 s wait, `wren` unaffected — `<x>-locked`
+8. too many tries — five refusals, a 4 min 12 s wait — `<x>-locked`
 
 Scenes 4 and 5 are the brief's one enrolment scene split in two, as in
 round 8, so the recovery codes get a page of their own.
@@ -129,7 +131,7 @@ left), then :19, :28, :39, :48 — closed to `ada` from 192.0.2.10 until
 `python3 gen.py`; `node capture.mjs` → `shots/<letter>-<scene>.jpg`,
 `shots/<letter>-motion.jpg` (door two landed, 4.9 s), `-motion-cage.jpg`
 (the cage filling, 10.2 s) and `-motion-still.jpg` (reduced motion).
-1440×900 at device scale 2, 33 shots, all inspected, four passes.
+1440×900 at device scale 2, 33 shots, all inspected, five passes.
 Shots are JPEG at quality 90 rather than PNG: the grain made the PNGs
 63 MB for the round, the JPEGs are 9.5 MB and indistinguishable at a
 side-by-side crop. The capture script freezes the caret.
@@ -150,6 +152,17 @@ motion caption was struck through by U's wires in the cage frame (caption
 on a void pill, the cage bars thin out behind the sentence, the passed
 door fades as the cage fills in all three); T's hall sat high and left
 the bottom of the screen empty (lowered).
+
+Fixed after the coordinator's review of the committed shots: T's cage
+frame had its time caption lost in the light (the cage sentence and its
+caption are now ink on the lit desk, which suits T better anyway); T's
+reduced-motion still showed two "a code" tabs (the ahead card is hidden
+once its door is in front); U's eyebrow line was crossed by the arch's
+ribs (it sits on a void pill now); U's timed-out door let the dashboard's
+card text ghost through and the green gate cut across the canary cards
+(solid door, heavier scrim under U); U's refusal footer had a stray
+space before "'s wires". The too-many-tries copy no longer names `wren`:
+naming another account to a visitor who is not signed in says it exists.
 
 ## Open for the owner
 

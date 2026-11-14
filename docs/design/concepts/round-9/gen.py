@@ -275,12 +275,12 @@ def scenes_for(D):
                '<div class="fields">' + fld('who', inp('user', 'ada', 'username'), 'live') + fld('password', inp('pass', '', 'password', 'password', live=True), 'live') + '</div>'
                + D.said('refused · 09:18:07', '4 tries left · the wait is per name and per address'),
                acts('try again ▸', [('use a passkey', ''), ('sign in with SSO', 'quiet')], '1 refusal in this five minutes'), 'refused')
-    body = chrome() + D.hall([], d, ['a code'], 'refused') + foot(f'birdcage {VER} · a refusal is ink, never alarm: the door {D.refusal_words}')
+    body = chrome() + D.hall([], d, ['a code'], 'refused') + foot(f'birdcage {VER} · a refusal is ink, never alarm: the door{D.refusal_words}')
     S.append(scene(sid('refused'), f'{L.upper()}, {N}: refused, wrong password', body, tag(7), L))
 
     # 8 too many tries
     d = D.door(f'the door · {DAY} · 09:18:48 · too many tries', 'Too many tries. <b>Wait.</b>',
-               f'Five wrong passwords for <b>ada</b> from <span class="ip">{IP}</span> inside five minutes. The door opens again for this name from this address at <b>09:23:00</b>; anyone else, <b>wren</b> included, can still sign in.',
+               f'Five wrong passwords for <b>ada</b> from <span class="ip">{IP}</span> inside five minutes. The door opens again for this name from this address at <b>09:23:00</b>; other names, and other addresses, are not held up.',
                D.wait('4:12', 'until it opens · counting down · the fields wake up when it does')
                + '<div class="fields">' + fld('who', 'ada', 'off') + fld('password', '', 'off', '5 refusals, 09:18:07 to 09:18:48 · all in the audit log') + '</div>',
                acts('sign in', [('use a passkey', ''), ('sign in with SSO', 'quiet')], 'a passkey or SSO is not counted', 'go off'), 'locked')
@@ -406,7 +406,7 @@ S_CSS = CONTENT + """
 
 class S(Direction):
     letter, name = 's', 'smoked glass'
-    refusal_words = 'frosts and its edge goes to ink'
+    refusal_words = ' frosts and its edge goes to ink'
     locked_words = 'has its shutter down behind the glass'
 
     def door(self, step, h2, sub, inner, a, cls=''):
@@ -485,7 +485,7 @@ T_CSS = CONTENT + """
 
 class T(Direction):
     letter, name = 't', 'slate and ink'
-    refusal_words = 'is stamped, and its printed rule goes to ink'
+    refusal_words = ' is stamped, and its printed rule goes to ink'
     locked_words = 'is bound with a paper band'
     qr = 196
 
@@ -550,7 +550,7 @@ U_CSS = CONTENT + """
   .u .door.wide { width: 920px; min-height: 580px; } .u .door.tall { min-height: 620px; }
   .u .door .wires { -webkit-mask: radial-gradient(ellipse 70% 80% at 50% 62%, transparent 60%, black 100%); mask: radial-gradient(ellipse 70% 80% at 50% 62%, transparent 60%, black 100%); }
   .u .door .fan { height: 36%; -webkit-mask: radial-gradient(ellipse at 50% 100%, transparent 48%, black 82%); mask: radial-gradient(ellipse at 50% 100%, transparent 48%, black 82%); }
-  .u .door .step { margin-top: 92px; text-align: center; } .u .door.wide .step, .u .door.tall .step { margin-top: 84px; }
+  .u .door .step { margin-top: 92px; text-align: center; align-self: center; padding: 5px 14px; border-radius: 999px; background: var(--void); position: relative; z-index: 1; } .u .door.wide .step, .u .door.tall .step { margin-top: 84px; }
   .u .door h2 { margin: 14px auto 10px; font: 700 38px/1.1 var(--sans); letter-spacing: -.02em; color: var(--ink); text-align: center; max-width: 24ch; }
   .u .door h2 b { color: var(--accent); }
   .u .door .sub { margin: 0 auto; text-align: center; max-width: 56ch; }
@@ -584,7 +584,7 @@ U_CSS = CONTENT + """
   .u .door.locked .wires { background: repeating-linear-gradient(90deg, rgba(85,98,138,.5) 0 1px, transparent 1px 17px), repeating-linear-gradient(0deg, rgba(85,98,138,.35) 0 1px, transparent 1px 17px);
     -webkit-mask: radial-gradient(ellipse 60% 70% at 50% 60%, transparent 46%, black 100%); mask: radial-gradient(ellipse 60% 70% at 50% 60%, transparent 46%, black 100%); }
   .u .door.locked .fan { background: repeating-conic-gradient(from 270deg at 50% 100%, rgba(85,98,138,.4) 0deg .5deg, transparent .5deg 9deg); border-bottom-color: rgba(85,98,138,.4); }
-  .u .hall.timeout { justify-content: flex-end; padding-right: 60px; top: 150px; } .u .hall.timeout .door { width: 640px; min-height: 540px; background: rgba(6,8,14,.9); } .u .hall.timeout .arch.done { background: var(--void); }
+  .u .hall.timeout { justify-content: flex-end; padding-right: 60px; top: 150px; } .u .hall.timeout .door { width: 640px; min-height: 540px; background: var(--void); } .u .scrim { background: rgba(6,8,14,.86); } .u .hall.timeout .arch.done { background: var(--void); }
   @media (prefers-reduced-motion: no-preference) {
     .u .door { animation: u-forward .7s cubic-bezier(.2,.7,.2,1) both; }
     @keyframes u-forward { from { opacity: 0; transform: translateX(120px) scale(.6); } }
@@ -679,7 +679,7 @@ T_MOTION = """
   .t .d1 { left: 300px; top: 20px; transform-origin: left center; opacity: 0; z-index: 4; }
   .t .d2 { left: 300px; top: 20px; z-index: 3; transform-origin: left center; }
   .t .f1 { left: 150px; top: 30px; transform: rotate(-4deg); }
-  .t .n2 { left: 308px; top: 20px; width: 760px; height: 463px; z-index: 2; }
+  .t .n2 { left: 308px; top: 20px; width: 760px; height: 463px; z-index: 2; opacity: 0; }
   .t .nc { left: 316px; top: 20px; width: 760px; height: 470px; z-index: 1; }
   .t .nc .tab::before { transform-origin: center; }
   .t .light { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: radial-gradient(circle, rgba(233,238,251,.9), rgba(157,184,232,.35) 30%, rgba(157,184,232,.08) 55%, transparent 70%); opacity: 0; z-index: 5; }
@@ -692,7 +692,7 @@ T_MOTION = """
     @keyframes m-d2 { 0%, 30% { opacity: 0; transform: translate(7px,7px); } 36%, 56% { opacity: 1; transform: none; } 59% { transform: translateY(-14px); } 65%, 100% { opacity: 0; transform: translate(-200px, 10px) rotateY(-180deg); } }
     .t .nc { animation: m-nc 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-nc { 0%, 64% { transform: none; } 70%, 100% { transform: translate(-14px,-14px); } }
     .t .light { animation: m-light 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-light { 0%, 68% { opacity: 0; transform: scale(1); } 72% { opacity: 1; transform: scale(8); } 84% { opacity: 1; transform: scale(150); } 94%, 100% { opacity: 0; transform: scale(150); } }
-    .t .into { animation: m-into 12s infinite; } @keyframes m-into { 0%, 76% { opacity: 0; } 82%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+    .stage.t .into b { color: #0d1120; } .stage.t .into i { color: #0d1120; font-size: 11px; } .t .into { animation: m-into 12s infinite; } @keyframes m-into { 0%, 76% { opacity: 0; } 82%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
   }
 """
 
