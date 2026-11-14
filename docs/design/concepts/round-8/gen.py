@@ -216,7 +216,7 @@ P_CSS = """
   .p .row .said { position: absolute; left: 148px; top: 60px; font: 600 12px var(--sans); color: var(--ink); white-space: nowrap; }
   .p .row .said span { color: var(--ink-3); font-weight: 400; margin-left: 10px; }
   .p .row.wait .lab, .p .row.wait .val { color: var(--ink-3); }
-  .p .acts { position: absolute; left: 190px; right: 140px; display: flex; justify-content: space-between; align-items: center; }
+  .p .acts { position: absolute; left: 190px; right: 166px; display: flex; justify-content: space-between; align-items: center; }
   .p .acts .alt { display: flex; gap: 8px; }
   .p .pill { font: 600 11px var(--sans); color: var(--accent); border: 1px solid var(--hair-2); border-radius: 999px; padding: 4px 14px; white-space: nowrap; }
   .p .pill.go { color: var(--void); background: var(--accent); border-color: var(--accent); font-size: 12px; padding: 6px 18px; }
@@ -667,7 +667,7 @@ R_CSS = """
   .r .door.locked { border-color: var(--ink-3); border-style: dashed; background: transparent; }
   .r .foot { position: absolute; left: 0; right: 0; bottom: 14px; text-align: center; font: 12.5px var(--sans); color: var(--ink-2); }
   .r .foot b { color: var(--ink); font-weight: 600; }
-  .r .hall.side { justify-content: flex-end; padding-right: 56px; top: 150px; } .r .hall.side .spine { background: var(--void); }
+  .r .hall.side { justify-content: flex-end; padding-right: 56px; top: 196px; } .r .hall.side .spine { background: var(--void); }
   .r .hall.side .door { width: 620px; }
   @media (prefers-reduced-motion: no-preference) {
     .r .door { animation: slide .55s cubic-bezier(.2,.7,.2,1) both; } @keyframes slide { from { opacity: 0; transform: translateX(40px); } }
