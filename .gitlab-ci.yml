@@ -301,7 +301,7 @@ lint:go:
       unformatted=$(gofmt -l $files)
       [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
     # Built from source with the image's Go: the prebuilt binary is built
-    # with an older Go and refuses go.mod's `go 1.27.1` directive.
+    # with an older Go and refuses go.mod's `go 1.27.4` directive.
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     - golangci-lint run ./...
 
@@ -496,11 +496,11 @@ lint:agent-deps:
 # govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
 # CI-only tool, never linked into birdcage (supply-chain/dependency-inventory.md,
 # "Approved third-party modules (the ledger)"). Installed from source and run against this project's
-# own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
+# own `go 1.27.4` (go.mod) -- the Go checksum database verifies the
 # module download the same way it does for golangci-lint above.
 #
 # GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
-# go.mod names a lower floor than 1.27.1, and GOTOOLCHAIN=auto's default
+# go.mod names a lower floor than 1.27.4, and GOTOOLCHAIN=auto's default
 # module-aware toolchain selection picks a toolchain that satisfies
 # *that* floor, not this project's -- observed directly: it built
 # govulncheck with go1.26.8, which then refused to analyse this
