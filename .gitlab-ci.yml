@@ -71,7 +71,7 @@ variables:
   # on purpose, with the coverage floors re-measured in the same change.
   GOLANG_IMAGE: golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   NODE_IMAGE: node:26-trixie
-  PYTHON_ALPINE_IMAGE: python:3.14-alpine
+  PYTHON_ALPINE_IMAGE: python:3.15-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
