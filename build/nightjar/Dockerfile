@@ -33,8 +33,8 @@
 # by grype itself into GRYPE_DB_CACHE_DIR below, on the operator's own
 # device.
 FROM alpine:3.24 AS grype
-ARG GRYPE_VERSION=0.119.0
-ARG GRYPE_SHA256=3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b
+ARG GRYPE_VERSION=0.121.3
+ARG GRYPE_SHA256=e9da18cc1429e786722e32161288103600efffd8e483c90761f90485bd1bec85
 WORKDIR /grype
 RUN apk add --no-cache curl \
     && curl -fsSL -o grype.tar.gz \
