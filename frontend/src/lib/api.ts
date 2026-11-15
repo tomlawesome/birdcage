@@ -23,14 +23,74 @@ import type {
   VisitorsResponse,
 } from './types'
 
+/** A refused or failed request. `kind` is the problem document's class
+ * -- the text after `#` in its `type` (`invalid-credentials`,
+ * `rate-limited`, `step-expired`, ...) -- or '' when the body was not a
+ * problem document; `detail` is its free text, shown only where the
+ * sign-in specification says so and never branched on. The message is
+ * the path and the status only: a request body never reaches it. */
 export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public kind = '',
+    public detail = '',
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+// Sign-in (issue #8, ADR-0016): a 401 from any dashboard read means the
+// session ended or timed out. App.svelte registers the one handler that
+// shows the door again; with none registered a 401 is only an error.
+let signedOutHandler: () => void = () => {}
+
+/** Registers the handler a 401 from getJSON calls (the latest wins). */
+export function onSignedOut(fn: () => void): void {
+  signedOutHandler = fn
+}
+
+// gauntlet's CSRF guard: every POST, PUT, PATCH and DELETE must carry
+// this header with birdcage's configured value, or it is refused 403.
+const CSRF_HEADER = { 'X-Requested-With': 'birdcage' }
+
+/** The problem class and detail of a failed response, or '' for both
+ * when its body is not an RFC 9457 problem document. */
+async function problemOf(res: Response): Promise<{ kind: string; detail: string }> {
+  try {
+    const body = (await res.json()) as { type?: unknown; detail?: unknown }
+    const type = typeof body?.type === 'string' ? body.type : ''
+    const hash = type.indexOf('#')
+    return {
+      kind: hash >= 0 ? type.slice(hash + 1) : '',
+      detail: hash >= 0 && typeof body.detail === 'string' ? body.detail : '',
+    }
+  } catch {
+    return { kind: '', detail: '' }
+  }
+}
+
+/** Every request that changes something goes through here: the CSRF
+ * header always, the JSON body (and its content type) when one is given,
+ * nothing in the URL beyond the path. Returns the parsed JSON of a 2xx;
+ * otherwise throws ApiError with the status, the problem's kind and its
+ * detail. The reply's type is the caller's to name; unnamed, it is
+ * any, as res.json() is. */
+export async function sendJSON<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { ...CSRF_HEADER }
+  const init: RequestInit = { method, headers, credentials: 'same-origin' }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(body)
+  }
+  const res = await fetch(path, init)
+  if (!res.ok) {
+    const { kind, detail } = await problemOf(res)
+    throw new ApiError(`${method} ${path}: ${res.status}`, res.status, kind, detail)
+  }
+  const text = await res.text()
+  return (text ? JSON.parse(text) : null) as T
 }
 
 interface Fixture {
@@ -159,9 +219,12 @@ export function inFixtureMode(): boolean {
   return fixtureScene() !== null
 }
 
-async function getJSON<T>(path: string): Promise<T> {
+/** GET a JSON read. A 401 also calls the onSignedOut handler (the
+ * session has ended), then throws as every other failure does. */
+export async function getJSON<T = any>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) {
+    if (res.status === 401) signedOutHandler()
     throw new ApiError(`${path}: ${res.status}`, res.status)
   }
   return (await res.json()) as T
