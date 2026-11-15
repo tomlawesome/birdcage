@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { base32Decode, redactCodes, setupCodeFrom, totpCode, writeAuthKeyFile } from './signin.mjs'
+import { base32Decode, hide, redactCodes, redactSecrets, setupCodeFrom, totpCode, writeAuthKeyFile } from './signin.mjs'
 
 let fail = 0
 function check(actual, want, label) {
@@ -48,6 +48,19 @@ check(redacted.split('with setup code <redacted>').length - 1, 2, 'redaction say
 check(redacted.includes('with unlock code <redacted> (valid until'), true, 'redaction says which kind of code it blanked (unlock)')
 
 const dir = mkdtempSync(join(tmpdir(), 'birdcage-signin-test-'))
+
+// A failed browser call can quote what it was typing: every hidden value
+// is blanked from printed text, the app secret also in its spaced groups.
+hide('pw-fake-Zq9xLm2')
+hide('AAAABBBBCCCCDDDD')
+hide('ab12-CD34-ef56-GH78')
+hide('')
+const quoted = 'fill("pw-fake-Zq9xLm2") failed; secret AAAA BBBB CCCC DDDD; raw AAAABBBBCCCCDDDD; code ab12-CD34-ef56-GH78; port 8080'
+const blanked = redactSecrets(quoted)
+check(blanked.includes('pw-fake-Zq9xLm2') || blanked.includes('AAAA') || blanked.includes('ab12-CD34'), false, 'redactSecrets blanks every hidden value')
+check(blanked.includes('port 8080') && blanked.includes('fill('), true, 'redactSecrets leaves the rest of the text')
+check(redactSecrets(new Error('x')).startsWith('Error: x'), true, 'redactSecrets takes any value')
+
 try {
   const a = writeAuthKeyFile(dir)
   check(readFileSync(a).length, 32, 'the key file holds 32 bytes')

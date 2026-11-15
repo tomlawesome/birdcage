@@ -33,12 +33,12 @@
 // checks the API refuses everything before the first admin exists, then
 // the browser reaches the dashboard through the sign-in screens: first
 // run with the setup code from birdcage's log, the authenticator app,
-// the recovery codes, enter. The spec's sign-out and sign-in-with-a-code
-// steps wait on the owner's choice of where sign-out lives
-// (docs/design/sign-in-screens.md, "Open").
+// the recovery codes, enter; then it signs out from the name menu and
+// signs in again with the password and an authenticator code. Anything
+// printed on a failure goes through signin.mjs's redactSecrets first.
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { getFreePorts } from './ports.mjs'
-import { checkBeforeFirstAdmin, firstAdminThroughScreens, redactCodes, removeOnExit, setupCodeFrom, writeAuthKeyFile } from './signin.mjs'
+import { checkBeforeFirstAdmin, firstAdminThroughScreens, hide, redactCodes, redactSecrets, removeOnExit, setupCodeFrom, signInAgain, writeAuthKeyFile } from './signin.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -215,6 +215,7 @@ async function main() {
       if (!setupCode) await new Promise((r) => setTimeout(r, 200))
     }
     if (!setupCode) throw new Error('birdcage never logged a setup code for the first admin')
+    hide(setupCode)
     await checkBeforeFirstAdmin(base, ok)
 
     console.log(`launching ${resolveBrowserName()}...`)
@@ -239,10 +240,17 @@ async function main() {
 
     step('signing in through the screens: first run, authenticator app, recovery codes, enter (issue #8)')
     await page.goto(`${base}/`)
-    const username = await firstAdminThroughScreens(page, setupCode, ok)
+    const account = await firstAdminThroughScreens(page, setupCode, ok)
+    const { username } = account
     const who = (await page.locator('.status .who').textContent({ timeout: 10000 }))?.trim()
     if (who !== `${username} (admin)`) throw new Error(`name chip: expected ${JSON.stringify(`${username} (admin)`)}, got ${JSON.stringify(who)}`)
     ok(`name chip: ${who}`)
+
+    step('signing out from the name menu, then in again with the password and an authenticator code (issue #8)')
+    await signInAgain(page, account, ok)
+    const whoAgain = (await page.locator('.status .who').textContent({ timeout: 10000 }))?.trim()
+    if (whoAgain !== `${username} (admin)`) throw new Error(`name chip after signing in again: got ${JSON.stringify(whoAgain)}`)
+    ok(`name chip: ${whoAgain}`)
 
     step('every top-level view renders against the live API with no console error')
     await page.waitForSelector('.hero', { timeout: 10000 })
@@ -420,14 +428,14 @@ async function main() {
   if (!ok_) {
     // The one-time setup and unlock codes are blanked: either one hands
     // whoever reads the log an admin account.
-    console.error('\nbirdcage log:\n' + redactCodes(birdcageLog))
-    console.error(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`)
+    console.error(redactSecrets('\nbirdcage log:\n' + redactCodes(birdcageLog)))
+    console.error(redactSecrets(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`))
     process.exit(1)
   }
   console.log('\nsmoke: ok')
 }
 
 main().catch((err) => {
-  console.error(err)
+  console.error(redactSecrets(err?.stack ?? err))
   process.exit(1)
 })

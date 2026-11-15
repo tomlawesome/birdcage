@@ -23,7 +23,8 @@
   // the door shows and no dashboard route is requested. A 401 from any
   // read later brings the door back -- over the dimmed dashboard when the
   // session can be resumed, the full sign-in otherwise.
-  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut } from './lib/api'
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut, sendJSON } from './lib/api'
+  import { tick } from 'svelte'
   import { doorFor, readSession, type SessionState } from './lib/auth'
   import Door from './door/Door.svelte'
   import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
@@ -121,6 +122,62 @@
     leaving = true
     // The bars slide apart over 700 ms and the door fades with them.
     setTimeout(() => (leaving = false), 750)
+  }
+
+  // The name chip's menu (owner 28a, docs/design/sign-in-screens.md,
+  // "Sign-out"): one item, Sign out. A failed request keeps the menu open
+  // with its alert; a click while one is in flight sends nothing.
+  let menuOpen = $state(false)
+  let signingOut = $state(false)
+  let signOutFailed = $state(false)
+  let chipEl: HTMLButtonElement | undefined = $state()
+  let menuBox: HTMLElement | undefined = $state()
+  let signOutEl: HTMLButtonElement | undefined = $state()
+
+  async function openMenu() {
+    menuOpen = true
+    signOutFailed = false
+    await tick()
+    signOutEl?.focus()
+  }
+  function closeMenu() {
+    menuOpen = false
+    signOutFailed = false
+    chipEl?.focus()
+  }
+  const toggleMenu = () => (menuOpen ? closeMenu() : void openMenu())
+
+  // A click (or touch) anywhere outside the chip and its menu closes it.
+  $effect(() => {
+    if (!menuOpen) return
+    const outside = (e: Event) => {
+      if (menuBox && e.target instanceof Node && menuBox.contains(e.target)) return
+      closeMenu()
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('mousedown', outside)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('mousedown', outside)
+    }
+  })
+
+  async function signOut() {
+    if (signingOut) return
+    signingOut = true
+    signOutFailed = false
+    try {
+      await sendJSON('POST', '/api/auth/logout')
+    } catch {
+      signOutFailed = true
+      return
+    } finally {
+      signingOut = false
+    }
+    menuOpen = false
+    // Whoever signs in next is someone new to this tab.
+    knownName = undefined
+    arrive({ ...SIGNED_OUT, ssoAvailable: session?.ssoAvailable ?? false })
   }
 
   let doorShown = $derived(phase === 'door' || leaving)
@@ -430,9 +487,25 @@
          class only when mail has actually stopped working, since
          nothing else on this page would go red about that. -->
     {#if mailStatus}<span class={mailStatus.cls} title={mailStatus.detail}>{mailStatus.text}</span>{/if}
-    <!-- The signed-in account. Sign-out has no home yet (no mock-up
-         shows one; docs/design/sign-in-screens.md, "Open"). -->
-    {#if session?.username}<span class="who">{session.username} ({session.role})</span>{/if}
+    <!-- The signed-in account, and under it the sign-out menu. -->
+    {#if session?.username}
+      <span class="who-box" bind:this={menuBox}>
+        <button
+          type="button"
+          class="who"
+          bind:this={chipEl}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onclick={toggleMenu}>{session.username} ({session.role})</button
+        >
+        {#if menuOpen}
+          <div class="menu" role="menu" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (e.preventDefault(), closeMenu())}>
+            <button type="button" role="menuitem" bind:this={signOutEl} onclick={signOut}>Sign out</button>
+            {#if signOutFailed}<p class="menu-error" role="alert">Could not sign out. Try again.</p>{/if}
+          </div>
+        {/if}
+      </span>
+    {/if}
   </div>
 
   <nav class="deck" aria-label="Views">
@@ -619,11 +692,54 @@
     color: var(--repeat);
     font-weight: 700;
   }
+  .status .who-box {
+    position: relative;
+  }
   .status .who {
     color: var(--ink-3);
+    background: none;
     border: 1px solid var(--hair-2);
     border-radius: 999px;
     padding: 2px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  /* The sign-out menu: under the chip, right-aligned, in the shell's
+     tokens and the chip's own type. */
+  .status .menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 10;
+    min-width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--hair-2);
+    border-radius: 6px;
+    padding: 4px;
+    font: inherit;
+    white-space: nowrap;
+  }
+  .status .menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: var(--ink-2);
+    font: inherit;
+    cursor: pointer;
+  }
+  .status .menu button:hover,
+  .status .menu button:focus-visible {
+    color: var(--ink);
+    background: var(--hair-2);
+    outline: none;
+  }
+  .status .menu-error {
+    margin: 4px 8px 2px;
+    color: var(--ink-3);
   }
 
   .ranges {

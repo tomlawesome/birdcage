@@ -10,12 +10,17 @@
 //   3. the first admin through the sign-in screens (issue #8 slice B):
 //      first run with the one-time setup code birdcage writes to its
 //      log, the authenticator app (password accounts must hold a second
-//      factor), the recovery codes, enter.
+//      factor), the recovery codes, enter;
+//   4. sign out from the name menu, and sign in again with the password
+//      and a code from the same authenticator app.
 //
 // The password, the app secret, the codes and the recovery codes are
 // made or read here and never printed: a failure names the step, the
 // status and the problem document's title and detail only, which
-// gauntlet never puts a secret in.
+// gauntlet never puts a secret in. A browser call that fails can still
+// quote what it was typing (a Playwright fill's call log), so every
+// secret is registered with hide() the moment it exists, and whatever
+// the journeys print goes through redactSecrets() first.
 import { createHmac, randomBytes } from 'node:crypto'
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -99,6 +104,27 @@ export function totpCode(secretBase32, counter) {
 
 const step30 = () => Math.floor(Date.now() / 1000 / 30)
 
+// Every secret value this run has made or read (hide()).
+const hidden = new Set()
+
+/** Registers value as never to be printed; returns it. */
+export function hide(value) {
+  if (typeof value === 'string' && value.length >= 4) hidden.add(value)
+  return value
+}
+
+/** text with every hidden value (and, for an app secret, its spaced
+ * groups of four as the screen shows it) replaced by <redacted>. */
+export function redactSecrets(text) {
+  let out = String(text)
+  for (const v of [...hidden].sort((a, b) => b.length - a.length)) {
+    out = out.split(v).join('<redacted>')
+    const grouped = v.match(/.{1,4}/g)?.join(' ')
+    if (grouped && grouped !== v) out = out.split(grouped).join('<redacted>')
+  }
+  return out
+}
+
 /** A minimal cookie jar: name -> value, honouring deletions. */
 class Jar {
   #cookies = new Map()
@@ -178,9 +204,12 @@ export async function checkBeforeFirstAdmin(base, log = () => {}) {
  * for the secret the screen shows, keeps the recovery codes, and waits
  * for the dashboard. The password is made here and typed only into the
  * page; nothing secret is printed. log(message) reports each step.
+ * Returns the account for signInAgain: its name, password, app secret
+ * and the time step of the last code used.
  */
 export async function firstAdminThroughScreens(page, setupCode, log = () => {}) {
-  const password = randomBytes(24).toString('base64url')
+  const password = hide(randomBytes(24).toString('base64url'))
+  hide(setupCode)
   await page.waitForSelector('h1:text-is("Create the admin account")', { timeout: 10000 })
   await page.fill('input[placeholder="setup code"]', setupCode)
   await page.fill('input[placeholder="account"]', USERNAME)
@@ -191,9 +220,11 @@ export async function firstAdminThroughScreens(page, setupCode, log = () => {}) 
   log('first run: created the first admin with the logged setup code')
 
   await page.click('button.key:has-text("Authenticator app")')
-  const secret = ((await page.locator('.secret').textContent({ timeout: 10000 })) ?? '').replace(/\s+/g, '')
+  const secret = hide(((await page.locator('.secret').textContent({ timeout: 10000 })) ?? '').replace(/\s+/g, ''))
   if (!secret) throw new Error('sign-in: the prove screen showed no secret')
-  await page.fill('input[placeholder="6-digit code"]', totpCode(secret, step30()))
+  if (!(await page.locator('canvas.qr[aria-label="QR code"]').isVisible())) throw new Error('sign-in: the prove screen showed no QR code')
+  const counter = step30()
+  await page.fill('input[placeholder="6-digit code"]', totpCode(secret, counter))
   await page.click('button:has-text("Confirm")')
   await page.waitForSelector('.grid span', { timeout: 10000 })
   const codes = await page.locator('.grid span').count()
@@ -203,5 +234,31 @@ export async function firstAdminThroughScreens(page, setupCode, log = () => {}) 
   await page.click('button:has-text("I have saved these")')
   await page.waitForSelector('.door', { state: 'detached', timeout: 10000 })
   log(`entered: the door opened onto the dashboard as ${USERNAME}`)
-  return USERNAME
+  return { username: USERNAME, password, secret, counter }
+}
+
+/**
+ * Signs out from the name menu in page, then signs in again through the
+ * screens with the account's password and a code from its authenticator
+ * app, and waits for the dashboard. gauntlet refuses a code whose time
+ * step is not after the last one used and accepts one step either side
+ * of now, so the code is for the later of now and the step after the
+ * last. Returns the account with that step recorded.
+ */
+export async function signInAgain(page, account, log = () => {}) {
+  await page.click('.status button.who')
+  await page.click('[role="menuitem"]:has-text("Sign out")')
+  await page.waitForSelector('input[placeholder="account"]', { timeout: 10000 })
+  log('signed out from the name menu: the door shows sign in')
+
+  await page.fill('input[placeholder="account"]', account.username)
+  await page.fill('input[placeholder="password"]', account.password)
+  await page.click('button:has-text("Enter")')
+  await page.waitForSelector('h1:text-is("Enter your code")', { timeout: 10000 })
+  const counter = Math.max(step30(), account.counter + 1)
+  await page.fill('input[placeholder="6-digit code"]', totpCode(account.secret, counter))
+  await page.click('button:has-text("Continue")')
+  await page.waitForSelector('.door', { state: 'detached', timeout: 10000 })
+  log(`signed in again with the password and an authenticator code, as ${account.username}`)
+  return { ...account, counter }
 }
