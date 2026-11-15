@@ -89,6 +89,13 @@ Frontend (`frontend/package.json`), dev-only, never shipped:
   Owner, 2026-09-20: *"it's not really a third party. It's a plugin by
   the exact same team."* #74.
 
+Frontend, shipped in the bundle:
+
+- `qrcode-generator` 2.0.4, pinned exactly (Kazuhiko Arase, MIT, no
+  dependencies of its own) -- draws the authenticator QR code on the
+  sign-in door until gauntlet serves the pattern itself; owner,
+  2026-11-15, #8 (29a). Row 234.
+
 Anything else goes to the owner first, on the issue, with provenance.
 
 ## Methodology
@@ -165,7 +172,7 @@ review's brief:
 | 22 | `modernc.org/mathutil` | v1.7.1 | v1.7.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 | 23 | `modernc.org/memory` | v1.11.0 | v1.12.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 
-### B. Frontend, `frontend/package.json` + `package-lock.json` -- all dev-only, never shipped (see the ledger above)
+### B. Frontend, `frontend/package.json` + `package-lock.json` -- all dev-only, never shipped, except `qrcode-generator` (row 234), which ships in the bundle (see the ledger above)
 
 | # | Dependency | Pinned | Latest upstream (verified 2026-09-20, spot-checked 2026-09-22) | Licence | Direct/Transitive | Maintainer | Popularity signal | Shipped / dev-CI-only | Approval status |
 |---|---|---|---|---|---|---|---|---|---|
@@ -299,6 +306,7 @@ review's brief:
 | 151 | `zimmerframe` | 1.1.5 | 1.1.5 | MIT | transitive | Svelte core team (transitive via `svelte`) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 152 | `lightningcss-*` (11 per-platform prebuilt binaries, grouped for readability) | 1.33.0 (all 11 pinned to the same version) | 1.33.0 | MPL-2.0 | transitive | lightningcss project (Devon Govett), prebuilt native binaries pulled in via vite | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 153 | `@rolldown/binding-*` (15 per-platform prebuilt binaries, grouped for readability) | 1.2.8 (all 15 pinned to the same version) | 1.2.9 | MIT | transitive | VoidZero / Rolldown team, prebuilt native binaries pulled in via vite | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
+| 234 | `qrcode-generator` | 2.0.4 (exact, no caret) | 2.0.4 | MIT | direct | Kazuhiko Arase (independent; the library's author since its first release) | high (about 8.6 million npm downloads a week, 2026-11-08 to 2026-11-14) | **Shipped** -- in the frontend bundle: draws the authenticator QR code on the sign-in door's "Prove it works" screen (`frontend/src/door/qr.ts`); no dependencies of its own | Approved -- owner, 2026-11-15, #8 (29a) |
 
 ### C. OpenCanary, `build/opencanary/requirements.txt` (uv-compiled from `requirements.in`, hash-pinned; moved out of the mockingbird image by issue #132, unchanged otherwise)
 
@@ -468,7 +476,7 @@ for #8: git in birdcage's Go build stage, row 232).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 10 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8) |
+| Approved, with issue number | 11 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8; `qrcode-generator` #8, row 234) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 51 (every other **direct** dependency, including `debian:trixie-slim`, row 224, and holder's/nightjar's golang build stages, rows 230-231) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 223) |

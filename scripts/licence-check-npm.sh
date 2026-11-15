@@ -4,10 +4,10 @@ set -euo pipefail
 # Gates the licences of the npm packages under frontend/node_modules --
 # the counterpart to scripts/licence-check.sh, which gates the Go modules
 # linked into the Birdcage binary. Unlike the Go script, this one does
-# not reason from a "what ships" dependency list: the frontend has no
-# runtime `dependencies` at all, but Svelte compiles its runtime helpers
-# into the built bundle regardless, so the whole installed tree is in
-# scope, not just direct dependencies.
+# not reason from a "what ships" dependency list: the frontend has one
+# runtime dependency (qrcode-generator, #8), but Svelte compiles its
+# runtime helpers into the built bundle regardless, so the whole
+# installed tree is in scope, not just direct dependencies.
 #
 # The real work (walking node_modules, reading each package.json's
 # licence field in its several shapes) is in licence-check-npm.py.

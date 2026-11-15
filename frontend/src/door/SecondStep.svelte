@@ -11,7 +11,7 @@
   import type { SessionState } from '../lib/auth'
   import { CeremonyError, createCredential } from '../lib/webauthn'
   import Alert from './Alert.svelte'
-  import { HAS_QR, drawQR } from './qr'
+  import { drawQR } from './qr'
   import { ENTER_APP_CODE, ENTER_PASSWORD, FAILED, INCORRECT_CODE, INCORRECT_PASSWORD, kindOf, statusOf, TOO_MANY, type Message } from './messages'
 
   let {
@@ -52,7 +52,7 @@
   const secretGroups = $derived((enrolment?.secret ?? '').replace(/\s+/g, '').match(/.{1,4}/g)?.join(' ') ?? '')
 
   $effect(() => {
-    if (HAS_QR && qrEl && enrolment) drawQR(qrEl, enrolment.uri)
+    if (qrEl && enrolment) drawQR(qrEl, enrolment.uri)
   })
 
   async function show(next: Stage) {
@@ -258,7 +258,7 @@
     <p class="thread">choose · <b>prove it</b> · keep the codes · enter</p>
     <h1>Prove it works</h1>
     <p class="subtitle">Scan this with your authenticator app, then enter the code it shows.</p>
-    {#if HAS_QR}<canvas class="qr" bind:this={qrEl} width="232" height="232" aria-label="QR code"></canvas>{/if}
+    <canvas class="qr" bind:this={qrEl} width="232" height="232" aria-label="QR code"></canvas>
     <span class="cap">Secret</span><span class="secret">{secretGroups}</span>
     <label
       ><span class="sr-only">Code from the app</span><input
