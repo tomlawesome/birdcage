@@ -45,4 +45,15 @@ Which light (question 22).
 
 ## Owner verdicts
 
-None yet.
+2026-11-15: "The wiggle is ... very wrong, it looks like something
+biological, which I won't say, and it's not at all how I envisaged it.
+The wiggle I was referring to was sharper, more like network activity
+from birdcage and mikroview."
+
+The smooth, travelling wiggle is dropped. Round 16 redraws it as a sharp
+activity trace.
+
+2026-11-15, on question 22 (which light): "22c shimmer is good though,
+other than the wiggle."
+
+Shimmer (AK) is chosen. Passing light (AI) and ripple (AJ) are dropped.
