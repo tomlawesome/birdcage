@@ -13,16 +13,19 @@
 // The mock-up is changed only where the specification says the build
 // cannot be true, and nowhere else:
 // - its bottom-left prototype links (`.proto`) are hidden;
-// - its QR placeholder is hidden: the QR is open for the owner and the
-//   prove screen is built without it (spec, "Open");
+// - its QR placeholder draws a made-up pattern, not a code: the QR
+//   region (the mock-up's #qr and the build's .qr, the union of the two
+//   boxes) is masked to one flat colour on both sides before comparing;
 // - of the five text differences the spec lists ("Where the mock-up
 //   cannot be true"), only the session-expired subtitle falls on a
 //   compared screen, and the mock-up's text is replaced by the built
 //   text. The refused and too-many-attempts texts are on screens not
 //   compared here; the account name under "Session expired" is shown,
 //   since this harness's tab knows it ('ada', as the mock-up).
-// Exits non-zero if any screen differs by more than 2%, or either page
-// logs an error.
+// Exits non-zero if any screen differs by more than 0.1%, if the build's
+// bars are not drawn (the bars are about 2% of the frame, so a blank
+// canvas alone could pass a looser limit), or if either page logs an
+// error.
 //
 // Stays on chromium.launch(), as band-compare.mjs does (issue #83): a
 // rendering-fidelity check, not a browser-compatibility one.
@@ -41,7 +44,11 @@ const mockUrl = pathToFileURL(join(mockDir, 'direction-an-bars-all-screens.html'
 const outDir = join(frontendDir, '.door-compare')
 mkdirSync(outDir, { recursive: true })
 
-const THRESHOLD_PCT = 2
+const THRESHOLD_PCT = 0.1
+// The bars must cover at least this share of the frame in the build's
+// shot: measured as the pixels that change when the bars canvas is
+// hidden. They cover about 2%; a blank or missing canvas covers none.
+const MIN_BARS_PCT = 0.5
 const VIEWPORT = { width: 1440, height: 900 }
 const DPR = 2
 // shot.mjs waits 900ms for the entrance animations; a little more here,
@@ -148,6 +155,43 @@ async function shoot(page) {
   return PNG.sync.read(await page.screenshot({ caret: 'hide' }))
 }
 
+/** The QR box on the page, in device pixels, or null when not shown. */
+async function qrBox(page, selector) {
+  const box = await page.evaluate((sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return r.width && r.height ? { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom } : null
+  }, selector)
+  if (!box) return null
+  return { x0: Math.floor(box.x0 * DPR), y0: Math.floor(box.y0 * DPR), x1: Math.ceil(box.x1 * DPR), y1: Math.ceil(box.y1 * DPR) }
+}
+
+/** Paints the box one flat colour in each image. */
+function mask(box, ...images) {
+  for (const img of images) {
+    for (let y = Math.max(0, box.y0); y < Math.min(img.height, box.y1); y++) {
+      for (let x = Math.max(0, box.x0); x < Math.min(img.width, box.x1); x++) {
+        const i = (y * img.width + x) * 4
+        img.data[i] = 255
+        img.data[i + 1] = 0
+        img.data[i + 2] = 255
+        img.data[i + 3] = 255
+      }
+    }
+  }
+}
+
+/** The share of the frame, in percent, the bars canvas draws: the
+ * pixels that differ between the shot and a shot with it hidden. */
+async function barsShare(page, shot) {
+  await page.addStyleTag({ content: '.door .bars{visibility:hidden !important}' })
+  const bare = PNG.sync.read(await page.screenshot({ caret: 'hide' }))
+  if (bare.width !== shot.width || bare.height !== shot.height) return 0
+  const changed = pixelmatch(shot.data, bare.data, null, shot.width, shot.height, { threshold: 0.1 })
+  return (changed / (shot.width * shot.height)) * 100
+}
+
 async function main() {
   const server = await createServer({ root: frontendDir, server: { port: 0 }, logLevel: 'warn' })
   await server.listen()
@@ -168,12 +212,13 @@ async function main() {
 
         const mock = await newPage()
         await mock.goto(`${mockUrl}?t=${s.t}#${s.state}`)
-        await mock.addStyleTag({ content: '.proto{display:none}#qr{display:none}' })
+        await mock.addStyleTag({ content: '.proto{display:none}' })
         await mock.evaluate((text) => {
           const sub = document.querySelector('#f-expired .subtitle')
           if (sub) sub.textContent = text
         }, EXPIRED_SUBTITLE)
         const ref = await shoot(mock)
+        const refQr = await qrBox(mock, '#qr')
         await mock.close()
 
         const built = await newPage()
@@ -183,11 +228,23 @@ async function main() {
         await built.waitForSelector('body[data-ready="1"] .door form', { timeout: 10000 })
         if (s.drive) await s.drive(built)
         const live = await shoot(built)
+        const liveQr = await qrBox(built, '.door .qr')
+        const bars = await barsShare(built, live)
         await built.close()
 
         if (live.width !== ref.width || live.height !== ref.height) {
           results.push({ name: s.name, error: `size mismatch: built ${live.width}x${live.height}, mock-up ${ref.width}x${ref.height}` })
           continue
+        }
+        if (refQr || liveQr) {
+          const boxes = [refQr, liveQr].filter(Boolean)
+          const union = {
+            x0: Math.min(...boxes.map((b) => b.x0)),
+            y0: Math.min(...boxes.map((b) => b.y0)),
+            x1: Math.max(...boxes.map((b) => b.x1)),
+            y1: Math.max(...boxes.map((b) => b.y1)),
+          }
+          mask(union, live, ref)
         }
         const diff = new PNG({ width: live.width, height: live.height })
         const diffPixels = pixelmatch(live.data, ref.data, diff.data, live.width, live.height, { threshold: 0.1 })
@@ -195,7 +252,7 @@ async function main() {
         writeFileSync(join(outDir, `${s.name}-live.png`), PNG.sync.write(live))
         writeFileSync(join(outDir, `${s.name}-ref.png`), PNG.sync.write(ref))
         writeFileSync(join(outDir, `${s.name}-diff.png`), PNG.sync.write(diff))
-        results.push({ name: s.name, pct: (diffPixels / totalPixels) * 100, diffPixels, totalPixels, errors })
+        results.push({ name: s.name, pct: (diffPixels / totalPixels) * 100, diffPixels, totalPixels, bars, errors })
       }
     } finally {
       await browser.close()
@@ -213,11 +270,14 @@ async function main() {
       continue
     }
     const over = r.pct > THRESHOLD_PCT
-    console.log(`${r.name}: ${r.pct.toFixed(3)}% differing pixels (${r.diffPixels}/${r.totalPixels}) -- ${over ? 'OVER THRESHOLD' : 'ok'}`)
+    const noBars = r.bars < MIN_BARS_PCT
+    console.log(
+      `${r.name}: ${r.pct.toFixed(3)}% differing pixels (${r.diffPixels}/${r.totalPixels}), bars ${r.bars.toFixed(2)}% of the frame -- ${over ? 'OVER THRESHOLD' : noBars ? 'BARS NOT DRAWN' : 'ok'}`,
+    )
     if (r.errors.length) console.log(`  console errors: ${r.errors.join(' | ')}`)
     // A page error fails the screen even when the pixels agree, as in
     // band-compare.mjs and canary-compare.mjs.
-    if (over || r.errors.length) failed = true
+    if (over || noBars || r.errors.length) failed = true
   }
   console.log(`\nDiff images written to ${outDir}`)
   process.exit(failed ? 1 : 0)
