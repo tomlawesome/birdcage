@@ -29,3 +29,6 @@ next due. The QR is a placeholder pattern, not a real key.
 
 2026-11-15: "25a". The caught signals are ratified as drawn. The
 remaining screens (question 26) are not yet answered.
+
+2026-11-15: "26a". The remaining screens stand as drawn. Round 18 is the
+ratified sign-in design; ADR-0017 records it.
