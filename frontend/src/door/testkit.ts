@@ -39,7 +39,8 @@ export function secondFactorReply(methods: string[]) {
   return jsonReply({ status: 'secondFactor', challenge: 'secondFactor', secondFactor: methods, methods })
 }
 export function proveReply() {
-  return jsonReply({ status: 'prove', challenge: 'prove' })
+  // gauntlet v0.4.2's ProveChallenge: {prove: 'passkey', passkeyOrigin}.
+  return jsonReply({ status: 'prove', challenge: 'prove', prove: 'passkey', passkeyOrigin: 'http://localhost' })
 }
 
 export interface Call {

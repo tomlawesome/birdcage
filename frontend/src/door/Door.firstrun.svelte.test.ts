@@ -112,8 +112,9 @@ describe('first run', () => {
     render(Door, { session: firstrun(), onenter: () => {} })
     await fill()
     await fireEvent.click(btn('Create account'))
+    // First run has an account field too: wait for the setup code to go.
+    await waitFor(() => expect(screen.queryByPlaceholderText('setup code')).toBeNull())
     expect(await screen.findByPlaceholderText('account')).toBeTruthy()
-    expect(screen.queryByPlaceholderText('setup code')).toBeNull()
     expect(btn('Enter')).toBeTruthy()
   })
 
