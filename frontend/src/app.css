@@ -23,6 +23,10 @@
   --ok: #37b364;
   --alarm: #ff5470;
   --now: #e8b05a;
+  /* A signal birdcage stopped, on the sign-in door's bars only
+     (ADR-0017 decision 5): never an error colour, never text. The bars
+     draw on a canvas, so door/bars.ts carries the same value as RED. */
+  --caught: #ec4850;
 
   /* Lane colours identify canaries (one per network); kind colours
      identify visitors (sweep, repeat, from inside, one touch). Fixed

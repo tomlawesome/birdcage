@@ -1,0 +1,353 @@
+/* The door (ADR-0017), ported from docs/design/concepts/round-18/door.css.
+   Every rule is the mock-up's, scoped under .door; ids became classes
+   (#f-code -> .f-code, #bars -> .bars, #qr -> .qr, #code -> .code-field),
+   body[data-state] became .door[data-state], and the mock-up's
+   display-toggling of nine stacked forms is gone because only the current
+   screen is rendered. The tokens are app.css's, not redefined here.
+   Left out: the .proto navigation (mock-up furniture), the corridor
+   round's .rail and the amber box the bars variant switched off. */
+
+.door {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  /* The mock-up's body: no inherited size or leading from the shell. */
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: normal;
+  /* app.css turns font synthesis off; the mock-up has it on, and the
+     800-weight wordmark is drawn synthesised where no such face exists. */
+  font-synthesis: initial;
+  color: var(--ink);
+  background: var(--void);
+  transition: background-color 0.45s ease 0.25s;
+}
+/* Over the dimmed dashboard: the mock-up draws the shell at opacity .2
+   and saturate(.5) on the void, which is the same as the void at .8 over
+   a half-saturated backdrop. */
+.door[data-state='expired'] {
+  background: rgba(6, 8, 14, 0.8);
+  backdrop-filter: saturate(0.5);
+}
+.door.leaving {
+  background: transparent;
+  pointer-events: none;
+}
+
+.door .screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  transition: opacity 0.35s ease 0.35s;
+}
+.door.leaving .screen {
+  opacity: 0;
+  pointer-events: none;
+}
+.door .stack {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: door-rise 0.3s ease-out;
+}
+@keyframes door-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.door .wm-box {
+  display: inline-block;
+  margin: 0 auto 22px;
+  padding: 0 0 4px;
+}
+.door .wm {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.door .wm em {
+  color: var(--accent);
+  font-style: normal;
+}
+.door form {
+  width: 100%;
+  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+}
+.door .f-code {
+  max-width: 320px;
+  align-items: center;
+}
+.door h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 500;
+  text-align: center;
+}
+.door .subtitle {
+  text-wrap: balance;
+  margin: -4px 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-align: center;
+}
+.door .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.door input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hair-2);
+  color: var(--ink);
+  border-radius: 0;
+  padding: 7px 4px;
+  font: 13.5px var(--sans);
+  text-align: center;
+}
+.door input::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
+}
+.door input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+.door .code-field {
+  max-width: 260px;
+  font-family: var(--mono);
+  letter-spacing: 0.3em;
+  font-size: 16px;
+}
+/* A refusal is ink text, never red (decision 1). */
+.door .error {
+  margin: 0 -60px;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: center;
+}
+.door .error span {
+  color: var(--ink-2);
+}
+.door .submit {
+  align-self: center;
+  margin-top: 12px;
+  background: transparent;
+  border: 1px solid var(--hair-2);
+  color: var(--accent);
+  font: 600 13px var(--sans);
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 7px 30px;
+  cursor: pointer;
+}
+.door .submit:hover {
+  border-color: var(--accent);
+}
+.door .submit:disabled {
+  cursor: default;
+}
+.door .divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.door .divider::before,
+.door .divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hair-2);
+}
+.door .sso {
+  text-align: center;
+  border: 1px solid var(--hair-2);
+  color: var(--ink-2);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  text-decoration: none;
+}
+.door .link {
+  background: transparent;
+  border: 0;
+  color: var(--ink-3);
+  font: 12px var(--sans);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.door .bars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* round 18: the rest of the screens */
+.door .f-wide {
+  max-width: 330px;
+  align-items: center;
+}
+.door .f-wide label {
+  width: 260px;
+}
+.door .thread {
+  margin: 0 0 6px;
+  font: 11px var(--mono);
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+.door .thread b {
+  font-weight: 400;
+  color: var(--ink);
+  border-bottom: 1px solid var(--accent);
+  padding-bottom: 2px;
+}
+.door .key {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
+  padding: 13px 16px;
+  color: var(--ink);
+  font: 14px var(--sans);
+  cursor: pointer;
+}
+.door .key:hover {
+  border-color: var(--accent);
+}
+.door .key:disabled {
+  cursor: default;
+}
+.door .key:disabled:hover {
+  border-color: var(--hair-2);
+}
+.door .key .g {
+  grid-row: span 2;
+  font: 12px var(--mono);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+}
+.door .key .g svg {
+  display: block;
+}
+.door .key small {
+  grid-column: 2;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.door .key i {
+  grid-row: 1/3;
+  grid-column: 3;
+  font-style: normal;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.door .note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-align: center;
+}
+.door .qr {
+  width: 120px;
+  height: 120px;
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px;
+}
+.door .cap {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 2px 0 -8px;
+}
+.door .secret {
+  font: 12px var(--mono);
+  color: var(--ink-2);
+  letter-spacing: 0.06em;
+}
+.door .grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 26px;
+  padding: 14px 22px;
+  border: 1px solid var(--hair-2);
+  border-radius: 6px;
+  background: rgba(6, 8, 14, 0.6);
+  font: 12.5px var(--mono);
+  color: var(--ink);
+}
+.door .row {
+  display: flex;
+  gap: 8px;
+}
+.door .ghost {
+  background: transparent;
+  border: 1px solid var(--hair-2);
+  border-radius: 5px;
+  color: var(--ink-2);
+  font: 11.5px var(--sans);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.door .who {
+  margin: 0 0 -6px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.door[data-state='expired'] .stack::before {
+  content: '';
+  position: absolute;
+  inset: -60px -10px;
+  background: radial-gradient(closest-side, rgba(6, 8, 14, 0.92) 55%, rgba(6, 8, 14, 0));
+  z-index: -1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .door .stack,
+  .door .bars {
+    animation: none !important;
+  }
+  .door,
+  .door .screen {
+    transition: none;
+  }
+}

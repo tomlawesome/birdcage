@@ -48,7 +48,8 @@ Its rules:
    "now"), mono for data and sans for prose.
 
 Palette: lane and kind colours validated in round 1
-(`round-1/README.md`); no new colour since.
+(`round-1/README.md`); no new colour since. ADR-0017 adds one: red for a
+caught signal, on the sign-in door only.
 
 ## Consequences
 
