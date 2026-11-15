@@ -244,27 +244,43 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 		return fail(err)
 	}
 
-	// SSO, only when configured. Its redirect address is built from the
-	// configured public URL, never from a request.
+	// SSO, only when configured, and optional: a configuration mistake
+	// refuses to start, but an identity provider that cannot be reached
+	// leaves SSO off for this run rather than stopping the dashboard,
+	// alerts and listeners with it. Password sign-in still works, and SSO
+	// returns on the next start once the provider answers. Its redirect
+	// address is built from the configured public URL, never from a request.
 	if cfg.OIDCIssuer != "" {
 		if cfg.PublicURL == "" {
 			return fail(errors.New("auth: SSO needs BIRDCAGE_PUBLIC_URL, which its redirect address is built from"))
+		}
+		// Policy stays zero: SSO group roles are off (ADR-0016 decision 7).
+		// A shared issuer with no tenant pin is a configuration mistake, so
+		// it is checked here, before the network, and still refuses.
+		policy := oidc.Policy{}
+		if err := oidc.AllowIssuerWithPolicy(cfg.OIDCIssuer, policy); err != nil {
+			return fail(fmt.Errorf("auth: SSO: %w", err))
 		}
 		client, err := oidc.New(ctx, oidc.Config{
 			IssuerURL:    cfg.OIDCIssuer,
 			ClientID:     cfg.OIDCClientID,
 			ClientSecret: cfg.OIDCClientSecret,
 			RedirectURL:  trimSlash(cfg.PublicURL) + "/api/auth/oidc/callback",
-			// Policy stays zero: SSO group roles are off (ADR-0016 decision 7).
+			Policy:       policy,
 		})
 		if err != nil {
-			return fail(fmt.Errorf("auth: SSO: %w", err))
+			log.Error(fmt.Sprintf("SSO is unavailable until the next start: %v", err))
+		} else {
+			state, err := oidc.NewStateCodec()
+			if err != nil {
+				return fail(fmt.Errorf("auth: SSO: %w", err))
+			}
+			deps.OIDC, deps.OIDCState = client, state
+			log.Info(fmt.Sprintf("SSO on against %s", cfg.OIDCIssuer))
+			if users.Count() > 0 && !users.HasLocalAdmin() {
+				log.Warn("no admin has a local password, so SSO is the only way in; if the identity provider is down at start, sign-in needs a restart once it answers")
+			}
 		}
-		state, err := oidc.NewStateCodec()
-		if err != nil {
-			return fail(fmt.Errorf("auth: SSO: %w", err))
-		}
-		deps.OIDC, deps.OIDCState = client, state
 	}
 
 	// Country, only when a provider is configured.
