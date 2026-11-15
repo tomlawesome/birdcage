@@ -10,7 +10,7 @@ Tests are written from this document alone, before the code.
 ## Scope
 
 In: the door (every screen in ADR-0017), the API client's sign-in
-handling, the signed-in name and sign-out in the shell, a pixel gate for
+handling, the signed-in name and its sign-out menu in the shell, a pixel gate for
 the door, and the browser smoke signing in through the screens.
 
 Out, each needing its own design first: users, API tokens, password
@@ -122,7 +122,18 @@ The QR code comes from `qrcode-generator` (owner approval 29a,
   the session says `resumable`, otherwise sign in), remembering the
   account name the tab had.
 - The shell's name chip shows the session's `username (role)`, not fixed
-  text. Sign-out: see "Open".
+  text.
+- **Sign-out** (owner 28a, 2026-11-15). The chip is a button
+  (`aria-haspopup="menu"`, `aria-expanded`). Click, Enter or Space opens
+  a menu under it, right-aligned, with one item, `Sign out`
+  (`role="menuitem"`), which takes focus. Escape or a click outside
+  closes it and returns focus to the chip. `Sign out` sends
+  `POST /api/auth/logout` through `sendJSON`; on success the door shows
+  sign in, the event stream is closed and no further dashboard request
+  is made. If the request fails the menu stays open and shows `Could not
+  sign out. Try again.` (`role="alert"`). A second click while the
+  request is in flight sends nothing. The menu uses the shell's tokens:
+  `--raised` surface, 1 px `--hair-2` border, the chip's own type.
 
 ## Screens and what they do
 
@@ -277,10 +288,12 @@ headers, body). In particular:
    order); `Copy all` writes all ten; nothing is written to
    `localStorage` or `sessionStorage`.
 7. Session expired: each response; someone else signs out first.
-8. `App`: no dashboard request before the session is read; none while
+8. Sign-out menu: opens and closes by mouse and keyboard, focus moves
+   as stated, each outcome of the request, double click sends one.
+9. `App`: no dashboard request before the session is read; none while
    the door shows; a later `401` shows the door; the chip shows the
    session's name and role.
-9. `bars`: `seeded` repeats; `makeTrace` bounds and zeros; `clampOffset`
+10. `bars`: `seeded` repeats; `makeTrace` bounds and zeros; `clampOffset`
    limits including the neighbouring case (`barIndex` 2 is not limited to
    36); reduced motion requests no animation frame.
 
@@ -291,10 +304,5 @@ the mock-up at the same `?t=`, the mock-up's bottom-left links hidden.
 
 Live: `frontend/e2e/smoke.mjs` reaches the dashboard through the screens
 in Firefox: first run with the setup code from the log, authenticator
-app, codes, enter; then sign out, sign in with a code.
-
-## Open
-
-- **Sign-out.** No mock-up shows where it lives. Until the owner
-  chooses, the chip shows the name only and the live journey's sign-out
-  step waits.
+app, codes, enter; then sign out from the name menu and sign in again
+with a code.
