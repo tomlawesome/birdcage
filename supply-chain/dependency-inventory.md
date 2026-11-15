@@ -262,7 +262,7 @@ review's brief:
 | 107 | `parse5-parser-stream` | 8.1.1 | 8.1.1 (current, 2026-11-14) | MIT | transitive | jsdom org / parse5 (Ivan Nikulin; transitive via `jsdom`) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 108 | `picocolors` | 1.1.1 | 1.1.1 | ISC | transitive | Svelte core team (transitive via `svelte-check`) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 109 | `picomatch` | 4.0.7 | 4.0.7 | MIT | transitive | vitest-dev (transitive via `vitest`) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
-| 110 | `pixelmatch` | 8.0.0 | 8.0.0 (current, 2026-11-14) | ISC | direct | mapbox-originated, now independent (community) | moderate (established, purpose-fit, not mainstream-scale) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | Predates the rule -- not individually recorded |
+| 110 | `pixelmatch` | 7.2.0 | 8.0.0 (2026-11-14); held at 7.x, see #211 | ISC | direct | mapbox-originated, now independent (community) | moderate (established, purpose-fit, not mainstream-scale) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | Predates the rule -- not individually recorded |
 | 111 | `playwright` | 1.65.0 | 1.65.0 (current, 2026-11-14; 1.65.1 of 2026-11-13 is under the 3-day age rule) | Apache-2.0 | direct | Microsoft | very high (mainstream, widely deployed) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | Predates the rule -- not individually recorded |
 | 112 | `playwright-core` | 1.63.0 | 1.63.0 | Apache-2.0 | transitive | Microsoft (transitive via `playwright`) | small utility (popularity tracks its direct parent) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | n/a -- transitive |
 | 113 | `pngjs` | 7.0.0 | 7.0.0 | MIT | direct | independent (lukeapage / community) | moderate (established, purpose-fit, not mainstream-scale) | Dev/CI-only -- frontend build & test tooling; svelte itself compiles into the shipped bundle, the rest never ships | Predates the rule -- not individually recorded |
@@ -527,6 +527,9 @@ extensions are self-evidently fine as a category.
 **Genuinely behind current upstream** (direct dependencies only; the full
 table has more transitive gaps that don't need an owner decision):
 - `typescript` 6.0.3 -> 7.0.2, a major version (row 135)
+- `pixelmatch` 7.2.0 -> 8.0.0, held back on purpose (row 110): 8 measures
+  colour difference differently, so the pixel gates' thresholds must be
+  re-measured before moving (#211)
 - `python:3.13-slim-trixie` / `python:3.13-alpine`: Python 3.14 is now the
   latest major line; no reason recorded for staying on 3.13 (rows 191, 194)
 - `github/codeql-action/init`/`analyze` v4.37.6 -> v4.38.1, several releases
