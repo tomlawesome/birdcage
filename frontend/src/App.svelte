@@ -17,7 +17,15 @@
   // footer sentence change -- and the page's own read joins the same
   // tick as the four above, so a canary page refreshes exactly as the
   // cage does.
-  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode } from './lib/api'
+  //
+  // Issue #8 (slice B, ADR-0017): sign-in. The session is read before
+  // anything else; until it says the account is in with nothing owed,
+  // the door shows and no dashboard route is requested. A 401 from any
+  // read later brings the door back -- over the dimmed dashboard when the
+  // session can be resumed, the full sign-in otherwise.
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut } from './lib/api'
+  import { doorFor, readSession, type SessionState } from './lib/auth'
+  import Door from './door/Door.svelte'
   import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
@@ -48,6 +56,75 @@
   let activeDeck = $state(0)
 
   const REFRESH_MS = 30_000
+
+  // 'start' until the first session read lands; 'in' while the dashboard
+  // is allowed to fetch; 'checking' while a 401 is being read back (the
+  // dashboard stays drawn, nothing is fetched); 'door' while the door shows.
+  let phase = $state<'start' | 'in' | 'checking' | 'door'>('start')
+  let session = $state<SessionState | null>(null)
+  // The account name this tab had, for the expired screen: gauntlet does
+  // not send it once the session has timed out.
+  let knownName: string | undefined = undefined
+  // The door opening onto the dashboard (ADR-0017 decision 2).
+  let leaving = $state(false)
+
+  const SIGNED_OUT: SessionState = {
+    setupRequired: false,
+    ssoAvailable: false,
+    authenticated: false,
+    hasLocalPassword: false,
+    ssoConnected: false,
+    mustChangePassword: false,
+    mustEnrolSecondFactor: false,
+    mustEnrolPasskey: false,
+    hasTOTP: false,
+  }
+
+  /** Show what the session names: the dashboard, or the door. */
+  function arrive(s: SessionState) {
+    if (s.username) knownName = s.username
+    session = { ...s, username: s.username ?? knownName }
+    phase = doorFor(s) === 'in' ? 'in' : 'door'
+  }
+
+  async function check() {
+    try {
+      arrive(await readSession())
+    } catch {
+      // No answer at all: the sign-in, which says so if it fails too.
+      arrive(SIGNED_OUT)
+    }
+  }
+
+  onSignedOut(() => {
+    if (phase !== 'in') return
+    phase = 'checking'
+    void check()
+  })
+  void check()
+
+  const stillMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  /** The door says the account is in: open it onto the dashboard. */
+  function enter(s?: SessionState) {
+    if (s && s.username && knownName && s.username !== knownName) {
+      // Someone else signed in: nothing of the last account's stays drawn.
+      loaderState = initialLoaderState
+      history = null
+      mail = null
+      canaryPage = null
+      canaryRuns = null
+    }
+    if (s) arrive(s)
+    else phase = 'in'
+    if (stillMotion()) return
+    leaving = true
+    // The bars slide apart over 700 ms and the door fades with them.
+    setTimeout(() => (leaving = false), 750)
+  }
+
+  let doorShown = $derived(phase === 'door' || leaving)
+  let shellShown = $derived(phase === 'in' || phase === 'checking' || (phase === 'door' && session !== null && doorFor(session) === 'expired'))
 
   // The whole router (lib/route.ts): which of the app's two places is
   // showing. Read once at mount and re-read on every hashchange, so the
@@ -114,6 +191,8 @@
   // so a stream that never connects, drops, or is disabled leaves the
   // dashboard behaving exactly as it does today.
   $effect(() => {
+    // Nothing is fetched while the door is (or may be) showing.
+    if (phase !== 'in') return
     const range = activeRange
     // Read here so the effect re-subscribes on navigation: moving to a
     // canary page must fetch that page now, not on the next 30 s tick.
@@ -218,6 +297,7 @@
   // never calls triggerRefresh here -- the dashboard behaves exactly as
   // it did before this effect existed.
   $effect(() => {
+    if (phase !== 'in') return
     if (typeof EventSource === 'undefined') return
     // A fixture scene has no server behind it: the fetches above already
     // answer from the fixture, and the stream must stay closed too.
@@ -277,6 +357,7 @@
   })
 </script>
 
+{#if shellShown}
 <div class="scene">
   <div class="wordmark" aria-label="Birdcage">BIRD<em>CAGE</em></div>
 
@@ -349,7 +430,9 @@
          class only when mail has actually stopped working, since
          nothing else on this page would go red about that. -->
     {#if mailStatus}<span class={mailStatus.cls} title={mailStatus.detail}>{mailStatus.text}</span>{/if}
-    <span class="who">tom (admin)</span>
+    <!-- The signed-in account. Sign-out has no home yet (no mock-up
+         shows one; docs/design/sign-in-screens.md, "Open"). -->
+    {#if session?.username}<span class="who">{session.username} ({session.role})</span>{/if}
   </div>
 
   <nav class="deck" aria-label="Views">
@@ -410,6 +493,11 @@
 
   <button type="button" class="ibtn" aria-label="About birdcage">i</button>
 </div>
+{/if}
+
+{#if doorShown && session}
+  <Door {session} onenter={enter} {leaving} />
+{/if}
 
 <style>
   .scene {
