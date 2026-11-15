@@ -46,4 +46,9 @@ Which of the two is built (question 20).
 
 ## Owner verdicts
 
-None yet.
+2026-11-15, answering question 20: "20b bars is actually quite good, I
+like it, but lets develop it further, bring in more colour to the glint
+in keeping with the app. We could maybe play with some of the bars
+showing signal signs, too. But don't over do it."
+
+AF (Bars) goes forward and is developed in round 14. AE is dropped.
