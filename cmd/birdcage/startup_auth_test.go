@@ -95,6 +95,30 @@ func TestLoadStartupConfigAcceptsAuthKeyFileOf32Bytes(t *testing.T) {
 	}
 }
 
+// TestLoadStartupConfigPassesAuthKeyFileBytesOn: the key file's bytes
+// reach the sign-in layer's Config.Key exactly as written -- not empty,
+// not trimmed, not altered. The key has a leading space and a trailing
+// newline, as a key made from /dev/urandom can, and every byte differs
+// from its neighbour so a shifted or truncated copy shows.
+func TestLoadStartupConfigPassesAuthKeyFileBytesOn(t *testing.T) {
+	want := []byte{' '}
+	for b := byte(1); len(want) < 39; b++ {
+		want = append(want, b)
+	}
+	want = append(want, '\n')
+	path := filepath.Join(t.TempDir(), "auth.key")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	cfg, err := loadStartupConfig(envMap(map[string]string{testEnvAuthKeyFile: path}), discardLog(), discardLog(), discardLog(), discardLog())
+	if err != nil {
+		t.Fatalf("loadStartupConfig with a 40-byte key file: %v", err)
+	}
+	if !bytes.Equal(cfg.auth.Key, want) {
+		t.Errorf("cfg.auth.Key = %q, want the key file's bytes %q", cfg.auth.Key, want)
+	}
+}
+
 // TestLoadStartupConfigCountryOffWithoutProvider: with no country provider
 // configured, start-up succeeds (country is simply off).
 func TestLoadStartupConfigCountryOffWithoutProvider(t *testing.T) {
