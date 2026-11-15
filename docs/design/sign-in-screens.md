@@ -98,6 +98,21 @@ owed (re-read the session after every step that could finish sign-in).
   animation frame.
 - `CAUGHT_SHARE = 0.27`: the share of pulses that are caught.
 
+### `door/qr.ts`
+
+The QR code comes from `qrcode-generator` (owner approval 29a,
+2026-11-15, on #8), until gauntlet serves the pattern itself.
+
+- `qrMatrix(text: string): boolean[][]` — pure; the QR code of `text`
+  at error-correction level M, `true` for a dark module. Square, side
+  `21 + 4k`. The same text gives the same matrix; different texts differ.
+  Each of the three finder corners (top left, top right, bottom left) is
+  the standard 7×7 pattern: a dark ring, a light ring, a dark 3×3 centre.
+- `drawQR(canvas, text): void` — fills the canvas white, then draws the
+  matrix edge to edge in `#06080e`, one `fillRect` per dark module.
+- The prove screen shows it in a canvas labelled `QR code` (`aria-label`)
+  above the secret.
+
 ### `App.svelte`
 
 - On start it reads the session before any dashboard request. It shows
@@ -196,7 +211,7 @@ current step. There is no skip, cancel or sign-out here.
   hold one (the page was reloaded), a `password` field is shown first with
   button `Continue`. Then: heading `Prove it works`; subtitle `Scan this
   with your authenticator app, then enter the code it shows.`; the QR of
-  `uri`; `Secret` and the secret in groups of four; field `6-digit code`;
+  `uri` (`door/qr.ts`); `Secret` and the secret in groups of four; field `6-digit code`;
   button `Confirm`; note `Confirming signs this account out everywhere
   else.`; link `Use a passkey instead` (when offered).
   `POST /api/auth/totp/confirm {code}`: codes returned → the codes
@@ -280,9 +295,6 @@ app, codes, enter; then sign out, sign in with a code.
 
 ## Open
 
-- **QR code.** Drawing one needs a library birdcage has not approved.
-  Until the owner chooses, the prove screen is built without the QR
-  square (secret only) and is not done.
 - **Sign-out.** No mock-up shows where it lives. Until the owner
   chooses, the chip shows the name only and the live journey's sign-out
   step waits.
