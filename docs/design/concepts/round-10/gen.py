@@ -282,7 +282,7 @@ def scenes_for(D):
 
     # 6 timed out (ADR-0016 §6; owner answer 5a: within the day the password alone carries on)
     d = D.door(f'sign in · session expired · {DAY} · {NOW}', 'Session expired',
-               'Your session expired at 08:52 after an hour of inactivity. The page behind this dialog is <b>26 minutes</b> old. '
+               'Your session expired at 08:52 after an hour of inactivity. '
                'Enter your password to continue. A full sign-in, including your authentication code, is required again by <b>Sunday 07:31</b>.',
                '<div class="fields one">' + fld('password', inp('pass', '', 'password', 'password', live=True), 'live', 'A passkey can also be used.') + '</div>',
                acts('Continue', [('Sign in as a different user', 'quiet')]))
@@ -435,7 +435,7 @@ V_CSS = GLASS + """
   .v .door .acts { max-width: 1000px; }
   .v .pane { top: 198px; height: 470px; width: 118px; }
   .v .door.tall ~ .pane, .v .hall.firstrun .pane { top: 150px; height: 580px; }
-  .v .pane.done { left: calc(54px + var(--i) * 38px); transform: rotateY(64deg); z-index: 1; }
+  .v .pane.done { left: calc(54px + var(--i) * 56px); transform: rotateY(64deg); z-index: 1; }
   .v .pane.ahead { right: calc(12px + var(--j) * 56px); transform: rotateY(-66deg); }
   .v .hall.timeout .pane.done { left: 54px; }
   .v .beam { right: 0; width: 700px; top: 160px; }
@@ -481,7 +481,7 @@ class W(Glass):
         p, a = self.panes(passed, ahead)
         extra = '' if kind == 'timeout' else '<div class="floor" aria-hidden="true"></div><div class="beam" aria-hidden="true"></div>'
         ticks = ''.join(f'<i style="left:{x}px"></i>' for x in range(0, 1249, 52))
-        axis = '' if kind == 'timeout' else f'<div class="axis" aria-hidden="true">{ticks}<em>15 M</em><small>the last quarter hour, stretched</small></div>'
+        axis = '' if kind == 'timeout' else f'<div class="axis" aria-hidden="true">{ticks}<em>15 M</em></div>'
         brink = f'<div class="brink" aria-hidden="true"></div><div class="nowlab" aria-label="now">NOW · {TIMES[kind]}</div>'
         return f'{extra}<div class="hall {kind}" aria-label="the doors">{p}{d}{a}</div>{axis}{brink}'
 
@@ -539,6 +539,7 @@ MOTION_BASE = """
     .stage .still { display: none; }
     .stage .shell.into { animation: m-shell 12s infinite; } @keyframes m-shell { 0%, 64% { opacity: 0; } 74%, 94% { opacity: 1; } 100% { opacity: 0; } }
     .stage .shell.into svg.band { animation: m-lines 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-lines { 0%, 68% { clip-path: inset(0 100% 0 0); } 84%, 100% { clip-path: inset(0 0 0 0); } }
+    .stage .cap { animation: m-chrome 12s infinite; }
     .stage .chrome { animation: m-chrome 12s infinite; } @keyframes m-chrome { 0%, 66% { opacity: 1; } 72%, 94% { opacity: 0; } 100% { opacity: 1; } }
   }
 """
@@ -632,7 +633,7 @@ def build_motion(D):
     if L == 'w':
         ticks = ''.join(f'<i style="left:{x}px"></i>' for x in range(0, 1249, 52))
         body = ('<div class="room"><div class="floor" aria-hidden="true"></div><div class="beam" aria-hidden="true"></div>'
-                f'<div class="axis" aria-hidden="true">{ticks}<em>15 M</em><small>the last quarter hour, stretched</small></div></div>'
+                f'<div class="axis" aria-hidden="true">{ticks}<em>15 M</em></div></div>'
                 f'<div class="hall m" aria-label="the doors">{p1}{d1}{d2}{p2}</div>'
                 '<div class="brink" aria-hidden="true"></div><div class="nowlab" aria-label="now"><span class="t1">NOW · 09:18:09</span><span class="t2">NOW · 09:18:12</span></div>')
         cap = 'W · the brink · motion'

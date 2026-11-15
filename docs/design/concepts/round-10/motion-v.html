@@ -156,7 +156,7 @@
   .v .door .acts { max-width: 1000px; }
   .v .pane { top: 198px; height: 470px; width: 118px; }
   .v .door.tall ~ .pane, .v .hall.firstrun .pane { top: 150px; height: 580px; }
-  .v .pane.done { left: calc(54px + var(--i) * 38px); transform: rotateY(64deg); z-index: 1; }
+  .v .pane.done { left: calc(54px + var(--i) * 56px); transform: rotateY(64deg); z-index: 1; }
   .v .pane.ahead { right: calc(12px + var(--j) * 56px); transform: rotateY(-66deg); }
   .v .hall.timeout .pane.done { left: 54px; }
   .v .beam { right: 0; width: 700px; top: 160px; }
@@ -183,6 +183,7 @@
     .stage .still { display: none; }
     .stage .shell.into { animation: m-shell 12s infinite; } @keyframes m-shell { 0%, 64% { opacity: 0; } 74%, 94% { opacity: 1; } 100% { opacity: 0; } }
     .stage .shell.into svg.band { animation: m-lines 12s cubic-bezier(.4,0,.2,1) infinite; } @keyframes m-lines { 0%, 68% { clip-path: inset(0 100% 0 0); } 84%, 100% { clip-path: inset(0 0 0 0); } }
+    .stage .cap { animation: m-chrome 12s infinite; }
     .stage .chrome { animation: m-chrome 12s infinite; } @keyframes m-chrome { 0%, 66% { opacity: 1; } 72%, 94% { opacity: 0; } 100% { opacity: 1; } }
   }
 </style>

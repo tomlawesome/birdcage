@@ -59,7 +59,7 @@ recognisably birdcage's.
 | Letter | Name | Where the glass meets the shell |
 | --- | --- | --- |
 | V | the column | The door occupies the trace's column exactly: left edge at the band's first tick (190), right edge at the brink (1368), top at the band's height. Passed panes fold into the gutter where the canary labels will sit; panes ahead stand in the deck's column at the right edge, in the deck's sideways type. The hand-over draws the four band lines across the space the door occupied. |
-| W | the brink | The brink is the one element the door and the dashboard share. It stands in the room at 1368 for the whole gauntlet, with the quarter-hour axis under it and `NOW · hh:mm:ss` in amber mono, and carries each scene's time. The doors hang in front of it. At the hand-over the brink shortens to the band's height, the label moves up to the band, and the lines draw across to meet it. In the timed-out scene the frozen page's own brink (`NOW · 08:52:10`) is the only one shown. |
+| W | the brink | The brink is the one element the door and the dashboard share. It stands in the room at 1368 for the whole gauntlet, with a quarter-hour axis under it (ticks and `15 M`, no caption) and `NOW · hh:mm:ss` in amber mono, and carries each scene's time. The doors hang in front of it. At the hand-over the brink shortens to the band's height, the label moves up to the band, and the lines draw across to meet it. In the timed-out scene the frozen page's own brink (`NOW · 08:52:10`) is the only one shown. |
 | X | through the frost | What is behind the glass is the shell's light, not its data: the heading, the sub-line, the band, the four tiles and the brink as blurred shapes at their real positions. Each door passed lowers the door's blur (`--lit` rises from .45 towards 1), so the room comes into focus as the visitor goes. At the hand-over the blur goes to zero and the shapes are the page. |
 
 ## Scenes (every direction proves all eight, same data)
@@ -78,10 +78,9 @@ recognisably birdcage's.
 5. **Recovery codes** — ten codes; `Continue`, `Copy`, `Download`,
    `Print`; `10 codes · none used`. Two passed, none ahead.
 6. **Session expired** — over the dimmed dashboard frozen at 08:52:10:
-   `Your session expired at 08:52 after an hour of inactivity. The page
-   behind this dialog is 26 minutes old. Enter your password to
-   continue. A full sign-in, including your authentication code, is
-   required again by Sunday 07:31.` Password; `A passkey can also be
+   `Your session expired at 08:52 after an hour of inactivity. Enter
+   your password to continue. A full sign-in, including your
+   authentication code, is required again by Sunday 07:31.` Password; `A passkey can also be
    used.`; `Continue`, `Sign in as a different user`. One passed pane,
    `Signed in 07:31`.
 7. **Refused** — `Incorrect username or password. · 4 attempts left`,
@@ -149,6 +148,15 @@ page's own brink is the one shown); the motion captions and the
 reduced-motion tag carried design commentary (reduced to the direction's
 name).
 
+Fixed after the coordinator's review of the committed shots: W's axis
+carried the band's caption `the last quarter hour, stretched` (removed;
+the axis is ticks and `15 M`); the session-expired text said how old
+the page behind the door was (sentence cut in all three; the dimmed
+page says it); the direction pill sat on the dashboard's footer in the
+hand-over frame (the pill fades with the chrome once the shell is in);
+V's two passed panes in the recovery-codes scene overlapped and clipped
+each other's labels (56 px apart, as the panes ahead).
+
 ## Decided
 
 - **Filled primary button, on the door only** (owner, 2026-11-15, 4a).
@@ -178,11 +186,11 @@ name).
   weakest on the owner's "not generic" test: blurred shapes behind
   glass are a known look, and the tie to birdcage is in the geometry
   rather than in anything the visitor can name.
-- **W's axis under the door.** The quarter-hour axis with `15 M` and
-  `the last quarter hour, stretched` is the band's own caption, shown
-  before sign-in. It reveals no data; it does tell a stranger what kind
-  of page is behind the door. Recommendation: keep it; the alternative
-  is the brink alone, which reads as a stray line.
+- **W's axis under the door.** The quarter-hour axis (ticks and
+  `15 M`) is the band's own scale, shown before sign-in. It reveals no
+  data; it does tell a stranger what kind of page is behind the door.
+  Recommendation: keep it; the alternative is the brink alone, which
+  reads as a stray line.
 
 ## Owner verdicts
 
