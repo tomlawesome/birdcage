@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/api"
+	"github.com/tomlawesome/birdcage/internal/auth"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/driftsched"
 	"github.com/tomlawesome/birdcage/internal/history"
@@ -77,7 +78,7 @@ const (
 	envInternalRanges = "BIRDCAGE_INTERNAL_RANGES"
 	// envIngestAddr configures issue #32's HTTPS ingest listener -- a
 	// canary's agent (#48) posts event batches here, authenticated by
-	// its own bearer token, never the dashboard's requireAuth seam.
+	// its own bearer token, never the dashboard's sign-in.
 	// Since #47 slice 1, the listener's serving certificate is minted by
 	// birdcage's own CA (internal/ca, envCADir below) rather than a
 	// cert/key pair an operator supplied by hand, so envIngestAddr alone
@@ -280,6 +281,22 @@ func main() {
 		}
 	}()
 
+	// Issue #8: sign-in for the dashboard (ADR-0016). Opening it after the
+	// database means a key that cannot open the stored accounts, or any
+	// other refusal, stops start-up here; the one-time setup code is
+	// logged here when there is no account yet. Only the server-start
+	// path opens it: the CLI subcommands above open the database alone,
+	// announce no code, and never touch the sign-in stores. The deferred
+	// Close runs before the database's, so the sign-in history is saved
+	// while the database is still open.
+	authLog := logging.New("auth")
+	authService, err := auth.Open(ctx, database, cfg.auth, authLog)
+	if err != nil {
+		authLog.Error(err.Error())
+		os.Exit(1)
+	}
+	defer authService.Close()
+
 	// checkStartupCAContinuity needs the database open (issue #149), so
 	// the CA block below runs here rather than in its more obvious spot
 	// right after checkStartupFiles.
@@ -356,6 +373,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Issue #8: everything under /api/ needs a session or a read API
+	// token from here on; the frontend still loads without one, so the
+	// sign-in screen can. The canary listeners below never pass through
+	// it. Wrapped here, after buildDashboardServer has built the mux, and
+	// before anything serves.
+	dashboardServer.Handler = authService.Wrap(dashboardServer.Handler)
+
 	ingestServer, enrolServer, err := buildIngestServers(cfg, database, birdcageCA, hub, selfTestIndex, selfTestScheduler, configLog, ingestLog, enrolLog)
 	if err != nil {
 		ingestLog.Error(err.Error())
@@ -364,6 +388,7 @@ func main() {
 
 	mainLog := logging.New("birdcage")
 	if err := serveAll(ctx, stop, dashboardServer, cfg.httpSelection.Mode, unixPath, ingestServer, enrolServer, httpLog, ingestLog, enrolLog, mainLog); err != nil {
+		authService.Close() // os.Exit skips the defer; save the sign-in history first
 		os.Exit(1)
 	}
 }

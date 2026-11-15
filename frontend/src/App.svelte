@@ -17,7 +17,16 @@
   // footer sentence change -- and the page's own read joins the same
   // tick as the four above, so a canary page refreshes exactly as the
   // cage does.
-  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode } from './lib/api'
+  //
+  // Issue #8 (slice B, ADR-0017): sign-in. The session is read before
+  // anything else; until it says the account is in with nothing owed,
+  // the door shows and no dashboard route is requested. A 401 from any
+  // read later brings the door back -- over the dimmed dashboard when the
+  // session can be resumed, the full sign-in otherwise.
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut, sendJSON, ApiError } from './lib/api'
+  import { onMount, tick } from 'svelte'
+  import { doorFor, readSession, type SessionState } from './lib/auth'
+  import Door from './door/Door.svelte'
   import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
   import { computeFooter, computeSentence, computeStatus, formatClock, mailLine } from './lib/sentence'
   import { isSameUTCDate } from './lib/sentence/time'
@@ -48,6 +57,152 @@
   let activeDeck = $state(0)
 
   const REFRESH_MS = 30_000
+
+  // 'start' until the first session read lands; 'in' while the dashboard
+  // is allowed to fetch; 'checking' while a 401 is being read back (the
+  // dashboard stays drawn, nothing is fetched); 'door' while the door shows.
+  let phase = $state<'start' | 'in' | 'checking' | 'door'>('start')
+  let session = $state<SessionState | null>(null)
+  // The account name this tab had, for the expired screen: gauntlet does
+  // not send it once the session has timed out.
+  let knownName: string | undefined = undefined
+  // The door opening onto the dashboard (ADR-0017 decision 2).
+  let leaving = $state(false)
+
+  const SIGNED_OUT: SessionState = {
+    setupRequired: false,
+    ssoAvailable: false,
+    authenticated: false,
+    hasLocalPassword: false,
+    ssoConnected: false,
+    mustChangePassword: false,
+    mustEnrolSecondFactor: false,
+    mustEnrolPasskey: false,
+    hasTOTP: false,
+  }
+
+  /** Show what the session names: the dashboard, or the door. */
+  function arrive(s: SessionState) {
+    // A new session state never brings the name menu back open.
+    menuOpen = false
+    signOutFailed = false
+    if (s.username) knownName = s.username
+    session = { ...s, username: s.username ?? knownName }
+    if (doorFor(s) === 'in') phase = 'in'
+    else {
+      phase = 'door'
+      forgetDashboard()
+    }
+  }
+
+  // Bumped whenever the door shows: a dashboard reply that left before it
+  // carries the old number and is dropped, so nothing of the session the
+  // door replaced is drawn again behind it.
+  let epoch = 0
+
+  /** Nothing of the last session's dashboard stays in memory. */
+  function forgetDashboard() {
+    epoch++
+    loaderState = initialLoaderState
+    history = null
+    historyFailed = false
+    mail = null
+    canaryPage = null
+    canaryFailed = false
+    canaryRuns = null
+  }
+
+  async function check() {
+    try {
+      arrive(await readSession())
+    } catch {
+      // No answer at all: the sign-in, which says so if it fails too.
+      arrive(SIGNED_OUT)
+    }
+  }
+
+  onMount(() =>
+    onSignedOut(() => {
+      if (phase !== 'in') return
+      phase = 'checking'
+      void check()
+    }),
+  )
+  void check()
+
+  const stillMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  /** The door says the account is in: open it onto the dashboard (the
+   * last session's data went when the door showed). */
+  function enter(s: SessionState) {
+    arrive(s)
+    if (stillMotion()) return
+    leaving = true
+    // The bars slide apart over 700 ms and the door fades with them.
+    setTimeout(() => (leaving = false), 750)
+  }
+
+  // The name chip's menu (owner 28a, docs/design/sign-in-screens.md,
+  // "Sign-out"): one item, Sign out. A failed request keeps the menu open
+  // with its alert; a click while one is in flight sends nothing.
+  let menuOpen = $state(false)
+  let signingOut = $state(false)
+  let signOutFailed = $state(false)
+  let chipEl: HTMLButtonElement | undefined = $state()
+  let menuBox: HTMLElement | undefined = $state()
+  let signOutEl: HTMLButtonElement | undefined = $state()
+
+  async function openMenu() {
+    menuOpen = true
+    signOutFailed = false
+    await tick()
+    signOutEl?.focus()
+  }
+  function closeMenu() {
+    menuOpen = false
+    signOutFailed = false
+    chipEl?.focus()
+  }
+  const toggleMenu = () => (menuOpen ? closeMenu() : void openMenu())
+
+  // A click (or touch) anywhere outside the chip and its menu closes it.
+  $effect(() => {
+    if (!menuOpen) return
+    const outside = (e: Event) => {
+      if (menuBox && e.target instanceof Node && menuBox.contains(e.target)) return
+      closeMenu()
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('mousedown', outside)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('mousedown', outside)
+    }
+  })
+
+  async function signOut() {
+    if (signingOut) return
+    signingOut = true
+    signOutFailed = false
+    try {
+      await sendJSON('POST', '/api/auth/logout')
+    } catch (err) {
+      // A 401 says the session is already gone: that is signed out too.
+      if (!(err instanceof ApiError && err.status === 401)) {
+        signOutFailed = true
+        return
+      }
+    } finally {
+      signingOut = false
+    }
+    menuOpen = false
+    // Whoever signs in next is someone new to this tab.
+    knownName = undefined
+    arrive({ ...SIGNED_OUT, ssoAvailable: session?.ssoAvailable ?? false })
+  }
+
+  let doorShown = $derived(phase === 'door' || leaving)
+  let shellShown = $derived(phase === 'in' || phase === 'checking' || (phase === 'door' && session !== null && doorFor(session) === 'expired'))
 
   // The whole router (lib/route.ts): which of the app's two places is
   // showing. Read once at mount and re-read on every hashchange, so the
@@ -114,10 +269,16 @@
   // so a stream that never connects, drops, or is disabled leaves the
   // dashboard behaving exactly as it does today.
   $effect(() => {
+    // Nothing is fetched while the door is (or may be) showing.
+    if (phase !== 'in') return
     const range = activeRange
     // Read here so the effect re-subscribes on navigation: moving to a
     // canary page must fetch that page now, not on the next 30 s tick.
     const currentRoute = route
+    // A reply is applied only while its range is still the one showing
+    // and the door has not shown since it left (epoch).
+    const gen = epoch
+    const current = () => range === activeRange && gen === epoch
     let inFlight = false
     const load = async () => {
       if (inFlight) return
@@ -131,23 +292,23 @@
       const historyCanary = currentRoute.name === 'canary' ? currentRoute.id : undefined
       const historyLoad = fetchHistory(range, historyCanary)
         .then((h) => {
-          if (range !== activeRange) return
+          if (!current()) return
           history = h
           historyFailed = false
         })
         .catch(() => {
-          if (range === activeRange) historyFailed = true
+          if (current()) historyFailed = true
         })
       const canaryLoad =
         currentRoute.name === 'canary'
           ? fetchCanary(currentRoute.id, range)
               .then((p) => {
-                if (range !== activeRange) return
+                if (!current()) return
                 canaryPage = p
                 canaryFailed = false
               })
               .catch(() => {
-                if (range === activeRange) {
+                if (current()) {
                   canaryPage = null
                   canaryFailed = true
                 }
@@ -160,13 +321,13 @@
         currentRoute.name === 'canary'
           ? fetchCanaryRuns(currentRoute.id)
               .then((r) => {
-                if (range === activeRange) canaryRuns = r
+                if (current()) canaryRuns = r
               })
               .catch(() => {
-                if (range === activeRange) canaryRuns = null
+                if (current()) canaryRuns = null
               })
           : Promise.resolve().then(() => {
-              canaryRuns = null
+              if (gen === epoch) canaryRuns = null
             })
       // Same tick, same "drop a response for a range we've since left"
       // check. Range-free itself -- "is mail working" is not a question
@@ -174,7 +335,7 @@
       // after the operator changed range cannot overwrite a newer one.
       const mailLoad = fetchMail()
         .then((m) => {
-          if (range === activeRange) mail = m
+          if (current()) mail = m
         })
         .catch(() => {
           // Leave whatever was last known in place: one failed poll is
@@ -183,9 +344,9 @@
         })
       try {
         const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
-        if (range === activeRange) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
+        if (current()) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
       } catch {
-        if (range === activeRange) loaderState = onFetchError(loaderState)
+        if (current()) loaderState = onFetchError(loaderState)
       } finally {
         await historyLoad
         await mailLoad
@@ -218,6 +379,7 @@
   // never calls triggerRefresh here -- the dashboard behaves exactly as
   // it did before this effect existed.
   $effect(() => {
+    if (phase !== 'in') return
     if (typeof EventSource === 'undefined') return
     // A fixture scene has no server behind it: the fetches above already
     // answer from the fixture, and the stream must stay closed too.
@@ -277,6 +439,7 @@
   })
 </script>
 
+{#if shellShown}
 <div class="scene">
   <div class="wordmark" aria-label="Birdcage">BIRD<em>CAGE</em></div>
 
@@ -349,7 +512,27 @@
          class only when mail has actually stopped working, since
          nothing else on this page would go red about that. -->
     {#if mailStatus}<span class={mailStatus.cls} title={mailStatus.detail}>{mailStatus.text}</span>{/if}
-    <span class="who">tom (admin)</span>
+    <!-- The signed-in account, and under it the sign-out menu: only while
+         signed in (behind the expired door there is no role to show). -->
+    {#if session?.authenticated && session.username}
+      <span class="who-box" bind:this={menuBox}>
+        <button
+          type="button"
+          class="who"
+          bind:this={chipEl}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onkeydown={(e) => e.key === 'Escape' && menuOpen && (e.preventDefault(), closeMenu())}
+          onclick={toggleMenu}>{session.username} ({session.role})</button
+        >
+        {#if menuOpen}
+          <div class="menu" role="menu" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (e.preventDefault(), closeMenu())}>
+            <button type="button" role="menuitem" bind:this={signOutEl} onclick={signOut}>Sign out</button>
+            {#if signOutFailed}<p class="menu-error" role="alert">Could not sign out. Try again.</p>{/if}
+          </div>
+        {/if}
+      </span>
+    {/if}
   </div>
 
   <nav class="deck" aria-label="Views">
@@ -410,6 +593,11 @@
 
   <button type="button" class="ibtn" aria-label="About birdcage">i</button>
 </div>
+{/if}
+
+{#if doorShown && session}
+  <Door {session} onenter={enter} {leaving} />
+{/if}
 
 <style>
   .scene {
@@ -531,11 +719,54 @@
     color: var(--repeat);
     font-weight: 700;
   }
+  .status .who-box {
+    position: relative;
+  }
   .status .who {
     color: var(--ink-3);
+    background: none;
     border: 1px solid var(--hair-2);
     border-radius: 999px;
     padding: 2px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  /* The sign-out menu: under the chip, right-aligned, in the shell's
+     tokens and the chip's own type. */
+  .status .menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 10;
+    min-width: 100%;
+    background: var(--raised);
+    border: 1px solid var(--hair-2);
+    border-radius: 6px;
+    padding: 4px;
+    font: inherit;
+    white-space: nowrap;
+  }
+  .status .menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: var(--ink-2);
+    font: inherit;
+    cursor: pointer;
+  }
+  .status .menu button:hover,
+  .status .menu button:focus-visible {
+    color: var(--ink);
+    background: var(--hair-2);
+    outline: none;
+  }
+  .status .menu-error {
+    margin: 4px 8px 2px;
+    color: var(--ink-3);
   }
 
   .ranges {

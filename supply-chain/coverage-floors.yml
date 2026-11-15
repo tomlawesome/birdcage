@@ -321,6 +321,12 @@ floors:
                               # in pipeline 1766, 2026-09-27.
   internal/api: 82
   internal/audit: 94
+  internal/auth: 78          # New package (#8, ADR-0016): the sign-in gate over
+                             # gauntlet. 78.2% measured with -race and Postgres
+                             # on golang:1.27.4, matching test:go, 2026-11-13.
+  internal/authstore: 82     # New package (#8): gauntlet's document store on
+                             # birdcage's database; passes gauntlet's persisttest.
+                             # 82.9% measured the same way, 2026-11-13.
   internal/ca: 76             # 79.6% locally, 2026-09-30, with CAMissing's tests (#149)
   internal/crowdsec: 91      # 91.6% measured by test:go in pipeline 1931,
                              # 2026-10-01 (#4, ADR-0014): the permanent-ban

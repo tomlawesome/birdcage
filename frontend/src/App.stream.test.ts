@@ -34,10 +34,16 @@ class FakeEventSource {
   }
 }
 
+const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'tom', role: 'admin' }
+
 function stubSuccessfulFetch() {
   vi.stubGlobal(
     'fetch',
     vi.fn((path: string) => {
+      // Signed in (issue #8): the session is read before the dashboard.
+      if (path === '/api/auth/session') {
+        return Promise.resolve({ ok: true, json: async () => signedIn })
+      }
       if (path.includes('/api/canaries')) {
         return Promise.resolve({ ok: true, json: async () => quietFixture.canaries })
       }

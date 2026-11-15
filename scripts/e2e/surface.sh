@@ -34,17 +34,17 @@ api_route() {
   step "GET $path answers 200 with the documented shape"
   if helper "
 set -eu
-code=\$(curl -sS -o /tmp/resp.json -w '%{http_code}' --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL$path')
+code=\$(curl -sS -o /tmp/resp.json -w '%{http_code}' --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL$path')
 [ \"\$code\" = 200 ] || exit 1
 jq -e '$jq_filter' /tmp/resp.json >/dev/null
 "; then
     local summary
-    summary="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL$path' 2>/dev/null | head -c 300")" \
+    summary="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL$path' 2>/dev/null | head -c 300")" \
       || summary="(could not re-fetch the body for display)"
     ok "GET $path: $summary"
   else
     local detail
-    detail="$(helper "curl -sS -w ' http=%{http_code}' --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL$path'")" \
+    detail="$(helper "curl -sS -w ' http=%{http_code}' --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL$path'")" \
       || detail="(unreachable)"
     fail "GET $path did not answer 200 with the documented shape ($jq_filter): $detail" "$E2E_BIRDCAGE"
   fi
@@ -68,7 +68,7 @@ step "GET /api/stream delivers a real-time event for a live hit"
 # stream fires for a real hit within the connection's lifetime -- rather
 # than the alert's own id appearing in it, which the product never sends
 # over this channel; see the report for this journey's named gap.
-"$E2E_STACK" helper "curl -sS --max-time 15 --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/stream' > /work/stream-output.txt 2>&1" &
+"$E2E_STACK" helper "curl -sS --max-time 15 --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/stream' > /work/stream-output.txt 2>&1" &
 stream_pid=$!
 sleep 2
 helper "{ printf 'USER x\\r\\nPASS y\\r\\nQUIT\\r\\n'; sleep 2; } | nc -w 5 $E2E_CANARY 21" >/dev/null \

@@ -28,6 +28,11 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
+  # gauntlet is fetched from its Git host, never through proxy.golang.org
+  # or sum.golang.org: the first lookup there records a version for good,
+  # which is publishing it (ADR-0016 decision 1). GOPRIVATE turns both off
+  # for the owner's modules; go.sum still pins the exact content.
+  GOPRIVATE: "github.com/tomlawesome/*"
   # Where the six images are published (#90, #125, #126, #132).
   # Deliberately NOT named BIRDCAGE_IMAGE: that is the environment
   # variable scripts/verify-validation-evidence.sh reads to know which
@@ -64,9 +69,9 @@ variables:
   # 1.27.2 under an open merge request and changed how coverage statements are
   # counted, failing test:go on unchanged code. Bump tag and digest together,
   # on purpose, with the coverage floors re-measured in the same change.
-  GOLANG_IMAGE: golang:1.27.3@sha256:b76020929b709ddb6202afc05410a0faefae20ae05e27ad548b3870092688a69
+  GOLANG_IMAGE: golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   NODE_IMAGE: node:26-trixie
-  PYTHON_ALPINE_IMAGE: python:3.14-alpine
+  PYTHON_ALPINE_IMAGE: python:3.15-alpine
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
@@ -88,8 +93,76 @@ variables:
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
   RELEASE_APK_PACKAGES: bash curl python3
 
+# Batch intake (ai/agent-infra#114): a merge request into batch-a or batch-b
+# runs the static checks only, and a chore/catchup-* one into a batch also
+# gets catchup-check. The shared snippets set BATCH_INTAKE and CATCHUP_CHECK in
+# the workflow rules below; the first rules of `.gate` and `.higher_bar` stop
+# every heavy job when either is set. Static checks take `.static_gate`, which
+# has no such rule, so they run on every merge request as before.
+include:
+  - project: ai/agent-infra
+    ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
+    file: scripts/batch-intake/ci-template.yml
+  - project: ai/agent-infra
+    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
+    file: scripts/catchup-check/ci-template.yml
+  # Dev landing (ai/agent-infra#113, owner 2026-11-05: "Secrets scanning and
+  # similar very fast checks should happen on merge to dev. Five minutes.
+  # Max."): a push to dev runs only the fast checks (`.fast_gate`, 5 minute
+  # timeout) plus the GitHub mirror. Every other job takes `.dev-landing`'s
+  # job_rule first, through `.static_gate`, `.gate` and `.higher_bar`.
+  - project: ai/agent-infra
+    ref: 1dca70057bd93f68ded22c6b159f315c987c1663  # dev-landing/v1
+    file: scripts/dev-landing/ci-template.yml
+
+# Which pipelines are created. Before the batch snippets there was no
+# `workflow:`, so GitLab's default applied: a pipeline for every source (push,
+# merge request, schedule, web, api, tag), kept only if a job's own rules
+# select it. The last rule says exactly that, so nothing changes for any
+# pipeline except the two batch merge-request kinds, which the snippets'
+# rules (first, as they require) mark with a variable and let through.
+workflow:
+  rules:
+    - !reference [.dev-landing, workflow_rules]
+    - !reference [.catchup-check, workflow_rules]
+    - !reference [.batch-intake, workflow_rules]
+    - when: always
+
+# The static checks: the merge-request and branch gate as it always was,
+# behind the dev-landing stop (a push to dev runs only `.fast_gate` jobs).
+.static_gate: &static_gate
+  rules:
+    - !reference [.dev-landing, job_rule]
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The fast checks (ai/agent-infra#113): the same pipelines as `.static_gate`,
+# and also the push that lands on dev, where each must finish within 5 minutes
+# (`extends: .dev-landing-check` sets the timeout). Only checks that took
+# under 40 seconds on recent dev pipelines belong here. Never `needs:` a job
+# that is skipped on that push.
+.fast_gate: &fast_gate
+  rules:
+    - !reference [.dev-landing-check, rules]
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "preview"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# The heavy jobs' gate: `.static_gate` behind the batch-intake and catch-up
+# stops. scripts/ci-e2e-guard.py requires every e2e job to use this or
+# `.higher_bar`.
 .gate: &gate
   rules:
+    - !reference [.dev-landing, job_rule]
+    - !reference [.batch-intake, job_rule]
+    - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -104,6 +177,9 @@ variables:
 # jobs still run at these hops too, because `*gate` names them as well.
 .higher_bar: &higher_bar
   rules:
+    - !reference [.dev-landing, job_rule]
+    - !reference [.batch-intake, job_rule]
+    - !reference [.catchup-check, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
@@ -215,7 +291,7 @@ policy:promotion-hop:
 lint:go:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   script:
     - go build ./...
     - go vet ./...
@@ -225,15 +301,15 @@ lint:go:
       unformatted=$(gofmt -l $files)
       [ -z "$unformatted" ] || { echo "Not gofmt-clean:"; echo "$unformatted"; gofmt -d $files; exit 1; }
     # Built from source with the image's Go: the prebuilt binary is built
-    # with an older Go and refuses go.mod's `go 1.27.1` directive.
-    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+    # with an older Go and refuses go.mod's `go 1.27.4` directive.
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     - golangci-lint run ./...
 
 # Ported from licence.yml; the script is host independent by design.
 lint:licences:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  <<: [*static_gate, *git_safe]
   script:
     - scripts/licence-check.sh
 
@@ -253,7 +329,7 @@ lint:licences:
 lint:licences-python:
   stage: lint
   image: $PYTHON_SLIM_IMAGE
-  <<: *gate
+  <<: *static_gate
   script:
     - scripts/licence-check-python.test.sh
     - scripts/licence-check-python.sh
@@ -272,7 +348,8 @@ lint:licences-python:
 lint:ci:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
-  <<: *gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   before_script:
     - apk add --no-cache bash >/dev/null
@@ -290,6 +367,12 @@ lint:ci:
     # is the record; this is the check that it is still true.
     - python3 scripts/action-pins-check.py
     - scripts/action-pins-check.test.sh
+    # The image builds' half of GOPRIVATE above (ADR-0016 decision 1, #8):
+    # every Go build stage in any tracked Dockerfile keeps the owner's
+    # modules off proxy.golang.org, and only birdcage's build stage
+    # carries git.
+    - python3 scripts/go-fetch-guard.py
+    - scripts/go-fetch-guard.test.sh
 
 # ---------------------------------------------------------------------------
 # Every scripts/*.test.sh, in one job (#100). Before this, three of the
@@ -312,7 +395,7 @@ lint:ci:
 lint:scripts:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
-  <<: *gate
+  <<: *static_gate
   needs: []
   before_script:
     # curl is not padding: ensure-cosign.sh downloads with it, and its suite
@@ -335,6 +418,12 @@ lint:scripts:
         if bash "$suite"; then :; else failed="$failed $suite"; fi
       done
       [ "$found" -gt 0 ] || { echo "no scripts/*.test.sh found at all"; exit 1; }
+      # One scripts/e2e suite runs here too: the authenticator-code maths
+      # every journey's sign-in rests on (#8), which needs no docker. The
+      # rest of scripts/e2e/*.test.sh drive a real stack.
+      found=$((found + 1))
+      echo "--- scripts/e2e/totp.test.sh"
+      if sh scripts/e2e/totp.test.sh; then :; else failed="$failed scripts/e2e/totp.test.sh"; fi
       if [ -n "$failed" ]; then
         echo "failed suites:$failed"
         exit 1
@@ -347,7 +436,8 @@ lint:scripts:
 lint:flake-check:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: *gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   script:
     - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
@@ -361,7 +451,8 @@ lint:flake-check:
 test:release-scripts:
   stage: lint
   image: $DOCKER_CLI_IMAGE
-  <<: *gate
+  extends: .dev-landing-check
+  <<: *fast_gate
   needs: []
   before_script:
     - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
@@ -393,7 +484,8 @@ test:release-scripts:
 lint:agent-deps:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  extends: .dev-landing-check
+  <<: [*fast_gate, *git_safe]
   script:
     # Once per agent binary (ADR-0009 decision 6) -- each kind's own
     # allowed set, checked separately so one kind's fence cannot cover
@@ -404,11 +496,11 @@ lint:agent-deps:
 # govulncheck (#51, owner approval 2026-09-27): golang.org/x/vuln is a
 # CI-only tool, never linked into birdcage (supply-chain/dependency-inventory.md,
 # "Approved third-party modules (the ledger)"). Installed from source and run against this project's
-# own `go 1.27.1` (go.mod) -- the Go checksum database verifies the
+# own `go 1.27.4` (go.mod) -- the Go checksum database verifies the
 # module download the same way it does for golangci-lint above.
 #
 # GOTOOLCHAIN=local on both steps, deliberately: golang.org/x/vuln's own
-# go.mod names a lower floor than 1.27.1, and GOTOOLCHAIN=auto's default
+# go.mod names a lower floor than 1.27.4, and GOTOOLCHAIN=auto's default
 # module-aware toolchain selection picks a toolchain that satisfies
 # *that* floor, not this project's -- observed directly: it built
 # govulncheck with go1.26.8, which then refused to analyse this
@@ -416,7 +508,7 @@ lint:agent-deps:
 # go1.27") on every commit, clean or not. GOTOOLCHAIN=local pins both
 # steps to $GOLANG_IMAGE's own go, which already satisfies govulncheck's
 # floor and matches go.mod exactly -- confirmed against the real
-# golang:1.27.3 image.
+# golang:1.27.4 image.
 #
 # A reachable vulnerability fails the job; an unreachable one is printed
 # only -- govulncheck's own default. Proved locally, not assumed: a
@@ -426,9 +518,9 @@ lint:agent-deps:
 lint:govulncheck:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: *gate
+  <<: *static_gate
   script:
-    - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+    - GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
     - GOTOOLCHAIN=local govulncheck ./...
 
 # gitleaks (#28, owner approval 2026-09-27): the released MIT binary, not
@@ -450,7 +542,8 @@ lint:govulncheck:
 lint:gitleaks:
   stage: lint
   image: $GOLANG_IMAGE
-  <<: [*gate, *git_safe]
+  extends: .dev-landing-check
+  <<: [*fast_gate, *git_safe]
   variables:
     GIT_DEPTH: 0
   before_script:
@@ -557,6 +650,8 @@ test:frontend:
     # Issue #118's canary page, gated the same way the band is: the four
     # round-7 scenes against references captured from the build.
     - npm run compare:canary
+    # Issue #8's sign-in door against the round-18 mock-up itself.
+    - npm run compare:door
     - npm run build
   # Surfaces the total in the job list, and feeds GitLab the per-line
   # cobertura report so coverage shows on the merge request diff rather
@@ -648,7 +743,7 @@ test:go:
     # This run sets BIRDCAGE_TEST_DATABASE_URL, so internal/db is
     # measured against real Postgres here and reads higher than it does
     # on a workstation, where the same tests fall back to SQLite.
-    # golang:1.27.3 ships python3 (3.13.5, verified), which the checker
+    # golang:1.27.4 ships python3 (3.13.5, verified), which the checker
     # needs.
     # #93: run the suite as a NON-ROOT user. internal/startcheck proves
     # birdcage refuses to start on unsafe file permissions, and those
@@ -685,6 +780,7 @@ test:go:
       GOCACHE=/tmp/gotest/cache
       GOMODCACHE=/tmp/gotest/mod
       GOFLAGS='$GOFLAGS'
+      GOPRIVATE='$GOPRIVATE'
       BIRDCAGE_TEST_DATABASE_URL='$BIRDCAGE_TEST_DATABASE_URL'
       go test ./... -race -skip '$QUARANTINE_SKIP' -timeout=20m -coverprofile=/tmp/gotest/coverage.out"
     # Read back as root: the profile is tester-owned but world-readable,
@@ -1029,31 +1125,48 @@ test:image:birdcage:
         exit 1
       fi
       echo "version stamped: $got"
+    # The sign-in key birdcage will not start without (#8,
+    # BIRDCAGE_AUTH_KEY_FILE): 32 fresh random bytes made inside a
+    # container straight into a volume of this job's own, so they never
+    # reach the job log, the job container or the repository; owned by
+    # the image's uid 1000, readable by it alone, and mounted read-only.
+    - docker volume create "$APP-key" >/dev/null
+    - >-
+      docker run --rm --volume "$APP-key:/key" "$ALPINE_IMAGE" sh -c
+      'set -eu; umask 077; head -c 32 /dev/urandom > /key/auth.key;
+      [ "$(wc -c < /key/auth.key)" -eq 32 ];
+      chown 1000:1000 /key/auth.key; chmod 400 /key/auth.key'
     - >-
       docker run --detach --name "$APP"
       --env BIRDCAGE_HTTP_ADDR=127.0.0.1:8080
       --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m
       --tmpfs /var/lib/birdcage:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      --volume "$APP-key:/auth:ro" --env BIRDCAGE_AUTH_KEY_FILE=/auth/auth.key
       --cap-drop ALL --security-opt no-new-privileges
       --pids-limit 64 --memory 256m --cpus 0.5
       "$APP"
+    # GET /api/auth/session answers without a credential (#8): a fresh
+    # birdcage with no admin yet says setup is required, which proves the
+    # sign-in layer opened with the key as well as that the image serves.
+    # The rest of /api/ answers 503 until the first admin exists.
     - |
       for attempt in $(seq 1 20); do
         if docker run --rm --network "container:$APP" "$ALPINE_IMAGE" \
-             wget -q -O - http://127.0.0.1:8080/api/alerts 2>/dev/null | grep -q '"alerts"'; then
-          echo "/api/alerts answered on attempt $attempt"
+             wget -q -O - http://127.0.0.1:8080/api/auth/session 2>/dev/null | grep -q '"setupRequired":true'; then
+          echo "/api/auth/session answered setup required on attempt $attempt"
           break
         fi
         sleep 1
         if [ "$attempt" = 20 ]; then
-          echo "/api/alerts never answered; container log follows"
-          docker logs "$APP"
+          echo "/api/auth/session never answered; container log follows (setup and unlock codes blanked)"
+          docker logs "$APP" 2>&1 | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g'
           exit 1
         fi
       done
   after_script:
     - docker rm --force "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
     - docker image rm "birdcage-test-$CI_JOB_ID" >/dev/null 2>&1 || true
+    - docker volume rm --force "birdcage-test-$CI_JOB_ID-key" >/dev/null 2>&1 || true
 
 # The agent fails closed without a token and client certificate in its
 # state directory, so the job mints throwaway ones into a named volume
@@ -2291,6 +2404,10 @@ e2e:postgres-requires-tls:
     # The script is bash (`set -eu`, case statements over multi-line
     # output); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
+    # The script makes its sign-in key (#8) in an $ALPINE_IMAGE
+    # container, a pull through the dependency proxy that needs this
+    # job's own login (refs #128). --password-stdin only, never echoed.
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login "$CI_DEPENDENCY_PROXY_SERVER" --username "$CI_DEPENDENCY_PROXY_USER" --password-stdin
   script:
     - scripts/e2e/postgres-requires-tls.sh
 

@@ -54,3 +54,15 @@ the whole account.
 - 2026-10-01 · 0b5eb09 · pipeline 1916 (!95) / lint:gitleaks, job 28440 ·
   `scripts/ensure-gitleaks.sh` got "curl: (22) The requested URL returned
   error: 504" from github.com before any scan ran. Retried as job 28489.
+
+## startup-refusals.sh -- first refusal outlived its 15 s bound (local)
+
+- 2026-10-10 · 2cbda6f plus the uncommitted #8 slice C journeys · local
+  `scripts/e2e/startup-refusals.sh` on a shared host · step 1 (sign-in key
+  unset) was killed by its 15 s `timeout` although the container had
+  already logged the refusal; the same image exits in about a second when
+  run alone, and the rerun straight after passed all five steps. Cause
+  unknown: a slow first `docker run` on a busy daemon would fit, but so
+  would a real hang -- birdcage logging its refusal and then not exiting
+  -- so a refusal outliving the 15 s bound again is not to be waved off as
+  this flake without looking.

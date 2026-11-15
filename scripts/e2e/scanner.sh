@@ -63,7 +63,7 @@ WANT_MASKED_PATHS='["/etc/shadow","/etc/gshadow","/etc/ssh","/root","/proc","/ru
 # `curl ... | jq -e '...'` assertions use.
 scan_check() { # scan_check <canary_id> <jq-boolean-expr>
   local canary_id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq -e --arg id '$canary_id' '[.scans[] | select(.canary_id == \$id)][0] | $expr'" \
     >/dev/null 2>&1
 }
@@ -73,7 +73,7 @@ scan_check() { # scan_check <canary_id> <jq-boolean-expr>
 # decision (scan_check above is exact).
 scan_field() { # scan_field <canary_id> <jq-filter>
   local canary_id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq -r --arg id '$canary_id' '[.scans[] | select(.canary_id == \$id)][0] | $filt'"
 }
 
@@ -85,13 +85,13 @@ scan_field() { # scan_field <canary_id> <jq-filter>
 # answered.
 scan_by_id_check() { # scan_by_id_check <snapshot_id> <jq-boolean-expr>
   local id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq -e --argjson id '$id' '[.scans[] | select(.id == \$id)][0] | $expr'" \
     >/dev/null 2>&1
 }
 scan_by_id_field() { # scan_by_id_field <snapshot_id> <jq-filter>
   local id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq -r --argjson id '$id' '[.scans[] | select(.id == \$id)][0] | $filt'"
 }
 
@@ -101,13 +101,13 @@ scan_by_id_field() { # scan_by_id_field <snapshot_id> <jq-filter>
 # its db_refresh state on this read model, never on /api/scans.
 canary_check() { # canary_check <canary_id> <jq-boolean-expr>
   local canary_id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' \
     | jq -e --arg id '$canary_id' '[.canaries[] | select(.id == \$id)][0] | $expr'" \
     >/dev/null 2>&1
 }
 canary_field() { # canary_field <canary_id> <jq-filter>
   local canary_id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' \
     | jq -r --arg id '$canary_id' '[.canaries[] | select(.id == \$id)][0] | $filt'"
 }
 
@@ -116,12 +116,12 @@ canary_field() { # canary_field <canary_id> <jq-filter>
 # list) -- newest first, completed runs only, never the run id.
 runs_check() { # runs_check <canary_id> <jq-boolean-expr-over-the-runs-array>
   local canary_id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries/$canary_id/runs' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries/$canary_id/runs' \
     | jq -e '.runs | $expr'" >/dev/null 2>&1
 }
 runs_field() { # runs_field <canary_id> <jq-filter-over-the-runs-array>
   local canary_id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries/$canary_id/runs' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries/$canary_id/runs' \
     | jq -r '.runs | $filt'"
 }
 
@@ -132,12 +132,12 @@ runs_field() { # runs_field <canary_id> <jq-filter-over-the-runs-array>
 # the whole array a leg cares about, not one row).
 findings_check() { # findings_check <agent_id> <jq-boolean-expr-over-the-findings-array>
   local agent_id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
     | jq -e '.findings | $expr'" >/dev/null 2>&1
 }
 findings_field() { # findings_field <agent_id> <jq-filter-over-the-findings-array>
   local agent_id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
     | jq -r '.findings | $filt'"
 }
 
@@ -146,7 +146,7 @@ findings_field() { # findings_field <agent_id> <jq-filter-over-the-findings-arra
 # below) posts a new one on every tick with no other outward sign.
 scan_count() { # scan_count <canary_id>
   local canary_id="$1"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq --arg id '$canary_id' '[.scans[] | select(.canary_id == \$id)] | length'"
 }
 
@@ -279,7 +279,7 @@ wait_for_scanner() { # wait_for_scanner <name> <container>
 # complete enrolment first.
 wait_for_scan_snapshot() { # wait_for_scan_snapshot <canary_id> <container>
   local canary_id="$1" container="$2"
-  poll 45 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/scans' \
+  poll 45 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/scans' \
     | jq -e --arg id '$canary_id' '[.scans[] | select(.canary_id == \$id)] | length > 0'" \
     || fail "GET /api/scans never held a snapshot for canary $canary_id after 45 attempts" "$container" "$E2E_BIRDCAGE"
 }
@@ -533,7 +533,7 @@ poll 30 canary_check "$LEG4_CANARY" '(.active_states // []) | index("db_stale") 
   || fail "leg 4 canary never read db_stale after failing_since moved back 25 hours: $(canary_field "$LEG4_CANARY" '.')" "$E2E_BIRDCAGE"
 ok "canary reads db_stale"
 # #56's period writer ticks every 30s; three ticks is the bound.
-poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/history?range=15m&canary=$LEG4_CANARY' \
+poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/history?range=15m&canary=$LEG4_CANARY' \
   | jq -e '[.periods[] | select(.state == \"db_stale\")] | length > 0'" \
   || fail "no db_stale period in /api/history for leg 4's canary within 90s" "$E2E_BIRDCAGE"
 ok "the db_stale period is on the canary's history"

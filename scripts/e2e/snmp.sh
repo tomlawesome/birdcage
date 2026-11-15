@@ -75,11 +75,11 @@ step "the request reached OpenCanary's own wire shape and then birdcage"
 # JSON string (internal/store.Alert.Raw), so logdata.COMMUNITY_STRING is
 # a field inside that string, not of the alert object itself -- the same
 # shape smb.sh's own poll uses for logdata.FILENAME.
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=snmp' \
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=snmp' \
   | jq -e --arg m '$MARKER' '[.alerts[] | (.raw | fromjson | .logdata.COMMUNITY_STRING // \"\") | select(. == \$m)] | length > 0'" \
   || fail "/api/alerts never held an snmp event carrying community string $MARKER after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
 
-alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=snmp' \
+alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=snmp' \
   | jq -c --arg m '$MARKER' '[.alerts[] | select((.raw | fromjson | .logdata.COMMUNITY_STRING // \"\") == \$m)][0] |
       {id, service, dest_port, community: (.raw | fromjson | .logdata.COMMUNITY_STRING), requests: (.raw | fromjson | .logdata.REQUESTS)}'")"
 case "$alert" in

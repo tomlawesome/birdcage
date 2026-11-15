@@ -338,30 +338,33 @@ only at the point that text is displayed, per surface:
   `unix://` path) refuses to start rather than guessing.
   See [docs/configuration.md](docs/configuration.md#dashboard-tls).
 
-  No authentication yet -- [issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8)
-  (ADR-0003) -- so whichever mode above is in use, treat it as reachable
-  by anyone who can reach the listener. Every route below has the same
-  gap:
+  Everything under `/api/` needs a signed-in session or a read API token
+  ([issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8),
+  ADR-0016); only the frontend files, which hold the sign-in screen, load
+  without one. The gate is the shared auth module gauntlet, and its own
+  routes (`/api/auth/*`, `/api/tokens`) sit beside the ones below. A read
+  API token reaches only the read-only routes below, never an account or
+  token route. See [docs/configuration.md](docs/configuration.md#sign-in).
 
   | Route                      | Method | Auth                          |
   | -------------------------- | ------ | ----------------------------- |
-  | `/`                        | GET    | requireAuth seam, pending #8  |
-  | `/api/alerts`              | GET    | requireAuth seam, pending #8  |
-  | `/api/instances`           | GET    | requireAuth seam, pending #8  |
-  | `/api/stats`               | GET    | requireAuth seam, pending #8  |
-  | `/api/canaries`            | GET    | requireAuth seam, pending #8  |
-  | `/api/canary`              | GET    | requireAuth seam, pending #8  |
-  | `/api/canaries/{id}/runs`  | GET    | requireAuth seam, pending #8  |
-  | `/api/scans`               | GET    | requireAuth seam, pending #8  |
-  | `/api/findings`            | GET    | requireAuth seam, pending #8  |
-  | `/api/visitors`            | GET    | requireAuth seam, pending #8  |
-  | `/api/trace`               | GET    | requireAuth seam, pending #8  |
-  | `/api/stream`              | GET    | requireAuth seam, pending #8  |
-  | `/api/history`             | GET    | requireAuth seam, pending #8  |
-  | `/api/mail`                | GET    | requireAuth seam, pending #8  |
+  | `/`                        | GET    | none (frontend files)         |
+  | `/api/alerts`              | GET    | session or read API token     |
+  | `/api/instances`           | GET    | session or read API token     |
+  | `/api/stats`               | GET    | session or read API token     |
+  | `/api/canaries`            | GET    | session or read API token     |
+  | `/api/canary`              | GET    | session or read API token     |
+  | `/api/canaries/{id}/runs`  | GET    | session or read API token     |
+  | `/api/scans`               | GET    | session or read API token     |
+  | `/api/findings`            | GET    | session or read API token     |
+  | `/api/visitors`            | GET    | session or read API token     |
+  | `/api/trace`               | GET    | session or read API token     |
+  | `/api/stream`              | GET    | session or read API token     |
+  | `/api/history`             | GET    | session or read API token     |
+  | `/api/mail`                | GET    | session or read API token     |
 
-  `/api/findings` is the one to weigh first when deciding who may reach
-  the listener: it returns every agent's standing findings store (issue
+  `/api/findings` is the one to weigh first when deciding who may be
+  given an account or a token: it returns every agent's standing findings store (issue
   #109) -- the CVEs present on each scanned host, their state (open,
   operator-accepted, fixed) and the version that fixes them -- which is
   a map of the fleet's weak points to anyone who can fetch it. `/api/scans`
@@ -372,10 +375,10 @@ only at the point that text is displayed, per surface:
   route is registered there without a row here.
 
   `/api/stream` (issue #44) is a server-sent-events connection birdcage
-  holds open rather than answering once, so until #8 lands it also caps
+  holds open rather than answering once, so it caps
   total concurrent connections (`internal/stream.Hub`, 256) and drops the
   slowest subscriber's buffer rather than growing it without limit --
-  mitigating the connection-exhaustion risk a held-open, unauthenticated
+  mitigating the connection-exhaustion risk a held-open
   route adds beyond the other routes above (see issue #44's Research
   section for the threat model and CVE search this came from). A dropped
   or refused stream falls back to the dashboard's existing 30s poll,

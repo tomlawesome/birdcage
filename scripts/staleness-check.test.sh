@@ -21,6 +21,10 @@ cat > "$root/go.mod" <<'EOF'
 module test
 
 go 1.21.0
+
+require (
+	github.com/tomlawesome/gauntlet v0.4.1
+)
 EOF
 
 cat > "$root/frontend/package.json" <<'EOF'
@@ -59,6 +63,11 @@ EOF
 # on the URLs.
 fixture_repo_url="https://registry.example.test/v2/group/poisoner"
 fixture_pin_digest="sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+
+# The owner module in go.mod above is looked up on the Git host's tags
+# API, never the Go proxy (ADR-0016 decision 1). Default response: its
+# only tag is the pin, i.e. current.
+owner_tags_url="https://api.github.com/repos/tomlawesome/gauntlet/tags?per_page=100"
 
 # expect <want-exit> <name> <upstream-json> <staleness-yml> [--today VALUE]
 expect() {
@@ -141,6 +150,7 @@ merged = {
     "https://registry.npmjs.org/widget/latest": json.dumps({"version": "1.0.0"}),
     f"{repo_url}/tags/list": {"tags": ["v1.0.0"]},
     f"{repo_url}/manifests/v1.0.0": pin_digest,
+    "https://api.github.com/repos/tomlawesome/gauntlet/tags?per_page=100": [{"name": "v0.4.1"}],
 }
 if drop_pypi != "1":
     merged["https://pypi.org/pypi/gadget/json"] = json.dumps({"info": {"version": "2.0.0"}})
@@ -234,6 +244,87 @@ fixture_tags_404="{
 
 expect 1 "fixture tags/list 404s -- unverifiable" \
   "$(upstream_json "$alpine_current" 0 "$fixture_tags_404")" "$no_config"
+
+# Owner modules (github.com/tomlawesome/*) -- ADR-0016 decision 1: a lookup
+# through proxy.golang.org publishes the version for good, so the script
+# reads GitHub's tags API instead. The default fixture above is the
+# "current" case (tag v0.4.1 == pin).
+must_contain='| gomod:github.com/tomlawesome/gauntlet | v0.4.1 | v0.4.1 | current |' \
+  expect 0 "owner module at the newest GitHub tag -- current" \
+  "$(upstream_json "$alpine_current")" "$no_config"
+
+owner_behind="{
+  \"$owner_tags_url\": [{\"name\": \"v0.4.1\"}, {\"name\": \"v0.5.0\"}, {\"name\": \"v0.4.9\"}]
+}"
+
+must_contain='| gomod:github.com/tomlawesome/gauntlet | v0.4.1 | v0.5.0 | behind |' \
+  expect 1 "owner module behind the newest GitHub tag -- behind" \
+  "$(upstream_json "$alpine_current" 0 "$owner_behind")" "$no_config"
+
+# Non-semver tags (and a partial vX.Y) are ignored, even where they would
+# sort above the real newest tag.
+owner_junk_tags="{
+  \"$owner_tags_url\": [{\"name\": \"v0.4.1\"}, {\"name\": \"v9.9\"}, {\"name\": \"latest\"}, {\"name\": \"v0.9.0-rc1\"}, {\"name\": \"release-99.0.0\"}]
+}"
+
+must_contain='| gomod:github.com/tomlawesome/gauntlet | v0.4.1 | v0.4.1 | current |' \
+  expect 0 "owner module: non-semver tags are ignored" \
+  "$(upstream_json "$alpine_current" 0 "$owner_junk_tags")" "$no_config"
+
+# The fake fetcher records every URL requested. Drives check_go_modules
+# directly (go.mod: an owner module, plus a subpackage `go install` of
+# one owner module and a /v2 module in .gitlab-ci.yml) and asserts the
+# proxy is never asked about any owner module, and that the proxy helpers
+# themselves refuse one.
+mkdir -p "$work/owner" && cp "$root/go.mod" "$work/owner/go.mod"
+cat > "$work/owner/.gitlab-ci.yml" <<'CIEOF'
+script:
+  - go install github.com/tomlawesome/gauntlet/cmd/gauntlet@v0.4.1
+  - go install github.com/tomlawesome/other/v2@v2.0.0
+CIEOF
+if python3 - "$check" "$work/owner" <<'PYEOF'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("staleness_check", sys.argv[1])
+sc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sc)
+
+class Recording:
+    def __init__(self):
+        self.urls = []
+    def get(self, url, headers=None):
+        self.urls.append(url)
+        if url == "https://api.github.com/repos/tomlawesome/gauntlet/tags?per_page=100":
+            return True, json.dumps([{"name": "v0.4.1"}, {"name": "v0.5.0"}, {"name": "v2.0.0"}]).encode(), None
+        if url == "https://api.github.com/repos/tomlawesome/other/tags?per_page=100":
+            return True, json.dumps([{"name": "v1.9.0"}, {"name": "v2.0.0"}, {"name": "v2.1.0"}, {"name": "v3.0.0"}]).encode(), None
+        return False, None, "unexpected URL: " + url
+
+f = Recording()
+rows = {r.id: r for r in sc.check_go_modules(sys.argv[2], f)}
+bad = [u for u in f.urls if "proxy.golang.org" in u or "sum.golang.org" in u]
+assert not bad, f"owner module reached the Go proxy: {bad}"
+assert f.urls, "no URL requested at all"
+g = rows["gomod:github.com/tomlawesome/gauntlet"]
+assert (g.latest, g.status) == ("v0.5.0", "behind"), (g.latest, g.status)
+o = rows["gomod:github.com/tomlawesome/other/v2"]
+assert (o.latest, o.status) == ("v2.1.0", "behind"), (o.latest, o.status)
+
+for name in ("go_proxy_latest", "go_proxy_version_list"):
+    f2 = Recording()
+    for mod in ("github.com/tomlawesome/gauntlet", "github.com/TomLawesome/gauntlet/cmd/x"):
+        try:
+            getattr(sc, name)(f2, mod)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"{name} accepted owner module {mod}")
+    assert not f2.urls, f"{name} requested {f2.urls}"
+# A look-alike is not an owner module.
+assert not sc.is_owner_module("github.com/tomlawesomeness/x")
+assert not sc.is_owner_module("github.com/tomlawesome")
+PYEOF
+then echo "ok   owner modules never reach the Go proxy (recorded URLs, helpers refuse)"; pass=$((pass + 1))
+else echo "FAIL owner modules never reach the Go proxy"; fail=$((fail + 1)); fi
 
 # image_ci_vars reads plain Docker Hub names (what .gitlab-ci.yml uses now),
 # the Docker Hub cache prefix, and skips ghcr.io / mcr.microsoft.com names

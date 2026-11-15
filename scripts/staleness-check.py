@@ -25,7 +25,13 @@ Ecosystems covered, and where each pin comes from:
   - Direct Go modules: go.mod's `require` block (skipping `// indirect`),
     plus every `go install <module>@vX.Y.Z` in .gitlab-ci.yml -- compared
     against proxy.golang.org's `@latest` (and, for a module already pinned
-    to a pre-release, `@v/list` too).
+    to a pre-release, `@v/list` too). The owner's own modules
+    (`github.com/tomlawesome/*`) are the exception, per ADR-0016 decision
+    1: a lookup through proxy.golang.org or sum.golang.org records the
+    version there permanently, which is publishing it, so these are
+    never sent to the proxy. They are compared against the newest `vX.Y.Z`
+    tag (of the module's own major) in GitHub's tags API instead, and
+    go_proxy_latest/go_proxy_version_list refuse an owner module outright.
   - Direct npm packages: names from frontend/package.json, installed
     versions from frontend/package-lock.json -- compared against
     registry.npmjs.org's `/latest`.
@@ -95,12 +101,21 @@ def require_yaml():
         raise SystemExit(2)
 
 
+def _ci_loader():
+    """SafeLoader that accepts GitLab's `!reference [job, key]` tag."""
+    class Loader(yaml.SafeLoader):
+        pass
+    Loader.add_constructor(
+        "!reference", lambda l, n: {"!reference": l.construct_sequence(n)})
+    return Loader
+
+
 def load_gitlab_ci(path):
     """The parsed .gitlab-ci.yml, cached per path within one run."""
     if path not in _GITLAB_CI_CACHE:
         require_yaml()
         with open(path) as f:
-            _GITLAB_CI_CACHE[path] = yaml.safe_load(f) or {}
+            _GITLAB_CI_CACHE[path] = yaml.load(f, Loader=_ci_loader()) or {}
     return _GITLAB_CI_CACHE[path]
 
 
@@ -508,9 +523,74 @@ def parse_go_installs(ci_text):
     return re.findall(r"go install ([^\s@]+)@(v[0-9][^\s]*)", ci_text)
 
 
+OWNER_MODULE_PREFIX = "github.com/tomlawesome/"
+
+
+def is_owner_module(module):
+    """True for a module path under the owner's GitHub account.
+
+    Matches the way GOPRIVATE does: the prefix `github.com/tomlawesome/`
+    followed by a path element. Compared case-insensitively, so a
+    differently-cased spelling can never slip through to the proxy.
+    """
+    m = module.lower()
+    return m.startswith(OWNER_MODULE_PREFIX) and len(m) > len(OWNER_MODULE_PREFIX)
+
+
+def _refuse_owner_module(module):
+    # An explicit raise, not `assert`, so `python -O` cannot strip it.
+    if is_owner_module(module):
+        raise RuntimeError(
+            f"refusing to look up owner module {module} through proxy.golang.org "
+            "(ADR-0016 decision 1: a proxy lookup publishes the version permanently)"
+        )
+
+
+def owner_module_repo_and_major(module):
+    """('gauntlet', 2) for github.com/tomlawesome/gauntlet/v2/sub.
+
+    The repository is the path element right after the owner prefix; a
+    subpackage path never changes it. A trailing `/vN` (N >= 2) element is
+    the module's major version; without one the module is v0/v1 (None).
+    """
+    parts = module[len(OWNER_MODULE_PREFIX):].split("/")
+    major = None
+    for el in parts[1:]:
+        m = re.match(r"^v([2-9]|[1-9][0-9]+)$", el)
+        if m:
+            major = int(m.group(1))
+    return parts[0], major
+
+
+def owner_module_latest(fetcher, module):
+    """(version, err): newest `vX.Y.Z` tag of the module's major, read from
+    GitHub's tags API -- never from the Go proxy (ADR-0016 decision 1)."""
+    repo, major = owner_module_repo_and_major(module)
+    url = f"https://api.github.com/repos/tomlawesome/{repo}/tags?per_page=100"
+    ok, body, err = fetcher.get(url, headers=github_headers())
+    if not ok:
+        return None, err
+    try:
+        tags = [t["name"] for t in json.loads(body)]
+    except Exception as e:  # noqa: BLE001
+        return None, f"bad JSON from {url}: {e}"
+    want = (0, 1) if major is None else (major,)
+    semver = []
+    for t in tags:
+        m = re.match(r"^v(\d+)\.\d+\.\d+$", t)
+        if m and int(m.group(1)) in want:
+            semver.append(t)
+    if not semver:
+        return None, f"no full vX.Y.Z tag for {module} found in {url}"
+    return max(semver, key=semver_key), None
+
+
 def go_proxy_latest(fetcher, module):
     """(version, err) from proxy.golang.org, resolving a subpackage path
-    down to its containing module the way `go install` itself does."""
+    down to its containing module the way `go install` itself does.
+
+    Refuses an owner module (see is_owner_module)."""
+    _refuse_owner_module(module)
     path = module
     last_err = None
     while True:
@@ -529,6 +609,7 @@ def go_proxy_latest(fetcher, module):
 
 
 def go_proxy_version_list(fetcher, module):
+    _refuse_owner_module(module)
     url = f"https://proxy.golang.org/{escape_module(module)}/@v/list"
     ok, body, err = fetcher.get(url)
     if not ok:
@@ -569,6 +650,16 @@ def check_go_modules(root, fetcher):
             continue
         seen.add(module)
         row_id = f"gomod:{module}"
+        if is_owner_module(module):
+            # ADR-0016 decision 1: never the proxy. Git host tags only.
+            latest, err = owner_module_latest(fetcher, module)
+            if latest is None:
+                rows.append(unverifiable(row_id, pinned, err))
+            elif latest == pinned:
+                rows.append(Row(row_id, pinned, latest, "current"))
+            else:
+                rows.append(Row(row_id, pinned, latest, "behind"))
+            continue
         latest, err = go_proxy_latest(fetcher, module)
         if latest is None:
             rows.append(unverifiable(row_id, pinned, err))

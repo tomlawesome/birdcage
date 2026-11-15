@@ -1,8 +1,9 @@
 # Licence policy for Birdcage's shipped dependencies -- the Go modules
 # linked into the built binary, not build/test tooling. Read by
-# scripts/licence-check.sh, which runs `go-licenses check` against this
-# list, and by the `lint:licences` job in .gitlab-ci.yml, which calls that
-# script on every merge request and on push to dev.
+# scripts/licence-check.sh, which checks `go-licenses report` against this
+# list and the exceptions under allow-go-module-licenses:, and is called by
+# the `lint:licences` job in .gitlab-ci.yml on every merge request and on
+# push to dev.
 #
 # Replaces the retired .github/dependency-review-config.yml (the GitHub
 # dependency-review licence check); the reasoning is in that removal's
@@ -21,9 +22,8 @@
 #
 # A licence is never added to this list to make one specific package
 # pass. An exception for a package whose licence is genuinely outside
-# this list is instead an exact entry under allow-dependencies-licenses,
-# in the form `pkg:golang/<module>@<version>`, with a comment giving the
-# reason and a review date.
+# this list is instead an exact entry under allow-go-module-licenses
+# below, with a comment giving the reason.
 # Only the licences a shipped module actually uses (`go-licenses report
 # ./...`), not a general list of acceptable ones: a dependency arriving under
 # a licence not yet here fails the job, and adding the entry is a reviewed
@@ -32,7 +32,43 @@ allow-licenses:
   - BSD-3-Clause
   - MIT
 
-allow-dependencies-licenses: []
+# Named, version-pinned exceptions to allow-licenses: above, read by
+# scripts/licence-check.sh. Owner, 2026-10-11, #8 answer 7a: Apache-2.0,
+# ISC and BSD-2-Clause are accepted ONLY for gauntlet
+# (github.com/tomlawesome/gauntlet, the owner's own sign-in module,
+# ADR-0016) and the libraries it brings in -- each entry below was checked
+# with `go mod why -m` / `go mod graph` to reach birdcage only through
+# gauntlet. Never a general allow: those licences stay off allow-licenses:,
+# so any other module arriving under them still fails.
+#
+# Format: "<library>@<version> <licence>". <library> is the path
+# go-licenses reports (a package path, which may sit below its module's
+# root); <version> is that library's module version in go.mod; <licence>
+# is what go-licenses reads from the library's LICENSE file. All three
+# must match exactly. A version bump stops the entry matching -- intended:
+# the gate fires again and the new version gets its own review. An entry
+# that matches no library needing it is itself a failure ("stale -- delete
+# it"), so dead exceptions cannot linger.
+#
+# Replaces the unread allow-dependencies-licenses: [] key, a leftover of
+# the retired GitHub dependency-review licence check that nothing parsed.
+allow-go-module-licenses:
+  - github.com/tomlawesome/gauntlet@v0.4.2 Apache-2.0
+  # gauntlet itself.
+  - github.com/coreos/go-oidc/v3/oidc@v3.21.0 Apache-2.0
+  # gauntlet/oidc.
+  - github.com/go-jose/go-jose/v4@v4.1.4 Apache-2.0
+  # gauntlet/oidc, through go-oidc.
+  - github.com/go-webauthn/x/crypto/secp256k1@v0.3.1 ISC
+  # gauntlet/passkey, through go-webauthn/webauthn. The rest of
+  # go-webauthn/x is BSD-3-Clause; this package carries its own LICENSE.
+  - github.com/go-webauthn/x/revoke@v0.3.1 BSD-2-Clause
+  # gauntlet/passkey, through go-webauthn/webauthn; its own LICENSE, as
+  # above.
+  - github.com/google/go-tpm@v0.9.8 Apache-2.0
+  # gauntlet/passkey, through go-webauthn/webauthn (TPM attestation).
+  - github.com/oschwald/maxminddb-golang/v2@v2.6.0 ISC
+  # gauntlet/geoip.
 
 # Licence policy for the npm packages under frontend/node_modules, read by
 # scripts/licence-check-npm.py (called via scripts/licence-check-npm.sh).

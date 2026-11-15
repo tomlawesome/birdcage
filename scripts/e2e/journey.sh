@@ -52,7 +52,10 @@ fail() {
   local container
   for container in "${@:-$E2E_BIRDCAGE}"; do
     echo "--- docker logs $container ---" >&2
-    docker logs "$container" >&2 || echo "(no log: $container does not exist)" >&2
+    # Setup and unlock codes (#8) blanked, as stack.sh's birdcage_log
+    # does: either one hands whoever reads the log an admin account.
+    { docker logs "$container" 2>&1 || echo "(no log: $container does not exist)"; } \
+      | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2
   done
   exit 1
 }
@@ -69,6 +72,15 @@ fail() {
 # callbacks like conflict_visible, outbox_row) still sees it land.
 E2E_HELPER_TIMEOUT="${E2E_HELPER_TIMEOUT:-20}"
 helper() { timeout "$E2E_HELPER_TIMEOUT" "$E2E_STACK" helper "$@"; }
+
+# DASHBOARD_AUTH signs a dashboard API call (#8): every route under
+# /api/ answers 401 without a credential. It is curl's `-H @file`, the
+# header line `Authorization: Bearer <read API token>` that stack.sh's
+# sign_in left in the work volume, so the token is read inside the
+# helper and never appears on a command line or in a log:
+#
+#   helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts'"
+DASHBOARD_AUTH='-H @/work/dashboard-auth'
 
 # poll retries a command until it succeeds, bounded. The bound is part
 # of the failure message the caller writes, so a journey never waits

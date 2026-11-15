@@ -43,7 +43,7 @@ esac
 # reports credential_conflict for $E2E_CANARY_ID, carrying two addresses.
 conflict_json=""
 conflict_visible() {
-  conflict_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+  conflict_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' \
     | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .credential_conflict'" 2>/dev/null)" || return 1
   [ "$conflict_json" != "null" ] && [ -n "$conflict_json" ]
 }

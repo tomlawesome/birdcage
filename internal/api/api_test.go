@@ -220,9 +220,10 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 }
 
 // TestDashboardRoutesAllReadOnly is the owner's 2026-09-26 rule enforced
-// in code: the dashboard API stays read-only until login exists (#8),
-// because requireAuth is still a no-op and any mutating route here would
-// let anyone who can reach the dashboard change birdcage's state. Issue
+// in code: the dashboard API stays read-only. Login exists now (#8), but
+// a read API token is answered by this same handler (internal/auth's
+// Service.Wrap), so a mutating route here would let a token meant only
+// to read change birdcage's state. Issue
 // #124 briefly registered POST /api/canary/settings and was told to take
 // it back out; issue #135 removed the one mutating route that did exist,
 // POST /api/heartbeat, because it required no credential at all -- a
@@ -239,7 +240,7 @@ func TestDashboardRoutesAllReadOnly(t *testing.T) {
 	h := &handler{}
 	for _, spec := range dashboardRouteSpecs(h) {
 		if spec.method != http.MethodGet {
-			t.Errorf("dashboardRoutes registers %s %s -- only GET routes may be registered here until #8 lands", spec.method, spec.path)
+			t.Errorf("dashboardRoutes registers %s %s -- only GET routes may be registered here (read API tokens are served by this handler)", spec.method, spec.path)
 		}
 	}
 }

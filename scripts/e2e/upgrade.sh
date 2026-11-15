@@ -61,7 +61,7 @@ DUAL_USE_WINDOW_S=60
 # GET of this canary's page, inside the helper: the JSON never
 # round-trips through this shell.
 page_jq() {
-  helper "curl -sS --fail --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL$PAGE' | jq $1"
+  helper "curl -sS --fail --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL$PAGE' | jq $1"
 }
 
 page_summary() {
@@ -151,7 +151,7 @@ serial_before="$(helper 'openssl x509 -in /state/client.pem -noout -serial')" \
   || fail "could not read the client certificate serial" "$E2E_CANARY"
 sessions_before="$("$E2E_STACK" birdcage canary enrol --status | grep -Fc "$(printf '\tname=%s\tlane=' "$E2E_CANARY_NAME")")" \
   || fail "could not count enrolment sessions named $E2E_CANARY_NAME"
-canaries_before="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
+canaries_before="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
   || fail "could not count canaries"
 
 # report_older sends one heartbeat reporting $older with the canary's
@@ -429,7 +429,7 @@ sessions_after="$("$E2E_STACK" birdcage canary enrol --status | grep -Fc "$(prin
   || fail "could not count enrolment sessions after the upgrade"
 [ "$sessions_after" = "$sessions_before" ] \
   || fail "enrolment sessions named $E2E_CANARY_NAME changed ($sessions_before -> $sessions_after)" "$E2E_BIRDCAGE"
-canaries_after="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
+canaries_after="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq '.canaries | length'")" \
   || fail "could not count canaries after the upgrade"
 [ "$canaries_after" = "$canaries_before" ] \
   || fail "the number of canaries changed ($canaries_before -> $canaries_after): a new canary was registered" "$E2E_BIRDCAGE"
