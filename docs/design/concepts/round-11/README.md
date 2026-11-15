@@ -229,3 +229,8 @@ uneven).
 
 ## Owner verdicts
 
+2026-11-15: "I strongly dislike all of them."
+
+- Y, Z and AA: all dropped. Nothing from this round is carried forward.
+- Round 9's S (smoked glass) remains the only direction the owner has
+  called the best so far.
