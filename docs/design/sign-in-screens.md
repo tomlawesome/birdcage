@@ -36,7 +36,7 @@ All under `frontend/src/`.
 
 ### `lib/api.ts`
 
-- `getJSON(path)` unchanged for callers. A `401` response also calls the
+- `getJSON(path)` is exported and otherwise unchanged for callers. A `401` response also calls the
   handler registered with `onSignedOut(fn)`, then throws `ApiError` as now.
 - `sendJSON(method, path, body?)`: sends `X-Requested-With: birdcage`,
   and `Content-Type: application/json` with the JSON body when one is
@@ -46,6 +46,22 @@ All under `frontend/src/`.
   `sign-in-required`, `invalid-request`, `conflict`, `setup-required`,
   ...), or `''` when the body is not a problem document; and `detail`.
 - Requests never carry credentials in the URL.
+
+### Wire shapes (gauntlet v0.4.2)
+
+- `SessionState`: always `setupRequired`, `ssoAvailable`, `authenticated`,
+  `hasLocalPassword`, `ssoConnected`, `mustChangePassword`,
+  `mustEnrolSecondFactor`, `mustEnrolPasskey`, `hasTOTP`; when signed in
+  `username`, `role`; optional `passkeys {count, status, origin, signIn}`
+  (`status` is `ready`, `unset`, `ip` or `insecure`) and `resumable`.
+- Login and factor replies: an account `{username, role}`; or
+  `{secondFactor: ['passkey'?, 'totp'?]}`; or `{confirm: true}`; or
+  `{prove: 'passkey'}`.
+- `POST /api/auth/totp/enrol` → `{uri, secret}`;
+  `POST /api/auth/totp/confirm` and
+  `POST /api/auth/passkeys/register/finish` → `{recoveryCodes: [10] | null, ...}`;
+  passkey enrolment begins at `POST /api/auth/passkeys/register/begin`.
+- Errors are problem documents; branch on `kind`, never on `detail`.
 
 ### `lib/auth.ts`
 
