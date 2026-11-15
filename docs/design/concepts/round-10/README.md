@@ -194,4 +194,9 @@ each other's labels (56 px apart, as the panes ahead).
 
 ## Owner verdicts
 
-(none yet)
+2026-11-15: "Yeah I just feel like you've played it safe with everything
+you've done so far."
+
+- V, W and X: none carried forward as drawn. Round 11 takes smoked glass
+  (round 9 S) much further: bolder, less safe, still elegant and in
+  professional copy.
