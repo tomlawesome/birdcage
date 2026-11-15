@@ -193,4 +193,12 @@ no longer open: the owner ratified it on 2026-11-14 (answer 5a).
 
 ## Owner verdicts
 
-(none yet)
+2026-11-15: "7A is the best but it doesn't hugely tie in with the rest
+of birdcage."
+
+- **S, smoked glass: carried forward**, not yet ratified. Round 10 ties
+  it into the ratified shell (ADR-0004) and the canary page (round 7 O).
+- **T, slate and ink: dropped.** Its serif question falls away with it.
+- **U, wire gates: dropped.** Its centred-text question falls away.
+- Still open: the filled door button, and the dimmed dashboard behind
+  the timed-out door.
