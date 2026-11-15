@@ -28,13 +28,14 @@ var privateProxyRanges = []string{
 	"::1/128", "fc00::/7", "fe80::/10",
 }
 
-// parseTrustedProxies turns the comma-separated setting into prefixes. A
-// bare address is a single-host prefix; blank entries are skipped; the entry
-// unix (item 15) trusts a proxy on the unix socket and adds no prefix; any
-// other entry that is not an address, a CIDR or private is an error, never
-// skipped.
-func parseTrustedProxies(value string) (prefixes []netip.Prefix, trustUnix bool, err error) {
-	var out []netip.Prefix
+// parseTrustedProxies turns the comma-separated setting into prefixes:
+// peers, whose forwarding header is believed, and hops, the chain entries
+// skipped when walking it (SEC-A1). The shorthand private adds peers only,
+// never hops; a bare address (a single-host prefix) or a CIDR adds both.
+// Blank entries are skipped; the entry unix (item 15) trusts a proxy on the
+// unix socket and adds no prefix; any other entry that is not an address, a
+// CIDR or private is an error, never skipped.
+func parseTrustedProxies(value string) (peers, hops []netip.Prefix, trustUnix bool, err error) {
 	for _, raw := range strings.Split(value, ",") {
 		entry := strings.TrimSpace(raw)
 		if entry == "" {
@@ -46,20 +47,23 @@ func parseTrustedProxies(value string) (prefixes []netip.Prefix, trustUnix bool,
 		}
 		if strings.EqualFold(entry, "private") {
 			for _, r := range privateProxyRanges {
-				out = append(out, netip.MustParsePrefix(r))
+				peers = append(peers, netip.MustParsePrefix(r))
 			}
 			continue
 		}
 		if p, err := netip.ParsePrefix(entry); err == nil {
-			out = append(out, p.Masked())
+			peers = append(peers, p.Masked())
+			hops = append(hops, p.Masked())
 			continue
 		}
 		addr, err := netip.ParseAddr(entry)
 		if err != nil {
-			return nil, false, fmt.Errorf("%q is neither an IP address, a CIDR, private nor unix", entry)
+			return nil, nil, false, fmt.Errorf("%q is neither an IP address, a CIDR, private nor unix", entry)
 		}
 		addr = addr.Unmap()
-		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+		p := netip.PrefixFrom(addr, addr.BitLen())
+		peers = append(peers, p)
+		hops = append(hops, p)
 	}
-	return out, trustUnix, nil
+	return peers, hops, trustUnix, nil
 }

@@ -87,12 +87,17 @@ type Config struct {
 	// (BIRDCAGE_TRUSTED_PROXIES). Empty, the default, means headers are
 	// ignored and the client is the connecting peer.
 	TrustedProxies []netip.Prefix
+	// TrustedHops are the entries skipped in the forwarding chain: explicit
+	// BIRDCAGE_TRUSTED_PROXIES addresses and CIDRs, never the private
+	// shorthand, so a shorthand covering whole client populations cannot be
+	// used by a client to step over its own entry. See ProxyTrust.
+	TrustedHops []netip.Prefix
 	// TrustUnixSocket trusts a proxy connected over the dashboard's unix
 	// socket (the entry "unix" in BIRDCAGE_TRUSTED_PROXIES). A unix peer has
 	// no IP address, so no prefix can match it. See ClientIPWith.
 	TrustUnixSocket bool
 	// ClientIPHeader is the forwarding header read for a trusted peer;
-	// empty means X-Forwarded-For. See ClientIP.
+	// empty means X-Forwarded-For. See ClientIPWith.
 	ClientIPHeader string
 
 	// DataDir is birdcage's data directory. The common-password list
@@ -302,7 +307,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 		LoginPath:       "/",
 		Log:             log,
 		ClientIP: func(r *http.Request) string {
-			return ClientIPWith(r, cfg.TrustedProxies, cfg.TrustUnixSocket, cfg.ClientIPHeader)
+			return ClientIPWith(r, ProxyTrust{Peers: cfg.TrustedProxies, Hops: cfg.TrustedHops, Unix: cfg.TrustUnixSocket}, cfg.ClientIPHeader)
 		},
 		AdminPasskey: rule,
 		Audit:        auditor{db: database, log: log},
