@@ -1,0 +1,67 @@
+:root{--void:#06080e;--raised:#0f1422;--hair:rgba(160,185,230,.13);--hair-2:rgba(160,185,230,.26);--ink:#e9eefb;--ink-2:#97a4c4;--ink-3:#55628a;--accent:#9db8e8;--lan:#3987e5;--srv:#199e70;--iot:#c98500;--guest:#d76a9e;--now:#e8b05a;--sans:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--void);color:var(--ink);font-family:var(--sans);overflow:hidden}
+#shell{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:left top;opacity:0;transition:opacity .45s ease .25s}
+body[data-state="in"] #shell{opacity:1}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;transition:opacity .35s ease}
+body[data-state="in"] .screen{opacity:0;pointer-events:none}
+.stack{position:relative;z-index:2;width:100%;display:flex;flex-direction:column;align-items:center;animation:rise .3s ease-out}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+.wm-box{display:inline-block;margin:0 auto 22px;padding:12px 30px;border:1.5px solid var(--now);border-radius:4px;box-shadow:0 0 14px color-mix(in srgb,var(--now) 22%,transparent),inset 0 0 10px color-mix(in srgb,var(--now) 6%,transparent);animation:kindle .5s ease-out}
+@keyframes kindle{from{box-shadow:none;border-color:transparent}}
+.wm{font-size:34px;font-weight:800;letter-spacing:.04em;color:var(--ink)}
+.wm em{color:var(--accent);font-style:normal}
+form{width:100%;max-width:260px;display:none;flex-direction:column;gap:14px}
+body[data-state="signin"] #f-signin,body[data-state="refused"] #f-signin,body[data-state="code"] #f-code{display:flex}
+#f-code{max-width:320px;align-items:center}
+h1{margin:0;font-size:22px;font-weight:500;text-align:center}
+.subtitle{text-wrap:balance;margin:-4px 0 6px;font-size:13px;line-height:1.5;color:var(--ink-2);text-align:center}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+input{width:100%;background:transparent;border:0;border-bottom:1px solid var(--hair-2);color:var(--ink);border-radius:0;padding:7px 4px;font:13.5px var(--sans);text-align:center}
+input::placeholder{color:var(--ink-3);opacity:1}
+input:focus{outline:none;border-bottom-color:var(--accent)}
+#code{max-width:260px;font-family:var(--mono);letter-spacing:.3em;font-size:16px}
+.error{margin:0 -60px;color:var(--ink);font-size:13px;text-align:center}
+.error span{color:var(--ink-2)}
+.submit{align-self:center;margin-top:12px;background:transparent;border:1px solid var(--hair-2);color:var(--accent);font:600 13px var(--sans);letter-spacing:.04em;border-radius:999px;padding:7px 30px;cursor:pointer}
+.submit:hover{border-color:var(--accent)}
+.divider{display:flex;align-items:center;gap:10px;margin-top:4px;color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--hair-2)}
+.sso{text-align:center;border:1px solid var(--hair-2);color:var(--ink-2);border-radius:8px;padding:10px;font-size:14px;text-decoration:none}
+.link{background:transparent;border:0;color:var(--ink-3);font:12px var(--sans);text-decoration:underline;text-underline-offset:2px;padding:2px;cursor:pointer}
+.proto{position:fixed;left:12px;bottom:10px;z-index:9;font:10px var(--mono);letter-spacing:.06em;color:var(--ink-3)}
+.proto a{color:var(--ink-3);text-decoration:none;margin-left:10px}
+.proto a.on{color:var(--ink)}
+
+#bars{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.bx .screen{transition:opacity .35s ease .35s}
+.bx .wm-box{border:0;box-shadow:none;animation:none;padding:0 0 4px}
+.bx .rail{position:absolute;left:calc(50% - 210px);right:calc(50% - 210px);height:1.5px;background:rgba(160,185,230,.2);pointer-events:none}
+@media (prefers-reduced-motion:reduce){.stack,.wm-box,#bars{animation:none!important}#shell,.screen{transition:none}}
+
+/* round 18: the rest of the screens */
+form{display:none!important}
+body[data-state="signin"] #f-signin,body[data-state="refused"] #f-signin,body[data-state="locked"] #f-signin,body[data-state="code"] #f-code,body[data-state="firstrun"] #f-firstrun,body[data-state="choose"] #f-choose,body[data-state="prove"] #f-prove,body[data-state="codes"] #f-codes,body[data-state="expired"] #f-expired{display:flex!important}
+#f-firstrun,#f-choose,#f-prove,#f-codes,#f-expired{max-width:330px;align-items:center}
+#f-firstrun label,#f-expired label,#f-prove label{width:260px}
+.thread{margin:0 0 6px;font:11px var(--mono);color:var(--ink-3);letter-spacing:.02em}
+.thread b{font-weight:400;color:var(--ink);border-bottom:1px solid var(--accent);padding-bottom:2px}
+.key{width:100%;display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:4px 12px;text-align:left;background:transparent;border:1px solid var(--hair-2);border-radius:8px;padding:13px 16px;color:var(--ink);font:14px var(--sans);cursor:pointer}
+.key:hover{border-color:var(--accent)}
+.key .g{grid-row:span 2;font:12px var(--mono);color:var(--accent);letter-spacing:.04em;line-height:1.25}
+.key .g svg{display:block}
+.key small{grid-column:2;color:var(--ink-2);font-size:12.5px}
+.key i{grid-row:1/3;grid-column:3;font-style:normal;color:var(--ink-3);font-size:12px}
+.note{margin:0;font-size:12px;line-height:1.5;color:var(--ink-3);text-align:center}
+#qr{width:120px;height:120px;background:#fff;border-radius:6px;padding:8px}
+.cap{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:2px 0 -8px}
+.secret{font:12px var(--mono);color:var(--ink-2);letter-spacing:.06em}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 26px;padding:14px 22px;border:1px solid var(--hair-2);border-radius:6px;background:rgba(6,8,14,.6);font:12.5px var(--mono);color:var(--ink)}
+.row{display:flex;gap:8px}
+.ghost{background:transparent;border:1px solid var(--hair-2);border-radius:5px;color:var(--ink-2);font:11.5px var(--sans);padding:5px 12px;cursor:pointer}
+.who{margin:0 0 -6px;font-size:13.5px;color:var(--ink-2)}
+body[data-state="locked"] #f-signin input{border-bottom-style:dashed;color:var(--ink-3)}
+body[data-state="locked"] #f-signin .submit{opacity:.35;pointer-events:none}
+body[data-state="expired"] #shell{opacity:.2;filter:saturate(.5)}
+body[data-state="expired"] .stack::before{content:'';position:absolute;inset:-60px -10px;background:radial-gradient(closest-side,rgba(6,8,14,.92) 55%,rgba(6,8,14,0));z-index:-1}

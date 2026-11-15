@@ -19,4 +19,11 @@ One page, one change from round 16.
 
 ## Owner verdicts
 
-None yet.
+2026-11-15: "24a". The trace is ratified; go on to the remaining screens.
+
+2026-11-15, a further request: "though one thing I would like to try, is
+to show that birdcage catches and stops some of these bad signals, so at
+random.. maybe some of the traces could get cut off in their tracks.. the
+line gets cut and pulses red with some kind of transition back to nomral"
+
+Round 18 draws the remaining screens and tries the caught signals.

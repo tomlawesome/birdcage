@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Birdcage · Bars, every screen</title><link rel="stylesheet" href="door.css"></head>
+<body class="an bx" data-glint="shimmer" data-state="signin">
+<img id="shell" src="dashboard.jpg" alt="" aria-hidden="true">
+<div class="screen">
+<canvas id="bars" aria-hidden="true"></canvas>
+<div class="stack">
+  <div class="wm-box"><span class="wm">BIRD<em>CAGE</em></span></div>
+  <form id="f-signin" novalidate>
+    <label><span class="sr-only">Account</span><input id="username" placeholder="account" autocomplete="username" value="ada"></label>
+    <label><span class="sr-only">Password</span><input id="password" type="password" placeholder="password" autocomplete="current-password"></label>
+    <p class="error" id="err" role="alert" hidden>Incorrect account or password. <span>4 attempts left.</span></p>
+    <p class="error" id="lock" role="alert" hidden>Too many attempts. Try again at 09:23.<br><span>Passkey and SSO sign-in still work.</span></p>
+    <button class="submit">Enter</button>
+    <div class="divider"><span>or</span></div>
+    <a class="sso" href="#">Sign in with SSO</a>
+  </form>
+  <form id="f-code" novalidate>
+    <h1>Enter your code</h1>
+    <p class="subtitle">Your password was right. Enter the current code from your authenticator app to finish signing in.</p>
+    <label><span class="sr-only">Code</span><input id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"></label>
+    <button class="submit">Continue</button>
+    <button type="button" class="link">Use your passkey instead</button>
+    <button type="button" class="link">Use a recovery code instead</button>
+  </form>
+  <form id="f-firstrun" novalidate>
+    <h1>Create the admin account</h1>
+    <p class="subtitle">No account exists yet. The setup code is in the server log.</p>
+    <label><span class="sr-only">Setup code</span><input id="setup" placeholder="setup code" autocomplete="off"></label>
+    <label><span class="sr-only">Account</span><input placeholder="account" autocomplete="username"></label>
+    <label><span class="sr-only">Password</span><input type="password" placeholder="password" autocomplete="new-password"></label>
+    <label><span class="sr-only">Confirm password</span><input type="password" placeholder="confirm password" autocomplete="new-password"></label>
+    <button class="submit">Create account</button>
+  </form>
+  <form id="f-choose" novalidate>
+    <p class="thread"><b>choose</b> · prove it · keep the codes · enter</p>
+    <h1>Add a second step</h1>
+    <p class="subtitle">Every account needs one. Pick a key and prove it works.</p>
+    <button class="key"><span class="g">428<br>116</span>Authenticator app<i>set it up ▸</i><small>A code from your phone.</small></button>
+    <button class="key" type="button"><span class="g"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M12 11v4a8 8 0 0 0 1 4M8.5 20a12 12 0 0 1-1-5v-4a4.5 4.5 0 0 1 9 0v3a12 12 0 0 0 .8 4.3M4.5 16.5a16 16 0 0 1-.5-4V11a8 8 0 0 1 13-6.2M20 11v2.5"/></svg></span>Passkey<i>set it up ▸</i><small>Fingerprint, face or device PIN.</small></button>
+  </form>
+  <form id="f-prove" novalidate>
+    <p class="thread">choose · <b>prove it</b> · keep the codes · enter</p>
+    <h1>Prove it works</h1>
+    <p class="subtitle">Scan this with your authenticator app, then enter the code it shows.</p>
+    <canvas id="qr" width="232" height="232" aria-label="QR code"></canvas>
+    <span class="cap">Secret</span><span class="secret">JBSW Y3DP EHPK 3PXP K7MQ 4D2X</span>
+    <label><span class="sr-only">Code from the app</span><input id="prove-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"></label>
+    <button class="submit">Confirm</button>
+    <p class="note">Confirming signs this account out everywhere else.</p>
+    <button type="button" class="link">Use a passkey instead</button>
+  </form>
+  <form id="f-codes" novalidate>
+    <p class="thread">choose · prove it · <b>keep the codes</b> · enter</p>
+    <h1>Keep the codes</h1>
+    <p class="subtitle">Ten recovery codes. Each works once in place of your second step. They are not shown again.</p>
+    <div class="grid"><span>k7mq-4d2x</span><span>p9vh-3wtc</span><span>x2fn-8rjb</span><span>d6ys-5kga</span><span>m4tc-7zqe</span><span>h8bw-2nxp</span><span>r3jd-9fvm</span><span>w5ka-6ysh</span><span>c9xe-4bmt</span><span>g2tb-8nxv</span></div>
+    <div class="row"><button type="button" class="ghost">Copy all</button><button type="button" class="ghost">Download</button></div>
+    <button class="submit">I have saved these</button>
+  </form>
+  <form id="f-expired" novalidate>
+    <h1>Session expired</h1>
+    <p class="subtitle">Signed out at 08:52 after an hour unused. Enter your password to continue.</p>
+    <p class="who">ada</p>
+    <label><span class="sr-only">Password</span><input id="again" type="password" placeholder="password" autocomplete="current-password"></label>
+    <button class="submit">Continue</button>
+    <button type="button" class="link">Use your passkey instead</button>
+    <button type="button" class="link">Sign in as someone else</button>
+  </form>
+</div>
+</div>
+<nav class="proto">AN<a href="#" data-go="signin">sign in</a><a href="#" data-go="refused">refused</a><a href="#" data-go="locked">locked</a><a href="#" data-go="code">code</a><a href="#" data-go="firstrun">first run</a><a href="#" data-go="choose">choose</a><a href="#" data-go="prove">prove</a><a href="#" data-go="codes">codes</a><a href="#" data-go="expired">expired</a><a href="#" data-go="in">enter</a></nav>
+<script src="door.js"></script><script src="bars.js"></script>
+</body></html>
