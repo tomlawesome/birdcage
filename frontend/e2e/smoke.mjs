@@ -27,15 +27,18 @@
 // Browser: resolved once, by ./browser.mjs (issue #83) -- BIRDCAGE_BROWSER
 // selects it, default firefox.
 //
-// Sign-in (issue #8, ADR-0016): the dashboard API answers nothing without
-// a signed-in session. birdcage gets a fresh sign-in key file in this
-// run's temporary directory; once it is up, ./signin.mjs creates the
-// first admin from the setup code in its log, enrols an authenticator
-// app and signs in, and the browser starts with that session cookie
-// already set -- the sign-in screens are a later slice of #8.
+// Sign-in (issue #8, ADR-0016 and ADR-0017): the dashboard API answers
+// nothing without a signed-in session. birdcage gets a fresh sign-in key
+// file in this run's temporary directory; once it is up, ./signin.mjs
+// checks the API refuses everything before the first admin exists, then
+// the browser reaches the dashboard through the sign-in screens: first
+// run with the setup code from birdcage's log, the authenticator app,
+// the recovery codes, enter. The spec's sign-out and sign-in-with-a-code
+// steps wait on the owner's choice of where sign-out lives
+// (docs/design/sign-in-screens.md, "Open").
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { getFreePorts } from './ports.mjs'
-import { redactCodes, removeOnExit, setupCodeFrom, signInFirstAdmin, writeAuthKeyFile } from './signin.mjs'
+import { checkBeforeFirstAdmin, firstAdminThroughScreens, redactCodes, removeOnExit, setupCodeFrom, writeAuthKeyFile } from './signin.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -203,7 +206,7 @@ async function main() {
     const base = `http://127.0.0.1:${httpPort}`
     await waitForServer(`${base}/`)
 
-    step('signing in: the first admin, from the setup code birdcage logged (issue #8)')
+    step('before the first admin: the API answers 503 setup required and refuses a wrong setup code (issue #8)')
     // birdcage writes the code once its sign-in layer has opened, which
     // is before the listener the wait above just reached.
     let setupCode = null
@@ -212,7 +215,7 @@ async function main() {
       if (!setupCode) await new Promise((r) => setTimeout(r, 200))
     }
     if (!setupCode) throw new Error('birdcage never logged a setup code for the first admin')
-    const session = await signInFirstAdmin(base, setupCode, ok)
+    await checkBeforeFirstAdmin(base, ok)
 
     console.log(`launching ${resolveBrowserName()}...`)
     browser = await launchBrowser()
@@ -223,9 +226,6 @@ async function main() {
     // the label-collapse assertion below needs to be a real check rather
     // than a check that happens to have nothing to catch.
     const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } })
-    // Signed in before the first page load: the session cookie goes into
-    // the browser context, so every API call and the event stream carry it.
-    await context.addCookies([{ name: session.name, value: session.value, url: base }])
     const page = await context.newPage()
 
     // Captured for the whole test, but only *enforced* up to the
@@ -237,8 +237,14 @@ async function main() {
     })
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
-    step('every top-level view renders against the live API with no console error')
+    step('signing in through the screens: first run, authenticator app, recovery codes, enter (issue #8)')
     await page.goto(`${base}/`)
+    const username = await firstAdminThroughScreens(page, setupCode, ok)
+    const who = (await page.locator('.status .who').textContent({ timeout: 10000 }))?.trim()
+    if (who !== `${username} (admin)`) throw new Error(`name chip: expected ${JSON.stringify(`${username} (admin)`)}, got ${JSON.stringify(who)}`)
+    ok(`name chip: ${who}`)
+
+    step('every top-level view renders against the live API with no console error')
     await page.waitForSelector('.hero', { timeout: 10000 })
     const hero = (await page.textContent('.hero'))?.trim()
     const tileCount = await page.locator('.tile').count()
@@ -259,7 +265,7 @@ async function main() {
     // has no dedicated element to measure, so this reads it off the page
     // itself -- nothing the trace draws may reach above where the sub
     // sentence ends, and specifically never over the hero sentence or the
-    // admin pill, which is what the fix (frontend/src/lib/band/placement.ts)
+    // name chip, which is what the fix (frontend/src/lib/band/placement.ts)
     // is meant to guarantee under any data.
     const chartFloor = await page.evaluate(() => document.querySelector('.sub').getBoundingClientRect().bottom)
     const [heroBox, whoBox, labelBoxes] = await Promise.all([
@@ -282,7 +288,7 @@ async function main() {
         throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the hero sentence`)
       }
       if (rectOverlaps(box, whoBox)) {
-        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the "tom (admin)" pill`)
+        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the name chip`)
       }
     }
     for (let i = 0; i < labelBoxes.length; i++) {
@@ -292,7 +298,7 @@ async function main() {
         }
       }
     }
-    ok(`${labelBoxes.length} trace labels, all within the chart box, clear of the hero sentence and the admin pill`)
+    ok(`${labelBoxes.length} trace labels, all within the chart box, clear of the hero sentence and the name chip`)
     const historyCount = await page.locator('.history').count()
     if (historyCount !== 1) throw new Error('the state history section did not render')
     ok('state history rendered')

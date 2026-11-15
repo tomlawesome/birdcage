@@ -10,7 +10,7 @@ to meet. The rules themselves are in [CONTRIBUTING.md](../CONTRIBUTING.md)
 | --- | --- | --- |
 | Go unit and package tests | `go test ./... -race`, against SQLite and a real Postgres (`BIRDCAGE_TEST_DATABASE_URL`) | `test:go` |
 | Frontend unit tests | Vitest with coverage | `test:frontend` |
-| Dashboard smoke and pixel checks | Playwright journeys in `frontend/e2e/`, band comparisons | `test:smoke`, `test:smoke:postgres` |
+| Dashboard smoke and pixel checks | Playwright journeys in `frontend/e2e/`, signing in through the door's screens; pixel comparisons of the band, the page below it, the canary page and the sign-in door (`npm run compare:*`) | `test:smoke`, `test:smoke:postgres`; the comparisons in `test:frontend` |
 | Image tests | Each built image started and probed on its own | `test:image:*` |
 | Live end-to-end journeys | The real images, stack and agents under `scripts/e2e/` | `e2e:*` |
 

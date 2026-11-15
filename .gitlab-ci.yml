@@ -650,6 +650,8 @@ test:frontend:
     # Issue #118's canary page, gated the same way the band is: the four
     # round-7 scenes against references captured from the build.
     - npm run compare:canary
+    # Issue #8's sign-in door against the round-18 mock-up itself.
+    - npm run compare:door
     - npm run build
   # Surfaces the total in the job list, and feeds GitLab the per-line
   # cobertura report so coverage shows on the merge request diff rather
