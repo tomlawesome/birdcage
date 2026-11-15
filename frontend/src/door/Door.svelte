@@ -8,7 +8,12 @@
   //
   // The password typed during this visit is held here, in memory only,
   // so a second step owed straight after signing in does not ask for it
-  // again; it goes with the door.
+  // again. It is dropped as soon as it cannot be needed: on the way back
+  // to sign in, and on entering.
+  //
+  // Each screen awaits the promise proceed() returns, so it stays busy
+  // (and a second submit sends nothing) until the session has been read
+  // again; and proceed() itself runs one read at a time and enters once.
   import { untrack } from 'svelte'
   import { doorFor, readSession, type SessionState } from '../lib/auth'
   import Bars from './Bars.svelte'
@@ -28,8 +33,9 @@
     frozenAt,
   }: {
     session: SessionState
-    /** Signed in with nothing owed; given the session that says so. */
-    onenter: (session?: SessionState) => void
+    /** Signed in with nothing owed; given the session that says so.
+     * Called at most once. */
+    onenter: (session: SessionState) => void
     /** The door is opening onto the dashboard: the bars slide apart. */
     leaving?: boolean
     /** Draw the bars still, this many seconds in (the pixel gate). */
@@ -41,7 +47,8 @@
   let screen: Screen = $state(untrack(() => doorFor(session)))
   let held = $state('')
   let methods: string[] = $state([])
-  let notice: Message | null = $state(ssoNotice())
+  // ?ssoError is read only when the door opens on sign in.
+  let notice: Message | null = $state(untrack(() => (doorFor(session) === 'signin' ? ssoNotice() : null)))
   // Each new arrival at a screen remounts it, so it starts clean.
   let visit = $state(0)
 
@@ -64,32 +71,42 @@
   }
 
   function go(next: Screen, why: Message | null = null) {
+    if (next === 'signin') held = ''
     notice = why
     screen = next
     visit++
   }
 
-  /** Re-read the session and continue by it. */
-  async function proceed() {
-    let s: SessionState
-    try {
-      s = await readSession()
-    } catch {
-      return go('signin', { text: FAILED })
-    }
-    current = s
-    const next = doorFor(s)
-    if (next === 'in') {
-      held = ''
-      screen = 'in'
-      onenter(s)
-    } else go(next)
+  let reading: Promise<void> | null = null
+  let entered = false
+
+  /** Re-read the session and continue by it. A call while a read is in
+   * flight shares it; after entering, nothing more happens. */
+  function proceed(): Promise<void> {
+    if (entered) return Promise.resolve()
+    reading ??= (async () => {
+      let s: SessionState
+      try {
+        s = await readSession()
+      } catch {
+        return go('signin', { text: FAILED })
+      }
+      current = s
+      const next = doorFor(s)
+      if (next === 'in') {
+        entered = true
+        held = ''
+        screen = 'in'
+        onenter(s)
+      } else go(next)
+    })().finally(() => (reading = null))
+    return reading
   }
 
   const keep = (pw: string) => (held = pw)
 </script>
 
-<div class="door" data-state={screen === 'expired' ? 'expired' : screen} class:leaving>
+<div class="door" data-state={screen} class:leaving>
   <div class="screen">
     <Bars {frozenAt} opening={() => leaving} />
     <div class="stack">

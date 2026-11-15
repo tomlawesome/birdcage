@@ -15,7 +15,8 @@
     onsignin,
   }: {
     session: SessionState
-    onresumed: () => void
+    /** Resumed. Busy until the promise it returns settles. */
+    onresumed: () => void | Promise<void>
     /** Nothing to resume, or someone else: the full sign-in. */
     onsignin: () => void
   } = $props()
@@ -43,7 +44,7 @@
     msg = null
     try {
       await sendJSON('POST', '/api/auth/reauthenticate', { password })
-      onresumed()
+      await onresumed()
     } catch (err) {
       if (statusOf(err) === 401 && kindOf(err) === 'invalid-credentials') {
         msg = { text: INCORRECT_PASSWORD }
@@ -65,13 +66,23 @@
       prompting = true
       const assertion = await getAssertion(options).finally(() => (prompting = false))
       await sendJSON('POST', '/api/auth/reauthenticate', { assertion })
-      onresumed()
+      await onresumed()
     } catch (err) {
       if (err instanceof CeremonyError) msg = { text: FAILED }
       else refused(err)
     } finally {
       busy = false
     }
+  }
+
+  /** Between the password and the passkey; the password field takes
+   * focus when it comes back. */
+  async function usePassword(yes: boolean) {
+    passkey = !yes
+    msg = null
+    if (!yes) return
+    await tick()
+    passwordEl?.focus({ preventScroll: true })
   }
 
   async function someoneElse() {
@@ -105,13 +116,14 @@
     <Alert {msg} />
     <button class="submit" disabled={busy}>{busy ? 'Please wait…' : 'Continue'}</button>
     {#if session.passkeys?.signIn}
-      <button type="button" class="link" onclick={() => ((passkey = true), (msg = null))}>Use your passkey instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => usePassword(false)}>Use your passkey instead</button>
     {/if}
   {:else}
     <Alert {msg} />
     <button type="button" class="submit" disabled={busy} onclick={usePasskey}
       >{prompting ? 'Waiting…' : busy ? 'Please wait…' : 'Use your passkey'}</button
     >
+    <button type="button" class="link" disabled={busy} onclick={() => usePassword(true)}>Use your password instead</button>
   {/if}
-  <button type="button" class="link" onclick={someoneElse}>Sign in as someone else</button>
+  <button type="button" class="link" disabled={busy} onclick={someoneElse}>Sign in as someone else</button>
 </form>

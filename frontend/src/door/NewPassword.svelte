@@ -7,7 +7,8 @@
   import Alert from './Alert.svelte'
   import { CONFIRM_PASSWORD, detailOf, ENTER_PASSWORD, FAILED, MISMATCH, statusOf, TOO_MANY, type Message } from './messages'
 
-  let { onchanged }: { onchanged: (password: string) => void } = $props()
+  /** Busy until the promise onchanged returns settles. */
+  let { onchanged }: { onchanged: (password: string) => void | Promise<void> } = $props()
 
   let password = $state('')
   let confirm = $state('')
@@ -27,7 +28,7 @@
     msg = null
     try {
       await sendJSON('POST', '/api/auth/password', { newPassword: password })
-      onchanged(password)
+      await onchanged(password)
     } catch (err) {
       const status = statusOf(err)
       if (status === 400) msg = { text: detailOf(err) || FAILED }

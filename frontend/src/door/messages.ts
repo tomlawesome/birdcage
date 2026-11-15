@@ -14,6 +14,12 @@ export const ENTER_RECOVERY_CODE = 'Enter a recovery code.'
 export const INCORRECT_CODE = 'Incorrect code.'
 export const INCORRECT_PASSWORD = 'Incorrect password.'
 export const TIMED_OUT = 'Your sign-in timed out. Enter your password again.'
+/** passkeys/register/finish, 400: the browser's credential (or the
+ * name) was refused; the ceremony stays open for another try. */
+export const PASSKEY_REFUSED = 'The passkey was not accepted. Try again.'
+/** passkeys/register/begin, 409: a key set up earlier in the last ten
+ * minutes is on hold until its recovery codes are confirmed. */
+export const PASSKEY_BUSY = 'Another key is waiting for its codes to be saved. Try again in ten minutes.'
 
 /** A message line: `text`, with `aside` beneath it in the softer ink. */
 export interface Message {

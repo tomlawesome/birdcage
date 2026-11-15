@@ -21,9 +21,10 @@
     onconflict,
   }: {
     /** Created and signed in: the password, for the second step owed next. */
-    oncreated: (password: string) => void
-    /** An account exists already: carry on by the session. */
-    onconflict: () => void
+    oncreated: (password: string) => void | Promise<void>
+    /** An account exists already: carry on by the session. Either way
+     * the screen is busy until the promise returned settles. */
+    onconflict: () => void | Promise<void>
   } = $props()
 
   let setupCode = $state('')
@@ -54,12 +55,12 @@
     msg = null
     try {
       await sendJSON('POST', '/api/auth/register', { username, password, setupCode })
-      oncreated(password)
+      await oncreated(password)
     } catch (err) {
       const status = statusOf(err)
       if (status === 401) msg = { text: 'Incorrect setup code.' }
       else if (status === 400) msg = { text: detailOf(err) || FAILED }
-      else if (status === 409) onconflict()
+      else if (status === 409) await onconflict()
       else if (status === 429) msg = { text: TOO_MANY }
       else msg = { text: FAILED }
     } finally {

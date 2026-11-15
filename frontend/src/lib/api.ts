@@ -23,12 +23,15 @@ import type {
   VisitorsResponse,
 } from './types'
 
-/** A refused or failed request. `kind` is the problem document's class
- * -- the text after `#` in its `type` (`invalid-credentials`,
- * `rate-limited`, `step-expired`, ...) -- or '' when the body was not a
- * problem document; `detail` is its free text, shown only where the
- * sign-in specification says so and never branched on. The message is
- * the path and the status only: a request body never reaches it. */
+/** A refused or failed request. `status` is the HTTP status. From
+ * sendJSON, `kind` is the problem document's class -- the text after `#`
+ * in its `type` (`invalid-credentials`, `rate-limited`, `step-expired`,
+ * ...) -- and `detail` its free text, shown only where the sign-in
+ * specification says so and never branched on; both are '' when the
+ * body was not a problem document, and always '' from getJSON, which
+ * does not read the body of a failure. The message is the method (from
+ * sendJSON), the path and the status only: a request body never reaches
+ * it. */
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -44,11 +47,17 @@ export class ApiError extends Error {
 // Sign-in (issue #8, ADR-0016): a 401 from any dashboard read means the
 // session ended or timed out. App.svelte registers the one handler that
 // shows the door again; with none registered a 401 is only an error.
-let signedOutHandler: () => void = () => {}
+const noHandler = () => {}
+let signedOutHandler: () => void = noHandler
 
-/** Registers the handler a 401 from getJSON calls (the latest wins). */
-export function onSignedOut(fn: () => void): void {
+/** Registers the handler a 401 from getJSON calls (the latest wins).
+ * Returns the unsubscribe, which removes it if it is still the one
+ * registered. */
+export function onSignedOut(fn: () => void): () => void {
   signedOutHandler = fn
+  return () => {
+    if (signedOutHandler === fn) signedOutHandler = noHandler
+  }
 }
 
 // gauntlet's CSRF guard: every POST, PUT, PATCH and DELETE must carry

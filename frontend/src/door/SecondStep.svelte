@@ -12,7 +12,19 @@
   import { CeremonyError, createCredential } from '../lib/webauthn'
   import Alert from './Alert.svelte'
   import { drawQR } from './qr'
-  import { ENTER_APP_CODE, ENTER_PASSWORD, FAILED, INCORRECT_CODE, INCORRECT_PASSWORD, kindOf, statusOf, TOO_MANY, type Message } from './messages'
+  import {
+    ENTER_APP_CODE,
+    ENTER_PASSWORD,
+    FAILED,
+    INCORRECT_CODE,
+    INCORRECT_PASSWORD,
+    kindOf,
+    PASSKEY_BUSY,
+    PASSKEY_REFUSED,
+    statusOf,
+    TOO_MANY,
+    type Message,
+  } from './messages'
 
   let {
     session,
@@ -23,10 +35,12 @@
     session: SessionState
     /** The password typed earlier in this visit, if the door holds one. */
     password?: string
-    /** A password typed here, for the door to hold for this visit. */
+    /** A password typed here, for the door to hold for this visit; ''
+     * when the held one turned out wrong. */
     onpassword: (password: string) => void
-    /** The factor is live (or the step must be read again): re-read the session. */
-    ondone: () => void
+    /** The factor is live (or the step must be read again): re-read the
+     * session. Busy until the promise it returns settles. */
+    ondone: () => void | Promise<void>
   } = $props()
 
   type Key = 'totp' | 'passkey'
@@ -65,6 +79,7 @@
   /** Forget the held password and ask for it again. */
   function askPassword(for_: Key, why: Message | null) {
     held = ''
+    onpassword('')
     typed = ''
     target = for_
     msg = why
@@ -123,12 +138,12 @@
     }
   }
 
-  function gotCodes(list: string[] | null | undefined) {
+  async function gotCodes(list: string[] | null | undefined) {
     if (Array.isArray(list) && list.length) {
       codes = list
       msg = null
       void show('codes')
-    } else ondone() // a later factor: live at once, no codes
+    } else await ondone() // a later factor: live at once, no codes
   }
 
   async function confirmTotp(e: Event) {
@@ -139,11 +154,13 @@
     msg = null
     try {
       const r = await sendJSON<{ recoveryCodes: string[] | null }>('POST', '/api/auth/totp/confirm', { code })
-      gotCodes(r.recoveryCodes)
+      await gotCodes(r.recoveryCodes)
     } catch (err) {
       if (statusOf(err) === 400) {
         msg = { text: INCORRECT_CODE }
         code = ''
+        await tick()
+        fieldEl?.focus()
       } else if (statusOf(err) === 401 && kindOf(err) === 'step-expired') {
         // The pending secret ran out: start the step again with a new one.
         try {
@@ -162,14 +179,25 @@
     if (busy) return
     busy = true
     msg = null
+    let finishing = false
     try {
-      const options = await sendJSON('POST', '/api/auth/passkeys/register/begin', { password: held })
+      let options
+      try {
+        options = await sendJSON('POST', '/api/auth/passkeys/register/begin', { password: held })
+      } catch (err) {
+        // A passkey enrolment already under way for this account.
+        if (statusOf(err) === 409) return void (msg = { text: PASSKEY_BUSY })
+        throw err
+      }
       prompting = true
       const credential = await createCredential(options).finally(() => (prompting = false))
+      finishing = true
       const r = await sendJSON<{ recoveryCodes: string[] | null }>('POST', '/api/auth/passkeys/register/finish', { credential, name })
-      gotCodes(r.recoveryCodes)
+      await gotCodes(r.recoveryCodes)
     } catch (err) {
       if (err instanceof CeremonyError) msg = { text: FAILED }
+      // The browser's answer was refused: the next press begins afresh.
+      else if (finishing && statusOf(err) === 400) msg = { text: PASSKEY_REFUSED }
       else failed(err, 'passkey')
     } finally {
       busy = false
@@ -191,7 +219,8 @@
     a.href = url
     a.download = 'birdcage-recovery-codes.txt'
     a.click()
-    URL.revokeObjectURL(url)
+    // Firefox can lose a download whose URL is revoked straight away.
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function saved(e: Event) {
@@ -202,14 +231,14 @@
     try {
       await sendJSON('POST', '/api/auth/recovery-codes/confirm')
       codes = []
-      ondone()
+      await ondone()
     } catch (err) {
       if (statusOf(err) === 401 && kindOf(err) === 'step-expired') {
         // The hold ran out and the factor went with it: set it up again.
         codes = []
         enrolment = null
         void show('choose')
-      } else if (statusOf(err) === 409) ondone()
+      } else if (statusOf(err) === 409) await ondone()
       else msg = { text: FAILED }
     } finally {
       busy = false
@@ -224,17 +253,17 @@
     <p class="subtitle">Every account needs one. Pick a key and prove it works.</p>
     {#if totpOffered}
       <button type="button" class="key" disabled={busy} onclick={() => pick('totp')}
-        ><span class="g">428<br />116</span>Authenticator app<i>set it up ▸</i><small>A code from your phone.</small></button
+        ><span class="g" aria-hidden="true">428<br />116</span>Authenticator app<i>set it up <span aria-hidden="true">▸</span></i><small>A code from your phone.</small></button
       >
     {/if}
     <button type="button" class="key" disabled={!passkeyReady || busy} onclick={() => pick('passkey')}
-      ><span class="g"
+      ><span class="g" aria-hidden="true"
         ><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
           ><path
             d="M12 11v4a8 8 0 0 0 1 4M8.5 20a12 12 0 0 1-1-5v-4a4.5 4.5 0 0 1 9 0v3a12 12 0 0 0 .8 4.3M4.5 16.5a16 16 0 0 1-.5-4V11a8 8 0 0 1 13-6.2M20 11v2.5"
           /></svg
         ></span
-      >Passkey<i>set it up ▸</i><small>{passkeyReady ? 'Fingerprint, face or device PIN.' : 'Passkeys need an https web address.'}</small></button
+      >Passkey<i>set it up <span aria-hidden="true">▸</span></i><small>{passkeyReady ? 'Fingerprint, face or device PIN.' : 'Passkeys need an https web address.'}</small></button
     >
     <Alert {msg} />
   </form>
@@ -274,7 +303,7 @@
     <button class="submit" disabled={busy}>{busy ? 'Please wait…' : 'Confirm'}</button>
     <p class="note">Confirming signs this account out everywhere else.</p>
     {#if passkeyReady}
-      <button type="button" class="link" onclick={() => ((msg = null), show('prove-passkey'))}>Use a passkey instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => ((msg = null), show('prove-passkey'))}>Use a passkey instead</button>
     {/if}
   </form>
 {:else if stage === 'prove-passkey'}
@@ -286,7 +315,7 @@
     <Alert {msg} />
     <button class="submit" disabled={busy}>{prompting ? 'Waiting…' : busy ? 'Please wait…' : 'Add passkey'}</button>
     {#if totpOffered}
-      <button type="button" class="link" onclick={() => ((msg = null), pick('totp'))}>Use an authenticator app instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => ((msg = null), pick('totp'))}>Use an authenticator app instead</button>
     {/if}
   </form>
 {:else}

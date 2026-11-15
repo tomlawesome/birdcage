@@ -29,6 +29,8 @@ mock-up. These are the only intended differences.
 | `Passkey and SSO sign-in still work.` | `SSO sign-in still works.`, only when SSO is on | passkey-alone sign-in is off |
 | `Signed out at 08:52 after an hour unused. Enter your password to continue.` | `Enter your password to continue.` | no time is sent |
 | account name under `Session expired` | shown only if this tab knew it | not sent once timed out |
+| no passkey refusal shown | `The passkey was not accepted. Try again.` | `register/finish` answers `400` for a refused credential or name |
+| no enrolment-on-hold state shown | `Another key is waiting for its codes to be saved. Try again in ten minutes.` | `register/begin` answers `409` while a first factor is on hold (gauntlet holds it ten minutes) |
 
 ## Seams
 
@@ -76,10 +78,12 @@ All under `frontend/src/`.
 
 ### `door/Door.svelte`
 
-Props: `session: SessionState`, `onenter: () => void`. It shows the screen
-`doorFor(session)` names and moves between screens as below. It calls
-`onenter` once the server says the account is signed in with nothing
-owed (re-read the session after every step that could finish sign-in).
+Props: `session: SessionState`, `onenter: (session: SessionState) => void`.
+It shows the screen `doorFor(session)` names and moves between screens
+as below. It calls `onenter`, once, with the session it read, once the
+server says the account is signed in with nothing owed (re-read the
+session after every step that could finish sign-in). The password typed
+in this visit is dropped on returning to sign in and on entering.
 
 ### `door/bars.ts`
 
@@ -117,12 +121,14 @@ The QR code comes from `qrcode-generator` (owner approval 29a,
 
 - On start it reads the session before any dashboard request. It shows
   the door unless `doorFor` is `'in'`; no dashboard route is requested
-  while the door is shown.
+  while the door is shown. When the door shows, the dashboard data of
+  the session before it is dropped, and a reply that left before the
+  door showed is not applied.
 - A `401` from any dashboard request shows the door again (expired when
   the session says `resumable`, otherwise sign in), remembering the
   account name the tab had.
 - The shell's name chip shows the session's `username (role)`, not fixed
-  text.
+  text, and only while signed in.
 - **Sign-out** (owner 28a, 2026-11-15). The chip is a button
   (`aria-haspopup="menu"`, `aria-expanded`). Click, Enter or Space opens
   a menu under it, right-aligned, with one item, `Sign out`
@@ -138,7 +144,10 @@ The QR code comes from `qrcode-generator` (owner approval 29a,
 ## Screens and what they do
 
 Text is exact. Buttons show `Please wait…` and are disabled while their
-request is in flight; a second submit in that time sends nothing.
+request is in flight, and after a step that could finish sign-in until
+the session has been read again; a second submit in that time sends
+nothing. Links that switch mode or screen are disabled for the same time.
+Decorative glyphs (the key glyphs, the `▸`) are `aria-hidden`.
 
 ### Sign in (`'signin'`)
 
@@ -163,6 +172,7 @@ Fields with placeholders `account`, `password`; button `Enter`. When
   `not_permitted` → `Your account signed in but is not permitted to use
   this birdcage.`; any other code → `SSO sign-in failed. Try again, or
   sign in with your password.` The query is then removed from the address.
+  It is read only when the door opens on sign in.
 
 ### Code step
 
@@ -226,13 +236,16 @@ current step. There is no skip, cancel or sign-out here.
   button `Confirm`; note `Confirming signs this account out everywhere
   else.`; link `Use a passkey instead` (when offered).
   `POST /api/auth/totp/confirm {code}`: codes returned → the codes
-  screen; `400` → `Incorrect code.`; `401 step-expired` → start the step
-  again with a new secret.
+  screen; `400` → `Incorrect code.`, field cleared and focused;
+  `401 step-expired` → start the step again with a new secret.
 - **Prove it, passkey.** Heading `Prove it works`; subtitle `Name this
   passkey. Your browser asks for the fingerprint, face or PIN.`; field
   `name`; button `Add passkey`, `Waiting…` during the prompt; link `Use an
   authenticator app instead`. `register/begin {password}`, the browser
-  prompt, `register/finish {credential, name}`.
+  prompt, `register/finish {credential, name}`. `register/begin` `409` →
+  `Another key is waiting for its codes to be saved. Try again in ten
+  minutes.`; `register/finish` `400` → `The passkey was not accepted.
+  Try again.`
 - **Keep the codes.** Heading `Keep the codes`; subtitle `Ten recovery
   codes. Each works once in place of your second step. They are not shown
   again.`; the ten codes in two columns, in the order sent; `Copy all`
@@ -253,7 +266,10 @@ password`, `confirm password`; button `Set password`.
 Over the dimmed dashboard. Heading `Session expired`; subtitle `Enter
 your password to continue.`; the account name when known; field
 `password`; button `Continue`; links `Use your passkey instead` (only
-when `passkeys.signIn`) and `Sign in as someone else`.
+when `passkeys.signIn`) and `Sign in as someone else`. In passkey mode:
+heading `Use your passkey`; button `Use your passkey`; links `Use your
+password instead` (back to the password, which takes focus) and `Sign in
+as someone else`.
 
 - `POST /api/auth/reauthenticate {password}`: account → `onenter`;
   `401 invalid-credentials` → `Incorrect password.`;

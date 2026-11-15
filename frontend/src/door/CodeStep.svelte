@@ -16,7 +16,8 @@
     ontimedout,
   }: {
     methods: string[]
-    onaccount: () => void
+    /** Signed in. Busy until the promise it returns settles. */
+    onaccount: () => void | Promise<void>
     /** The pending login is gone: sign in again from the start. */
     ontimedout: () => void
   } = $props()
@@ -67,7 +68,7 @@
     msg = null
     try {
       const reply = readLoginReply(await sendJSON('POST', '/api/auth/login/factor', { code }))
-      if (reply.kind === 'account') onaccount()
+      if (reply.kind === 'account') await onaccount()
       else if (reply.kind === 'prove') {
         prove = true
         mode = 'passkey'
@@ -97,7 +98,7 @@
       const assertion = await getAssertion(options).finally(() => (prompting = false))
       finishing = true
       const reply = readLoginReply(await sendJSON('POST', finish, { assertion }))
-      if (reply.kind === 'account') onaccount()
+      if (reply.kind === 'account') await onaccount()
       else msg = { text: FAILED }
     } catch (err) {
       // A cancelled prompt, or a refused or dead ceremony at the finish:
@@ -136,13 +137,13 @@
   {/if}
   {#if !prove}
     {#if mode !== 'passkey' && hasPasskey}
-      <button type="button" class="link" onclick={() => switchTo('passkey')}>Use your passkey instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => switchTo('passkey')}>Use your passkey instead</button>
     {/if}
     {#if mode !== 'totp' && hasTotp}
-      <button type="button" class="link" onclick={() => switchTo('totp')}>Use your authenticator app instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => switchTo('totp')}>Use your authenticator app instead</button>
     {/if}
     {#if mode !== 'recovery'}
-      <button type="button" class="link" onclick={() => switchTo('recovery')}>Use a recovery code instead</button>
+      <button type="button" class="link" disabled={busy} onclick={() => switchTo('recovery')}>Use a recovery code instead</button>
     {/if}
   {/if}
 </form>

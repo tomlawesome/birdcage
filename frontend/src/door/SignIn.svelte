@@ -16,8 +16,9 @@
     ssoAvailable: boolean
     /** A message carried in from elsewhere (an SSO error, a timed-out step). */
     notice?: Message | null
-    /** Signed in by the password: the password, for a second step owed next. */
-    onaccount: (password: string) => void
+    /** Signed in by the password: the password, for a second step owed
+     * next. Busy until the promise it returns settles. */
+    onaccount: (password: string) => void | Promise<void>
     onsecondfactor: (methods: string[], password: string) => void
   } = $props()
 
@@ -28,10 +29,8 @@
   let accountEl: HTMLInputElement | undefined = $state()
   let passwordEl: HTMLInputElement | undefined = $state()
 
-  onMount(() => {
-    // door.js focuses the password; with no account typed yet, the account.
-    ;(username ? passwordEl : accountEl)?.focus({ preventScroll: true })
-  })
+  // door.js focuses the password; with no account typed yet, the account.
+  onMount(() => accountEl?.focus({ preventScroll: true }))
 
   async function submit(e: Event) {
     e.preventDefault()
@@ -43,7 +42,7 @@
     msg = null
     try {
       const reply = readLoginReply(await sendJSON('POST', '/api/auth/login', { username, password }))
-      if (reply.kind === 'account') onaccount(password)
+      if (reply.kind === 'account') await onaccount(password)
       else if (reply.kind === 'secondFactor') onsecondfactor(reply.methods, password)
       // A confirmation code (#189) is not built yet.
       else msg = { text: FAILED }

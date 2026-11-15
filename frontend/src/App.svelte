@@ -24,7 +24,7 @@
   // read later brings the door back -- over the dimmed dashboard when the
   // session can be resumed, the full sign-in otherwise.
   import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut, sendJSON } from './lib/api'
-  import { tick } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { doorFor, readSession, type SessionState } from './lib/auth'
   import Door from './door/Door.svelte'
   import type { CanaryPageResponse, HistoryResponse, MailStatus, RunsResponse } from './lib/types'
@@ -85,7 +85,28 @@
   function arrive(s: SessionState) {
     if (s.username) knownName = s.username
     session = { ...s, username: s.username ?? knownName }
-    phase = doorFor(s) === 'in' ? 'in' : 'door'
+    if (doorFor(s) === 'in') phase = 'in'
+    else {
+      phase = 'door'
+      forgetDashboard()
+    }
+  }
+
+  // Bumped whenever the door shows: a dashboard reply that left before it
+  // carries the old number and is dropped, so nothing of the session the
+  // door replaced is drawn again behind it.
+  let epoch = 0
+
+  /** Nothing of the last session's dashboard stays in memory. */
+  function forgetDashboard() {
+    epoch++
+    loaderState = initialLoaderState
+    history = null
+    historyFailed = false
+    mail = null
+    canaryPage = null
+    canaryFailed = false
+    canaryRuns = null
   }
 
   async function check() {
@@ -97,27 +118,21 @@
     }
   }
 
-  onSignedOut(() => {
-    if (phase !== 'in') return
-    phase = 'checking'
-    void check()
-  })
+  onMount(() =>
+    onSignedOut(() => {
+      if (phase !== 'in') return
+      phase = 'checking'
+      void check()
+    }),
+  )
   void check()
 
   const stillMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-  /** The door says the account is in: open it onto the dashboard. */
-  function enter(s?: SessionState) {
-    if (s && s.username && knownName && s.username !== knownName) {
-      // Someone else signed in: nothing of the last account's stays drawn.
-      loaderState = initialLoaderState
-      history = null
-      mail = null
-      canaryPage = null
-      canaryRuns = null
-    }
-    if (s) arrive(s)
-    else phase = 'in'
+  /** The door says the account is in: open it onto the dashboard (the
+   * last session's data went when the door showed). */
+  function enter(s: SessionState) {
+    arrive(s)
     if (stillMotion()) return
     leaving = true
     // The bars slide apart over 700 ms and the door fades with them.
@@ -254,6 +269,10 @@
     // Read here so the effect re-subscribes on navigation: moving to a
     // canary page must fetch that page now, not on the next 30 s tick.
     const currentRoute = route
+    // A reply is applied only while its range is still the one showing
+    // and the door has not shown since it left (epoch).
+    const gen = epoch
+    const current = () => range === activeRange && gen === epoch
     let inFlight = false
     const load = async () => {
       if (inFlight) return
@@ -267,23 +286,23 @@
       const historyCanary = currentRoute.name === 'canary' ? currentRoute.id : undefined
       const historyLoad = fetchHistory(range, historyCanary)
         .then((h) => {
-          if (range !== activeRange) return
+          if (!current()) return
           history = h
           historyFailed = false
         })
         .catch(() => {
-          if (range === activeRange) historyFailed = true
+          if (current()) historyFailed = true
         })
       const canaryLoad =
         currentRoute.name === 'canary'
           ? fetchCanary(currentRoute.id, range)
               .then((p) => {
-                if (range !== activeRange) return
+                if (!current()) return
                 canaryPage = p
                 canaryFailed = false
               })
               .catch(() => {
-                if (range === activeRange) {
+                if (current()) {
                   canaryPage = null
                   canaryFailed = true
                 }
@@ -296,13 +315,13 @@
         currentRoute.name === 'canary'
           ? fetchCanaryRuns(currentRoute.id)
               .then((r) => {
-                if (range === activeRange) canaryRuns = r
+                if (current()) canaryRuns = r
               })
               .catch(() => {
-                if (range === activeRange) canaryRuns = null
+                if (current()) canaryRuns = null
               })
           : Promise.resolve().then(() => {
-              canaryRuns = null
+              if (gen === epoch) canaryRuns = null
             })
       // Same tick, same "drop a response for a range we've since left"
       // check. Range-free itself -- "is mail working" is not a question
@@ -310,7 +329,7 @@
       // after the operator changed range cannot overwrite a newer one.
       const mailLoad = fetchMail()
         .then((m) => {
-          if (range === activeRange) mail = m
+          if (current()) mail = m
         })
         .catch(() => {
           // Leave whatever was last known in place: one failed poll is
@@ -319,9 +338,9 @@
         })
       try {
         const [c, v, t] = await Promise.all([fetchCanaries(range), fetchVisitors(range), fetchTrace(range)])
-        if (range === activeRange) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
+        if (current()) loaderState = onFetchSuccess({ canaries: c.canaries, visitors: v.visitors, trace: t })
       } catch {
-        if (range === activeRange) loaderState = onFetchError(loaderState)
+        if (current()) loaderState = onFetchError(loaderState)
       } finally {
         await historyLoad
         await mailLoad
@@ -487,8 +506,9 @@
          class only when mail has actually stopped working, since
          nothing else on this page would go red about that. -->
     {#if mailStatus}<span class={mailStatus.cls} title={mailStatus.detail}>{mailStatus.text}</span>{/if}
-    <!-- The signed-in account, and under it the sign-out menu. -->
-    {#if session?.username}
+    <!-- The signed-in account, and under it the sign-out menu: only while
+         signed in (behind the expired door there is no role to show). -->
+    {#if session?.authenticated && session.username}
       <span class="who-box" bind:this={menuBox}>
         <button
           type="button"
