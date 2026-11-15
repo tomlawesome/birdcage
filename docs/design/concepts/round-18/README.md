@@ -27,4 +27,5 @@ next due. The QR is a placeholder pattern, not a real key.
 
 ## Owner verdicts
 
-None yet.
+2026-11-15: "25a". The caught signals are ratified as drawn. The
+remaining screens (question 26) are not yet answered.
