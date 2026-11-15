@@ -30,7 +30,8 @@ its `door.css`, `door.js` and `bars.js`. Build ports those files.
    of mikroview's amber box round the wordmark. On entering, the two
    halves slide apart and the dashboard shows between them.
 3. **Signals.** Coloured pulses climb random bars at uneven intervals, in
-   the four lane colours. Behind a pulse the bar shows a sharp, irregular
+   the mock-up's four colours: lan blue, srv green, guest pink and the
+   amber of `--now`. Behind a pulse the bar shows a sharp, irregular
    trace, like activity on the dashboard's lines; long spikes cross the
    neighbouring bars, and the two bars either side pick up a fainter trace
    of their own. Nothing crosses the amber bars into the form. Each bar
