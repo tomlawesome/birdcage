@@ -23,7 +23,7 @@
   // the door shows and no dashboard route is requested. A 401 from any
   // read later brings the door back -- over the dimmed dashboard when the
   // session can be resumed, the full sign-in otherwise.
-  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut, sendJSON } from './lib/api'
+  import { fetchCanaries, fetchCanary, fetchCanaryRuns, fetchHistory, fetchMail, fetchTrace, fetchVisitors, inFixtureMode, onSignedOut, sendJSON, ApiError } from './lib/api'
   import { onMount, tick } from 'svelte'
   import { doorFor, readSession, type SessionState } from './lib/auth'
   import Door from './door/Door.svelte'
@@ -83,6 +83,9 @@
 
   /** Show what the session names: the dashboard, or the door. */
   function arrive(s: SessionState) {
+    // A new session state never brings the name menu back open.
+    menuOpen = false
+    signOutFailed = false
     if (s.username) knownName = s.username
     session = { ...s, username: s.username ?? knownName }
     if (doorFor(s) === 'in') phase = 'in'
@@ -183,9 +186,12 @@
     signOutFailed = false
     try {
       await sendJSON('POST', '/api/auth/logout')
-    } catch {
-      signOutFailed = true
-      return
+    } catch (err) {
+      // A 401 says the session is already gone: that is signed out too.
+      if (!(err instanceof ApiError && err.status === 401)) {
+        signOutFailed = true
+        return
+      }
     } finally {
       signingOut = false
     }
@@ -516,6 +522,7 @@
           bind:this={chipEl}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
+          onkeydown={(e) => e.key === 'Escape' && menuOpen && (e.preventDefault(), closeMenu())}
           onclick={toggleMenu}>{session.username} ({session.role})</button
         >
         {#if menuOpen}

@@ -136,8 +136,11 @@ The QR code comes from `qrcode-generator` (owner approval 29a,
   closes it and returns focus to the chip. `Sign out` sends
   `POST /api/auth/logout` through `sendJSON`; on success the door shows
   sign in, the event stream is closed and no further dashboard request
-  is made. If the request fails the menu stays open and shows `Could not
-  sign out. Try again.` (`role="alert"`). A second click while the
+  is made. A `401` means the session is already gone and is treated as
+  success. If the request otherwise fails the menu stays open and shows
+  `Could not sign out. Try again.` (`role="alert"`). Escape closes the
+  menu from the chip as well as from the item, and the menu is closed,
+  with no alert, whenever the session is read again. A second click while the
   request is in flight sends nothing. The menu uses the shell's tokens:
   `--raised` surface, 1 px `--hair-2` border, the chip's own type.
 

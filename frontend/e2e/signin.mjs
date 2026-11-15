@@ -19,8 +19,10 @@
 // status and the problem document's title and detail only, which
 // gauntlet never puts a secret in. A browser call that fails can still
 // quote what it was typing (a Playwright fill's call log), so every
-// secret is registered with hide() the moment it exists, and whatever
-// the journeys print goes through redactSecrets() first.
+// secret (the setup code, the password, the app secret, every code typed
+// and the recovery codes shown) is registered with hide() the moment it
+// exists, and whatever the journeys print goes through redactSecrets()
+// first.
 import { createHmac, randomBytes } from 'node:crypto'
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -224,9 +226,10 @@ export async function firstAdminThroughScreens(page, setupCode, log = () => {}) 
   if (!secret) throw new Error('sign-in: the prove screen showed no secret')
   if (!(await page.locator('canvas.qr[aria-label="QR code"]').isVisible())) throw new Error('sign-in: the prove screen showed no QR code')
   const counter = step30()
-  await page.fill('input[placeholder="6-digit code"]', totpCode(secret, counter))
+  await page.fill('input[placeholder="6-digit code"]', hide(totpCode(secret, counter)))
   await page.click('button:has-text("Confirm")')
   await page.waitForSelector('.grid span', { timeout: 10000 })
+  for (const c of await page.locator('.grid span').allTextContents()) hide(c.trim())
   const codes = await page.locator('.grid span').count()
   if (codes !== 10) throw new Error(`sign-in: the codes screen showed ${codes} recovery codes, want 10`)
   log('second step: proved an authenticator app, shown ten recovery codes')
@@ -256,7 +259,7 @@ export async function signInAgain(page, account, log = () => {}) {
   await page.click('button:has-text("Enter")')
   await page.waitForSelector('h1:text-is("Enter your code")', { timeout: 10000 })
   const counter = Math.max(step30(), account.counter + 1)
-  await page.fill('input[placeholder="6-digit code"]', totpCode(account.secret, counter))
+  await page.fill('input[placeholder="6-digit code"]', hide(totpCode(account.secret, counter)))
   await page.click('button:has-text("Continue")')
   await page.waitForSelector('.door', { state: 'detached', timeout: 10000 })
   log(`signed in again with the password and an authenticator code, as ${account.username}`)

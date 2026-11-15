@@ -15,7 +15,9 @@
 // - its bottom-left prototype links (`.proto`) are hidden;
 // - its QR placeholder draws a made-up pattern, not a code: the QR
 //   region (the mock-up's #qr and the build's .qr, the union of the two
-//   boxes) is masked to one flat colour on both sides before comparing;
+//   boxes) is masked to one flat colour on both sides before comparing,
+//   and a screen where the mock-up has a QR box and the build has none
+//   fails;
 // - of the five text differences the spec lists ("Where the mock-up
 //   cannot be true"), only the session-expired subtitle falls on a
 //   compared screen, and the mock-up's text is replaced by the built
@@ -232,6 +234,11 @@ async function main() {
         const bars = await barsShare(built, live)
         await built.close()
 
+        // The mask must not hide a QR code the build failed to draw.
+        if (refQr && !liveQr) {
+          results.push({ name: s.name, error: 'the mock-up shows a QR code and the build shows none' })
+          continue
+        }
         if (live.width !== ref.width || live.height !== ref.height) {
           results.push({ name: s.name, error: `size mismatch: built ${live.width}x${live.height}, mock-up ${ref.width}x${ref.height}` })
           continue

@@ -60,6 +60,9 @@ const blanked = redactSecrets(quoted)
 check(blanked.includes('pw-fake-Zq9xLm2') || blanked.includes('AAAA') || blanked.includes('ab12-CD34'), false, 'redactSecrets blanks every hidden value')
 check(blanked.includes('port 8080') && blanked.includes('fill('), true, 'redactSecrets leaves the rest of the text')
 check(redactSecrets(new Error('x')).startsWith('Error: x'), true, 'redactSecrets takes any value')
+hide('482913')
+hide('rc-fake-7k2m')
+check(redactSecrets('fill("482913") then rc-fake-7k2m'), 'fill("<redacted>") then <redacted>', 'redactSecrets blanks a typed code and a recovery code')
 
 try {
   const a = writeAuthKeyFile(dir)
