@@ -73,7 +73,7 @@
 
   .door { position: relative; z-index: 2; display: flex; flex-direction: column; }
   .door .step { font: 600 9.5px var(--mono); letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; }
-  .door h1 { margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
+  .door h1 { text-wrap: balance; margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
   .door.tall h1 { font-size: 44px; } .door.wide h1 { font-size: 52px; }
   .door .sub { margin: 0; font: 16px/1.55 var(--sans); color: var(--ink-2); max-width: 58ch; }
   .door.tall .sub { font-size: 14.5px; }
@@ -123,8 +123,9 @@
 
   .z .rail { left: 720px; top: 74px; }
   .z .ver { right: auto; left: 22px; top: 52px; }
-  .z .col { position: absolute; left: 720px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
-  .z .col.wide { left: 340px; width: 920px; }
+  .z .col { position: absolute; left: 620px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
+  .z .col.wide { left: 280px; width: 860px; }
+  #z-timeout .col { width: 500px; }
   .z .door h1 { font-size: 54px; } .z .door.tall h1 { font-size: 40px; } .z .door.wide h1 { font-size: 50px; }
   .z .door .sub { font-size: 15px; }
   .z .door .fields { gap: 20px 36px; }
@@ -176,7 +177,7 @@
 <section class="scene g z" id="z-codes" role="region" aria-label="Z, ajar: recovery codes shown once">
   <div class="wordmark">BIRD<em>CAGE</em></div>
   <div class="ver">birdcage <b>0.2.0</b></div>
-<canvas class="gl" data-fx="z" data-m="0" data-w="108" aria-hidden="true"></canvas><ol class="rail" style="left:340px" aria-label="steps"><li class="done">Administrator</li><li class="done">Authenticator</li><li class="now" aria-current="step">Recovery codes</li></ol><div class="col wide"><div class="door wide"><div class="step">first run · step 3 of 3 · sat 14 nov · 09:18:41</div><h1>Save your recovery codes</h1><p class="sub">Each code can be used once in place of your authenticator app. Store them somewhere safe, away from this computer. They will not be shown again.</p><div class="codes"><div><small>01</small>k7mq-4d2x</div><div><small>02</small>p3vn-8rtc</div><div><small>03</small>h2wd-6yqa</div><div><small>04</small>z9lf-1sbe</div><div><small>05</small>m4cr-7hjn</div><div><small>06</small>t6xp-2vgk</div><div><small>07</small>b8qn-5wmz</div><div><small>08</small>r1dk-9pft</div><div><small>09</small>w5hs-3lcy</div><div><small>10</small>g2tb-8nxv</div></div><div class="acts"><button class="go">Continue</button><button class="alt ">Copy</button><button class="alt ">Download</button><button class="alt quiet">Print</button><span class="sp"></span><span class="meta">10 codes · none used</span></div></div></div>
+<canvas class="gl" data-fx="z" data-m="0" data-w="84" aria-hidden="true"></canvas><ol class="rail" style="left:340px" aria-label="steps"><li class="done">Administrator</li><li class="done">Authenticator</li><li class="now" aria-current="step">Recovery codes</li></ol><div class="col wide"><div class="door wide"><div class="step">first run · step 3 of 3 · sat 14 nov · 09:18:41</div><h1>Save your recovery codes</h1><p class="sub">Each code can be used once in place of your authenticator app. Store them somewhere safe, away from this computer. They will not be shown again.</p><div class="codes"><div><small>01</small>k7mq-4d2x</div><div><small>02</small>p3vn-8rtc</div><div><small>03</small>h2wd-6yqa</div><div><small>04</small>z9lf-1sbe</div><div><small>05</small>m4cr-7hjn</div><div><small>06</small>t6xp-2vgk</div><div><small>07</small>b8qn-5wmz</div><div><small>08</small>r1dk-9pft</div><div><small>09</small>w5hs-3lcy</div><div><small>10</small>g2tb-8nxv</div></div><div class="acts"><button class="go">Continue</button><button class="alt ">Copy</button><button class="alt ">Download</button><button class="alt quiet">Print</button><span class="sp"></span><span class="meta">10 codes · none used</span></div></div></div>
   <div class="ibtn" aria-hidden="true">i</div>
   <div class="tag">Z · ajar · scene 5 · recovery codes, shown once</div>
 </section>

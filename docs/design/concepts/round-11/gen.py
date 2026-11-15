@@ -432,7 +432,7 @@ def scenes_for(D):
 CONTENT = """
   .door { position: relative; z-index: 2; display: flex; flex-direction: column; }
   .door .step { font: 600 9.5px var(--mono); letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; }
-  .door h1 { margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
+  .door h1 { text-wrap: balance; margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
   .door.tall h1 { font-size: 44px; } .door.wide h1 { font-size: 52px; }
   .door .sub { margin: 0; font: 16px/1.55 var(--sans); color: var(--ink-2); max-width: 58ch; }
   .door.tall .sub { font-size: 14.5px; }
@@ -509,7 +509,8 @@ Y_CSS = CONTENT + NOGL + """
   .y .rail { left: 110px; top: 74px; }
   .y .col { position: absolute; left: 110px; top: 0; bottom: 0; width: 780px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
   .y .col.wide { width: 1100px; }
-  .y .ver { right: auto; left: 110px; top: 24px; }
+  .scene.y > .wordmark, .y .chrome > .wordmark, .y .ibtn { left: 78px; }
+  .y .ver { right: auto; left: 170px; top: 24px; }
   .y .door .acts { flex-wrap: wrap; } .y .door .acts .sp { display: none; } .y .door .acts .meta { flex-basis: 100%; margin-top: 10px; } .y .col.tall { padding-top: 110px; }
   .y .door h1 { font-size: 72px; } .y .door.wide h1 { font-size: 56px; } .y .door.tall h1 { font-size: 46px; }
   .y .frost { position: absolute; inset: 0; backdrop-filter: blur(12px) saturate(.8); -webkit-backdrop-filter: blur(12px) saturate(.8); background: rgba(6,8,14,.55); }
@@ -547,8 +548,9 @@ class Y(Dir):
 Z_CSS = CONTENT + NOGL + """
   .z .rail { left: 720px; top: 74px; }
   .z .ver { right: auto; left: 22px; top: 52px; }
-  .z .col { position: absolute; left: 720px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
-  .z .col.wide { left: 340px; width: 920px; }
+  .z .col { position: absolute; left: 620px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
+  .z .col.wide { left: 280px; width: 860px; }
+  #z-timeout .col { width: 500px; }
   .z .door h1 { font-size: 54px; } .z .door.tall h1 { font-size: 40px; } .z .door.wide h1 { font-size: 50px; }
   .z .door .sub { font-size: 15px; }
   .z .door .fields { gap: 20px 36px; }
@@ -564,7 +566,7 @@ Z_CSS = CONTENT + NOGL + """
 """
 
 # how far the door stands open in each scene, in px, at the brink
-Z_W = {'signin': 6, 'factor': 72, 'firstrun': 6, 'enrol': 48, 'codes': 108, 'timeout': 104, 'refused': 0, 'locked': 0}
+Z_W = {'signin': 6, 'factor': 72, 'firstrun': 6, 'enrol': 48, 'codes': 84, 'timeout': 104, 'refused': 0, 'locked': 0}
 
 
 class Z(Dir):
@@ -599,10 +601,10 @@ AA_CSS = CONTENT + NOGL + """
   .aa .mirror.near { filter: blur(1.2px); mask-image: linear-gradient(to top, rgba(0,0,0,.30), rgba(0,0,0,.12) 90px, transparent 170px); -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,.30), rgba(0,0,0,.12) 90px, transparent 170px); }
   .aa .mirror.far { filter: blur(5px); mask-image: linear-gradient(to top, transparent 60px, rgba(0,0,0,.14) 150px, transparent 300px); -webkit-mask-image: linear-gradient(to top, transparent 60px, rgba(0,0,0,.14) 150px, transparent 300px); }
   .aa .col { position: absolute; left: 130px; bottom: 0; width: 780px; }
-  .aa .col.wide { width: 1160px; }
+  .aa .col.wide { left: 190px; width: 1100px; }
   .aa .door { padding-bottom: 2px; }
   .aa .door h1 { font-size: 66px; } .aa .door.tall h1 { font-size: 40px; } .aa .door.wide h1 { font-size: 54px; }
-  .aa .door.tall .sub { font-size: 14px; } .aa .door.tall .fields { margin-top: 14px; gap: 8px 48px; } .aa .door.tall .fld .box { height: 40px; font-size: 20px; } .aa .door.tall .log { margin-top: 12px; } .aa .door.tall .acts { margin-top: 26px; }
+  .aa .door.tall .sub { font-size: 14px; } .aa .door.tall .fields { margin-top: 10px; gap: 26px 48px; } .aa .door.tall .fld .box { height: 40px; font-size: 20px; } .aa .door.tall .log { margin-top: 12px; } .aa .door.tall .acts { margin-top: 14px; }
   .aa .door .acts { margin-top: 36px; }
   .aa .slab { position: absolute; bottom: 0; left: var(--x); width: 60px; height: 330px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
     transform: rotateY(var(--ry)); transform-origin: center bottom;

@@ -148,7 +148,7 @@ birdcage 0.2.0. Scene times run 09:18:04 to 09:18:48. Last sign-in Thu
 `<letter>-motion.jpg` (step two landed, 4.9 s), `<letter>-motion-handover.jpg`
 (the shell's first view, 10.2 s) and `<letter>-motion-still.jpg` (reduced
 motion). 1440×900 at device scale 2, JPEG quality 90, 33 shots, all
-inspected, five passes.
+inspected, six passes.
 
 Fixed between passes: Y's refraction was far too strong (the edges ahead
 looked like lightning and the window behind the glass like a moon;
@@ -168,6 +168,22 @@ slit is 104 px there, so `NOW · 08:52:10` is whole); every timed-out
 scene drew a second version label over the shell's own chrome (removed);
 AA's two slabs ahead in first run overlapped and the second was cropped
 at the viewport edge (spaced 75 px apart, both inside the frame).
+
+Fixed after the coordinator's review of the committed shots: Y's wordmark
+and info button sat on the far-left bevel (the chrome starts at 78 px,
+clear of it; the version label follows at 170 px; the motion page's
+chrome too); Z's recovery codes 05 and 10 sat in the light (the slit is
+84 px there, not 108, and the wide column runs 280–1140); Z's timed-out
+paragraph ran into the bright gradient (the column starts at 620 and the
+timed-out column is 500 wide, so the text ends by about 1105); AA's
+passed slabs came within 10 px of the recovery-codes column (the wide
+column starts at 190; 70 px clear); AA's first-run hints ran into the
+next row's label (row gap 26 px, with the field and action margins
+reduced to keep the form above the floor); the second-factor heading
+wrapped with `code` alone on its second line in Y and AA (headings use
+`text-wrap: balance`, which gives two even lines; Chromium 114+, Firefox
+121+, Safari 17.5+; elsewhere the old wrap, which is legible, just
+uneven).
 
 ## Decided
 

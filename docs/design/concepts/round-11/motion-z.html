@@ -73,7 +73,7 @@
 
   .door { position: relative; z-index: 2; display: flex; flex-direction: column; }
   .door .step { font: 600 9.5px var(--mono); letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; }
-  .door h1 { margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
+  .door h1 { text-wrap: balance; margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
   .door.tall h1 { font-size: 44px; } .door.wide h1 { font-size: 52px; }
   .door .sub { margin: 0; font: 16px/1.55 var(--sans); color: var(--ink-2); max-width: 58ch; }
   .door.tall .sub { font-size: 14.5px; }
@@ -123,8 +123,9 @@
 
   .z .rail { left: 720px; top: 74px; }
   .z .ver { right: auto; left: 22px; top: 52px; }
-  .z .col { position: absolute; left: 720px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
-  .z .col.wide { left: 340px; width: 920px; }
+  .z .col { position: absolute; left: 620px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
+  .z .col.wide { left: 280px; width: 860px; }
+  #z-timeout .col { width: 500px; }
   .z .door h1 { font-size: 54px; } .z .door.tall h1 { font-size: 40px; } .z .door.wide h1 { font-size: 50px; }
   .z .door .sub { font-size: 15px; }
   .z .door .fields { gap: 20px 36px; }

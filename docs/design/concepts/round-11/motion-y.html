@@ -73,7 +73,7 @@
 
   .door { position: relative; z-index: 2; display: flex; flex-direction: column; }
   .door .step { font: 600 9.5px var(--mono); letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; }
-  .door h1 { margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
+  .door h1 { text-wrap: balance; margin: 12px 0 14px; font: 400 60px/1.04 var(--sans); letter-spacing: -.025em; color: var(--ink); }
   .door.tall h1 { font-size: 44px; } .door.wide h1 { font-size: 52px; }
   .door .sub { margin: 0; font: 16px/1.55 var(--sans); color: var(--ink-2); max-width: 58ch; }
   .door.tall .sub { font-size: 14.5px; }
@@ -130,7 +130,8 @@
   .y .rail { left: 110px; top: 74px; }
   .y .col { position: absolute; left: 110px; top: 0; bottom: 0; width: 780px; display: flex; flex-direction: column; justify-content: center; padding: 60px 0 40px; }
   .y .col.wide { width: 1100px; }
-  .y .ver { right: auto; left: 110px; top: 24px; }
+  .scene.y > .wordmark, .y .chrome > .wordmark, .y .ibtn { left: 78px; }
+  .y .ver { right: auto; left: 170px; top: 24px; }
   .y .door .acts { flex-wrap: wrap; } .y .door .acts .sp { display: none; } .y .door .acts .meta { flex-basis: 100%; margin-top: 10px; } .y .col.tall { padding-top: 110px; }
   .y .door h1 { font-size: 72px; } .y .door.wide h1 { font-size: 56px; } .y .door.tall h1 { font-size: 46px; }
   .y .frost { position: absolute; inset: 0; backdrop-filter: blur(12px) saturate(.8); -webkit-backdrop-filter: blur(12px) saturate(.8); background: rgba(6,8,14,.55); }
