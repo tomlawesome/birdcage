@@ -71,4 +71,9 @@ Which concept goes forward (question 19).
 
 ## Owner verdicts
 
-None yet.
+2026-11-15, on the round as a whole: "Just reuse Mikroviews setup I guess.
+Give it a slight birdcage twist. You can have one more go at an
+alternative."
+
+All three dropped. Round 13 carries mikroview's sign-in screen over with
+a small change, plus one last alternative.
