@@ -42,4 +42,11 @@ Which signal, or neither (question 21).
 
 ## Owner verdicts
 
-None yet.
+2026-11-15, answering question 21: "I like the pulses but when a pulse
+appears it should also make the line wiggle in a bounded but randomised
+way, and there should be slightly more of them. The glint is alright but
+it's just a generic sweep and a bit boring. I'd be willing to look at
+some other version that's similar but different maybe."
+
+AG (pulses) goes forward with those changes; AH (lit) is dropped. The
+sweep is replaced: round 15 draws alternatives.
