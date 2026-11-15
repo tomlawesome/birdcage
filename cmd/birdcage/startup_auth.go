@@ -6,6 +6,8 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -56,8 +58,10 @@ const (
 // dataDir is where the common-password list and country data are kept;
 // servesTLS is whether the dashboard serves TLS itself; the session cookie
 // is Secure then, or when the public address is https (a TLS-terminating
-// proxy in front).
-func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, configLog *slog.Logger) (auth.Config, error) {
+// proxy in front). offBoxAddr is the dashboard's TCP address when it is
+// not a loopback bind, empty otherwise; trusted proxies on such a
+// listener draw a warning.
+func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, offBoxAddr string, configLog *slog.Logger) (auth.Config, error) {
 	cfg := auth.Config{DataDir: dataDir, SecureCookie: servesTLS}
 	refuse := func(format string, args ...any) (auth.Config, error) {
 		return auth.Config{}, &startupError{configLog, fmt.Sprintf(format, args...)}
@@ -101,13 +105,20 @@ func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, 
 	// which header. A bad entry is refused, never skipped, so the operator
 	// is not left believing forwarded addresses are honoured.
 	if raw := getenv(envTrustedProxies); raw != "" {
-		proxies, trustUnix, err := parseTrustedProxies(raw)
+		proxies, hops, trustUnix, err := parseTrustedProxies(raw)
 		if err != nil {
 			return refuse("%s=%q: %v", envTrustedProxies, raw, err)
 		}
 		cfg.TrustedProxies = proxies
+		cfg.TrustedHops = hops
 		cfg.TrustUnixSocket = trustUnix
 		configLog.Info(fmt.Sprintf("%s=%s", envTrustedProxies, raw))
+		// The trusted-proxy pattern assumes the dashboard is reachable only
+		// through the proxy, which code cannot check. A peer in the list
+		// that connects directly may name any client.
+		if offBoxAddr != "" && (len(proxies) > 0 || trustUnix) {
+			configLog.Warn(fmt.Sprintf("%s is set but the dashboard listens on %s: any peer in the list may name the client; make the listener reachable only from the proxy", envTrustedProxies, offBoxAddr))
+		}
 	}
 	cfg.ClientIPHeader = defaultClientIPHeader
 	if h := strings.TrimSpace(getenv(envClientIPHeader)); h != "" {
@@ -215,6 +226,26 @@ func readSecretFile(setting, path string, trim bool) ([]byte, error) {
 // TLS itself, which is when the session cookie must be Secure.
 func dashboardServesTLS(sel tlsconfig.Selection) bool {
 	return sel.Mode == tlsconfig.ModeCert || sel.Mode == tlsconfig.ModeMintedCert
+}
+
+// dashboardOffBoxAddr returns the dashboard's TCP address when the bind
+// is not loopback, so other hosts may reach it; empty for a loopback bind
+// or a unix socket.
+func dashboardOffBoxAddr(sel tlsconfig.Selection) string {
+	if sel.Mode == tlsconfig.ModePlainUnixSocket || sel.Addr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(sel.Addr)
+	if err != nil {
+		host = sel.Addr
+	}
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+	if ip, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil && ip.IsLoopback() {
+		return ""
+	}
+	return sel.Addr
 }
 
 // authDataDir is the data directory the sign-in layer keeps its fetched

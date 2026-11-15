@@ -50,6 +50,22 @@ async function open(chip: HTMLElement) {
   return screen.findByRole('menuitem', { name: 'Sign out' })
 }
 
+// jsdom never turns a key into a click, so a test that fires the click
+// itself passes whatever the chip is. This does what a browser does: a
+// native, enabled <button> is activated by Enter on keydown and by Space
+// on keyup, unless a handler cancelled the key. Any other element only
+// gets the key events and must handle them itself.
+async function press(el: HTMLElement, key: 'Enter' | ' ') {
+  const down = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+  el.dispatchEvent(down)
+  const native = el instanceof HTMLButtonElement && !el.disabled
+  if (native && key === 'Enter' && !down.defaultPrevented) el.click()
+  const up = new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true })
+  el.dispatchEvent(up)
+  if (native && key === ' ' && !down.defaultPrevented && !up.defaultPrevented) el.click()
+  await flush()
+}
+
 describe('sign-out menu', () => {
   it('the chip is a menu button, closed at first, with no menu in the page', async () => {
     const { chip } = await shell()
@@ -70,9 +86,7 @@ describe('sign-out menu', () => {
   it('Enter on the chip opens the menu', async () => {
     const { chip } = await shell()
     chip.focus()
-    await fireEvent.keyDown(chip, { key: 'Enter' })
-    await fireEvent.keyUp(chip, { key: 'Enter' })
-    await fireEvent.click(chip)
+    await press(chip, 'Enter')
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
     expect(chip.getAttribute('aria-expanded')).toBe('true')
   })
@@ -80,9 +94,7 @@ describe('sign-out menu', () => {
   it('Space on the chip opens the menu', async () => {
     const { chip } = await shell()
     chip.focus()
-    await fireEvent.keyDown(chip, { key: ' ' })
-    await fireEvent.keyUp(chip, { key: ' ' })
-    await fireEvent.click(chip)
+    await press(chip, ' ')
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
     expect(chip.getAttribute('aria-expanded')).toBe('true')
   })

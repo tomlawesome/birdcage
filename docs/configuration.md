@@ -260,8 +260,8 @@ and revocation, and the like) are written to the audit log.
 | `BIRDCAGE_AUTH_ADMIN_PASSKEY` | no | `required` or `optional`; overrides the admin-passkey rule below. Matched without regard to case and ignoring spaces around it. Any other value is refused, and so is `required` where browsers cannot make a passkey (see below). |
 | `BIRDCAGE_GEOIP_IPINFO_TOKEN_FILE` | no | Path to a file holding your IPinfo access token. Turns on country lookup, using IPinfo's free Lite data. Not together with MaxMind: setting both is refused with "choose one country provider". |
 | `BIRDCAGE_GEOIP_MAXMIND_ACCOUNT_ID` and `BIRDCAGE_GEOIP_MAXMIND_LICENCE_KEY_FILE` | no | Your MaxMind account ID, and the path to a file holding its licence key. Turns on country lookup, using MaxMind's free GeoLite2 data. Both or neither, and not together with IPinfo: setting both providers is refused with "choose one country provider". |
-| `BIRDCAGE_OIDC_ISSUER`, `BIRDCAGE_OIDC_CLIENT_ID`, `BIRDCAGE_OIDC_CLIENT_SECRET_FILE` | no | Single sign-on through an OpenID Connect provider you run. All three or none, and `BIRDCAGE_PUBLIC_URL` must be set, because the redirect address is built from it. The secret is a path to a file. |
-| `BIRDCAGE_TRUSTED_PROXIES` | no | The reverse proxies whose forwarding header is believed. Empty by default. See [Running behind a reverse proxy](#running-behind-a-reverse-proxy). |
+| `BIRDCAGE_OIDC_ISSUER`, `BIRDCAGE_OIDC_CLIENT_ID`, `BIRDCAGE_OIDC_CLIENT_SECRET_FILE` | no | Single sign-on through an OpenID Connect provider you run. All three or none, and `BIRDCAGE_PUBLIC_URL` must be set, because the redirect address is built from it. The secret is a path to a file. If the provider cannot be reached when birdcage starts, birdcage starts without SSO and says so in the log; SSO returns on the next start once the provider answers. Keep one admin with a password. |
+| `BIRDCAGE_TRUSTED_PROXIES` | no | The reverse proxies whose forwarding header is believed. Empty by default. Set it only when the dashboard is reachable solely through the proxy. See [Running behind a reverse proxy](#running-behind-a-reverse-proxy). |
 | `BIRDCAGE_CLIENT_IP_HEADER` | no | The header read for a trusted proxy. Defaults to `X-Forwarded-For`. |
 
 Secrets are only ever given as the path to a file, never as a value, so
@@ -271,6 +271,20 @@ token, licence-key and client-secret files; the key file is used exactly as
 it is. None of them is ever logged.
 
 ### Running behind a reverse proxy
+
+Trust a proxy only when the dashboard is reachable solely through it. A
+trusted peer may name any client address, so a client that reaches the
+dashboard directly from a trusted range can forge its own:
+
+- **Same host:** use mode 3 (`BIRDCAGE_HTTP_ADDR=127.0.0.1:8080` or a unix
+  socket) and trust `127.0.0.1` or `unix`.
+- **Compose:** do not publish birdcage's port; trust the proxy's address.
+- Never set `BIRDCAGE_TRUSTED_PROXIES` while also browsing the dashboard
+  directly.
+
+Birdcage cannot check this. It logs a warning at start-up when
+`BIRDCAGE_TRUSTED_PROXIES` is set and the dashboard listens on a TCP
+address that is not loopback.
 
 Birdcage rate-limits failed sign-ins per client address as well as per
 account, and records that address in the sign-in history. Behind a reverse
@@ -310,7 +324,8 @@ BIRDCAGE_CLIENT_IP_HEADER=X-Forwarded-For # the default
   header holding one address works unchanged.
 
 The header is read **right to left**, skipping entries that are themselves
-trusted proxies, and the first untrusted address is the client. The
+trusted proxies listed by address or CIDR, and the first untrusted address
+is the client. The
 direction matters: each hop appends the address it saw, so the right-most
 entries were written by your own proxies, while anything further left could
 have been forged by the client before the request arrived. If every entry
@@ -318,6 +333,16 @@ is a trusted proxy, the left-most is used. If an entry is not an address,
 or the header is missing, or the connecting peer is not in the list,
 birdcage uses the connecting peer's own address rather than anything the
 client chose.
+
+`private` believes the header from a proxy on a private address, but never
+skips private entries in the chain: the right-most address that proxy wrote
+is the client. Its ranges hold your LAN and Tailscale users too, and one of
+them could otherwise write any address in front of its own and have its own
+entry skipped. So with two proxies on private addresses (say, a LAN proxy in
+front of a container one) list the inner one by address or CIDR as well
+(`private,` then the inner proxy's address). The same reasoning applies to any CIDR you list: a
+CIDR that contains your users lets them pick their own address, so list the
+proxy's address, not its subnet.
 
 A bad entry in the list stops birdcage starting, naming the setting; it is
 never skipped, because a skipped entry would leave you believing forwarded

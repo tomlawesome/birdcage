@@ -1,0 +1,20 @@
+# Exceptions to the private-details commit check (ai/agent-infra#32).
+#
+# That check stops real network addresses of the owner's machines reaching
+# this repository, which is mirrored publicly. It cannot tell a real
+# address from an invented one, so files that need invented addresses as
+# test inputs are listed here, each for the address rules only: a name,
+# login or secret in the same file is still caught.
+#
+# Every address in these files is invented and belongs to no real machine.
+# Add a file here only when its test needs a private-range address to test
+# the behaviour at all; never list a file that holds real configuration.
+# Approved by the owner, 2026-11-15.
+
+[[allowlists]]
+description = "invented private and Tailscale addresses: trusted-proxy tests, where the behaviour under test depends on the address being in a private range"
+targetRules = ["ip-address", "ipv6-address"]
+paths = [
+  '''^internal/auth/trusted_proxies_test\.go$''',
+  '''^cmd/birdcage/startup_proxy_test\.go$''',
+]

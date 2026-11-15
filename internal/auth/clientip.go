@@ -11,60 +11,68 @@ import (
 // the cloud load balancers set without being asked.
 const defaultClientIPHeader = "X-Forwarded-For"
 
-// ClientIP is the address the login limiter and audit records use (ADR-0016
-// decision 4; the same rule as mikroview's).
-//
-// With no trusted proxies, or a connecting peer outside them, it is the
-// peer's own address and every forwarding header is ignored: a header is
-// only text the client sent, so believing one unconditionally would give
-// every request a fresh limiter bucket.
-//
-// For a trusted peer the named header (all its lines, read as one comma
-// separated list) is walked right to left, skipping entries that are
-// themselves trusted proxies; the first untrusted entry is the client. Each
-// proxy appends the address it saw, so the right-most entries were written
-// by proxies we trust and anything further left may be forged. If every
-// entry is trusted the left-most is returned; an entry that is not an
-// address, or no header at all, falls back to the peer, never to something
-// the client chose.
-func ClientIP(r *http.Request, trusted []netip.Prefix, header string) string {
-	return ClientIPWith(r, trusted, false, header)
+// ProxyTrust says which forwarding headers are believed and how far.
+// Peers are the connecting addresses whose header is believed; Hops are the
+// chain entries stepped over when walking it. The private shorthand adds
+// peers only, never hops: its ranges contain whole client populations, and a
+// client inside a hop range could otherwise write any address left of its
+// own entry and have its own entry skipped. Unix trusts a peer on the unix
+// socket (BIRDCAGE_TRUSTED_PROXIES entry "unix"; only processes allowed to
+// open the socket file can connect); it never makes a TCP peer trusted and
+// adds no hops.
+type ProxyTrust struct {
+	Peers []netip.Prefix
+	Hops  []netip.Prefix
+	Unix  bool
 }
 
 // unixPeer is the RemoteAddr net/http gives a request that arrived on a
 // unix-domain socket: it has no IP address to match against a prefix.
 const unixPeer = "@"
 
-// ClientIPWith is ClientIP with one more way for a peer to be trusted: when
-// trustUnix is true a unix-socket peer counts as a trusted proxy, even with
-// no address prefixes listed (BIRDCAGE_TRUSTED_PROXIES entry "unix"; only
-// processes allowed to open the socket file can connect). trustUnix never
-// makes a TCP peer trusted. Otherwise the walk is that of ClientIP.
-func ClientIPWith(r *http.Request, trusted []netip.Prefix, trustUnix bool, header string) string {
+// ClientIPWith is the address the login limiter and audit records use
+// (ADR-0016 decision 4; the same rule as mikroview's).
+//
+// With no trusted peers, or a connecting peer outside them, it is the
+// peer's own address and every forwarding header is ignored: a header is
+// only text the client sent, so believing one unconditionally would give
+// every request a fresh limiter bucket.
+//
+// For a trusted peer the named header (all its lines, read as one comma
+// separated list) is walked right to left, skipping entries inside
+// trust.Hops; the first entry outside them is the client. Each proxy
+// appends the address it saw, so the right-most entries were written by
+// proxies we trust and anything further left may be forged. With no hops
+// the right-most entry, the one the trusted peer appended, is the client:
+// the private shorthand trusts the peer, not the chain. If every entry is a
+// hop the left-most is returned; an entry that is not an address, or no
+// header at all, falls back to the peer, never to something the client
+// chose.
+func ClientIPWith(r *http.Request, trust ProxyTrust, header string) string {
 	peer := peerHost(r)
 	if r.RemoteAddr == unixPeer {
-		if !trustUnix {
+		if !trust.Unix {
 			return peer
 		}
 	} else {
-		if len(trusted) == 0 {
+		if len(trust.Peers) == 0 {
 			return peer
 		}
 		peerAddr, err := netip.ParseAddr(peer)
-		if err != nil || !isTrusted(trusted, peerAddr) {
+		if err != nil || !isTrusted(trust.Peers, peerAddr) {
 			return peer
 		}
 	}
 	if header == "" {
 		header = defaultClientIPHeader
 	}
-	if ip, ok := forwardedClient(trusted, r.Header.Values(header)); ok {
+	if ip, ok := forwardedClient(trust.Hops, r.Header.Values(header)); ok {
 		return ip
 	}
 	return peer
 }
 
-func forwardedClient(trusted []netip.Prefix, values []string) (string, bool) {
+func forwardedClient(hops []netip.Prefix, values []string) (string, bool) {
 	var chain []string
 	for _, v := range values {
 		for _, part := range strings.Split(v, ",") {
@@ -79,13 +87,13 @@ func forwardedClient(trusted []netip.Prefix, values []string) (string, bool) {
 		if !ok {
 			return "", false // malformed from here leftwards: believe none of it
 		}
-		if !isTrusted(trusted, addr) {
+		if !isTrusted(hops, addr) {
 			return addr.String(), true
 		}
 		last = addr
 	}
 	if last.IsValid() {
-		return last.String(), true // every entry trusted: the left-most
+		return last.String(), true // every entry a hop: the left-most
 	}
 	return "", false
 }

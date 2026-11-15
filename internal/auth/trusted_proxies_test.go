@@ -20,16 +20,17 @@ import (
 //
 //	auth.Config.TrustedProxies []netip.Prefix
 //	auth.Config.ClientIPHeader string
-//	auth.ClientIP(r *http.Request, trusted []netip.Prefix, header string) string
 //
-// ClientIP returns the address alone (no port), in the form
-// netip.Addr.String gives.
-//
-// Item 15 (a proxy connected over the dashboard's unix socket) adds, with
-// ClientIP unchanged:
+// Item 15 (a proxy connected over the dashboard's unix socket) adds:
 //
 //	auth.Config.TrustUnixSocket bool
-//	auth.ClientIPWith(r *http.Request, trusted []netip.Prefix, trustUnix bool, header string) string
+//	auth.ClientIPWith(r *http.Request, trust auth.ProxyTrust, header string) string
+//
+// ClientIPWith returns the address alone (no port), in the form
+// netip.Addr.String gives.
+//
+// SEC-A1 splits trust: ProxyTrust.Peers say whose header is believed,
+// ProxyTrust.Hops (also Config.TrustedHops) which chain entries are skipped.
 //
 // A unix-socket peer has no IP address. Go's http server sets its
 // RemoteAddr to "@" (checked against net/http with a unix listener); an
@@ -60,11 +61,35 @@ func TestClientIPResolution(t *testing.T) {
 		name      string
 		peer      string
 		trusted   []string
+		noHops    bool // trusted are peers only: no chain entry is skipped
 		trustUnix bool
 		header    string
 		lines     map[string][]string
 		want      string
 	}{
+		{
+			name: "private shorthand: a client on a private range cannot forge an entry further left",
+			peer: "10.0.0.2:4000", trusted: privateRanges, noHops: true, header: xff,
+			lines: map[string][]string{xff: {"8.8.8.8, 192.168.1.50"}},
+			want:  "192.168.1.50",
+		},
+		{
+			name: "private shorthand: a Tailscale client cannot forge an entry further left",
+			peer: "100.64.0.2:4000", trusted: privateRanges, noHops: true, header: xff,
+			lines: map[string][]string{xff: {"203.0.113.7, 100.64.0.9"}},
+			want:  "100.64.0.9",
+		},
+		{
+			name: "private shorthand: honest LAN client",
+			peer: "10.0.0.2:4000", trusted: privateRanges, noHops: true, header: xff,
+			lines: map[string][]string{xff: {"192.168.1.50"}},
+			want:  "192.168.1.50",
+		},
+		{
+			name: "private shorthand: trusted peer, no header: the peer",
+			peer: "10.0.0.2:4000", trusted: privateRanges, noHops: true, header: xff,
+			want: "10.0.0.2",
+		},
 		{
 			name: "no trusted proxies: the header is ignored",
 			peer: "192.0.2.10:5000", header: xff,
@@ -285,15 +310,13 @@ func TestClientIPResolution(t *testing.T) {
 					r.Header.Add(name, v)
 				}
 			}
-			got := auth.ClientIPWith(r, prefixes(t, tc.trusted...), tc.trustUnix, tc.header)
+			trust := auth.ProxyTrust{Peers: prefixes(t, tc.trusted...), Unix: tc.trustUnix}
+			if !tc.noHops {
+				trust.Hops = prefixes(t, tc.trusted...)
+			}
+			got := auth.ClientIPWith(r, trust, tc.header)
 			if got != tc.want {
 				t.Errorf("ClientIPWith(peer %s, trusted %v, trustUnix %v, header %q, lines %v) = %q, want %q", tc.peer, tc.trusted, tc.trustUnix, tc.header, tc.lines, got, tc.want)
-			}
-			if !tc.trustUnix {
-				// ClientIP is ClientIPWith with unix not trusted.
-				if plain := auth.ClientIP(r, prefixes(t, tc.trusted...), tc.header); plain != tc.want {
-					t.Errorf("ClientIP(peer %s, trusted %v, header %q, lines %v) = %q, want %q", tc.peer, tc.trusted, tc.header, tc.lines, plain, tc.want)
-				}
 			}
 		})
 	}
@@ -347,8 +370,16 @@ func startRegistered(t *testing.T, database *db.DB, cfg auth.Config) *system {
 	return sys
 }
 
+// privateRanges are the nine ranges the private shorthand stands for.
+var privateRanges = []string{
+	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+	"100.64.0.0/10", "169.254.0.0/16",
+	"::1/128", "fc00::/7", "fe80::/10",
+}
+
 // loopbackProxies lists the peers the test server's own connections come
 // from, so the test server plays the trusted reverse proxy.
+
 func loopbackProxies(t *testing.T) []netip.Prefix {
 	return prefixes(t, "127.0.0.0/8", "::1/128")
 }
@@ -430,6 +461,25 @@ func TestForgedLeftMostEntryDoesNotEscapeTheLimiter(t *testing.T) {
 	}
 	if status := oneFailedSignIn(t, base, "other", map[string]string{"X-Forwarded-For": "6.6.6.6, 198.51.100.2"}); status != http.StatusUnauthorized {
 		t.Errorf("a different real client with the same forged left-most entry: status %d, want 401", status)
+	}
+}
+
+// TestPrivateShorthandForgedEntryDoesNotEscapeTheLimiter (SEC-A1): with the
+// private shorthand (peers only, no hops) a client on a private address
+// cannot step over its own entry: the right-most entry names it, so varying
+// what is on the left does not give it fresh limiter buckets.
+func TestPrivateShorthandForgedEntryDoesNotEscapeTheLimiter(t *testing.T) {
+	database := openDatabase(t)
+	sys := startRegistered(t, database, auth.Config{Key: testKey('a'), TrustedProxies: prefixes(t, privateRanges...), TrustedHops: nil, ClientIPHeader: "X-Forwarded-For"})
+	base := sys.server.URL
+
+	var last int
+	for i := 1; i <= 6; i++ {
+		forged := fmt.Sprintf("203.0.113.%d, 192.168.1.50", i)
+		last = oneFailedSignIn(t, base, fmt.Sprintf("sec-a1-%d", i), map[string]string{"X-Forwarded-For": forged})
+	}
+	if last != http.StatusTooManyRequests {
+		t.Errorf("sixth failed sign-in with a different forged left-most entry each time: status %d, want 429", last)
 	}
 }
 

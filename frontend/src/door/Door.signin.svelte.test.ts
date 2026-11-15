@@ -1,5 +1,8 @@
+/// <reference types="node" />
+// node:fs reads the shipped CSS for the never-red check; vitest runs in Node.
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import Door from './Door.svelte'
 import { accountReply, deferred, flush, jsonReply, problem, proveReply, secondFactorReply, session, stubBrowser, stubCredentials, stubServer } from './testkit'
 
@@ -101,7 +104,25 @@ describe('sign in screen', () => {
     expect(password().value).toBe('')
     expect(document.activeElement).toBe(password())
     expect(account().value).toBe('ana')
-    expect(getComputedStyle(alert).color).not.toMatch(/^(red|rgb\(\s*255,\s*0,\s*0\s*\))$/)
+    // vitest does not load CSS (an import, even ?raw, comes back empty),
+    // so with nothing more every colour reads as the default and a red
+    // alert would pass. Load the shipped app and door styles into the
+    // page from disk: jsdom then cascades them and resolves var(--ink),
+    // so the alert's colour is the one a browser would show.
+    const css = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8')
+    const style = document.createElement('style')
+    style.textContent = css('../app.css') + '\n' + css('./door.css')
+    document.head.append(style)
+    try {
+      const ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()
+      expect(ink).toMatch(/^#[0-9a-f]{6}$/i)
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(ink.slice(i, i + 2), 16))
+      // Ink text, never red (ADR-0017 decision 1).
+      expect(getComputedStyle(alert).color).toBe(`rgb(${r}, ${g}, ${b})`)
+      expect(getComputedStyle(alert).color).not.toMatch(/^(red|rgb\(\s*255,\s*0,\s*0\s*\))$/)
+    } finally {
+      style.remove()
+    }
   })
 
   it('the refusal text is identical whatever the detail says', async () => {
@@ -150,7 +171,8 @@ describe('sign in screen', () => {
   })
 
   it('a confirm challenge (#189) also says Sign-in failed', async () => {
-    stubServer({ 'POST /api/auth/login': jsonReply({ status: 'confirm', challenge: 'confirm' }) })
+    // gauntlet v0.4.2's ConfirmationChallenge: exactly {confirm: true}.
+    stubServer({ 'POST /api/auth/login': jsonReply({ confirm: true }) })
     render(Door, { session: session(), onenter: () => {} })
     await submit()
     expect((await screen.findByRole('alert')).textContent).toContain('Sign-in failed. Try again.')

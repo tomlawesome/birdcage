@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"log/slog"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -255,5 +258,118 @@ func TestLoadStartupConfigStillRefusesABadEntryBesideUnix(t *testing.T) {
 				t.Errorf("error = %q, want it to name %s", err.Error(), testEnvTrustedProxies)
 			}
 		})
+	}
+}
+
+// TestParseTrustedProxiesSplitsPeersFromHops (SEC-A1): the private shorthand
+// names peers (whose header is believed) but never hops (chain entries that
+// are skipped); an explicit address or CIDR is both.
+func TestParseTrustedProxiesSplitsPeersFromHops(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		peersHave []string
+		peersLack []string
+		hopsHave  []string
+		hopsLack  []string
+	}{
+		{"private: peers only", "private", []string{"10.1.2.3", "100.64.0.9"}, nil, nil, []string{"10.1.2.3", "100.64.0.9", "192.168.1.50", "127.0.0.1"}},
+		{"private plus an address: only the address is a hop", "private,203.0.113.9", []string{"10.1.2.3", "203.0.113.9"}, nil, []string{"203.0.113.9"}, []string{"10.1.2.3", "100.64.0.9"}},
+		{"an explicit CIDR is both", "10.0.0.0/8", []string{"10.1.2.3"}, nil, []string{"10.1.2.3"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			peers, hops, _, err := parseTrustedProxies(tc.value)
+			if err != nil {
+				t.Fatalf("parseTrustedProxies(%q): %v", tc.value, err)
+			}
+			for _, a := range tc.peersHave {
+				if !covers(peers, a) {
+					t.Errorf("peers %v do not contain %s", peers, a)
+				}
+			}
+			for _, a := range tc.hopsHave {
+				if !covers(hops, a) {
+					t.Errorf("hops %v do not contain %s", hops, a)
+				}
+			}
+			for _, a := range tc.hopsLack {
+				if covers(hops, a) {
+					t.Errorf("hops %v contain %s, want none of the private shorthand", hops, a)
+				}
+			}
+			if tc.value == "private" && len(hops) != 0 {
+				t.Errorf("hops = %v, want empty for private", hops)
+			}
+		})
+	}
+}
+
+// warnRecorder is a slog handler that keeps the Warn-or-higher messages.
+type warnRecorder struct {
+	mu    *sync.Mutex
+	warns *[]string
+}
+
+func newWarnRecorder() *warnRecorder {
+	return &warnRecorder{mu: &sync.Mutex{}, warns: &[]string{}}
+}
+
+func (h *warnRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (h *warnRecorder) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= slog.LevelWarn {
+		h.mu.Lock()
+		*h.warns = append(*h.warns, r.Message)
+		h.mu.Unlock()
+	}
+	return nil
+}
+func (h *warnRecorder) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *warnRecorder) WithGroup(string) slog.Handler      { return h }
+
+// trustedProxyWarnings loads the config and returns the Warn-level
+// configLog messages that name BIRDCAGE_TRUSTED_PROXIES.
+func trustedProxyWarnings(t *testing.T, env map[string]string) []string {
+	t.Helper()
+	rec := newWarnRecorder()
+	if _, err := loadStartupConfig(startupEnv(t, env), slog.New(rec), discardLog(), discardLog(), discardLog()); err != nil {
+		t.Fatalf("loadStartupConfig: %v", err)
+	}
+	var got []string
+	for _, m := range *rec.warns {
+		if strings.Contains(m, testEnvTrustedProxies) {
+			got = append(got, m)
+		}
+	}
+	return got
+}
+
+// Residual of SEC-A1: trusted proxies on a listener reachable off the box
+// warn once; loopback, unix-socket and unset settings stay quiet.
+func TestLoadStartupConfigWarnsTrustedProxiesOnNonLoopbackBind(t *testing.T) {
+	got := trustedProxyWarnings(t, map[string]string{testEnvTrustedProxies: "private"})
+	if len(got) != 1 {
+		t.Errorf("Warn lines naming %s = %q, want exactly one (default bind is non-loopback)", testEnvTrustedProxies, got)
+	}
+}
+
+func TestLoadStartupConfigNoTrustedProxiesWarningOnLoopbackBind(t *testing.T) {
+	got := trustedProxyWarnings(t, map[string]string{testEnvTrustedProxies: "private", testEnvHTTPAddr: "127.0.0.1:8080"})
+	if len(got) != 0 {
+		t.Errorf("Warn lines = %q, want none on a loopback bind", got)
+	}
+}
+
+func TestLoadStartupConfigNoTrustedProxiesWarningOnUnixSocket(t *testing.T) {
+	got := trustedProxyWarnings(t, map[string]string{testEnvTrustedProxies: "unix", testEnvHTTPAddr: "unix:///run/birdcage/http.sock"})
+	if len(got) != 0 {
+		t.Errorf("Warn lines = %q, want none on a unix socket", got)
+	}
+}
+
+func TestLoadStartupConfigNoTrustedProxiesWarningWhenUnset(t *testing.T) {
+	got := trustedProxyWarnings(t, nil)
+	if len(got) != 0 {
+		t.Errorf("Warn lines = %q, want none when %s is unset", got, testEnvTrustedProxies)
 	}
 }

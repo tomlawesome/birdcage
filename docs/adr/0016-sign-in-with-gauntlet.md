@@ -62,6 +62,14 @@ on their own listeners and never pass through the dashboard's sign-in.
    to left past trusted entries; the first untrusted entry wins. Amended
    by owner answer 25a on 2026-10-10: behind a reverse proxy, as mikroview
    (ai/mikroview#1287); this replaces "trusts no proxy headers".
+   Amended 2026-11-15 (SEC-A1): `private` trusts the connecting peer only
+   and never makes chain entries skipped; explicit addresses and CIDRs are
+   both trusted peers and skipped hops. Trusting a proxy assumes the
+   dashboard is reachable solely through it, which code cannot check: same
+   host uses mode 3 (loopback or unix socket), compose does not publish
+   birdcage's port, and `BIRDCAGE_TRUSTED_PROXIES` is never set while the
+   dashboard is also browsed directly. Start-up warns when it is set on a
+   TCP listener that is not loopback.
 5. **Admin passkey (ruling 1, settles #180).** Required when
    `BIRDCAGE_PUBLIC_URL` is an https URL on a domain name and passkeys are
    wired; optional otherwise. `BIRDCAGE_AUTH_ADMIN_PASSKEY`
