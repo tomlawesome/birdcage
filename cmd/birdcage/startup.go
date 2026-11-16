@@ -742,7 +742,8 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 // current certificate names it: its DNSNames and IPAddresses are exactly
 // BIRDCAGE_DASHBOARD_HOST's list or the guessed names in minted mode, and
 // the operator's names for a given certificate. Asking getCert each time
-// follows a reloaded or renewed certificate. Wildcard SANs are not matched.
+// follows a reloaded or renewed certificate. Wildcard SANs are not matched,
+// and a requested name containing '*' is refused.
 func certHostAllower(getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)) tlssniff.HostAllower {
 	return func(requested string) string {
 		host := requested
@@ -750,7 +751,8 @@ func certHostAllower(getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error
 			host = h
 		}
 		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-		if host == "" {
+		// A literal wildcard SAN must never match a Host.
+		if host == "" || strings.Contains(host, "*") {
 			return ""
 		}
 		cert, err := getCert(&tls.ClientHelloInfo{})

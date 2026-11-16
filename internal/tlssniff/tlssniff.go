@@ -18,7 +18,9 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
+	"net/textproto"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -165,26 +167,85 @@ func (l *listener) sniff(c net.Conn) {
 // request that is malformed, oversized or too slow gets no answer at all.
 func (l *listener) answerPlain(c net.Conn, first byte) {
 	r := io.MultiReader(bytes.NewReader([]byte{first}), io.LimitReader(c, maxRequestBytes-1))
-	req, err := http.ReadRequest(bufio.NewReaderSize(r, maxRequestBytes))
+	target, hdr, err := readHead(bufio.NewReaderSize(r, maxRequestBytes))
 	if err != nil {
 		l.log.Debug(fmt.Sprintf("tlssniff: unreadable plain request from %s: %v", c.RemoteAddr(), err))
 		return
 	}
-	name := ""
-	if req.Host != "" {
-		name = l.allow(req.Host)
+	// The Host header as sent: for an absolute-form target net/http would
+	// take the host from the target, which the client chose freely.
+	hosts := hdr.Values("Host")
+	name, port := "", ""
+	if len(hosts) == 1 && hosts[0] != "" {
+		name = l.allow(hosts[0])
+		port = redirectPort(hosts[0], l.port)
 	}
-	if name == "" || l.port == "" || strings.ContainsAny(name, "\r\n/ ") {
-		l.log.Debug(fmt.Sprintf("tlssniff: plain request from %s for host %q refused", c.RemoteAddr(), req.Host))
-		_, _ = io.WriteString(c, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-		return
-	}
-	path := req.URL.RequestURI()
+	path := target.EscapedPath()
 	if !strings.HasPrefix(path, "/") {
 		path = "/"
 	}
-	loc := "https://" + net.JoinHostPort(name, l.port) + path
+	if target.RawQuery != "" {
+		path += "?" + target.RawQuery
+	}
+	if name == "" || port == "" || strings.ContainsAny(name, "/ ") || !headerSafe(name+path) {
+		l.log.Debug(fmt.Sprintf("tlssniff: plain request from %s for host %q refused", c.RemoteAddr(), hosts))
+		_, _ = io.WriteString(c, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		return
+	}
+	loc := "https://" + net.JoinHostPort(name, port) + path
 	_, _ = io.WriteString(c, "HTTP/1.1 308 Permanent Redirect\r\nLocation: "+loc+"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+// readHead reads an HTTP/1.x request line and headers. Only the target's
+// path and query are used later; its scheme and host, if any, are dropped.
+func readHead(br *bufio.Reader) (*url.URL, textproto.MIMEHeader, error) {
+	tp := textproto.NewReader(br)
+	line, err := tp.ReadLine()
+	if err != nil {
+		return nil, nil, err
+	}
+	parts := strings.Split(line, " ")
+	if len(parts) != 3 || parts[0] == "" || !strings.HasPrefix(parts[2], "HTTP/1.") {
+		return nil, nil, fmt.Errorf("malformed request line %q", line)
+	}
+	target, err := url.ParseRequestURI(parts[1])
+	if err != nil {
+		return nil, nil, err
+	}
+	hdr, err := tp.ReadMIMEHeader()
+	if err != nil {
+		return nil, nil, err
+	}
+	return target, hdr, nil
+}
+
+// redirectPort is the port the browser used, from its Host header (it may
+// differ from the listener's behind a port map), else the listener's. ""
+// means the Host names a port that is not a decimal number in 1-65535.
+func redirectPort(hostHeader, listenerPort string) string {
+	_, p, err := net.SplitHostPort(hostHeader)
+	if err != nil {
+		return listenerPort // no port given
+	}
+	if p == "" || len(p) > 5 || strings.Trim(p, "0123456789") != "" {
+		return ""
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+// headerSafe reports whether s has only visible ASCII, so it cannot break
+// out of the Location header.
+func headerSafe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] >= 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // replayConn returns the sniffed byte before reading from the connection.

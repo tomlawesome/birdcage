@@ -223,8 +223,8 @@ plaintext listener reachable off loopback, and there is no fifth mode.
    volume is already on the right side of that line.
 
 In modes 1 and 2, an `http://` visit to the dashboard's port is
-redirected to `https://` on the same port, but only for a name the
-certificate covers; any other name gets a bare `400`. Nothing else is
+redirected to `https://` on the port the browser used, but only for a
+name the certificate covers; any other name gets a bare `400`. Nothing else is
 ever served over plain HTTP there (#212).
 
 ACME (automatic certificate issuance/renewal) was considered and ruled
