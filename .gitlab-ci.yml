@@ -994,9 +994,7 @@ test:smoke:postgres:
 # TWICE (#112, second incident): the first use's ci-ensure-image.sh call
 # already recovered it, but nothing stopped a second concurrent prune from
 # deleting it again before the second use, and nothing re-checked before
-# that second use ran. That is now fixed at both ends: the prune below
-# only removes a tag old enough that no pipeline still running could have
-# built it (see that job's own comment), and every script with a second
+# that second use ran. That is now fixed: every script with a second
 # use of a shared tag re-runs scripts/ci-ensure-image.sh immediately
 # before that second use. This registry push is transport between this
 # pipeline's own jobs, not a release: publication that customers or an
@@ -1063,8 +1061,8 @@ build:images:
         # image I am pushing" the same statement.
         image_id="$(docker image inspect --format '{{.Id}}' "$local_tag")"
         # Pushed to this project's OWN registry, never GHCR -- this is
-        # transport between this pipeline's own jobs (#112), so a shared
-        # daemon's prune below can never delete the only copy. It is not a
+        # transport between this pipeline's own jobs (#112), so a local
+        # tag going missing can never lose the only copy. It is not a
         # release: release:push alone publishes anywhere a consumer would
         # ever pull from. scripts/publish-image.sh both pushes and proves
         # the round trip, the same guarantee release:push already relies on
@@ -2793,8 +2791,7 @@ release:push:
       docker tag "$OPENCANARY_BUILD_IMAGE" "${OPENCANARY_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
-      # which is also what would happen if a second runner host ever meant
-      # "the same pipeline" no longer implied "the same daemon".
+      # which is also what would happen if the local tag were ever replaced.
       birdcage_digest="$(scripts/publish-image.sh "${BIRDCAGE_RELEASE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
       mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
       nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
@@ -2802,7 +2799,7 @@ release:push:
       holder_digest="$(scripts/publish-image.sh "${HOLDER_RELEASE_REPO}:${anchor}" "$HOLDER_BUILD_ID")"
       opencanary_digest="$(scripts/publish-image.sh "${OPENCANARY_RELEASE_REPO}:${anchor}" "$OPENCANARY_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
-      # docker:29-cli has no python and no jq, and a digest read wrongly is
+      # docker:29-cli has no jq, and a digest read wrongly is
       # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
       # called BIRDCAGE_DIGEST would be inherited by every later job and
       # silently answer for scripts/verify-validation-evidence.sh, which
