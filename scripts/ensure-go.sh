@@ -22,9 +22,8 @@ set -euo pipefail
 GO_VERSION="go1.27.4"
 # SHA-256 of go1.27.4.linux-amd64.tar.gz, copied from
 #   https://go.dev/dl/?mode=json
-# fetched 2026-10-28; archive size 70588678 bytes. Cross-checked the same
-# day by separately downloading the archive and hashing it locally -- the
-# two matched.
+# (include=all); go1.27.4 entry fetched and compared with this pin
+# 2026-11-16: hash matches, archive size 70680823 bytes.
 GO_ARCHIVE_SHA256="7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
 
 GO_URL=""

@@ -39,10 +39,10 @@ describe('session expired', () => {
 
   it('passkey link only when passkeys.signIn', () => {
     stubServer({})
-    const a = render(Door, { session: expired({ passkeys: { status: 'ready', signIn: true } }), onenter: () => {} })
+    const a = render(Door, { session: expired({ passkeys: { count: 0, status: 'ready', signIn: true } }), onenter: () => {} })
     expect(screen.getByText('Use your passkey instead')).toBeTruthy()
     a.unmount()
-    render(Door, { session: expired({ passkeys: { status: 'ready', signIn: false } }), onenter: () => {} })
+    render(Door, { session: expired({ passkeys: { count: 0, status: 'ready' } }), onenter: () => {} })
     expect(screen.queryByText('Use your passkey instead')).toBeNull()
   })
 
@@ -127,7 +127,7 @@ describe('session expired', () => {
   it('the passkey link switches to the passkey screen', async () => {
     stubCredentials()
     stubServer({})
-    render(Door, { session: expired({ passkeys: { status: 'ready', signIn: true } }), onenter: () => {} })
+    render(Door, { session: expired({ passkeys: { count: 0, status: 'ready', signIn: true } }), onenter: () => {} })
     await fireEvent.click(screen.getByText('Use your passkey instead'))
     expect(await screen.findByRole('heading', { name: 'Use your passkey' })).toBeTruthy()
   })

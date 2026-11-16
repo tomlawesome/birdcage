@@ -149,9 +149,9 @@ const SECRET = 'JBSWY3DPEHPK3PXP'
 const URI = 'otpauth://totp/birdcage:ana?secret=' + SECRET
 // deliberately not in sorted order
 const CODES = ['q7m2-x9kd', 'b4n8-t2wz', 'z1c5-h6rj', 'a9p3-v7ls', 'm2d6-f8yg', 'k5t1-w3nb', 'x8h4-c2qe', 'f3v9-r5ju', 'c6s7-p1ma', 'd2g8-y4zk']
-const owed = (over: Record<string, unknown> = {}) => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { status: 'ready', signIn: false }, ...over })
+const owed = (over: Record<string, unknown> = {}) => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { count: 0, status: 'ready' }, ...over })
 const enrolReply = () => jsonReply({ uri: URI, secret: SECRET })
-const codesReply = () => jsonReply({ recoveryCodes: CODES, codes: CODES })
+const codesReply = () => jsonReply({ recoveryCodes: CODES })
 
 describe('second step: choose', () => {
   it('shows heading, subtitle, both keys and the thread line', () => {
@@ -174,7 +174,7 @@ describe('second step: choose', () => {
 
   it('passkey key is disabled, with the https note instead of its description, unless passkeys are ready', () => {
     stubServer({})
-    render(Door, { session: owed({ passkeys: { status: 'needs-https', signIn: false } }), onenter: () => {} })
+    render(Door, { session: owed({ passkeys: { count: 0, status: 'insecure' } }), onenter: () => {} })
     expect(screen.getByText('Passkeys need an https web address.')).toBeTruthy()
     expect(screen.queryByText('Fingerprint, face or device PIN.')).toBeNull()
     const key = screen.getByText('Passkey').closest('button')
@@ -260,7 +260,7 @@ describe('second step: prove it with the authenticator app', () => {
 
   it('omits the passkey link when passkeys are not offered', async () => {
     stubServer({ 'POST /api/auth/totp/enrol': enrolReply() })
-    render(Door, { session: owed({ passkeys: { status: 'needs-https', signIn: false } }), onenter: () => {} })
+    render(Door, { session: owed({ passkeys: { count: 0, status: 'insecure' } }), onenter: () => {} })
     await fireEvent.click(screen.getByText('Authenticator app'))
     await type(ph('password'), 'pw-fake-1')
     await fireEvent.click(btn('Continue'))

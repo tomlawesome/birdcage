@@ -10,9 +10,11 @@ export function session(over: Record<string, unknown> = {}): SessionState {
     mustChangePassword: false,
     mustEnrolSecondFactor: false,
     mustEnrolPasskey: false,
-    resumable: false,
+    hasLocalPassword: true,
+    ssoConnected: false,
+    hasTOTP: false,
     ssoAvailable: false,
-    passkeys: { status: 'ready', signIn: false },
+    passkeys: { count: 0, status: 'ready' },
     ...over,
   } as unknown as SessionState
 }
@@ -30,17 +32,18 @@ export function problem(kind: string, status: number, detail = 'detail text'): R
   )
 }
 
-// Reply bodies. The specification does not give the wire shape of these;
-// the fields are a superset so the build may pick any one reasonable name.
+// Reply bodies, in the wire shapes of gauntlet v0.4.2's docs/api/auth.yaml
+// (the Account, SecondFactorChallenge and ProveChallenge schemas; the
+// sign-in-screens specification, docs/design/sign-in-screens.md, defers to
+// it). The schemas allow no extra properties, so none are added here.
 export function accountReply(username = 'ana', role = 'admin') {
-  return jsonReply({ status: 'account', account: { username, role }, username, role })
+  return jsonReply({ username, role })
 }
 export function secondFactorReply(methods: string[]) {
-  return jsonReply({ status: 'secondFactor', challenge: 'secondFactor', secondFactor: methods, methods })
+  return jsonReply(methods.includes('passkey') ? { secondFactor: methods, passkeyOrigin: 'http://localhost' } : { secondFactor: methods })
 }
 export function proveReply() {
-  // gauntlet v0.4.2's ProveChallenge: {prove: 'passkey', passkeyOrigin}.
-  return jsonReply({ status: 'prove', challenge: 'prove', prove: 'passkey', passkeyOrigin: 'http://localhost' })
+  return jsonReply({ prove: 'passkey', passkeyOrigin: 'http://localhost' })
 }
 
 export interface Call {
