@@ -54,31 +54,42 @@ needs to compile against a fresh clone — never commit a real build there.
 For day-to-day frontend work, run the dev server against a real backend on
 loopback `:8080` -- the dashboard refuses to start as plain HTTP on
 anything else (issue #63, see [SECURITY.md](SECURITY.md#network-exposure)),
-so a local run needs `BIRDCAGE_HTTP_ADDR` set explicitly:
+so a local run needs `BIRDCAGE_HTTP_ADDR` set explicitly. It also needs a
+sign-in key file (see [Sign-in](docs/configuration.md#sign-in)); make a
+throwaway one for local work:
 
 ```
-BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/birdcage
+head -c 32 /dev/urandom > /tmp/birdcage-dev.key
+BIRDCAGE_AUTH_KEY_FILE=/tmp/birdcage-dev.key BIRDCAGE_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/birdcage
 ```
 
 ```
 cd frontend && npm run dev
 ```
 
+The page opens on the sign-in door: on a fresh database, first run asks
+for the setup code birdcage wrote to its log, then a second step
+(authenticator app or passkey) before the dashboard.
+
 `npm run dev` also understands `?scene=quiet|silent|night` in the URL: it
 loads one of the fixtures under `frontend/src/dev/fixtures/` instead of
-calling the API, so the chrome and later slices can be built and reviewed
-without a running backend or seeded data.
+calling the API, and answers as a signed-in admin, so the door is skipped
+and the chrome and later slices can be built and reviewed without a
+running backend or seeded data.
 
 Other frontend commands: `npm run check` (types), `npm test` (vitest),
-`npm run preview` (serve a production build locally).
+`npm run preview` (serve a production build locally), and the pixel
+gates `npm run compare:band`, `compare:below-band`, `compare:canary` and
+`compare:door` (the sign-in door against its ratified round-18 mock-up).
 
 To check the built binary actually serves the dashboard end to end:
 seed a fresh SQLite database with the round-6 night story
 (`go run ./cmd/seed-story ./seed.db`), build the binary with a real
 frontend embedded as above, then run `BIRDCAGE_BIN=../birdcage npm run
 smoke` from `frontend/` -- it starts that binary against the seeded
-database on a free port and checks a real browser sees the sweep
-sentence and four tiles.
+database on a free port, signs in through the door's screens (first run with the
+logged setup code, an authenticator app, the recovery codes) and checks
+a real browser sees the sweep sentence and four tiles.
 
 ## Licence
 

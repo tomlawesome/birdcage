@@ -33,8 +33,8 @@
 # by grype itself into GRYPE_DB_CACHE_DIR below, on the operator's own
 # device.
 FROM alpine:3.24 AS grype
-ARG GRYPE_VERSION=0.119.0
-ARG GRYPE_SHA256=3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b
+ARG GRYPE_VERSION=0.121.3
+ARG GRYPE_SHA256=e9da18cc1429e786722e32161288103600efffd8e483c90761f90485bd1bec85
 WORKDIR /grype
 RUN apk add --no-cache curl \
     && curl -fsSL -o grype.tar.gz \
@@ -48,10 +48,16 @@ RUN apk add --no-cache curl \
 # CI job lint:agent-deps, run once per agent kind since #108): no server
 # package, and no other kind's own package (internal/opencanary), can be
 # linked in here.
-FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS agent
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS agent
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
+# No `go mod download` layer: that fetches every module in go.mod,
+# github.com/tomlawesome/gauntlet included, which this binary never
+# links (only cmd/birdcage does). `go build` fetches just what it uses.
+# GOPRIVATE keeps the owner's modules off proxy.golang.org and
+# sum.golang.org (ADR-0016 decision 1); with no git in this image, a
+# future need for one of them fails this build rather than going via
+# the public proxy. scripts/go-fetch-guard.py (lint:ci) holds this.
+ENV GOPRIVATE=github.com/tomlawesome/*
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/nightjar ./cmd/nightjar

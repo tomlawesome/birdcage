@@ -7,10 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
 import fixture from './dev/fixtures/canary-quiet.json'
 
+const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'tom', role: 'admin' }
+
 function stubFetch(canaryStatus = 200) {
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string) => {
+      // Signed in (issue #8): the session is read before the dashboard.
+      if (url === '/api/auth/session') return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(signedIn) })
       const body = url.startsWith('/api/canaries')
         ? fixture.canaries
         : url.startsWith('/api/canary')

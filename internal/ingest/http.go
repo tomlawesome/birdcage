@@ -56,7 +56,7 @@ type ingestHandler struct {
 // POST /ingest/events, and nothing else. It is never mounted alongside,
 // or reachable from, internal/api's dashboard mux -- issue #32: "on its
 // own submux, structurally unreachable from the dashboard routes and
-// from the requireAuth seam (#8)" -- so cmd/birdcage/main.go serves it
+// from the dashboard's sign-in (#8)" -- so cmd/birdcage/main.go serves it
 // from its own *http.Server (see NewTLSServer), a separate listener
 // entirely, not merely a separate path prefix on the dashboard's.
 //

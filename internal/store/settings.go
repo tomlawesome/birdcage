@@ -3,8 +3,8 @@
 // It carries what an operator decides while using birdcage -- the
 // self-test on/off switch, its schedule, the "same schedule as key
 // rotation" toggle, and the rotation schedule itself -- as rows a CLI
-// command (cmd/birdcage/settings.go) writes today and the dashboard (#8)
-// will write later, both through GetSetting/SetSetting rather than a
+// command (cmd/birdcage/settings.go) writes today and the dashboard may
+// write later, both through GetSetting/SetSetting rather than a
 // second copy that could disagree.
 //
 // The set of valid keys, and what counts as a valid value for each, is

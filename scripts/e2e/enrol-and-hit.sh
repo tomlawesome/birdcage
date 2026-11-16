@@ -16,6 +16,26 @@ set -eu
 
 . "$(dirname "$0")/journey.sh"
 
+step "the dashboard API needs a credential, and the journeys' token reads it"
+# Issue #8 (ADR-0016). stack.sh up's sign_in has already created the
+# first admin and minted the read API token every journey carries, and
+# on the way it saw what only exists before then: GET /api/alerts
+# answering 503 setup required, and a wrong setup code refused
+# (scripts/e2e/first-admin.sh). What is left is the door itself, now
+# that an admin exists: no credential is a 401, a token birdcage never
+# issued is a 401, and the minted one is a 200.
+dashboard_status() { # dashboard_status <extra curl flags>: http=<code> for GET /api/alerts
+  helper "curl -sS -o /dev/null -w 'http=%{http_code}' --cacert /tls/dashboard-ca.pem $1 '$BIRDCAGE_URL/api/alerts'"
+}
+anonymous="$(dashboard_status '')" || fail "GET /api/alerts with no credential could not be sent"
+[ "$anonymous" = http=401 ] || fail "GET /api/alerts with no credential answered $anonymous, want http=401"
+forged="$(dashboard_status "-H 'Authorization: Bearer not-a-token-birdcage-issued'")" \
+  || fail "GET /api/alerts with a made-up token could not be sent"
+[ "$forged" = http=401 ] || fail "GET /api/alerts with a token birdcage never issued answered $forged, want http=401"
+signed="$(dashboard_status "$DASHBOARD_AUTH")" || fail "GET /api/alerts with the journeys' token could not be sent"
+[ "$signed" = http=200 ] || fail "GET /api/alerts with the journeys' read API token answered $signed, want http=200"
+ok "no credential: $anonymous; a made-up token: $forged; the minted read token: $signed"
+
 step "the deploy token was burned"
 # --status never prints a token or a hash, only whether the session was
 # contacted -- so "contacted=<timestamp>" is the product's own evidence
@@ -55,7 +75,7 @@ step "GET /api/canaries carries the enrolled node's kind"
 # minted at enrolment (checked above), carried through
 # store.Provision, and now read back exactly as the product's own API
 # would show an operator.
-canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
+canary_json="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
   || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
 case "$canary_json" in
   *'"kind":"honeypot"'*) ok "canary $E2E_CANARY_ID: $canary_json" ;;
@@ -103,10 +123,10 @@ step "the hit reaches GET /api/alerts"
 # own logtype, so matching on it proves the whole path ran: OpenCanary
 # logged it, the agent read it, posted it over mutual TLS, and birdcage
 # stored it.
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=ftp' | jq -e '.alerts | length > 0'" \
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=ftp' | jq -e '.alerts | length > 0'" \
   || fail "/api/alerts never contained an ftp event after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
 
-alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=ftp' | jq -c '.alerts[0]'")"
+alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=ftp' | jq -c '.alerts[0]'")"
 case "$alert" in
   *'"dest_port":21'*) ok "alert on port 21: $alert" ;;
   *) fail "the ftp alert does not name port 21: $alert" "$E2E_BIRDCAGE" ;;
@@ -123,7 +143,7 @@ step "GET /api/canaries counts only this journey's real hits"
 # A canary fresh off enrolment showed ~11 hits before this fix, purely
 # from base start-up lines; this must now read 2, not a double-digit
 # count.
-canary_json2="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
+canary_json2="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
   || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
 case "$canary_json2" in
   *'"hits":2'*) ok "hits: $canary_json2" ;;
@@ -133,7 +153,7 @@ esac
 step "GET /api/alerts lists no base rows"
 # The other half of #117's acceptance: not merely under-counted, but
 # never stored as an alert at all.
-base_alerts="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?instance=$E2E_CANARY_ID&service=base' | jq -c '.alerts'")" \
+base_alerts="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?instance=$E2E_CANARY_ID&service=base' | jq -c '.alerts'")" \
   || fail "GET /api/alerts?service=base did not run" "$E2E_BIRDCAGE"
 case "$base_alerts" in
   '[]') ok "no service=base rows: $base_alerts" ;;
@@ -168,7 +188,7 @@ step "a dead OpenCanary raises an alert, and the agent keeps reporting (issue #1
 # That clears itself on the next heartbeat once OpenCanary has written
 # to it -- waited out here first, so the assertions below test what
 # stopping OpenCanary does, not this ordinary start-up transient.
-poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"not_delivering\") | not'" \
+poll 90 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"not_delivering\") | not'" \
   || fail "not_delivering never cleared from its own start-up transient" "$E2E_CANARY" "$E2E_BIRDCAGE"
 ok "the start-up not_delivering transient cleared"
 
@@ -184,23 +204,23 @@ ok "the start-up not_delivering transient cleared"
 # commands, 50-70 s after it starts; stop OpenCanary before then and
 # they miss, the canary stays pending until the run's 10-minute window
 # lapses, and lifecycle.sh -- which runs next -- times out waiting for ok.
-poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
+poll 180 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .status == \"ok\"'" \
   || fail "the canary never became ok before OpenCanary was stopped (its first self-test did not settle)" "$E2E_CANARY" "$E2E_BIRDCAGE"
 ok "the first self-test settled (status ok) before OpenCanary is stopped"
 docker stop --time 5 "$E2E_OPENCANARY" >/dev/null || fail "stopping $E2E_OPENCANARY failed" "$E2E_OPENCANARY"
-poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .active_states // [] | index(\"opencanary_down\")'" \
+poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | .active_states // [] | index(\"opencanary_down\")'" \
   || fail "the canary never reported opencanary_down after OpenCanary stopped" "$E2E_CANARY" "$E2E_BIRDCAGE"
 ok "opencanary_down appeared in active_states"
 # The agent itself must still be heartbeating throughout -- a dead
 # OpenCanary must never look like a dead agent (that is not_delivering's
 # job, a different signal, for a different failure).
-canary_json3="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")"
+canary_json3="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")"
 case "$canary_json3" in
   *'"active_states":['*'"not_delivering"'*) fail "the agent itself reads not_delivering while only OpenCanary is down: $canary_json3" "$E2E_CANARY" ;;
   *) ok "the agent is not reporting not_delivering: $canary_json3" ;;
 esac
 docker start "$E2E_OPENCANARY" >/dev/null || fail "starting $E2E_OPENCANARY back up failed" "$E2E_OPENCANARY"
-poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"opencanary_down\") | not'" \
+poll 120 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -e --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id) | (.active_states // []) | index(\"opencanary_down\") | not'" \
   || fail "opencanary_down never cleared after OpenCanary came back up" "$E2E_CANARY" "$E2E_OPENCANARY" "$E2E_BIRDCAGE"
 ok "opencanary_down cleared once OpenCanary answered again"
 

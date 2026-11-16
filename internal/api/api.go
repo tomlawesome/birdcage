@@ -50,8 +50,11 @@ type handler struct {
 	upgrade UpgradeConfig
 }
 
-// NewHandler wires the dashboard API behind the requireAuth seam #8
-// will fill in (ADR-0003). internalRanges is BIRDCAGE_INTERNAL_RANGES,
+// NewHandler wires the dashboard API. It does no sign-in of its own:
+// internal/auth.Service.Wrap puts the gate (a session or a read API
+// token, issue #8, ADR-0016) in front of it, and a read API token is
+// answered by this handler directly -- which is why every route here must
+// stay read-only. internalRanges is BIRDCAGE_INTERNAL_RANGES,
 // already parsed by the caller (store.ParseInternalRanges) -- nil is
 // fine and means no ranges beyond the always-internal defaults. The
 // returned handler owns its own stream.Hub, freshly created and not
@@ -104,7 +107,7 @@ func newHandlerWithUpgrade(database *db.DB, now func() time.Time, birdcageVersio
 
 func newHandlerWithHub(database *db.DB, now func() time.Time, internalRanges []*net.IPNet, hub *stream.Hub, mailConfigured bool, birdcageVersion string, upgrade UpgradeConfig) http.Handler {
 	h := &handler{db: database, now: now, internalRanges: internalRanges, hub: hub, mailConfigured: mailConfigured, birdcageVersion: birdcageVersion, upgrade: upgrade}
-	protected := requireAuth(dashboardRoutes(h))
+	protected := dashboardRoutes(h)
 
 	// Each known route is registered individually (rather than mounting
 	// dashboardRoutes at the "/api/" prefix) so anything dashboardRoutes
@@ -150,10 +153,11 @@ type dashboardRouteSpec struct {
 // issue #118, /api/canaries/{id}/runs, issue #116, and /api/findings,
 // issue #109) -- and nothing else.
 //
-// Owner, 2026-09-26: the dashboard API stays read-only until login
-// exists (#8) -- requireAuth is still a no-op, so any mutating route
-// registered here would let anyone who can reach the dashboard change
-// birdcage's state. Issue #124 briefly added POST /api/canary/settings
+// Owner, 2026-09-26: the dashboard API stays read-only. Login exists now
+// (#8), but a read API token is answered by this very handler (see
+// internal/auth.Service.Wrap), so a mutating route registered here would
+// let a token that was meant to read change birdcage's state. Issue #124
+// briefly added POST /api/canary/settings
 // here and was told to take it back out; issue #135 removed the one
 // mutating route that did exist, POST /api/heartbeat, for the same
 // reason (it required no credential at all). TestDashboardRoutesAllRead
@@ -183,21 +187,14 @@ func dashboardRouteSpecs(h *handler) []dashboardRouteSpec {
 // mikroview's readOnlyRoutes (internal/api/auth.go there): a caller
 // dispatched to this mux is structurally unable to reach anything but
 // these routes, because nothing else is ever registered on it. That
-// property is what requireAuth (issue #8, ADR-0003) will rely on once it
-// exists: a lesser-privileged credential can be routed here and nowhere
-// else.
+// property is what the sign-in gate (issue #8, ADR-0016) relies on: a
+// read API token is routed to this handler and nowhere else.
 func dashboardRoutes(h *handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	for _, spec := range dashboardRouteSpecs(h) {
 		mux.HandleFunc(spec.method+" "+spec.path, spec.handler)
 	}
 	return mux
-}
-
-// requireAuth is a placeholder: issue #8 replaces it with session and
-// API-token checks (ADR-0003). Until then every request is allowed.
-func requireAuth(next http.Handler) http.Handler {
-	return next
 }
 
 func notFoundJSON(w http.ResponseWriter, r *http.Request) {

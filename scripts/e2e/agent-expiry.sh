@@ -52,7 +52,7 @@ ok "throwaway canary $expiry_canary_id provisioned at $(date -u +%FT%TZ); no age
 # canary_field <field> reads one field of this canary's object from
 # GET /api/canaries.
 canary_field() {
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' \
     | jq -r --arg id '$expiry_canary_id' --arg f '$1' '.canaries[] | select(.id == \$id) | .[\$f]'" 2>/dev/null
 }
 
@@ -80,7 +80,7 @@ not_delivering_expired() {
   # those directly, and that not_delivering is still in the active set.
   [ "$(canary_field not_delivering)" = "true" ] \
     && [ "$(canary_field certificate_expired)" = "true" ] \
-    && helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/canaries' \
+    && helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' \
         | jq -e --arg id '$expiry_canary_id' \
           '.canaries[] | select(.id == \$id) | .active_states | index(\"not_delivering\")' >/dev/null" 2>/dev/null
 }

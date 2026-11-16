@@ -18,3 +18,7 @@ scripts/.out
 # canary-compare.mjs's screenshots (issue #118) -- same, regenerate with
 # `npm run compare:canary`.
 .canary-compare
+
+# door-compare.mjs's screenshots (issue #8) -- same, regenerate with
+# `npm run compare:door`.
+.door-compare

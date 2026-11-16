@@ -12,14 +12,8 @@ updates:
       github-actions:
         patterns:
           - "*"
-  # The Go module exists (ADR-0001 backend); track its dependency updates
-  # on the integration branch like the actions ones.
-  - package-ecosystem: gomod
-    directory: /
-    target-branch: dev
-    schedule:
-      interval: weekly
-    groups:
-      go:
-        patterns:
-          - "*"
+  # No gomod entry: go.mod requires github.com/tomlawesome/gauntlet, which
+  # must never be looked up through proxy.golang.org or sum.golang.org
+  # (ADR-0016 decision 1; the first lookup records the version for good).
+  # Go updates pause here until Renovate on GitLab takes them over (#186).
+  # Owner, 2026-10-10, on #8 (answer 5a).

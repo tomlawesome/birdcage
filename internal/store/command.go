@@ -31,11 +31,12 @@ type CommandKind string
 //
 // #32 also names an "upgrade" kind. It is deliberately absent: an
 // upgrade must not be orderable without an admin's established authority
-// to order one (owner, 2026-09-16), birdcage has no admin accounts yet
-// (internal/api/api.go's requireAuth placeholder, #8), and the honest way
-// to promise "no unattended upgrades" in the meantime is to have no way
-// to express one. Adding the constant is the smallest possible change
-// once that gate exists -- which is the point of it not being here now.
+// to order one (owner, 2026-09-16), and the dashboard API stays read-only
+// (internal/api/api.go, dashboardRouteSpecs: sign-in exists now, #8, but a
+// read API token is answered by the same handler). The honest way to
+// promise "no unattended upgrades" is to have no way to express one.
+// Adding the constant is the smallest possible change once an
+// admin-gated route exists -- which is the point of it not being here now.
 const CommandSelfTest CommandKind = "selftest"
 
 // CommandScan orders a scanner to run one scan and answer it with the

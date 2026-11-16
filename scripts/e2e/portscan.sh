@@ -57,7 +57,7 @@ sweep() { # sweep <target> <first-port> <count>
 # this is real proof the alert was attributed to the canary that sent
 # it, not just that *a* portscan event landed somewhere.
 portscan_alert_count() { # portscan_alert_count <canary-id>
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=portscan&instance=$1' | jq '.alerts | length'"
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=portscan&instance=$1' | jq '.alerts | length'"
 }
 
 # portscan_seen is poll's predicate: exit 0 once at least one alert has
@@ -91,7 +91,7 @@ count="$(portscan_alert_count "$PORTSCAN_POS_CANARY_ID")"
 [ "$count" = 1 ] || fail "expected exactly one port-scan alert after a $SWEEP_FIRST_COUNT-port sweep, got $count" "$PORTSCAN_POS_CANARY"
 ok "exactly one port-scan alert"
 
-alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=portscan&instance=$PORTSCAN_POS_CANARY_ID' \
+alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=portscan&instance=$PORTSCAN_POS_CANARY_ID' \
   | jq -c '.alerts[0] | {id, service, dest_port, count: (.raw | fromjson | .logdata.COUNT), proto: (.raw | fromjson | .logdata.PROTO)}'")"
 case "$alert" in
   *'"proto":"TCP"'*) ok "alert names TCP: $alert" ;;

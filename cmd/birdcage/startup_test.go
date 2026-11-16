@@ -182,7 +182,7 @@ func TestRunSubcommand(t *testing.T) {
 // --- loadStartupConfig ------------------------------------------------
 
 func TestLoadStartupConfigDefaults(t *testing.T) {
-	cfg, err := loadStartupConfig(envMap(nil), discardLog(), discardLog(), discardLog(), discardLog())
+	cfg, err := loadStartupConfig(startupEnv(t, nil), discardLog(), discardLog(), discardLog(), discardLog())
 	if err != nil {
 		t.Fatalf("loadStartupConfig: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestLoadStartupConfigDefaults(t *testing.T) {
 }
 
 func TestLoadStartupConfigHTTPAddrUnparseable(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{envHTTPAddr: "127.0.0.1"}), discardLog(), discardLog(), discardLog(), discardLog())
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{envHTTPAddr: "127.0.0.1"}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err == nil {
 		t.Fatal("loadStartupConfig with an unparseable BIRDCAGE_HTTP_ADDR = nil error, want a refusal")
 	}
@@ -220,7 +220,7 @@ func TestLoadStartupConfigHTTPAddrUnparseable(t *testing.T) {
 }
 
 func TestLoadStartupConfigCertWithoutKey(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{envHTTPTLSCert: "/etc/birdcage/cert.pem"}), discardLog(), discardLog(), discardLog(), discardLog())
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{envHTTPTLSCert: "/etc/birdcage/cert.pem"}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err == nil {
 		t.Fatal("loadStartupConfig with cert but no key = nil error, want a refusal")
 	}
@@ -230,7 +230,7 @@ func TestLoadStartupConfigCertWithoutKey(t *testing.T) {
 }
 
 func TestLoadStartupConfigBadInternalRanges(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{envInternalRanges: "not-a-cidr"}), discardLog(), discardLog(), discardLog(), discardLog())
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{envInternalRanges: "not-a-cidr"}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err == nil {
 		t.Fatal("loadStartupConfig with a bad BIRDCAGE_INTERNAL_RANGES = nil error, want a refusal")
 	}
@@ -240,7 +240,7 @@ func TestLoadStartupConfigBadInternalRanges(t *testing.T) {
 }
 
 func TestLoadStartupConfigBadIngestAddrWithAdvertiseHost(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{
 		envIngestAddr:    "bad",
 		envAdvertiseHost: "canary.example.net",
 	}), discardLog(), discardLog(), discardLog(), discardLog())
@@ -253,7 +253,7 @@ func TestLoadStartupConfigBadIngestAddrWithAdvertiseHost(t *testing.T) {
 }
 
 func TestLoadStartupConfigIngestURL(t *testing.T) {
-	cfg, err := loadStartupConfig(envMap(map[string]string{
+	cfg, err := loadStartupConfig(startupEnv(t, map[string]string{
 		envIngestAddr:    ":8443",
 		envAdvertiseHost: "canary.example.net",
 	}), discardLog(), discardLog(), discardLog(), discardLog())
@@ -270,7 +270,7 @@ func TestLoadStartupConfigIngestURL(t *testing.T) {
 // BIRDCAGE_TEST_CLIENT_CERT_TTL is unset, matching every other cfg
 // field's plain-default behavior in TestLoadStartupConfigDefaults.
 func TestLoadStartupConfigTestClientCertTTLUnsetIsZero(t *testing.T) {
-	cfg, err := loadStartupConfig(envMap(nil), discardLog(), discardLog(), discardLog(), discardLog())
+	cfg, err := loadStartupConfig(startupEnv(t, nil), discardLog(), discardLog(), discardLog(), discardLog())
 	if err != nil {
 		t.Fatalf("loadStartupConfig: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestLoadStartupConfigTestClientCertTTLUnsetIsZero(t *testing.T) {
 // clearly-test-only value (minutes, the live-journey case #130 names)
 // parses through to cfg.testClientCertTTL untouched.
 func TestLoadStartupConfigTestClientCertTTLAccepted(t *testing.T) {
-	cfg, err := loadStartupConfig(envMap(map[string]string{
+	cfg, err := loadStartupConfig(startupEnv(t, map[string]string{
 		envTestClientCertTTL: "5m",
 	}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err != nil {
@@ -298,7 +298,7 @@ func TestLoadStartupConfigTestClientCertTTLAccepted(t *testing.T) {
 // malformed value refuses startup rather than silently falling back to
 // the normal 7-day TTL.
 func TestLoadStartupConfigTestClientCertTTLRefusesUnparseable(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{
 		envTestClientCertTTL: "not-a-duration",
 	}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err == nil {
@@ -315,7 +315,7 @@ func TestLoadStartupConfigTestClientCertTTLRefusesUnparseable(t *testing.T) {
 // of quietly becoming a longer-lived certificate than production ever
 // issues.
 func TestLoadStartupConfigTestClientCertTTLRefusesLongerThanSevenDays(t *testing.T) {
-	_, err := loadStartupConfig(envMap(map[string]string{
+	_, err := loadStartupConfig(startupEnv(t, map[string]string{
 		envTestClientCertTTL: "169h", // 7 days + 1 hour
 	}), discardLog(), discardLog(), discardLog(), discardLog())
 	if err == nil {
@@ -333,7 +333,7 @@ func TestLoadStartupConfigTestClientCertTTLRefusesLongerThanSevenDays(t *testing
 // much as a warning would hide that mistake.
 func TestLoadStartupConfigTestClientCertTTLRefusesZeroAndNegative(t *testing.T) {
 	for _, raw := range []string{"0m", "-5m"} {
-		_, err := loadStartupConfig(envMap(map[string]string{
+		_, err := loadStartupConfig(startupEnv(t, map[string]string{
 			envTestClientCertTTL: raw,
 		}), discardLog(), discardLog(), discardLog(), discardLog())
 		if err == nil {

@@ -91,7 +91,7 @@ echo "== down cleans up after a run killed half way =="
 # Exactly the state an interrupted `up` leaves: the network and volumes
 # made, one container started, the rest never reached.
 docker network create "$E2E_PREFIX-net" >/dev/null
-for vol in data tls work state log; do docker volume create "$E2E_PREFIX-$vol" >/dev/null; done
+for vol in data tls work state log key; do docker volume create "$E2E_PREFIX-$vol" >/dev/null; done
 docker run --detach --name "$E2E_PREFIX-birdcage" --network "$E2E_PREFIX-net" \
   --volume "$E2E_PREFIX-data:/data" alpine:3.24 sleep 600 >/dev/null
 printf 'FROM alpine:3.24\n' | docker build --quiet --tag "$E2E_PREFIX-helper" - >/dev/null
@@ -109,7 +109,7 @@ case "$first" in
   *) echo "FAIL - up did not print BIRDCAGE_URL"; fail=1 ;;
 esac
 case "$first" in
-  *MOCKINGBIRD_DEPLOY_TOKEN*|*TOKEN=*) echo "FAIL - up printed something token-shaped"; fail=1 ;;
+  *MOCKINGBIRD_DEPLOY_TOKEN*|*TOKEN=*|*Bearer*|*"setup code"*) echo "FAIL - up printed something token-shaped"; fail=1 ;;
   *) echo "ok - up prints no credential" ;;
 esac
 
@@ -121,7 +121,9 @@ case "$second" in
 esac
 # And the stack it left is the working one, not the first run's
 # half-removed remains: ask the dashboard over its real certificate.
-"$STACK" helper "curl -sS --cacert /tls/dashboard-ca.pem https://$E2E_PREFIX-birdcage:8080/api/alerts" 2>/dev/null | grep -q '"alerts"'
+# With the read API token the second up's sign-in minted (#8): the
+# first up's token was sealed under a key that went with its volumes.
+"$STACK" helper "curl -sS --cacert /tls/dashboard-ca.pem -H @/work/dashboard-auth https://$E2E_PREFIX-birdcage:8080/api/alerts" 2>/dev/null | grep -q '"alerts"'
 check "$?" "0" "the dashboard answers after the second up"
 
 "$STACK" down >/dev/null 2>&1

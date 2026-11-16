@@ -89,7 +89,7 @@ smb_get() {
 # itself.
 alerts_naming() {
   local path="$1"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=smb' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=smb' \
     | jq --arg p '$path' --arg c '$SMB_LURE_CANARY_ID' --argjson b '$BASELINE_ID' \
       '[.alerts[] | select(.instance_id == \$c and .id > \$b) | (.raw | fromjson)
         | select((.logdata.FILENAME // \"\") | endswith(\$p))] | length'"
@@ -99,7 +99,7 @@ alerts_naming() {
 # the path, the wording, and the service birdcage filed it under.
 alert_for() {
   local path="$1"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=smb' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=smb' \
     | jq -c --arg p '$path' --arg c '$SMB_LURE_CANARY_ID' --argjson b '$BASELINE_ID' \
       '[.alerts[] | select(.instance_id == \$c and .id > \$b)
         | select((.raw | fromjson | .logdata.FILENAME // \"\") | endswith(\$p))
@@ -126,7 +126,7 @@ test_at_least_one() {
 }
 
 step "note which alerts birdcage already holds, so this run counts only its own"
-BASELINE_ID="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=smb' \
+BASELINE_ID="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=smb' \
   | jq '[.alerts[].id] | max // 0'")" || fail "could not read birdcage's existing smb alerts"
 case "$BASELINE_ID" in
   ''|*[!0-9]*) fail "the alert-id baseline is not a number: [$BASELINE_ID]" ;;

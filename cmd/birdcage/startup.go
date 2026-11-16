@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/birdcage/internal/auth"
 	"github.com/tomlawesome/birdcage/internal/ca"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/enrol"
@@ -89,8 +90,8 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 	// (#34's "Not in this slice"), `mint`/`list`/`revoke` issue #32 item
 	// 9's agent token management, `enrol` issue #47 slice 1b's deploy-
 	// token mint, `settings` issue #124's per-canary settings (the CLI is
-	// the only write path onto them: the dashboard API stays read-only
-	// until login exists, #8), `upgrade-command` issue #54's upgrade
+	// the only write path onto them: the dashboard API stays read-only,
+	// #8), `upgrade-command` issue #54's upgrade
 	// token mint and command (CLI-only for the same reason) -- that exit
 	// immediately rather than starting the HTTP/ingest services below.
 	// ADR-0009 gave nodes a kind (honeypot, scanner), so `agent` is the
@@ -161,8 +162,8 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 
 	// `birdcage findings <list|accept> ...` (cmd/birdcage/finding.go) is
 	// issue #109's operator acceptance CLI -- the one write path onto
-	// findings.state, since the dashboard API stays read-only until login
-	// exists (#134), the same reason `agent settings` above is CLI-only.
+	// findings.state, since the dashboard API stays read-only (#134), the
+	// same reason `agent settings` above is CLI-only.
 	// Like `agent`, `settings` and `approval`, it exits immediately rather
 	// than starting the services below.
 	if len(args) > 1 && args[1] == "findings" {
@@ -253,6 +254,11 @@ type startupConfig struct {
 	// test fixture that needs a certificate to reach half-life and
 	// expiry in minutes.
 	testClientCertTTL time.Duration
+
+	// auth is the sign-in layer's settings (issue #8, ADR-0016), read
+	// and checked by loadAuthConfig. Its secrets are held here only
+	// until auth.Open takes them.
+	auth auth.Config
 }
 
 // loadStartupConfig resolves every environment variable the
@@ -382,6 +388,12 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 		return startupConfig{}, &startupError{configLog, fmt.Sprintf("%s: %v", envInternalRanges, err)}
 	}
 	cfg.internalRanges = internalRanges
+
+	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), dashboardOffBoxAddr(cfg.httpSelection), configLog)
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.auth = authCfg
 
 	return cfg, nil
 }

@@ -16,11 +16,10 @@ import (
 // display, which is the frontend's job.
 //
 // One fact the round-7 mockup shows is deliberately missing: who
-// enrolled the canary. birdcage has no operator identity yet (issue #8's
-// requireAuth is still a placeholder), and the audit log's triggered_by
-// for an enrolment is "cli" or "enrolment", never a person -- so the
-// field is absent rather than filled with something that only looks like
-// an answer.
+// enrolled the canary. Sign-in (issue #8) now says who is reading this
+// page, but the audit log's triggered_by for an enrolment is still "cli"
+// or "enrolment", never a person's account -- so the field is absent
+// rather than filled with something that only looks like an answer.
 type canaryFacts struct {
 	Kind               string  `json:"kind"`
 	Lane               string  `json:"lane"`

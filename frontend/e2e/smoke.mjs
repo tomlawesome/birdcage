@@ -26,10 +26,21 @@
 //
 // Browser: resolved once, by ./browser.mjs (issue #83) -- BIRDCAGE_BROWSER
 // selects it, default firefox.
+//
+// Sign-in (issue #8, ADR-0016 and ADR-0017): the dashboard API answers
+// nothing without a signed-in session. birdcage gets a fresh sign-in key
+// file in this run's temporary directory; once it is up, ./signin.mjs
+// checks the API refuses everything before the first admin exists, then
+// the browser reaches the dashboard through the sign-in screens: first
+// run with the setup code from birdcage's log, the authenticator app,
+// the recovery codes, enter; then it signs out from the name menu and
+// signs in again with the password and an authenticator code. Anything
+// printed on a failure goes through signin.mjs's redactSecrets first.
 import { launchBrowser, resolveBrowserName } from './browser.mjs'
 import { getFreePorts } from './ports.mjs'
+import { checkBeforeFirstAdmin, firstAdminThroughScreens, hide, redactCodes, redactSecrets, removeOnExit, setupCodeFrom, signInAgain, writeAuthKeyFile } from './signin.mjs'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -101,6 +112,10 @@ function parseEnrolOutput(output) {
 
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), 'birdcage-smoke-'))
+  // The sign-in key lands in workDir, so it goes on every way out: the
+  // early process.exit refusals below, a throw caught by main().catch,
+  // and Ctrl-C or a CI cancel's SIGTERM -- not only the finally below.
+  const removeWorkDir = removeOnExit(workDir)
   const caDir = join(workDir, 'ca')
 
   // Postgres (issue #81) when DATABASE_URL is set -- must already carry
@@ -163,6 +178,9 @@ async function main() {
   const { pin, token } = parseEnrolOutput(enrolOutput)
   ok(`minted a deploy token, pin=${pin.slice(0, 8)}...`)
 
+  // 32 fresh random bytes, mode 0400, removed with workDir on the way out.
+  const authKeyFile = writeAuthKeyFile(workDir)
+
   console.log(`\nstarting ${BIRDCAGE_BIN} on 127.0.0.1:${httpPort}...`)
   const birdcage = spawn(BIRDCAGE_BIN, [], {
     cwd: repoRoot,
@@ -170,6 +188,7 @@ async function main() {
       ...sharedEnv,
       BIRDCAGE_HTTP_ADDR: `127.0.0.1:${httpPort}`,
       BIRDCAGE_INGEST_ADDR: `127.0.0.1:${ingestPort}`,
+      BIRDCAGE_AUTH_KEY_FILE: authKeyFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -184,7 +203,20 @@ async function main() {
   let failure = null
   let browser = null
   try {
-    await waitForServer(`http://127.0.0.1:${httpPort}/`)
+    const base = `http://127.0.0.1:${httpPort}`
+    await waitForServer(`${base}/`)
+
+    step('before the first admin: the API answers 503 setup required and refuses a wrong setup code (issue #8)')
+    // birdcage writes the code once its sign-in layer has opened, which
+    // is before the listener the wait above just reached.
+    let setupCode = null
+    for (let i = 0; i < 50 && !setupCode; i++) {
+      setupCode = setupCodeFrom(birdcageLog)
+      if (!setupCode) await new Promise((r) => setTimeout(r, 200))
+    }
+    if (!setupCode) throw new Error('birdcage never logged a setup code for the first admin')
+    hide(setupCode)
+    await checkBeforeFirstAdmin(base, ok)
 
     console.log(`launching ${resolveBrowserName()}...`)
     browser = await launchBrowser()
@@ -194,7 +226,8 @@ async function main() {
     // together near the right edge on every run -- exactly the crowding
     // the label-collapse assertion below needs to be a real check rather
     // than a check that happens to have nothing to catch.
-    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+    const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } })
+    const page = await context.newPage()
 
     // Captured for the whole test, but only *enforced* up to the
     // deliberate-failure journey at the end: killing birdcage on purpose
@@ -205,8 +238,21 @@ async function main() {
     })
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
+    step('signing in through the screens: first run, authenticator app, recovery codes, enter (issue #8)')
+    await page.goto(`${base}/`)
+    const account = await firstAdminThroughScreens(page, setupCode, ok)
+    const { username } = account
+    const who = (await page.locator('.status .who').textContent({ timeout: 10000 }))?.trim()
+    if (who !== `${username} (admin)`) throw new Error(`name chip: expected ${JSON.stringify(`${username} (admin)`)}, got ${JSON.stringify(who)}`)
+    ok(`name chip: ${who}`)
+
+    step('signing out from the name menu, then in again with the password and an authenticator code (issue #8)')
+    await signInAgain(page, account, ok)
+    const whoAgain = (await page.locator('.status .who').textContent({ timeout: 10000 }))?.trim()
+    if (whoAgain !== `${username} (admin)`) throw new Error(`name chip after signing in again: got ${JSON.stringify(whoAgain)}`)
+    ok(`name chip: ${whoAgain}`)
+
     step('every top-level view renders against the live API with no console error')
-    await page.goto(`http://127.0.0.1:${httpPort}/`)
     await page.waitForSelector('.hero', { timeout: 10000 })
     const hero = (await page.textContent('.hero'))?.trim()
     const tileCount = await page.locator('.tile').count()
@@ -227,7 +273,7 @@ async function main() {
     // has no dedicated element to measure, so this reads it off the page
     // itself -- nothing the trace draws may reach above where the sub
     // sentence ends, and specifically never over the hero sentence or the
-    // admin pill, which is what the fix (frontend/src/lib/band/placement.ts)
+    // name chip, which is what the fix (frontend/src/lib/band/placement.ts)
     // is meant to guarantee under any data.
     const chartFloor = await page.evaluate(() => document.querySelector('.sub').getBoundingClientRect().bottom)
     const [heroBox, whoBox, labelBoxes] = await Promise.all([
@@ -250,7 +296,7 @@ async function main() {
         throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the hero sentence`)
       }
       if (rectOverlaps(box, whoBox)) {
-        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the "tom (admin)" pill`)
+        throw new Error(`trace label ${JSON.stringify(box.text)} overlaps the name chip`)
       }
     }
     for (let i = 0; i < labelBoxes.length; i++) {
@@ -260,7 +306,7 @@ async function main() {
         }
       }
     }
-    ok(`${labelBoxes.length} trace labels, all within the chart box, clear of the hero sentence and the admin pill`)
+    ok(`${labelBoxes.length} trace labels, all within the chart box, clear of the hero sentence and the name chip`)
     const historyCount = await page.locator('.history').count()
     if (historyCount !== 1) throw new Error('the state history section did not render')
     ok('state history rendered')
@@ -376,18 +422,20 @@ async function main() {
   } finally {
     if (browser) await browser.close()
     birdcage.kill()
-    rmSync(workDir, { recursive: true, force: true })
+    removeWorkDir()
   }
 
   if (!ok_) {
-    console.error('\nbirdcage log:\n' + birdcageLog)
-    console.error(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`)
+    // The one-time setup and unlock codes are blanked: either one hands
+    // whoever reads the log an admin account.
+    console.error(redactSecrets('\nbirdcage log:\n' + redactCodes(birdcageLog)))
+    console.error(redactSecrets(`\nsmoke: FAILED -- ${failure?.stack ?? failure}`))
     process.exit(1)
   }
   console.log('\nsmoke: ok')
 }
 
 main().catch((err) => {
-  console.error(err)
+  console.error(redactSecrets(err?.stack ?? err))
   process.exit(1)
 })

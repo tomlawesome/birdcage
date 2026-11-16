@@ -53,11 +53,11 @@ step "smbd's full_audit line reached OpenCanary and then birdcage"
 # fromjson on .raw: /api/alerts stores OpenCanary's whole event as a raw
 # JSON string (internal/store.Alert.Raw), so logdata.FILENAME is a field
 # inside that string, not of the alert object itself.
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=smb' \
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=smb' \
   | jq -e --arg m '$MARKER' '[.alerts[] | (.raw | fromjson | .logdata.FILENAME // \"\") | select(contains(\$m))] | length > 0'" \
   || fail "/api/alerts never held an smb event naming $MARKER after 30 attempts" "$SMB_CANARY" "$SMB_SAMBA" "$E2E_BIRDCAGE"
 
-alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem '$BIRDCAGE_URL/api/alerts?service=smb' \
+alert="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=smb' \
   | jq -c --arg m '$MARKER' '[.alerts[] | select((.raw | fromjson | .logdata.FILENAME // \"\") | contains(\$m))][0] | {id, service, dest_port, filename: (.raw | fromjson | .logdata.FILENAME)}'")"
 case "$alert" in
   *"$MARKER"*) ok "alert: $alert" ;;
