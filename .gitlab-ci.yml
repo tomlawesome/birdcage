@@ -78,7 +78,10 @@ variables:
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
   ALPINE_IMAGE: alpine:3.24
-  DOCKER_CLI_IMAGE: docker:29-cli
+  # Must match .dind's image (tag and digest); scripts/ci-config.test.sh
+  # holds them together. Straight from Docker Hub, no cache prefix:
+  # release:attest runs on the signing runner, which may not reach the cache.
+  DOCKER_CLI_IMAGE: docker:29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144
   # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
   # now the one Postgres pin in this file, used by both test:go's service
   # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
@@ -88,8 +91,8 @@ variables:
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
   DEBIAN_TRIXIE_SLIM_IMAGE: debian:trixie-slim
-  # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
-  # and what test:release-scripts installs to run their tests there.
+  # What the release jobs install on .dind's image (.registry_login), and
+  # what test:release-scripts installs on $DOCKER_CLI_IMAGE to run their tests.
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
   RELEASE_APK_PACKAGES: bash curl python3
 
