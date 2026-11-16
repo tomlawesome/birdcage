@@ -159,7 +159,7 @@ func (l *listener) sniff(c net.Conn) {
 		return
 	}
 	defer release()
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	l.answerPlain(c, first[0])
 }
 

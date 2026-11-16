@@ -22,7 +22,12 @@ func TestServeAllPlainLoopbackStillServesPlainHTTP(t *testing.T) {
 	go func() {
 		done <- serveAll(ctx, stop, dashboard, tlsconfig.ModePlainLoopbackTCP, "", nil, nil, discardLog(), discardLog(), discardLog(), discardLog())
 	}()
-	t.Cleanup(func() { stop(); <-done })
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Logf("serveAll after stop: %v", err)
+		}
+	})
 
 	client := &http.Client{
 		Timeout:       2 * time.Second,
@@ -38,7 +43,7 @@ func TestServeAllPlainLoopbackStillServesPlainHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plain GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || string(body) != "plain ok" {
 		t.Errorf("got %d %q, want 200 \"plain ok\"", resp.StatusCode, body)

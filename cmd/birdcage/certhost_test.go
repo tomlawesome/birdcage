@@ -90,7 +90,12 @@ func TestServeAllGivenCertAnswersPlainHTTPWith308(t *testing.T) {
 	go func() {
 		done <- serveAll(ctx, stop, dashboard, tlsconfig.ModeCert, "", nil, nil, discardLog(), discardLog(), discardLog(), discardLog())
 	}()
-	t.Cleanup(func() { stop(); <-done })
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Logf("serveAll after stop: %v", err)
+		}
+	})
 
 	client := &http.Client{
 		Timeout:       2 * time.Second,
@@ -108,7 +113,7 @@ func TestServeAllGivenCertAnswersPlainHTTPWith308(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plain GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusPermanentRedirect {
 		t.Fatalf("status = %d, want 308", resp.StatusCode)

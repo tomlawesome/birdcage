@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -383,7 +382,7 @@ func TestTemporaryAcceptErrorDoesNotStopTheListener(t *testing.T) {
 			t.Fatalf("Accept = %v, want the connection after temporary errors", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal(fmt.Sprint("Accept did not return a connection after temporary errors"))
+		t.Fatal("Accept did not return a connection after temporary errors")
 	}
 }
 
@@ -394,7 +393,7 @@ func TestTLSFirstByteIsReplayed(t *testing.T) {
 	_, _ = c.Write(want)
 	select {
 	case sc := <-accepted:
-		defer sc.Close()
+		defer func() { _ = sc.Close() }()
 		_ = sc.SetReadDeadline(time.Now().Add(2 * time.Second))
 		got := make([]byte, len(want))
 		if _, err := io.ReadFull(sc, got); err != nil {
