@@ -683,3 +683,17 @@ func TestCurrentSelfReportCarriesTheBaitNames(t *testing.T) {
 		t.Errorf("SelfReport.PoisonerNames with no detector = %q, want the empty string", got)
 	}
 }
+
+// TestPoisonerSettingsFloorBelowMinCeilingGap is #213's A-1-F1 on the env
+// path: a floor under poisoner.MinCeilingGap is refused (default kept) or
+// raised, never left below the minimum, and a warning names the variable.
+func TestPoisonerSettingsFloorBelowMinCeilingGap(t *testing.T) {
+	t.Setenv(envPoisonerFloor, "10ms")
+	cfg, warnings := poisonerSettings()
+	if cfg.Pace.FloorGap != 0 && cfg.Pace.FloorGap < poisoner.MinCeilingGap {
+		t.Errorf("floor = %v, want it refused or raised to at least %v", cfg.Pace.FloorGap, poisoner.MinCeilingGap)
+	}
+	if !strings.Contains(strings.Join(warnings, " "), envPoisonerFloor) {
+		t.Errorf("no warning names %s: %v", envPoisonerFloor, warnings)
+	}
+}

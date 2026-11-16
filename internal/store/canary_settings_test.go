@@ -220,3 +220,30 @@ func TestGetCanaryKind(t *testing.T) {
 		}
 	})
 }
+
+// TestSetCanarySettingsRefusesPaceBelowOneSecond is #213's PF3-F1: a
+// pace_floor or pace_ceiling under poisoner.MinCeilingGap (1s) would make
+// the canary broadcast continuously, so the write path refuses it naming
+// the 1s minimum; exactly 1s is accepted.
+func TestSetCanarySettingsRefusesPaceBelowOneSecond(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "canary-a", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: mustParse(t, "2026-01-01T00:00:00Z")})
+		at := mustParse(t, "2026-01-01T00:00:00Z")
+
+		for _, key := range []CanarySettingKey{CanarySettingPaceFloor, CanarySettingPaceCeiling} {
+			for _, bad := range []string{"30ms", "999ms", "1ns"} {
+				err := SetCanarySettings(ctx, database, "canary-a", agentkind.Honeypot, map[CanarySettingKey]string{key: bad}, at, "test")
+				if !errors.Is(err, ErrCanarySettingInvalidValue) {
+					t.Fatalf("%s=%s: err = %v, want ErrCanarySettingInvalidValue", key, bad, err)
+				}
+				if !strings.Contains(err.Error(), "1s") {
+					t.Errorf("%s=%s: error %q does not name the 1s minimum", key, bad, err.Error())
+				}
+			}
+			if err := SetCanarySettings(ctx, database, "canary-a", agentkind.Honeypot, map[CanarySettingKey]string{key: "1s"}, at, "test"); err != nil {
+				t.Errorf("%s=1s: err = %v, want accepted", key, err)
+			}
+		}
+	})
+}
