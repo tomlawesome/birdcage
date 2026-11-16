@@ -392,7 +392,7 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 	}
 	cfg.internalRanges = internalRanges
 
-	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), dashboardOffBoxAddr(cfg.httpSelection), configLog)
+	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), dashboardOffBoxAddr(cfg.httpSelection), cfg.httpSelection.Mode == tlsconfig.ModePlainUnixSocket, configLog)
 	if err != nil {
 		return startupConfig{}, err
 	}

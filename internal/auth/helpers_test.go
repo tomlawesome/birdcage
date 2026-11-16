@@ -176,6 +176,7 @@ func openService(t *testing.T, database *db.DB, key []byte) (*auth.Service, *log
 		return nil, capture, err
 	}
 	t.Cleanup(svc.Close)
+	svc.ReleaseCodes()
 	return svc, capture, nil
 }
 

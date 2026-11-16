@@ -515,6 +515,7 @@ func startUnixPeerSystem(t *testing.T, database *db.DB, cfg auth.Config) *system
 		t.Fatalf("auth.Open: %v", err)
 	}
 	t.Cleanup(svc.Close)
+	svc.ReleaseCodes()
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api.NewHandler(database, nil, "test"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

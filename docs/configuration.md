@@ -305,7 +305,10 @@ dashboard directly from a trusted range can forge its own:
 
 Birdcage cannot check this. It logs a warning at start-up when
 `BIRDCAGE_TRUSTED_PROXIES` is set and the dashboard listens on a TCP
-address that is not loopback.
+address that is not loopback. When it is empty and the dashboard listens on
+a unix socket, it warns that every visitor will share one sign-in limit and
+audit address until the setting names the proxy (`unix` for a socket); on
+loopback TCP it logs the same sentence at info level.
 
 Birdcage rate-limits failed sign-ins per client address as well as per
 account, and records that address in the sign-in history. Behind a reverse
