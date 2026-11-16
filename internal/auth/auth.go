@@ -129,15 +129,18 @@ type Service struct {
 	geo     *geoip.Manager
 	log     *slog.Logger
 
+	codes *heldCodes
+
 	cancel    context.CancelFunc
 	loops     sync.WaitGroup
 	closeOnce sync.Once
 }
 
 // Open builds the sign-in layer over database. When there is no account
-// yet it logs the one-time setup code on log, and the emergency unlock
-// code if one is due, in gauntlet's own words, but only once everything
-// below has opened: an Open that fails logs no code. It refuses a short
+// yet gauntlet announces the one-time setup code, and the emergency unlock
+// code if one is due; Open holds them and logs nothing until the caller
+// runs ReleaseCodes, so an Open that fails, or a later start-up step that
+// refuses, logs no code. It refuses a short
 // key, a key that cannot open the stored documents, and any setting
 // gauntlet refuses.
 //
@@ -185,9 +188,9 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if err != nil {
 		return fail(fmt.Errorf("auth: seal accounts: %w", err))
 	}
-	// The setup and unlock codes are held until Open has fully succeeded
-	// (below), so a refusal inside Open never leaves a code in the log.
-	// Later start-up steps in main can still refuse after the code is out.
+	// The setup and unlock codes are held until the caller runs
+	// ReleaseCodes, after its own later start-up steps, so an operator
+	// never copies a code from a process that then refused to start.
 	codes := &heldCodes{log: log}
 	users, err := gauntlet.OpenStore(accountsDoc, gauntlet.Options{
 		Log:               log,
@@ -323,7 +326,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
-	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, cancel: cancel}
+	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, codes: codes, cancel: cancel}
 	s.loop(func() { sweepTokens(loopCtx, g, log) })
 	if refresher != nil {
 		s.loop(func() { refresher.Run(loopCtx) })
@@ -331,14 +334,23 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if geo != nil {
 		s.loop(func() { geo.Run(loopCtx) })
 	}
-	codes.release()
 	return s, nil
 }
 
+// ReleaseCodes writes the setup and unlock codes Open held, in the order
+// gauntlet announced them, and lets later ones through. The caller runs it
+// once every start-up step that can refuse has passed, so an operator never
+// copies a code from a process that then refused to start. Until it runs no
+// code reaches the log. Safe to call more than once.
+func (s *Service) ReleaseCodes() {
+	s.codes.release()
+}
+
 // heldCodes keeps the one-time setup and unlock codes gauntlet announces
-// while the accounts store opens, and writes them to the log only once
-// Open has fully succeeded, in the words gauntlet's own default log line
-// uses. If Open fails they are never written. After release, a code
+// while the accounts store opens, and writes them to the log only when
+// Service.ReleaseCodes runs, in the words gauntlet's own default log line
+// uses. If Open fails, or start-up refuses before ReleaseCodes, they are
+// never written. After release, a code
 // gauntlet announces later (it re-issues the setup code if a reload finds
 // no accounts) is logged at once.
 type heldCodes struct {

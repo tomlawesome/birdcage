@@ -56,6 +56,7 @@ func TestOpenStartsWithoutSSOWhenIssuerUnreachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth.Open with an unreachable SSO issuer = %v, want nil (start without SSO)", err)
 	}
+	svc.ReleaseCodes()
 	t.Cleanup(svc.Close)
 
 	if ssoSessionAvailable(t, svc) {
