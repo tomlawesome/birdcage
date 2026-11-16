@@ -530,12 +530,13 @@ table has more transitive gaps that don't need an owner decision):
 - `pixelmatch` 7.2.0 -> 8.0.0, held back on purpose (row 110): 8 measures
   colour difference differently, so the pixel gates' thresholds must be
   re-measured before moving (#211)
-- `python:3.13-slim-trixie` / `python:3.13-alpine`: Python 3.14 is now the
-  latest major line; no reason recorded for staying on 3.13 (rows 191, 194)
-- `github/codeql-action/init`/`analyze` v4.37.6 -> v4.38.1, several releases
-  behind on the security-scanning action itself (rows 205-206)
-- `svelte` and `vitest`, one patch each behind (rows 124, 140) -- minor,
-  listed for completeness
+- `python:3.13-slim-trixie`: newer Python major lines exist (the CI alpine
+  image, row 194, is already on 3.15); no reason recorded for the opencanary
+  build stage staying on 3.13 (row 191)
+
+Checked 2026-11-16 and removed from this list as current: `github/codeql-action`
+v4.39.3 (rows 205-206), `svelte` 5.57.3 and `vitest` 5.1.0 (rows 124, 140),
+and `python:3.15-alpine` (row 194).
 
 **Licence flags with a redistribution question:** `hpfeeds` (GPL-3.0,
 transitive via `opencanary`, row 161) ships inside the mockingbird image --
