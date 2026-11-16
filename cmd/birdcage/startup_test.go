@@ -426,9 +426,9 @@ func TestLoadStartupCAUnwritableDir(t *testing.T) {
 
 // --- checkStartupCAContinuity ---------------------------------------------
 //
-// insertTestCanary (canary_test.go) gives checkStartupCAContinuity's
-// "state exists" signal (store.AnyCanariesEnrolled) a row to find --
-// it only needs one registered canary, not a real enrolment round trip.
+// insertTestClientCert gives checkStartupCAContinuity's "state exists"
+// signal (store.AnyClientCertsIssued) a row to find -- it only needs one
+// issued certificate, not a real enrolment round trip.
 
 // TestCheckStartupCAContinuityNotNeeded proves the check is a no-op when
 // no CA is needed at all (operator certificate, ingest off) -- there is

@@ -733,18 +733,6 @@ func ParseRange(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// AnyCanariesEnrolled reports whether the agents table has a row. It is
-// no longer the CA-continuity signal (an `agent add` row exists before
-// any certificate is signed; see AnyClientCertsIssued) and start-up does
-// not call it; only its own test does. Same EXISTS shape as below.
-func AnyCanariesEnrolled(ctx context.Context, database *db.DB) (bool, error) {
-	var exists bool
-	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents)`).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check for enrolled canaries: %w", err)
-	}
-	return exists, nil
-}
-
 // AnyClientCertsIssued reports whether the client_certs table has a row
 // -- issue #149's signal that birdcage already has real state depending
 // on its CA: a client certificate is signed with the CA key when a
