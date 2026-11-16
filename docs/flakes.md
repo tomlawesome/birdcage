@@ -66,3 +66,10 @@ the whole account.
   would a real hang -- birdcage logging its refusal and then not exiting
   -- so a refusal outliving the 15 s bound again is not to be waved off as
   this flake without looking.
+
+## Runner disk full during the Go tests (test:go) (host)
+
+- 2026-11-15 · 6dcffab · pipeline 4240 (!122) / test:go, job 51839 ·
+  two trusted-proxy tests failed at db.Migrate with "database or disk is
+  full (13)"; the runner also warned of a disconnected postgres service
+  container. Retried as job 51896, which passed.
