@@ -24,6 +24,7 @@ function visitor(overrides: Partial<Visitor> & { kind: VisitorKind }): Visitor {
     services: ['ssh'],
     tried: ['root / root'],
     clients: [],
+    latest_client: '',
     still_arriving: false,
     ...overrides,
   }
@@ -161,7 +162,7 @@ describe('whoSentence: touch credential is the part before the slash', () => {
 
 describe('whoSentence: client clause', () => {
   it('appends "Said it was <client>" from the newest client', () => {
-    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'] })
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'], latest_client: 'nuclei' })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(plainText(row.who)).toContain('Said it was nuclei.')
     expect(plainText(row.who)).not.toContain('curl/8.5.0')

@@ -60,6 +60,7 @@
      "llmnr"
     ],
     "clients": [],
+    "latest_client": "",
     "still_arriving": true,
     "poisoner": {
      "name": "fs-lon-02",

@@ -112,13 +112,13 @@ function poisonerSentence(v: Visitor): Segment[] {
   ]
 }
 
-// appendClientClause adds "Said it was <client>." using the newest entry in
-// v.clients (#143), to every non-poisoner whoSentence branch -- a poisoner
+// appendClientClause adds "Said it was <client>." using v.latest_client, the
+// newest client (#143, #213), to every non-poisoner whoSentence branch -- a poisoner
 // did not send an http/ssh hit, so poisonerSentence never calls this. No
 // clause at all when there is no client to report, rather than an empty
 // sentence fragment.
 function appendClientClause(segments: Segment[], v: Visitor): Segment[] {
-  const client = v.clients[v.clients.length - 1]
+  const client = v.latest_client
   if (client) {
     segments.push({ text: ' Said it was ' }, { text: client, cls: 'client', title: client }, { text: '.' })
   }
