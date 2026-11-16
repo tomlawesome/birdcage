@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -121,7 +122,12 @@ func TestPlainGetWithAllowedHostRedirects308KeepingPathQueryAndPort(t *testing.T
 			if resp.StatusCode != http.StatusPermanentRedirect {
 				t.Fatalf("status = %d, want 308", resp.StatusCode)
 			}
-			want := "https://" + allowedHost + ":" + port + "/a/b?x=1&y=2"
+			wantPort := port
+			if strings.HasSuffix(host, ":8443") {
+				// The browser's port, from the Host header, not the listener's.
+				wantPort = "8443"
+			}
+			want := "https://" + allowedHost + ":" + wantPort + "/a/b?x=1&y=2"
 			if got := resp.Header.Get("Location"); got != want {
 				t.Errorf("Location = %q, want %q", got, want)
 			}
@@ -399,5 +405,89 @@ func TestTLSFirstByteIsReplayed(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("TLS-looking connection not returned by Accept")
+	}
+}
+
+func TestRedirectPortIsTheHostHeaderPortElseTheListenerPort(t *testing.T) {
+	addr, port, _ := serveRaw(t, allowOnly(allowedHost))
+	if port == "443" {
+		t.Skip("listener is on 443; cannot tell the two ports apart")
+	}
+	resp := roundTripPlain(t, addr, "GET /p?q=1 HTTP/1.1\r\nHost: "+allowedHost+":443\r\n\r\n")
+	if resp.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want 308", resp.StatusCode)
+	}
+	if got, want := resp.Header.Get("Location"), "https://"+allowedHost+":443/p?q=1"; got != want {
+		t.Errorf("Host with port: Location = %q, want %q", got, want)
+	}
+
+	resp = roundTripPlain(t, addr, "GET /p HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n")
+	if got, want := resp.Header.Get("Location"), "https://"+allowedHost+":"+port+"/p"; got != want {
+		t.Errorf("Host without port: Location = %q, want %q", got, want)
+	}
+}
+
+func TestBadHostPortGets400NoLocation(t *testing.T) {
+	for _, hp := range []string{"abc", "99999", "65536", "0x50", "-1", ""} {
+		t.Run("port="+hp, func(t *testing.T) {
+			addr, _, accepted := serveRaw(t, allowOnly(allowedHost))
+			resp := roundTripPlain(t, addr, "GET / HTTP/1.1\r\nHost: "+allowedHost+":"+hp+"\r\n\r\n")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+			if loc := resp.Header.Get("Location"); loc != "" {
+				t.Errorf("Location = %q, want none", loc)
+			}
+			noAccepted(t, accepted)
+		})
+	}
+}
+
+// redirectHost sends raw, requires a 308 and returns the parsed Location.
+func redirectLocation(t *testing.T, raw string) (*url.URL, *http.Response, string) {
+	t.Helper()
+	addr, port, _ := serveRaw(t, allowOnly(allowedHost))
+	resp := roundTripPlain(t, addr, raw)
+	if resp.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want 308", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("Location %q does not parse: %v", loc, err)
+	}
+	return u, resp, port
+}
+
+func TestDoubleSlashPathStaysOnTheAllowedHost(t *testing.T) {
+	u, _, port := redirectLocation(t, "GET //evil.example/x HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n")
+	if u.Scheme != "https" || u.Host != allowedHost+":"+port {
+		t.Errorf("Location host = %q scheme %q, want https %s:%s", u.Host, u.Scheme, allowedHost, port)
+	}
+}
+
+func TestEncodedCRLFInPathNeverBreaksTheHeader(t *testing.T) {
+	_, resp, _ := redirectLocation(t, "GET /a%0d%0aSet-Cookie:%20x=1 HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n")
+	if c := resp.Header.Values("Set-Cookie"); len(c) != 0 {
+		t.Errorf("injected Set-Cookie header: %v", c)
+	}
+	if strings.ContainsAny(resp.Header.Get("Location"), "\r\n") {
+		t.Errorf("Location contains a raw line break: %q", resp.Header.Get("Location"))
+	}
+	for k := range resp.Header {
+		if k != "Location" && k != "Content-Length" && k != "Connection" {
+			t.Errorf("unexpected header %q", k)
+		}
+	}
+}
+
+func TestAbsoluteFormTargetRedirectsToTheAllowedHost(t *testing.T) {
+	for _, target := range []string{"http://evil.example/", "http://evil.example/x"} {
+		t.Run(target, func(t *testing.T) {
+			u, _, port := redirectLocation(t, "GET "+target+" HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n")
+			if u.Host != allowedHost+":"+port {
+				t.Errorf("Location host = %q, want %s:%s", u.Host, allowedHost, port)
+			}
+		})
 	}
 }
