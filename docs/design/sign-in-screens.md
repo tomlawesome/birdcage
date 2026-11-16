@@ -30,7 +30,10 @@ mock-up. These are the only intended differences.
 | `Signed out at 08:52 after an hour unused. Enter your password to continue.` | `Enter your password to continue.` | no time is sent |
 | account name under `Session expired` | shown only if this tab knew it | not sent once timed out |
 | no passkey refusal shown | `The passkey was not accepted. Try again.` | `register/finish` answers `400` for a refused credential or name |
-| no enrolment-on-hold state shown | `Another key is waiting for its codes to be saved. Try again in ten minutes.` | `register/begin` answers `409` while a first factor is on hold (gauntlet holds it ten minutes) |
+| no enrolment-on-hold state shown | `Another key is waiting for its codes to be saved. Try again in ten minutes.` | `register/begin` and `totp/enrol` answer `409` while a first factor is on hold (gauntlet holds it ten minutes) |
+| no expired-enrolment state shown | `Set-up timed out: the entry you scanned no longer works. Scan this new code.` | `totp/confirm` answers `401 step-expired` once the pending secret runs out; a new one is shown |
+| `Passkeys need an https web address.` for every disabled passkey | one line per `passkeys.status` (below) | the server says why: `unset`, `ip` or `insecure` |
+| no way out of the second step or the new password | `Sign in as someone else` (owner 31b, 2026-11-15, on #210) | the wrong account, or an account whose only key cannot be made here, would be stuck |
 
 ## Seams
 
@@ -222,14 +225,26 @@ setup code is in the server log.`; fields `setup code`, `account`,
 ### Add a second step (`'choose'`, then prove, then codes)
 
 A thread line `choose · prove it · keep the codes · enter` marks the
-current step. There is no skip, cancel or sign-out here.
+current step. There is no skip or cancel. The one way out is the link
+`Sign in as someone else` (owner 31b): the last link on the choose,
+password and both prove screens, below any `… instead` link, as on the
+expired screen; it sends `POST /api/auth/logout`, then shows sign in.
+The codes screen has no such link: leaving it loses the codes and holds
+the key for ten minutes, and `I have saved these` is one press away.
 
 - **Choose.** Heading `Add a second step`; subtitle `Every account needs
   one. Pick a key and prove it works.` Two keys: `Authenticator app` — `A
   code from your phone.`; `Passkey` — `Fingerprint, face or device PIN.`
-  The passkey key is disabled, with `Passkeys need an https web address.`
-  in place of its description, unless `passkeys.status` is `ready`. When
-  `mustEnrolPasskey`, only the passkey key is offered.
+  The passkey key is disabled unless `passkeys.status` is `ready`, with
+  one line in place of its description, by status: `unset` → `No public
+  address is set. Passkeys need one.`; `ip` → `The public address is an
+  IP. Passkeys need a domain name.`; `insecure` → `The public address is
+  http. Passkeys need https.`; any other value → `Passkeys need an https
+  web address.` When `mustEnrolPasskey`, only the passkey key is offered;
+  if it is disabled, nothing on the screen works, so a message shows
+  (`role="alert"`): `This account needs a passkey, and none can be made
+  at this address.` The key's line says what to fix; `Sign in as someone
+  else` is the way out.
 - **Prove it, authenticator.** `POST /api/auth/totp/enrol {password}`
   with the password typed earlier in this visit; if the door does not
   hold one (the page was reloaded), a `password` field is shown first with
@@ -240,7 +255,11 @@ current step. There is no skip, cancel or sign-out here.
   else.`; link `Use a passkey instead` (when offered).
   `POST /api/auth/totp/confirm {code}`: codes returned → the codes
   screen; `400` → `Incorrect code.`, field cleared and focused;
-  `401 step-expired` → start the step again with a new secret.
+  `401 step-expired` → start the step again with a new secret, showing
+  `Set-up timed out: the entry you scanned no longer works. Scan this new
+  code.`, field cleared. `totp/enrol` `409` → `Another key is waiting
+  for its codes to be saved. Try again in ten minutes.` (the same line as
+  the passkey's), on the screen the enrolment was started from.
 - **Prove it, passkey.** Heading `Prove it works`; subtitle `Name this
   passkey. Your browser asks for the fingerprint, face or PIN.`; field
   `name`; button `Add passkey`, `Waiting…` during the prompt; link `Use an
@@ -261,7 +280,9 @@ current step. There is no skip, cancel or sign-out here.
 
 Mikroview's screen: heading `Set a new password`; subtitle `Your one-time
 code got you in. Choose a password only you know.`; fields `new
-password`, `confirm password`; button `Set password`.
+password`, `confirm password`; button `Set password`; below it the link
+`Sign in as someone else` (owner 31b) → `POST /api/auth/logout`, then
+sign in.
 `POST /api/auth/password {newPassword}`; `400` → the server's `detail`.
 
 ### Session expired (`'expired'`)
@@ -302,7 +323,11 @@ headers, body). In particular:
 4. Code step: each mode's text and links for `[totp]`, `[passkey]`,
    `[totp, passkey]`; wrong code; step expired.
 5. First run: each check in order; each response.
-6. Second step: disabled passkey key; the reload case asks for the
+6. Second step: disabled passkey key, its line for each status; the
+   passkey-only account with a disabled key shows the alert; expired
+   enrolment shows its line with a new secret; `totp/enrol` 409; `Sign
+   in as someone else` signs out first on each screen that has it, and
+   the codes screen has none; the reload case asks for the
    password; codes shown in the order sent (use codes not in sorted
    order); `Copy all` writes all ten; nothing is written to
    `localStorage` or `sessionStorage`.

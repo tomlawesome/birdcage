@@ -50,7 +50,7 @@ export class ApiError extends Error {
 const noHandler = () => {}
 let signedOutHandler: () => void = noHandler
 
-/** Registers the handler a 401 from getJSON calls (the latest wins).
+/** Registers the handler a 401 from getJSON or sendJSON calls (the latest wins).
  * Returns the unsubscribe, which removes it if it is still the one
  * registered. */
 export function onSignedOut(fn: () => void): () => void {
@@ -95,6 +95,8 @@ export async function sendJSON<T = any>(method: string, path: string, body?: unk
   }
   const res = await fetch(path, init)
   if (!res.ok) {
+    // The door handles its own /api/auth/ refusals.
+    if (!path.startsWith('/api/auth/') && (res.status === 401 || (res.status === 403 && (await isGate(res.clone()))))) signedOutHandler()
     const { kind, detail } = await problemOf(res)
     throw new ApiError(`${method} ${path}: ${res.status}`, res.status, kind, detail)
   }

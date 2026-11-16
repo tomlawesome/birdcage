@@ -175,7 +175,7 @@ describe('second step: choose', () => {
   it('passkey key is disabled, with the https note instead of its description, unless passkeys are ready', () => {
     stubServer({})
     render(Door, { session: owed({ passkeys: { count: 0, status: 'insecure' } }), onenter: () => {} })
-    expect(screen.getByText('Passkeys need an https web address.')).toBeTruthy()
+    expect(screen.getByText('The public address is http. Passkeys need https.')).toBeTruthy()
     expect(screen.queryByText('Fingerprint, face or device PIN.')).toBeNull()
     const key = screen.getByText('Passkey').closest('button')
     expect(key?.hasAttribute('disabled')).toBe(true)

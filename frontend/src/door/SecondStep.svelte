@@ -1,7 +1,7 @@
 <script lang="ts">
   // Add a second step: choose a key, prove it works, keep the codes. Every
-  // local-password account must hold one, so there is no skip, cancel or
-  // sign-out here. gauntlet holds a first factor and its ten recovery
+  // local-password account must hold one, so there is no skip or cancel;
+  // the one way out is "Sign in as someone else". gauntlet holds a first factor and its ten recovery
   // codes until "I have saved these" confirms them (its #58).
   //
   // The recovery codes live in this component's memory only: never in
@@ -20,7 +20,11 @@
     INCORRECT_PASSWORD,
     kindOf,
     PASSKEY_BUSY,
+    PASSKEY_ONLY_STUCK,
     PASSKEY_REFUSED,
+    passkeyLine,
+    SETUP_TIMED_OUT,
+    SIGN_IN_AS_SOMEONE_ELSE,
     statusOf,
     TOO_MANY,
     type Message,
@@ -31,6 +35,7 @@
     password: held = '',
     onpassword,
     ondone,
+    onsignin,
   }: {
     session: SessionState
     /** The password typed earlier in this visit, if the door holds one. */
@@ -41,6 +46,8 @@
     /** The factor is live (or the step must be read again): re-read the
      * session. Busy until the promise it returns settles. */
     ondone: () => void | Promise<void>
+    /** Signed out: the full sign-in. */
+    onsignin: () => void
   } = $props()
 
   type Key = 'totp' | 'passkey'
@@ -50,6 +57,7 @@
 
   const passkeyReady = $derived(session.passkeys?.status === 'ready')
   const totpOffered = $derived(!session.mustEnrolPasskey)
+  const stuck = $derived(session.mustEnrolPasskey && !passkeyReady)
 
   let typed = $state('')
   let code = $state('')
@@ -95,7 +103,21 @@
   function failed(err: unknown, key: Key) {
     if (statusOf(err) === 401 && kindOf(err) === 'invalid-credentials') askPassword(key, { text: INCORRECT_PASSWORD })
     else if (statusOf(err) === 429) msg = { text: TOO_MANY }
+    else if (statusOf(err) === 409) msg = { text: PASSKEY_BUSY }
     else msg = { text: FAILED }
+  }
+
+  async function someoneElse() {
+    if (busy) return
+    busy = true
+    try {
+      await sendJSON('POST', '/api/auth/logout')
+    } catch {
+      // Signed out or not, the full sign-in is what comes next.
+    } finally {
+      busy = false
+    }
+    onsignin()
   }
 
   async function pick(key: Key) {
@@ -165,6 +187,8 @@
         // The pending secret ran out: start the step again with a new one.
         try {
           await enrolTotp(held)
+          code = ''
+          msg = { text: SETUP_TIMED_OUT }
         } catch (again) {
           failed(again, 'totp')
         }
@@ -246,6 +270,10 @@
   }
 </script>
 
+{#snippet out()}
+  <button type="button" class="link" disabled={busy} onclick={someoneElse}>{SIGN_IN_AS_SOMEONE_ELSE}</button>
+{/snippet}
+
 {#if stage === 'choose'}
   <form class="f-choose f-wide" novalidate onsubmit={(e) => e.preventDefault()}>
     <p class="thread"><b>choose</b> · prove it · keep the codes · enter</p>
@@ -263,9 +291,10 @@
             d="M12 11v4a8 8 0 0 0 1 4M8.5 20a12 12 0 0 1-1-5v-4a4.5 4.5 0 0 1 9 0v3a12 12 0 0 0 .8 4.3M4.5 16.5a16 16 0 0 1-.5-4V11a8 8 0 0 1 13-6.2M20 11v2.5"
           /></svg
         ></span
-      >Passkey<i>set it up <span aria-hidden="true">▸</span></i><small>{passkeyReady ? 'Fingerprint, face or device PIN.' : 'Passkeys need an https web address.'}</small></button
+      >Passkey<i>set it up <span aria-hidden="true">▸</span></i><small>{passkeyLine(session.passkeys?.status)}</small></button
     >
-    <Alert {msg} />
+    <Alert msg={msg ?? (stuck ? { text: PASSKEY_ONLY_STUCK } : null)} />
+    {@render out()}
   </form>
 {:else if stage === 'password'}
   <form class="f-prove f-wide" novalidate onsubmit={submitPassword}>
@@ -281,6 +310,7 @@
     >
     <Alert {msg} />
     <button class="submit" disabled={busy}>{busy ? 'Please wait…' : 'Continue'}</button>
+    {@render out()}
   </form>
 {:else if stage === 'prove-totp'}
   <form class="f-prove f-wide" novalidate onsubmit={confirmTotp}>
@@ -305,6 +335,7 @@
     {#if passkeyReady}
       <button type="button" class="link" disabled={busy} onclick={() => ((msg = null), show('prove-passkey'))}>Use a passkey instead</button>
     {/if}
+    {@render out()}
   </form>
 {:else if stage === 'prove-passkey'}
   <form class="f-prove f-wide" novalidate onsubmit={addPasskey}>
@@ -317,6 +348,7 @@
     {#if totpOffered}
       <button type="button" class="link" disabled={busy} onclick={() => ((msg = null), pick('totp'))}>Use an authenticator app instead</button>
     {/if}
+    {@render out()}
   </form>
 {:else}
   <form class="f-codes f-wide" novalidate onsubmit={saved}>
