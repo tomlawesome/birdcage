@@ -703,7 +703,7 @@ function visitedSentence(input: CanaryPageInput, visitor: Visitor, hit: TraceHit
   // #143: what this one hit said it was, straight from hit.client -- no
   // clause at all when there is nothing to report.
   if (hit.client) {
-    sub.push({ text: ' Said it was ' }, { text: hit.client, cls: 'client', title: hit.client }, { text: '. ' })
+    sub.push({ text: 'Said it was ' }, { text: hit.client, cls: 'client', title: hit.client }, { text: '. ' })
   }
 
   if (repeat) {
