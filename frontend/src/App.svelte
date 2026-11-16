@@ -68,6 +68,11 @@
   let knownName: string | undefined = undefined
   // The door opening onto the dashboard (ADR-0017 decision 2).
   let leaving = $state(false)
+  let leaveTimer: ReturnType<typeof setTimeout> | undefined
+  // Bumped each time arrive() shows the door, so the {#key} below mounts
+  // a fresh Door: one that entered keeps screen 'in' for good, and the
+  // door coming back inside its fade window would otherwise stay blank.
+  let doorVisit = $state(0)
 
   const SIGNED_OUT: SessionState = {
     setupRequired: false,
@@ -92,6 +97,12 @@
     else {
       phase = 'door'
       forgetDashboard()
+      // The door coming back is not the door leaving: the new instance
+      // must not mount faded, and the old fade's timer must not cut a
+      // later enter() short.
+      doorVisit++
+      leaving = false
+      clearTimeout(leaveTimer)
     }
   }
 
@@ -139,7 +150,7 @@
     if (stillMotion()) return
     leaving = true
     // The bars slide apart over 700 ms and the door fades with them.
-    setTimeout(() => (leaving = false), 750)
+    leaveTimer = setTimeout(() => (leaving = false), 750)
   }
 
   // The name chip's menu (owner 28a, docs/design/sign-in-screens.md,
@@ -596,7 +607,9 @@
 {/if}
 
 {#if doorShown && session}
-  <Door {session} onenter={enter} {leaving} />
+  {#key doorVisit}
+    <Door {session} onenter={enter} {leaving} />
+  {/key}
 {/if}
 
 <style>
