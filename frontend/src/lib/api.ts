@@ -228,12 +228,31 @@ export function inFixtureMode(): boolean {
   return fixtureScene() !== null
 }
 
-/** GET a JSON read. A 401 also calls the onSignedOut handler (the
- * session has ended), then throws as every other failure does. */
+// gauntlet's Protect gates (v0.4.2 docs/api/auth.yaml): a signed-in
+// session that must finish a step first is refused 403 with the gate
+// named in the X-Auth-Gate header and in the problem type's fragment.
+const GATES = ['must-change-password', 'must-enrol-factor', 'must-enrol-passkey']
+
+/** True when a 403 is one of gauntlet's Protect gates rather than a
+ * plain refusal. Reads the body only when the header does not say. */
+async function isGate(res: Response): Promise<boolean> {
+  if (GATES.includes(res.headers.get('X-Auth-Gate') ?? '')) return true
+  try {
+    const body = (await res.json()) as { type?: unknown }
+    const type = typeof body?.type === 'string' ? body.type : ''
+    return GATES.some((g) => type.endsWith(`errors.md#${g}`))
+  } catch {
+    return false
+  }
+}
+
+/** GET a JSON read. A 401, or a 403 from one of gauntlet's gates, also
+ * calls the onSignedOut handler (the session has ended, or the door has
+ * a step to show), then throws as every other failure does. */
 export async function getJSON<T = any>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) {
-    if (res.status === 401) signedOutHandler()
+    if (res.status === 401 || (res.status === 403 && (await isGate(res)))) signedOutHandler()
     throw new ApiError(`${path}: ${res.status}`, res.status)
   }
   return (await res.json()) as T
