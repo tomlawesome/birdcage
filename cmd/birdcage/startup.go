@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +28,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
 	"github.com/tomlawesome/birdcage/internal/tlsconfig"
+	"github.com/tomlawesome/birdcage/internal/tlssniff"
 	"github.com/tomlawesome/birdcage/web"
 )
 
@@ -735,6 +738,48 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	return ingestServer, enrolServer, nil
 }
 
+// certHostAllower accepts a plain request's Host only if the dashboard's
+// current certificate names it: its DNSNames and IPAddresses are exactly
+// BIRDCAGE_DASHBOARD_HOST's list or the guessed names in minted mode, and
+// the operator's names for a given certificate. Asking getCert each time
+// follows a reloaded or renewed certificate. Wildcard SANs are not matched.
+func certHostAllower(getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)) tlssniff.HostAllower {
+	return func(requested string) string {
+		host := requested
+		if h, _, err := net.SplitHostPort(requested); err == nil {
+			host = h
+		}
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+		if host == "" {
+			return ""
+		}
+		cert, err := getCert(&tls.ClientHelloInfo{})
+		if err != nil || cert == nil || len(cert.Certificate) == 0 {
+			return ""
+		}
+		leaf := cert.Leaf
+		if leaf == nil {
+			if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+				return ""
+			}
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			for _, c := range leaf.IPAddresses {
+				if c.Equal(ip) {
+					return c.String()
+				}
+			}
+			return ""
+		}
+		for _, name := range leaf.DNSNames {
+			if strings.EqualFold(name, host) {
+				return name
+			}
+		}
+		return ""
+	}
+}
+
 // serveAll runs the dashboard, ingest and enrolment listeners
 // concurrently and watches them to completion. It returns errServeFailed
 // the moment any service has failed -- each one's own Error line is
@@ -768,8 +813,19 @@ func serveAll(ctx context.Context, stop context.CancelFunc, dashboard *http.Serv
 			// httpServer.TLSConfig above (tlsconfig.NewCertReloader for
 			// ModeCert, birdcageCA.ServerCertificateSource for
 			// ModeMintedCert), so both arguments here are empty, matching
-			// ingest.NewTLSServer's callers.
-			err = dashboard.ListenAndServeTLS("", "")
+			// ingest.NewTLSServer's callers. The listener is wrapped so a
+			// plain http:// visit to this port is redirected to https
+			// (#212) rather than failing the handshake.
+			var ln net.Listener
+			addr := dashboard.Addr
+			if addr == "" {
+				addr = ":https" // ListenAndServeTLS's own default
+			}
+			ln, err = net.Listen("tcp", addr)
+			if err == nil {
+				ln = tlssniff.Listener(ln, httpLog, certHostAllower(dashboard.TLSConfig.GetCertificate))
+				err = dashboard.ServeTLS(ln, "", "")
+			}
 		case tlsconfig.ModePlainUnixSocket:
 			httpLog.Info(fmt.Sprintf("serving dashboard HTTP on unix socket %s", unixPath))
 			var ln net.Listener

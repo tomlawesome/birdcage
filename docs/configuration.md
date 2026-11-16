@@ -222,6 +222,11 @@ plaintext listener reachable off loopback, and there is no fifth mode.
    and a listener that can't be reached off the box or outside a shared
    volume is already on the right side of that line.
 
+In modes 1 and 2, an `http://` visit to the dashboard's port is
+redirected to `https://` on the same port, but only for a name the
+certificate covers; any other name gets a bare `400`. Nothing else is
+ever served over plain HTTP there (#212).
+
 ACME (automatic certificate issuance/renewal) was considered and ruled
 out (owner decision, 2026-09-20): it would need a third-party Go module
 this project has not approved, for a convenience (external TLS
