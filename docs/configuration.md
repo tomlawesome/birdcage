@@ -115,8 +115,9 @@ Back up `BIRDCAGE_CA_DIR` (default `/var/lib/birdcage/ca`) alongside the
 database, whichever engine is in use, and restore it before starting
 birdcage on the restored data -- every enrolled canary's client
 certificate and the dashboard's own certificate chain to the CA key in
-that directory, so a restore that omits it starts birdcage with a fresh,
-unrelated CA and the whole fleet must be re-enrolled.
+that directory, so a restore that omits it cannot be used as it stands:
+once any client certificate has been issued, birdcage refuses to start
+without the CA rather than mint a new, unrelated one.
 
 Birdcage refuses to start unless the restored directory is owned by the
 uid the container runs as (1000 in the shipped image) and has mode
@@ -886,8 +887,9 @@ secrets:
 ```
 
 The file must be readable by the user birdcage runs as and must not be
-empty; either way birdcage refuses to start, naming the path and this
-process's uid and gid. One trailing newline is trimmed. The password is
+empty; either way birdcage refuses to start. An unreadable file is
+reported with its path and this process's uid and gid; an empty one
+with its path alone. One trailing newline is trimmed. The password is
 never logged, never printed and never written to `audit_log`.
 
 ### What birdcage can do with this credential, and what it cannot
@@ -929,7 +931,9 @@ prints `added: permanent ban on 203.0.113.9 (LAPI alert N, duration
 876000h); recorded in audit_log as crowdsec.block_added`. On the
 CrowdSec host, `cscli decisions list` shows it. Every outcome -- added,
 already there, refused by the floor or the allowlist, or failed -- is a
-row in `audit_log` with the address as its target.
+row in `audit_log` with the address as its target. Input refused before
+any of that (an address that is not a bare IP, or a missing or unusable
+reason) writes no row.
 
 ## Other environment variables
 

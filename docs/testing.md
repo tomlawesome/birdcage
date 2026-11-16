@@ -32,9 +32,8 @@ the real stack -- birdcage, an enrolled Mockingbird container -- and
 exercises the real functions, on every merge request and on `dev`. Its jobs
 are never `allow_failure`, never `when: manual` and never moved to a
 schedule; `lint:ci` (`scripts/ci-e2e-guard.py`) refuses `allow_failure`,
-`when: manual` and rules that leave the gate's anchors (which never run on a
-schedule): a
-change cannot reach `dev` without the live checks having run. The project
+`when: manual` and rules that leave the gate's anchors. A change cannot
+reach `dev` without the live checks having run. The project
 also refuses a merge unless the pipeline succeeds.
 
 `preview` and `main` carry a higher bar than `dev`, not the same one (#91):

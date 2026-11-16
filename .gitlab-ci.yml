@@ -807,8 +807,8 @@ test:go:quarantine:
 
 # The real binary, with the frontend build embedded, seeded from the
 # night fixture and driven by Playwright (frontend/e2e/smoke.mjs). Node
-# image plus the Go tarball pinned to go.mod's version, since both are
-# needed in one job. SQLite only -- Postgres at the preview bar is #7's.
+# image plus the checksum-pinned Go toolchain that scripts/ensure-go.sh
+# installs (the version go.mod names), since both are needed in one job. SQLite only -- Postgres at the preview bar is #7's.
 #
 # Firefox (#83, docs/ci-hops.md, `test:smoke`): the owner
 # browses on Firefox, so that is the bar every change has to clear. The
@@ -971,32 +971,20 @@ test:smoke:postgres:
 # image is a few hundred megabytes and this runs on every branch.
 #
 # Before that, the daemon was SHARED across every pipeline running on the
-# runner host at once (#112), and the prune that used to run here (since
-# removed) was not written for that: it assumed the local tag it just built
-# was the only copy, so deleting every
-# other pipeline's tag was harmless because "harmless" meant "self-healing
-# for a runner that only ever has one pipeline on it". On a shared daemon it
-# instead deletes whatever another still-running pipeline is mid-e2e-stage
-# with, and that pipeline's jobs then fail for a reason that has nothing to
-# do with the code under test. Rather than change what gets pruned or when
-# (docs/ci-hops.md's #112 write-up has the four options considered and why
-# this one won), this job now also pushes each image to this project's own
+# runner host at once (#112), and a prune that used to run here (since
+# removed) deleted whatever another still-running pipeline was mid-e2e-stage
+# with, so that pipeline's jobs failed for a reason that has nothing to do
+# with the code under test (docs/ci-hops.md's #112 write-up has the options
+# considered). Per-job daemons took away the sharing; the registry push stays
+# as the transport. This job pushes each image to this project's own
 # container registry ($CI_REGISTRY_IMAGE, via scripts/publish-image.sh,
 # which pushes and then proves the round trip) and records the resulting
 # repo@digest in release.env alongside the local tag. Every later job that
 # uses one of these images calls scripts/ci-ensure-image.sh first, which
-# pulls that digest back and retags it locally if the daemon's local copy
-# is ever missing. Whoever prunes, and whenever, the worst case is now one
-# recovery pull instead of a failed job -- unless a job uses the same tag
-# TWICE (#112, second incident): the first use's ci-ensure-image.sh call
-# already recovered it, but nothing stopped a second concurrent prune from
-# deleting it again before the second use, and nothing re-checked before
-# that second use ran. That is now fixed at both ends: the prune below
-# only removes a tag old enough that no pipeline still running could have
-# built it (see that job's own comment), and every script with a second
-# use of a shared tag re-runs scripts/ci-ensure-image.sh immediately
-# before that second use. This registry push is transport between this
-# pipeline's own jobs, not a release: publication that customers or an
+# pulls that digest into its own empty daemon and tags it locally, and every
+# script with a second use of the tag re-runs scripts/ci-ensure-image.sh
+# immediately before that second use. This registry push is transport
+# between this pipeline's own jobs, not a release: publication that customers or an
 # attacker's search engine would ever see is still `release:push`'s
 # alone, to the four *_MIRROR_REPO variables above, unchanged by any of
 # this.
