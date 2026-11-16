@@ -78,7 +78,7 @@
 #     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
 #   docker run --rm --network covfloor-net-$$ \
 #     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
-#     -v "$PWD":/work -w /work golang:1.27.2 \
+#     -v "$PWD":/work -w /work golang:1.27.4 \
 #     go test ./... -race -coverprofile=/work/coverage.out
 #
 # Read the per-package numbers straight off that `go test` output -- they

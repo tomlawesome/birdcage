@@ -255,6 +255,22 @@ first account is always an admin. Accounts that use a password must also
 add a second factor (an authenticator app or a passkey) before they can
 reach anything. A restart signs everyone out.
 
+After 5 failed sign-ins within a minute, from one client address or
+against one account, further tries are answered with `429` for a while.
+Repeated lockouts grow longer, up to an hour.
+
+After 50 failed sign-ins in a row an account's password sign-in is
+disabled. Another admin can lift it with
+`POST /api/auth/users/{id}/unlock` (the dashboard has no screen for it
+yet). If no admin can,
+restart birdcage: when it opens with the only admin disabled it logs
+`lift the disable with unlock code <code>`, naming the account. Send that
+code with the admin's username as JSON to `POST /api/auth/unlock`
+(`{"username": "...", "unlockCode": "..."}`; the dashboard has no screen
+for it). The admin then signs in with their usual password and second
+factor. The code lasts until the disable is lifted or birdcage restarts,
+and the disable lifts itself 24 hours after it began.
+
 Sign-in and account events (sign-ins, failed sign-ins, API token creation
 and revocation, and the like) are written to the audit log.
 
@@ -374,12 +390,18 @@ chmod 0400 key
 ```
 
 **Losing this file loses every account.** The accounts are sealed under it
-and cannot be opened without it; there is no recovery and no way to reset
-it. Back it up **separately from the database**: a backup that holds both
-together gives whoever reads it everything. Changing the file to a
-different one has the same effect as losing it: birdcage refuses to start
-rather than treat the existing accounts as empty and offer a new setup
-code.
+and cannot be opened without it, so they cannot be recovered. Back it up
+**separately from the database**: a backup that holds both together gives
+whoever reads it everything. Changing the file to a different one has the
+same effect as losing it: birdcage refuses to start rather than treat the
+existing accounts as empty and offer a new setup code.
+
+To start again without the old key, stop birdcage, back up the database,
+and delete the three rows of the `auth_documents` table (`accounts`,
+`tokens` and `signins`). That permanently removes every account, API token
+and the sign-in history. The next start is a first run and logs a new setup
+code (see [Sign-in](#sign-in)). Restoring the original key file instead
+keeps everything.
 
 ### Admin passkeys
 

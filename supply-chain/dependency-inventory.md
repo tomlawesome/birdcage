@@ -411,8 +411,8 @@ The 2026-09-20 table covered `.gitlab-ci.yml`'s `image:` and `services:` lines f
 | 211 | `curl (apk package)` | unpinned -- `RELEASE_APK_PACKAGES` (`bash curl python3`), installed by the `.registry_login` release anchor | Unverified -- Alpine package index version not checked this session. | curl licence (MIT-style) | direct | curl project (Daniel Stenberg et al) | very high (mainstream, widely deployed) | CI/release-only -- release-job HTTP calls, never shipped | Predates the rule -- not individually recorded |
 | 212 | `git (apk package)` | unpinned -- `apk add --no-cache git` in `release:push` | Unverified -- Alpine package index version not checked this session. | GPL-2.0-only | direct | Git project (Software Freedom Conservancy) | very high (mainstream, widely deployed) | CI/release-only -- reads the merge commit's parents, never shipped | Predates the rule -- not individually recorded |
 | 213 | `git (apk package, second job)` | unpinned -- `apk add --no-cache git openssh-client curl jq` in `sync:mirror-to-github` | Unverified this session. | GPL-2.0-only | direct | Git project | very high (mainstream, widely deployed) | CI-only -- mirrors `dev`/`preview`/`main` to GitHub over SSH, never shipped | Predates the rule -- not individually recorded |
-| 214 | `openssh-client (apk package)` | unpinned -- same `sync:mirror-to-github` job as #216 | Unverified this session. | BSD-style (OpenSSH) | direct | OpenBSD/OpenSSH project | very high (mainstream, widely deployed) | CI-only -- same job as #216, never shipped | Predates the rule -- not individually recorded |
-| 215 | `jq (apk package)` | unpinned -- same `sync:mirror-to-github` job as #216 | Unverified this session. | MIT | direct | jq project (independent, stedolan/jqlang) | very high (mainstream, widely deployed) | CI-only -- same job as #216, never shipped | Predates the rule -- not individually recorded |
+| 214 | `openssh-client (apk package)` | unpinned -- same `sync:mirror-to-github` job as #213 | Unverified this session. | BSD-style (OpenSSH) | direct | OpenBSD/OpenSSH project | very high (mainstream, widely deployed) | CI-only -- same job as #213, never shipped | Predates the rule -- not individually recorded |
+| 215 | `jq (apk package)` | unpinned -- same `sync:mirror-to-github` job as #213 | Unverified this session. | MIT | direct | jq project (independent, stedolan/jqlang) | very high (mainstream, widely deployed) | CI-only -- same job as #213, never shipped | Predates the rule -- not individually recorded |
 | 216 | `cosign` | v3.1.4, checksum-pinned in `scripts/ensure-cosign.sh` (fetched by both the GitLab release jobs and GitHub's `countersign.yml`) | v3.1.4 (current, 2026-11-14) | Apache-2.0 | direct | sigstore project (Linux Foundation-hosted, OpenSSF) | high (the standard tool for keyless/key-based container signing) | Build/release-only -- signs and verifies image digests, never shipped in a product image | Predates the rule -- not individually recorded |
 | 217 | `actions/checkout` (in `countersign.yml`) | v7.0.1 (commit `3d3c42e...`, the same SHA pin as row 204; was the floating `@v5` tag until the 2026-09-30 audit fix) | v7.0.1 -- already current (same check as row 204). | MIT | direct | GitHub | very high (mainstream, widely deployed) | CI-only -- countersigning workflow checkout, never shipped | Predates the rule -- not individually recorded |
 ### I. `build/nightjar/Dockerfile` (#108: the scanner agent's own image, landed in commit 4 of that issue's slice)
@@ -466,14 +466,14 @@ birdcage nor shipped in any image -- the same footing as `golangci-lint`
 
 ## Summary, by approval status
 
-229 rows total (210 from the issue's own table, 10 found in section H, 2 in section I,
-3 in section F, 2 in section J, 2 in section K, 2 more in section D found in this
-review -- holder's and nightjar's own golang build stages -- and 1 more in section D
-for #8: git in birdcage's Go build stage, row 229).
+230 rows, numbered 1-231 (there is no row 222): section A 23, B 128, C 36, D 8,
+E 6, F 8, G 4, H 10, I 2, J 2, K 3. Section D includes holder's and nightjar's
+golang build stages (rows 227-228) and, for #8, git in birdcage's Go build
+stage (row 230); section B includes `qrcode-generator` (row 231).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 11 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8; `qrcode-generator` #8, row 231) |
+| Approved, with issue number | 12 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8, row 230; `qrcode-generator` #8, row 231; `python3` in the release jobs #158, row 229) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 51 (every other **direct** dependency, including `debian:trixie-slim`, row 221, and holder's/nightjar's golang build stages, rows 227-228) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 220) |
