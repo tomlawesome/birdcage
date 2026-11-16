@@ -437,7 +437,7 @@ func checkStartupDatabase(cfg startupConfig) error {
 }
 
 // checkStartupCAContinuity refuses to start when cfg.caDir (or its key
-// file) is missing but the store already shows an enrolled canary --
+// file) is missing but the store already holds an issued client certificate --
 // owner rule (issue #149): birdcage never mints a replacement CA just to
 // get going again, since every certificate that CA vouches for (a
 // canary's client certificate, an operator's already-trusted dashboard
@@ -447,8 +447,8 @@ func checkStartupDatabase(cfg startupConfig) error {
 //
 // database must already be open, so this needs to run after
 // openStartupDatabase rather than in loadStartupCA's usual position; see
-// main()'s call site. A genuinely fresh install (no canaries yet) has no
-// state to lose and falls through so loadStartupCA may still mint.
+// main()'s call site. A fresh install, or one with only `agent add` rows
+// and no certificate yet, has no state to lose and falls through so loadStartupCA may still mint.
 func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *db.DB, caLog *slog.Logger) error {
 	if !cfg.caNeeded {
 		return nil
@@ -460,9 +460,9 @@ func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *
 	if missing == "" {
 		return nil
 	}
-	enrolled, err := store.AnyCanariesEnrolled(ctx, database)
+	enrolled, err := store.AnyClientCertsIssued(ctx, database)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check for enrolled canaries before minting a new CA: %v", err)}
+		return &startupError{caLog, fmt.Sprintf("check for issued client certificates before minting a new CA: %v", err)}
 	}
 	if !enrolled {
 		return nil

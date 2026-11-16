@@ -149,7 +149,7 @@ func poisonerSettings() (poisoner.Config, []string) {
 		}
 	}
 
-	if gap, ok := poisonerDuration(envPoisonerFloor, 0, &warnings); ok {
+	if gap, ok := poisonerDuration(envPoisonerFloor, poisoner.MinCeilingGap, &warnings); ok {
 		cfg.Pace.FloorGap = gap
 	}
 	if gap, ok := poisonerDuration(envPoisonerCeiling, poisoner.MinCeilingGap, &warnings); ok {
@@ -171,10 +171,9 @@ func poisonerSettings() (poisoner.Config, []string) {
 
 // poisonerDuration reads one duration variable, reporting an unusable
 // value rather than failing startup over it. min, when positive, is an
-// extra floor beyond "positive at all" -- envPoisonerCeiling's own
+// extra floor beyond "positive at all" -- both variables pass
 // poisoner.MinCeilingGap, refused below it by name and value so a typo
-// like 30ms never reaches cfg.Pace.CeilingGap; envPoisonerFloor passes 0,
-// which never rejects anything a positive duration wouldn't already.
+// like 30ms never reaches cfg.Pace.
 func poisonerDuration(name string, min time.Duration, warnings *[]string) (time.Duration, bool) {
 	raw := os.Getenv(name)
 	if raw == "" {

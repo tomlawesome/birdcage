@@ -138,6 +138,10 @@ func (a *agentSettings) Apply(pushed map[string]string, detector liveSettable, l
 				log.Warn(fmt.Sprintf("birdcage pushed an invalid %s; leaving the current pace floor in force", key))
 				continue
 			}
+			if d < poisoner.MinCeilingGap {
+				log.Warn(fmt.Sprintf("birdcage pushed a %s of %s, below the %s minimum; leaving the current pace floor in force", key, d, poisoner.MinCeilingGap))
+				continue
+			}
 			a.pace.FloorGap = d
 		case settingPaceCeiling:
 			d, err := time.ParseDuration(value)

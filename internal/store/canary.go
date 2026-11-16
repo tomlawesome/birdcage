@@ -733,18 +733,30 @@ func ParseRange(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// AnyCanariesEnrolled reports whether the agents table has ever gained a
-// row -- issue #149's signal that birdcage already has real state
-// depending on its CA: a canary only reaches this table by completing
-// enrolment, which signs its client certificate with the CA key. A
-// single EXISTS query, cheaper than ListCanaries' full scan and needing
-// none of its joins or health computation. Scanned into a bool:
-// Postgres returns EXISTS as a boolean, SQLite as 0/1, and
-// database/sql converts both.
+// AnyCanariesEnrolled reports whether the agents table has a row. It is
+// no longer the CA-continuity signal (an `agent add` row exists before
+// any certificate is signed; see AnyClientCertsIssued) and start-up does
+// not call it; only its own test does. Same EXISTS shape as below.
 func AnyCanariesEnrolled(ctx context.Context, database *db.DB) (bool, error) {
 	var exists bool
 	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents)`).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check for enrolled canaries: %w", err)
+	}
+	return exists, nil
+}
+
+// AnyClientCertsIssued reports whether the client_certs table has a row
+// -- issue #149's signal that birdcage already has real state depending
+// on its CA: a client certificate is signed with the CA key when a
+// canary enrols or renews, so a row means a CA loss would orphan it. An
+// agents row alone is not that signal: `agent add` creates one before
+// the canary has ever enrolled. A single EXISTS query. Scanned into a
+// bool: Postgres returns EXISTS as a boolean, SQLite as 0/1, and
+// database/sql converts both.
+func AnyClientCertsIssued(ctx context.Context, database *db.DB) (bool, error) {
+	var exists bool
+	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM client_certs)`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check for issued client certificates: %w", err)
 	}
 	return exists, nil
 }
