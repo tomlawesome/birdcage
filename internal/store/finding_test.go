@@ -263,21 +263,33 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 func TestAcceptFindingValidatesArguments(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := mustParse(t, "2026-01-01T00:00:00Z")
+		// A real open finding, so a missing validation check would let the
+		// call succeed rather than fall through to ErrFindingNotFound.
+		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, now)
+		target, vuln := opensslFinding.Target, opensslFinding.VulnerabilityID
 		cases := []struct {
 			name                                string
 			agentID, target, vulnID, acceptedBy string
 			now                                 time.Time
 		}{
-			{"empty agent", "", "deb:openssl", "CVE-1", "tom", now},
-			{"empty target", "scanner-a", "", "CVE-1", "tom", now},
-			{"empty vuln", "scanner-a", "deb:openssl", "", "tom", now},
-			{"empty acceptedBy", "scanner-a", "deb:openssl", "CVE-1", "", now},
-			{"zero now", "scanner-a", "deb:openssl", "CVE-1", "tom", time.Time{}},
+			{"empty agent", "", target, vuln, "tom", now},
+			{"empty target", "scanner-a", "", vuln, "tom", now},
+			{"empty vuln", "scanner-a", target, "", "tom", now},
+			{"empty acceptedBy", "scanner-a", target, vuln, "", now},
+			{"zero now", "scanner-a", target, vuln, "tom", time.Time{}},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {
-				if err := AcceptFinding(context.Background(), database, c.agentID, c.target, c.vulnID, c.acceptedBy, c.now); err == nil {
-					t.Errorf("AcceptFinding(%+v) = nil error, want a validation error", c)
+				err := AcceptFinding(context.Background(), database, c.agentID, c.target, c.vulnID, c.acceptedBy, c.now)
+				if err == nil {
+					t.Fatalf("AcceptFinding(%+v) = nil error, want a validation error", c)
+				}
+				if errors.Is(err, ErrFindingNotFound) {
+					t.Fatalf("AcceptFinding(%+v) = ErrFindingNotFound, want a validation error (the finding exists)", c)
+				}
+				f := findByVuln(t, listFindings(t, database, "scanner-a"), vuln)
+				if f.State != FindingOpen || f.AcceptedBy != "" || f.AcceptedAt != nil {
+					t.Errorf("finding after rejected accept = %+v, want still open and not accepted", f)
 				}
 			})
 		}
