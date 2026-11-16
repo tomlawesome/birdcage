@@ -83,6 +83,10 @@ main() {
     fi
     # Do NOT trust it just because it is already there -- that is exactly
     # the silent-drift case this script exists to close.
+    if [ ! -x "$target/bin/go" ]; then
+      echo "ensure-go: $target is an incomplete install (no bin/go) -- remove it and run again" >&2
+      return 1
+    fi
     echo "ensure-go: $target exists but is not $GO_VERSION -- refusing to overwrite it" >&2
     echo "  expected VERSION: $GO_VERSION" >&2
     echo "  got:              ${installed_version:-<unreadable>}" >&2
@@ -120,7 +124,19 @@ main() {
     echo "ensure-go: unpack failed or incomplete -- nothing installed" >&2
     return 1
   fi
-  mv "$stage/go" "$target"
+  # -T: if another job installed the target meanwhile, fail rather than
+  # move this copy inside it; that job's copy is then checked like any
+  # existing one.
+  if ! mv -T "$stage/go" "$target" 2>/dev/null; then
+    rm -rf "$stage"
+    if [ -x "$target/bin/go" ] && [ "$(head -n1 "$target/VERSION" 2>/dev/null)" = "$GO_VERSION" ]; then
+      echo "ensure-go: $target was installed by another job meanwhile" >&2
+      echo "$target/bin/go"
+      return 0
+    fi
+    echo "ensure-go: could not move the unpacked Go into $target" >&2
+    return 1
+  fi
   rm -rf "$stage"
   echo "ensure-go: installed $target" >&2
   echo "$target/bin/go"
