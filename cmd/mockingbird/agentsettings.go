@@ -150,7 +150,7 @@ func (a *agentSettings) Apply(pushed map[string]string, detector liveSettable, l
 				continue
 			}
 			if d < poisoner.MinCeilingGap {
-				log.Warn(fmt.Sprintf("birdcage pushed a %s of %s, below the %s floor; leaving the current pace ceiling in force", key, d, poisoner.MinCeilingGap))
+				log.Warn(fmt.Sprintf("birdcage pushed a %s of %s, below the %s minimum; leaving the current pace ceiling in force", key, d, poisoner.MinCeilingGap))
 				continue
 			}
 			a.pace.CeilingGap = d
