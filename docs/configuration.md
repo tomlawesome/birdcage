@@ -255,11 +255,14 @@ first account is always an admin. Accounts that use a password must also
 add a second factor (an authenticator app or a passkey) before they can
 reach anything. A restart signs everyone out.
 
-More than 5 failed sign-ins in a minute, from one client address or against
-one account, are answered with `429`.
+After 5 failed sign-ins within a minute, from one client address or
+against one account, further tries are answered with `429` for a while.
+Repeated lockouts grow longer, up to an hour.
 
 After 50 failed sign-ins in a row an account's password sign-in is
-disabled; another admin can lift it from the user list. If no admin can,
+disabled. Another admin can lift it with
+`POST /api/auth/users/{id}/unlock` (the dashboard has no screen for it
+yet). If no admin can,
 restart birdcage: when it opens with the only admin disabled it logs
 `lift the disable with unlock code <code>`, naming the account. Send that
 code with the admin's username as JSON to `POST /api/auth/unlock`
