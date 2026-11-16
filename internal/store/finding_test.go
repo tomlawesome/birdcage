@@ -387,3 +387,24 @@ func findingsStaleness(t *testing.T, database *db.DB, agentID string) AgentScanS
 	}
 	return status
 }
+
+// TestListFindingsOrdersByInstantNotText: last_seen is RFC3339Nano, which
+// trims trailing zeros, so "...:00Z" sorts after "...:00.5Z" as text even
+// though it is the earlier instant (see timeCompare). The finding seen
+// 500ms later must come first.
+func TestListFindingsOrdersByInstantNotText(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		base := mustParse(t, "2026-01-01T00:00:00Z")
+		applySnapshot(t, database, "scanner-whole", []ObservedFinding{opensslFinding}, base)
+		applySnapshot(t, database, "scanner-frac", []ObservedFinding{opensslFinding}, base.Add(500*time.Millisecond))
+
+		findings := listFindings(t, database, "")
+		if len(findings) != 2 {
+			t.Fatalf("got %d findings, want 2: %+v", len(findings), findings)
+		}
+		if findings[0].AgentID != "scanner-frac" || findings[1].AgentID != "scanner-whole" {
+			t.Errorf("order = %s, %s (last_seen %v, %v); want scanner-frac (T+500ms) first, then scanner-whole (T)",
+				findings[0].AgentID, findings[1].AgentID, findings[0].LastSeen, findings[1].LastSeen)
+		}
+	})
+}
