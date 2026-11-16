@@ -51,7 +51,7 @@ const (
 	csrfValue = "birdcage"
 
 	// loginFailures and loginWindow: failed sign-ins allowed per client
-	// address and per account in the window before a 429 (docs/using.md).
+	// address and per account in the window before a 429.
 	loginFailures = 5
 	loginWindow   = time.Minute
 
@@ -186,8 +186,8 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 		return fail(fmt.Errorf("auth: seal accounts: %w", err))
 	}
 	// The setup and unlock codes are held until Open has fully succeeded
-	// (below), so an operator never copies a code from a process that
-	// then refused to start.
+	// (below), so a refusal inside Open never leaves a code in the log.
+	// Later start-up steps in main can still refuse after the code is out.
 	codes := &heldCodes{log: log}
 	users, err := gauntlet.OpenStore(accountsDoc, gauntlet.Options{
 		Log:               log,
