@@ -49,7 +49,7 @@ fetch() {
 # <install_parent_dir>/go, matching the layout the archive itself uses and
 # the path the smoke jobs already put on PATH.
 main() {
-  local install_parent_dir target archive_name tmp tmpdir actual installed_version
+  local install_parent_dir target archive_name tmp actual installed_version
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -75,7 +75,7 @@ main() {
   target="$install_parent_dir/go"
 
   if [ -e "$target" ]; then
-    if [ -r "$target/VERSION" ] && installed_version="$(head -n1 "$target/VERSION" 2>/dev/null)" \
+    if [ -x "$target/bin/go" ] && [ -r "$target/VERSION" ] && installed_version="$(head -n1 "$target/VERSION" 2>/dev/null)" \
        && [ "$installed_version" = "$GO_VERSION" ]; then
       echo "ensure-go: $target already has $GO_VERSION, skipping download" >&2
       echo "$target/bin/go"
@@ -89,8 +89,10 @@ main() {
     return 1
   fi
 
+  tmpdir=""; stage=""  # globals so the INT/TERM trap can still see them
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' RETURN
+  trap 'rm -rf "${tmpdir:-}" "${stage:-}"' RETURN
+  trap 'rm -rf "${tmpdir:-}" "${stage:-}"; exit 1' INT TERM
   tmp="$tmpdir/$archive_name"
 
   echo "ensure-go: fetching $GO_VERSION from $GO_URL" >&2
@@ -110,7 +112,16 @@ main() {
     return 1
   fi
 
-  tar -C "$install_parent_dir" -xzf "$tmp"
+  # Stage then switch (PR1-R1): unpack beside the target, rename into place
+  # only once the unpack fully succeeded, so an interrupted or failed unpack
+  # never leaves a target a later run would trust.
+  stage="$(mktemp -d "$install_parent_dir/.ensure-go.XXXXXX")"
+  if ! tar -C "$stage" -xzf "$tmp" || [ ! -x "$stage/go/bin/go" ]; then
+    echo "ensure-go: unpack failed or incomplete -- nothing installed" >&2
+    return 1
+  fi
+  mv "$stage/go" "$target"
+  rm -rf "$stage"
   echo "ensure-go: installed $target" >&2
   echo "$target/bin/go"
 }
