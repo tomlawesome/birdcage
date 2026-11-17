@@ -356,20 +356,16 @@ exist on a rootless host.
 The fence is this runner, not `.gitlab-ci.yml`: a job without the tag never
 sees the key, and a job with the tag on an unprotected ref never runs.
 
-### 4. Link the GHCR packages to the repository
+### 4. Check the GHCR packages name the repository
 
-**Verify this rather than assuming it.** The images are pushed to GHCR from
-GitLab with `GHCR_TOKEN`, not by Actions. A package pushed that way is not
-necessarily linked to the repository, and if it is not, the countersigning
-workflow's built-in `GITHUB_TOKEN` has no write access to it — and cosign
-needs that write to store the signature beside the image.
-
-Prove it on a throwaway tag before the first real release: merge to
-`preview` once, check the package page for `ghcr.io/tomlawesome/birdcage`,
-`.../mockingbird`, `.../opencanary`, `.../nightjar`, `.../smb-lure` and `.../holder` each
-lists this repository, and run the countersigning workflow against the
-`preview` digests. There is no separate scratch push to do by hand —
-`release:mirror-preview` is that first push.
+Every image carries `org.opencontainers.image.source` (set once, on the
+`docker build` in `build:images`), which is what links a GHCR package to
+this repository; no manual linking is needed. Do check it: after the first
+`release:mirror-preview`, the package page for each of
+`ghcr.io/tomlawesome/birdcage`, `.../mockingbird`, `.../opencanary`,
+`.../nightjar`, `.../smb-lure` and `.../holder` must name this repository.
+Without that link the countersigning workflow's `GITHUB_TOKEN` cannot write
+the signature beside the image.
 
 ## What has not been run yet
 
@@ -396,7 +392,7 @@ Four things in particular to watch on the first cut:
   against the copy, passed on a local registry; GitLab to GHCR has not yet
   run. If `cosign verify-attestation` finds nothing on the GHCR side, this
   is the first place to look.
-- Setup step 4 above (GHCR package-to-repository linkage) is unverified
+- Setup step 4 above (each GHCR package page names the repository) is unchecked
   until the first `preview` merge actually pushes through
   `release:mirror-preview` and the countersigning workflow is run against
   it.
