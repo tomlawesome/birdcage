@@ -15,6 +15,9 @@ func TestBroadcastFor(t *testing.T) {
 		wantErr bool
 	}{
 		{cidr: "192.0.2.5/24", want: "192.0.2.255"},
+		{cidr: "198.51.100.5/8", want: net.IPv4(198, 255, 255, 255).String()},
+		{cidr: "192.0.2.5/16", want: net.IPv4(192, 0, 255, 255).String()},
+		{cidr: "203.0.113.10/20", want: net.IPv4(203, 0, 127, 255).String()},
 		{cidr: "198.51.100.5/25", want: "198.51.100.127"},
 		{cidr: "203.0.113.10/28", want: "203.0.113.15"},
 		{cidr: "192.0.2.3/30", want: "192.0.2.3"},

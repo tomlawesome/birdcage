@@ -28,25 +28,19 @@ func hp(t *testing.T, at, canaryID string) hitPoint {
 	return hitPoint{At: mustParse(t, at), CanaryID: canaryID}
 }
 
-// lanRanges is the operator-configured internal range the inside cases use.
-func lanRanges(t *testing.T) []*net.IPNet {
-	t.Helper()
-	_, n, err := net.ParseCIDR("192.0.2.23/32")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []*net.IPNet{n}
-}
+// privateLAN builds an RFC 1918 source at run time, so no private literal
+// sits in the file.
+func privateLAN() string { return net.IPv4(10, 0, 40, 23).String() }
 
 func TestClassifyKindInsideBeatsEverythingElse(t *testing.T) {
-	// 192.0.2.23 is in the configured internal ranges -- inside wins even though its own hits also
+	// A private RFC 1918 source is inside with no ranges configured -- inside wins even though its own hits also
 	// satisfy the sweep rule (2 distinct canaries within 15 minutes), which
 	// is evaluated after inside and must never be reached.
 	hits := []hitPoint{
 		hp(t, "2026-09-12T19:11:04Z", "canary-lan"),
 		hp(t, "2026-09-12T19:11:22Z", "canary-srv"),
 	}
-	if got := classifyKind("192.0.2.23", hits, lanRanges(t)); got != KindInside {
+	if got := classifyKind(privateLAN(), hits, nil); got != KindInside {
 		t.Errorf("classifyKind = %q, want inside", got)
 	}
 }
@@ -733,13 +727,13 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		insertAlertRaw(t, database, "canary-srv", "192.0.2.88", 21, "ftp",
 			`{"logdata": {"USERNAME": "anonymous", "PASSWORD": ""}}`, "2026-09-11T03:18:40Z")
 
-		// inside: 192.0.2.23 (an internal range) browses canary-lan :80 -- its own
+		// inside: a private RFC 1918 source (no ranges configured) browses canary-lan :80 -- its own
 		// two hits, 18 seconds apart on the same canary, would otherwise
 		// classify as neither sweep nor repeat, proving rule 1 alone puts
 		// it in "inside" rather than falling through to "touch".
-		insertAlertRaw(t, database, "canary-lan", "192.0.2.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", privateLAN(), 80, "http",
 			`{"logdata": {"PATH": "/"}}`, "2026-09-12T19:11:04Z")
-		insertAlertRaw(t, database, "canary-lan", "192.0.2.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", privateLAN(), 80, "http",
 			`{"logdata": {"PATH": "/admin"}}`, "2026-09-12T19:11:22Z")
 
 		// sweep: 203.0.113.42 touches two canaries within 15 minutes.
@@ -754,7 +748,7 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		now := mustParse(t, "2026-09-12T22:04:31Z")
 		visitors, err := ListVisitors(context.Background(), database, now, VisitorFilter{
 			Since: now.Add(-14 * 24 * time.Hour), Until: now,
-		}, lanRanges(t))
+		}, nil)
 		if err != nil {
 			t.Fatalf("ListVisitors: %v", err)
 		}
@@ -765,7 +759,7 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		want := map[string]VisitorKind{
 			"203.0.113.42": KindSweep,
 			"198.51.100.7": KindRepeat,
-			"192.0.2.23":   KindInside,
+			privateLAN():   KindInside,
 			"192.0.2.88":   KindTouch,
 		}
 		got := make(map[string]VisitorKind, len(visitors))

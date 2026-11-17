@@ -74,6 +74,29 @@ run 1 "history mode finds a word removed in a later commit" --root "$hrepo" --hi
 if echo "$out" | grep -qi zanzibar; then echo "FAIL history output leaks the word"; fail=$((fail+1)); else echo "ok   history output omits the word"; pass=$((pass+1)); fi
 if echo "$out" | grep -q 'old.txt'; then echo "ok   history output names the path"; pass=$((pass+1)); else echo "FAIL history output lacks path"; fail=$((fail+1)); fi
 
+# a blob first committed at an allowlisted path, then the same content at an
+# ordinary path: the blob is one object, but the second path must be reported
+arepo="$work/histallow"; mkdir "$arepo"
+git -C "$arepo" init -q
+git -C "$arepo" config user.email t@example.invalid; git -C "$arepo" config user.name t
+echo 'Copyright zanzibar' > "$arepo/ALLOWED.txt"; git -C "$arepo" add -A; git -C "$arepo" commit -qm one
+run 0 "history mode: a word only at an allowlisted path passes" --root "$arepo" --history
+echo 'Copyright zanzibar' > "$arepo/ordinary.txt"; git -C "$arepo" add -A; git -C "$arepo" commit -qm two
+run 1 "history mode: same content later added at an ordinary path is reported" --root "$arepo" --history
+if echo "$out" | grep -q 'ordinary.txt'; then echo "ok   history output names the ordinary path"; pass=$((pass+1)); else echo "FAIL history output lacks the ordinary path"; fail=$((fail+1)); fi
+
+# a submodule entry is not a file and must not count as an oversize skip
+srepo="$work/sub"; mkdir "$srepo"
+git -C "$srepo" init -q
+git -C "$srepo" config user.email t@example.invalid; git -C "$srepo" config user.name t
+echo 'nothing personal' > "$srepo/a.txt"; git -C "$srepo" add -A; git -C "$srepo" commit -qm one
+git -C "$srepo" update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,vendor/mod
+git -C "$srepo" commit -qm sub
+run 0 "tree mode: a submodule entry passes" --root "$srepo"
+if echo "$out" | grep -q skipped; then echo "FAIL tree mode counts a submodule as an oversize skip"; fail=$((fail+1)); else echo "ok   tree mode: submodule is not an oversize skip"; pass=$((pass+1)); fi
+run 0 "history mode: a submodule entry passes" --root "$srepo" --history
+if echo "$out" | grep -q skipped; then echo "FAIL history mode counts a submodule as an oversize skip"; fail=$((fail+1)); else echo "ok   history mode: submodule is not an oversize skip"; pass=$((pass+1)); fi
+
 # --- config errors exit 2 ---
 printf '%s\n' "$h" > "$work/nosalt"
 run 2 "missing salt line exits 2" --root "$repo" --hashes "$work/nosalt"

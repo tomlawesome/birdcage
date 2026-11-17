@@ -7,7 +7,8 @@
 # they source the script (its sourcing guard keeps main() from running on
 # import) and drive judge_evidence directly against fixture DSSE envelopes --
 # exactly the JSONL shape `cosign verify-attestation` would have already
-# verified and handed to this script.
+# verified and handed to this script. The legacy-type path is also run end to
+# end through fetch_verified_attestations with a stub `cosign` on PATH.
 set -euo pipefail
 # The policy reads $CI_REGISTRY, so pin a test registry here rather than
 # inherit the job's.
@@ -260,6 +261,54 @@ expect 13 "evidence just over seven days old is expired" "$f"
 future="$(plus 600)"
 f="$(fixture future "$(statement "$digest" "$commit" main 1 "$policy" "$future")")"
 expect 13 "evidence dated in the future is refused" "$f"
+
+# --- legacy path end to end, through a stub cosign on PATH ---------------
+# fetch_verified_attestations is run for real against a stub `cosign`:
+# `download attestation` hands back unverified envelopes, the listed type is
+# then requested with `verify-attestation --type`, and only the verified
+# output is judged. The download deliberately claims another commit, so an
+# accept can only come from the verified output.
+mkdir -p "$work/bin"
+cat > "$work/bin/cosign" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  download) cat "$STUB_DOWNLOAD" ;;
+  verify-attestation)
+    t=""
+    while [ $# -gt 0 ]; do [ "$1" = --type ] && t="$2"; shift; done
+    [ "${STUB_VERIFY_FAILS:-0}" = 1 ] && exit 1
+    [ "$t" = "$STUB_OK_TYPE" ] && { cat "$STUB_VERIFIED"; exit 0; }
+    exit 1 ;;
+esac
+STUB
+chmod +x "$work/bin/cosign"
+legacy_stmt() { statement "$digest" "$1" main 1 "$policy" "$recent" | with_type "$fake_legacy"; }
+{ envelope "$(legacy_stmt "$other_commit")"; envelope "$(statement "$digest" "$commit" main 1 "$policy" "$recent" | with_type "$unrelated_type")"; } > "$work/dl.jsonl"
+envelope "$(legacy_stmt "$commit")" > "$work/verified.jsonl"
+e2e() { # e2e <name> <want: accept|refuse> <download-file> [extra env...]
+  local name="$1" want="$2" dl="$3" rc=0 out; shift 3
+  : > "$work/e2e.out"
+  ( export PATH="$work/bin:$PATH" STUB_DOWNLOAD="$dl" STUB_VERIFIED="$work/verified.jsonl" \
+      STUB_OK_TYPE="$fake_legacy" LEGACY_PREDICATE_TYPES_FILE="$work/legacy.sha256" "$@"
+    cosign_cmd=cosign; public_key="$work/unused.pub"
+    fetch_verified_attestations "registry.example.test/x@$digest" "$work/e2e.out" 2>"$work/e2e.err" || exit 90
+    judge_evidence "$work/e2e.out" "$digest" "$commit" main "$policy" 7 ) >"$work/e2e.msg" 2>&1 || rc=$?
+  out="$(cat "$work/e2e.err" "$work/e2e.msg" 2>/dev/null)"
+  if { [ "$want" = accept ] && [ "$rc" = 0 ]; } || { [ "$want" = refuse ] && [ "$rc" != 0 ]; }; then
+    ok "$name"
+  else
+    bad "$name" "exit $rc, want $want" "$out"
+  fi
+}
+e2e "legacy e2e: a listed legacy type is verified by --type and accepted" accept "$work/dl.jsonl"
+e2e "legacy e2e: listed type in the download but verify-attestation fails is refused" refuse "$work/dl.jsonl" STUB_VERIFY_FAILS=1
+{ cat "$work/dl.jsonl"; head -c 11000000 /dev/zero | tr '\0' 'x'; echo; } > "$work/dl-big.jsonl"
+e2e "legacy e2e: a download over 10 MB is refused" refuse "$work/dl-big.jsonl"
+if grep -qiE 'too large|exceed|limit|over [0-9]+ ?MB' "$work/e2e.err"; then
+  ok "legacy e2e: the oversize refusal says why"
+else
+  bad "legacy e2e: the oversize refusal says why" "stderr: $(head -c 300 "$work/e2e.err")"
+fi
 
 # --- fetch_verified_attestations wiring: main() treats a failed fetch as
 # missing evidence, without ever reaching judge_evidence. Overriding it here
