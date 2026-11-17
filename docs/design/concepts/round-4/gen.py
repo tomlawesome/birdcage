@@ -241,7 +241,7 @@ NIGHT_SUB = ('<span class="ip">203.0.113.42</span> has reached <b>all four canar
 VISITOR_ROWS = [
     ('k-sw', '✱ SWEEP', '7× · 9 m · still arriving', '<span class="ip">203.0.113.42</span> walked <b>all four canaries</b> in nine minutes — ssh, then mysql, default passwords. Never seen before tonight.', '7×', '4 of 4', sweep),
     ('k-rp', '✱ REPEAT', '221× · 6 d · on schedule', '<span class="ip">198.51.100.7</span> knocks on <b>canary-iot :445</b> every ~20 minutes through the night, six nights running. Community-blocked since Tuesday.', '221×', '1 of 4', repeat),
-    ('k-in', '✱ FROM INSIDE', '2× · 3 h ago', '<span class="ip">10.0.40.23</span>, a guest device, browsed <b>canary-lan :80</b> and tried /admin. Never auto-blocked (#33).', '2×', '1 of 4', inside),
+    ('k-in', '✱ FROM INSIDE', '2× · 3 h ago', '<span class="ip">192.0.2.23</span>, a guest device, browsed <b>canary-lan :80</b> and tried /admin. Never auto-blocked (#33).', '2×', '1 of 4', inside),
     ('k-tc', '▲ ONE TOUCH', '1× · yesterday', '<span class="ip">192.0.2.88</span> logged in to <b>canary-srv :21</b> as anonymous, once, and left.', '1×', '1 of 4', touch),
 ]
 
@@ -383,7 +383,7 @@ def i_night():
             parts.append(f'<text x="{x-6:.1f}" y="{y-10}" class="lyric dim" text-anchor="end">198.51.100.7 · :445 · the 221st knock, 21:59</text>')
         if c == 'lan':
             x = icx(10389)
-            parts.append(f'<text x="{x:.1f}" y="{y-10}" class="lyric dim" text-anchor="middle">10.0.40.23 · :80 then /admin · 19:11</text>')
+            parts.append(f'<text x="{x:.1f}" y="{y-10}" class="lyric dim" text-anchor="middle">192.0.2.23 · :80 then /admin · 19:11</text>')
         if c == 'srv':
             x = icx(153951)
             parts.append(f'<text x="{x:.1f}" y="{y+22}" class="lyric dim" text-anchor="middle">192.0.2.88 · anonymous ftp · yesterday 03:18</text>')
@@ -394,7 +394,7 @@ def i_night():
     body += ('  <div class="chips" style="top:836px"><span>◎ visitors · 14 d ·</span>'
              '<span class="chip k-sw"><b>✱ sweep</b> <span class="ip">203.0.113.42</span> · 7× · 4 of 4</span>'
              '<span class="chip k-rp"><b>✱ repeat</b> <span class="ip">198.51.100.7</span> · 221× · iot :445</span>'
-             '<span class="chip k-in"><b>✱ from inside</b> <span class="ip">10.0.40.23</span> · 2× · lan :80</span>'
+             '<span class="chip k-in"><b>✱ from inside</b> <span class="ip">192.0.2.23</span> · 2× · lan :80</span>'
              '<span class="chip k-tc"><b>▲ one touch</b> <span class="ip">192.0.2.88</span> · 1× · srv :21</span></div>\n')
     body += f'  <div class="legend" style="top:892px">{I_LEGEND}</div>\n'
     body += '  <div class="foot"><span>a quiet fortnight until <b>21:55</b> tonight — <span class="r">one address is walking the cage right now</span></span></div>\n'

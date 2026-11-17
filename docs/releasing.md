@@ -223,6 +223,8 @@ cosign verify-attestation \
   ghcr.io/tomlawesome/birdcage@sha256:<digest>
 ```
 
+Evidence made before the predicate type changed verifies through `scripts/verify-validation-evidence.sh`, which also accepts the earlier type.
+
 And the keyless countersignature, which is in the public transparency log:
 
 ```sh

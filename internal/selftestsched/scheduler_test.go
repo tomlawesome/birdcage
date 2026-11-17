@@ -589,7 +589,7 @@ func TestMintRecentCheckErrorSkipsCanary(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		scheduledTickSettings(t, database, now)
-		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		insertHoneypotCanary(t, database, "canary-a", "22", "198.51.100.5")
 		dropTable(t, database, "self_test_runs")
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.Tick(context.Background())
@@ -603,7 +603,7 @@ func TestMintCommandErrorSkipsCanary(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		scheduledTickSettings(t, database, now)
-		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		insertHoneypotCanary(t, database, "canary-a", "22", "198.51.100.5")
 		dropTable(t, database, "self_test_targets")
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.Tick(context.Background())
@@ -620,7 +620,7 @@ func TestRotationSucceededDisabledDoesNothing(t *testing.T) {
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		mustSetSetting(t, database, store.SettingSelfTestEnabled, "false")
 		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
-		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		insertHoneypotCanary(t, database, "canary-a", "22", "198.51.100.5")
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.RotationSucceeded(context.Background(), "canary-a", now)
 		if n := selfTestRunCount(t, database, "canary-a"); n != 0 {
@@ -637,7 +637,7 @@ func TestRotationSucceededUseRotationReadErrorDoesNothing(t *testing.T) {
 			store.SettingSelfTestEnabled:             strp("true"),
 			store.SettingSelfTestUseRotationSchedule: nil,
 		})
-		insertHoneypotCanary(t, database, "canary-a", "22", "10.0.0.5")
+		insertHoneypotCanary(t, database, "canary-a", "22", "198.51.100.5")
 		now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
 		s.RotationSucceeded(context.Background(), "canary-a", now)

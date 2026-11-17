@@ -127,7 +127,7 @@
         "still_arriving": false
       },
       {
-        "source_ip": "10.0.40.23",
+        "source_ip": "192.0.2.23",
         "kind": "inside",
         "first_at": "2026-09-12T19:11:04Z",
         "last_at": "2026-09-12T19:11:22Z",
@@ -219,7 +219,7 @@
           },
           {
             "at": "2026-09-12T19:11:22Z",
-            "visitor": "10.0.40.23",
+            "visitor": "192.0.2.23",
             "kind": "inside",
             "service": "http",
             "tried": "/admin",
@@ -227,7 +227,7 @@
           },
           {
             "at": "2026-09-12T19:11:04Z",
-            "visitor": "10.0.40.23",
+            "visitor": "192.0.2.23",
             "kind": "inside",
             "service": "http",
             "tried": "/",

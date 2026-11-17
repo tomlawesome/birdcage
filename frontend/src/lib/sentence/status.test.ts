@@ -150,7 +150,7 @@ describe('the status pill: issue #45 ranking', () => {
   it('credential_conflict reads as critical, ranked with token_conflict', () => {
     const canaries = [
       canary('a', 'silent', { silent_for_s: 60 }),
-      canary('b', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } }),
+      canary('b', 'credential_conflict', { credential_conflict: { addresses: ['198.51.100.1', '198.51.100.2'] } }),
     ]
     const s = computeStatus(canaries, [], '14d')
     expect(s.kind).toBe('critical')

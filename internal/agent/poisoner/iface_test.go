@@ -14,14 +14,14 @@ func TestBroadcastFor(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{cidr: "192.168.1.5/24", want: "192.168.1.255"},
-		{cidr: "10.0.0.5/8", want: "10.255.255.255"},
-		{cidr: "172.16.4.10/20", want: "172.16.15.255"},
-		{cidr: "10.1.2.3/30", want: "10.1.2.3"},
+		{cidr: "192.0.2.5/24", want: "192.0.2.255"},
+		{cidr: "198.51.100.5/25", want: "198.51.100.127"},
+		{cidr: "203.0.113.10/28", want: "203.0.113.15"},
+		{cidr: "192.0.2.3/30", want: "192.0.2.3"},
 		// A /31 is a point-to-point link and a /32 a single host: neither
 		// has a broadcast address, so neither is a segment to ask on.
-		{cidr: "10.1.2.2/31", wantErr: true},
-		{cidr: "10.1.2.2/32", wantErr: true},
+		{cidr: "192.0.2.2/31", wantErr: true},
+		{cidr: "192.0.2.2/32", wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -54,12 +54,12 @@ func TestBroadcastForAcceptsA16ByteMask(t *testing.T) {
 	mask := make(net.IPMask, net.IPv6len)
 	// The last four bytes carry the IPv4 /24.
 	copy(mask[net.IPv6len-net.IPv4len:], net.IPv4Mask(255, 255, 255, 0))
-	got, err := broadcastFor(&net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: mask})
+	got, err := broadcastFor(&net.IPNet{IP: net.ParseIP("192.0.2.5"), Mask: mask})
 	if err != nil {
 		t.Fatalf("broadcastFor: %v", err)
 	}
-	if got.String() != "192.168.1.255" {
-		t.Errorf("broadcast = %s, want 192.168.1.255", got)
+	if got.String() != "192.0.2.255" {
+		t.Errorf("broadcast = %s, want 192.0.2.255", got)
 	}
 }
 

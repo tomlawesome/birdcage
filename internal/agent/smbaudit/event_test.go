@@ -11,7 +11,7 @@ import (
 )
 
 func TestEncodeProducesAnSMBAlert(t *testing.T) {
-	ev, ok := Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`))
+	ev, ok := Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`))
 	if !ok {
 		t.Fatal("Parse returned no event")
 	}
@@ -31,7 +31,7 @@ func TestEncodeProducesAnSMBAlert(t *testing.T) {
 	if fields.Service != "smb" {
 		t.Errorf("service = %q, want %q -- logtype %d must map to smb", fields.Service, "smb", LogTypeSMBFileOpen)
 	}
-	if fields.SourceIP != "172.21.0.3" {
+	if fields.SourceIP != "203.0.113.3" {
 		t.Errorf("src_host = %q, want the client address from the audit line", fields.SourceIP)
 	}
 	if fields.DestPort != SMBPort {
@@ -106,9 +106,9 @@ func TestEncodeKeysAreSorted(t *testing.T) {
 
 func TestEncodeEveryKind(t *testing.T) {
 	lines := map[Kind]string{
-		KindAccess:              `[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`,
-		KindUnexpectedOperation: `[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|unlinkat|ok|/srv/shares/public/x`,
-		KindUnparseable:         `[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|openat|ok|r|/srv/shares/public/x`,
+		KindAccess:              `[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`,
+		KindUnexpectedOperation: `[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|unlinkat|ok|/srv/shares/public/x`,
+		KindUnparseable:         `[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|openat|ok|r|/srv/shares/public/x`,
 		KindPanic:               `[2026/09/23 22:06:57.659891,  0]   PANIC (pid 1): sys_setgroups failed in 4.23.8`,
 	}
 	for kind, line := range lines {
@@ -148,7 +148,7 @@ func TestEncodeEveryKind(t *testing.T) {
 // bytes, so two encodes of one Event at one instant have to be the same
 // bytes or the queue would hold the same line twice under two ids.
 func TestEncodeIsStableForTheSameEvent(t *testing.T) {
-	ev, _ := Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`))
+	ev, _ := Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`))
 	first, err := Encode(ev, "mockingbird")
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -173,7 +173,7 @@ func TestEncodeEscapesHostileContent(t *testing.T) {
 	ev := Event{
 		Kind:     KindAccess,
 		User:     "a\"b\\c\nd</script>",
-		SourceIP: "172.21.0.3",
+		SourceIP: "203.0.113.3",
 		Share:    "public",
 		Path:     "/srv/shares/public/\x01",
 	}
@@ -201,7 +201,7 @@ func TestEncodeEscapesHostileContent(t *testing.T) {
 // same bytes, so it produces the same id and the queue drops the second
 // copy instead of birdcage storing the access twice.
 func TestEncodeIsStableAcrossReReads(t *testing.T) {
-	line := []byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`)
+	line := []byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`)
 
 	var ids []string
 	for i := 0; i < 2; i++ {

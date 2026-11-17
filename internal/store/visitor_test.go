@@ -28,15 +28,25 @@ func hp(t *testing.T, at, canaryID string) hitPoint {
 	return hitPoint{At: mustParse(t, at), CanaryID: canaryID}
 }
 
+// lanRanges is the operator-configured internal range the inside cases use.
+func lanRanges(t *testing.T) []*net.IPNet {
+	t.Helper()
+	_, n, err := net.ParseCIDR("192.0.2.23/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []*net.IPNet{n}
+}
+
 func TestClassifyKindInsideBeatsEverythingElse(t *testing.T) {
-	// 10.0.40.23 is RFC 1918 -- inside wins even though its own hits also
+	// 192.0.2.23 is in the configured internal ranges -- inside wins even though its own hits also
 	// satisfy the sweep rule (2 distinct canaries within 15 minutes), which
 	// is evaluated after inside and must never be reached.
 	hits := []hitPoint{
 		hp(t, "2026-09-12T19:11:04Z", "canary-lan"),
 		hp(t, "2026-09-12T19:11:22Z", "canary-srv"),
 	}
-	if got := classifyKind("10.0.40.23", hits, nil); got != KindInside {
+	if got := classifyKind("192.0.2.23", hits, lanRanges(t)); got != KindInside {
 		t.Errorf("classifyKind = %q, want inside", got)
 	}
 }
@@ -377,13 +387,13 @@ func TestTriedForSIP(t *testing.T) {
 		{
 			name: "from header present",
 			raw: datagram(`{"logdata": {"HEADERS": {"from": ["sipvicious<sip:100@192.0.2.50>;tag=6194256813024"], ` +
-				`"to": ["sip:100@10.0.0.5"], "via": ["SIP/2.0/UDP 192.0.2.50:5061;branch=z9hG4bK-313432-1"], ` +
+				`"to": ["sip:100@198.51.100.5"], "via": ["SIP/2.0/UDP 192.0.2.50:5061;branch=z9hG4bK-313432-1"], ` +
 				`"user-agent": ["friendly-scanner"]}}, "logtype": 15001}`),
 			want: "sipvicious<sip:100@192.0.2.50>;tag=6194256813024",
 		},
 		{
 			name: "no from header at all falls back to the service name",
-			raw:  datagram(`{"logdata": {"HEADERS": {"to": ["sip:100@10.0.0.5"]}}, "logtype": 15001}`),
+			raw:  datagram(`{"logdata": {"HEADERS": {"to": ["sip:100@198.51.100.5"]}}, "logtype": 15001}`),
 			want: "sip",
 		},
 	}
@@ -446,7 +456,7 @@ func TestTriedForMSSQL(t *testing.T) {
 		{
 			name: "username, password and app name all present",
 			raw: datagram(`{"logdata": {"HostName": "WORKSTATION1", "UserName": "sa", "Password": "sa123", ` +
-				`"AppName": "Microsoft SQL Server Management Studio", "ServerName": "10.0.0.5", ` +
+				`"AppName": "Microsoft SQL Server Management Studio", "ServerName": "198.51.100.5", ` +
 				`"Language": "", "Database": "", "CltIntName": "ODBC"}, "logtype": 9001}`),
 			want: "Microsoft SQL Server Management Studio sa / sa123",
 		},
@@ -723,13 +733,13 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		insertAlertRaw(t, database, "canary-srv", "192.0.2.88", 21, "ftp",
 			`{"logdata": {"USERNAME": "anonymous", "PASSWORD": ""}}`, "2026-09-11T03:18:40Z")
 
-		// inside: 10.0.40.23 (RFC 1918) browses canary-lan :80 -- its own
+		// inside: 192.0.2.23 (an internal range) browses canary-lan :80 -- its own
 		// two hits, 18 seconds apart on the same canary, would otherwise
 		// classify as neither sweep nor repeat, proving rule 1 alone puts
 		// it in "inside" rather than falling through to "touch".
-		insertAlertRaw(t, database, "canary-lan", "10.0.40.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", "192.0.2.23", 80, "http",
 			`{"logdata": {"PATH": "/"}}`, "2026-09-12T19:11:04Z")
-		insertAlertRaw(t, database, "canary-lan", "10.0.40.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", "192.0.2.23", 80, "http",
 			`{"logdata": {"PATH": "/admin"}}`, "2026-09-12T19:11:22Z")
 
 		// sweep: 203.0.113.42 touches two canaries within 15 minutes.
@@ -744,7 +754,7 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		now := mustParse(t, "2026-09-12T22:04:31Z")
 		visitors, err := ListVisitors(context.Background(), database, now, VisitorFilter{
 			Since: now.Add(-14 * 24 * time.Hour), Until: now,
-		}, nil)
+		}, lanRanges(t))
 		if err != nil {
 			t.Fatalf("ListVisitors: %v", err)
 		}
@@ -755,7 +765,7 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		want := map[string]VisitorKind{
 			"203.0.113.42": KindSweep,
 			"198.51.100.7": KindRepeat,
-			"10.0.40.23":   KindInside,
+			"192.0.2.23":   KindInside,
 			"192.0.2.88":   KindTouch,
 		}
 		got := make(map[string]VisitorKind, len(visitors))

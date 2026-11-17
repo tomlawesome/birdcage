@@ -328,7 +328,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
   const poisoned = (mac: string) =>
     visitor({
       kind: 'inside',
-      source_ip: '10.30.0.51',
+      source_ip: '198.51.100.51',
       services: ['poisoner'],
       tried: ['llmnr'],
       poisoner: { name: 'fs-lon-02', protocol: 'llmnr', mac },
@@ -337,7 +337,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
   it('says what answered, for which name, and why that matters', () => {
     const row = computeEventRow(poisoned('52:54:00:8a:1c:3d'), canaries, '2026-09-12T21:05:00Z')
     expect(plainText(row.who)).toBe(
-      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr · 52:54:00:8a:1c:3d',
+      '198.51.100.51 answered for fs-lon-02, a name nobody should answer. llmnr · 52:54:00:8a:1c:3d',
     )
   })
 
@@ -351,7 +351,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
     // (internal/agent/poisoner/arp.go), which is ordinary rather than a gap.
     const row = computeEventRow(poisoned(''), canaries, '2026-09-12T21:05:00Z')
     expect(plainText(row.who)).toBe(
-      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr',
+      '198.51.100.51 answered for fs-lon-02, a name nobody should answer. llmnr',
     )
   })
 

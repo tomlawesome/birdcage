@@ -42,7 +42,7 @@
  "visitors": {
   "visitors": [
    {
-    "source_ip": "10.30.0.51",
+    "source_ip": "198.51.100.51",
     "kind": "inside",
     "first_at": "2026-09-05T22:03:58Z",
     "last_at": "2026-09-05T22:03:58Z",
@@ -148,7 +148,7 @@
     "hits": [
      {
       "at": "2026-09-05T22:03:58Z",
-      "visitor": "10.30.0.51",
+      "visitor": "198.51.100.51",
       "kind": "inside",
       "service": "poisoner",
       "tried": "llmnr",
