@@ -288,6 +288,25 @@ policy:promotion-hop:
           ;;
       esac
 
+# The fence on the one release/vX.Y.Z MR per release (#215, owner answer
+# 41b; the exception is recorded centrally): straight into dev, changing only
+# CHANGELOG.md and docs/releases/v<VERSION>.md. Starts at once (seconds).
+policy:release-record:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  needs: []
+  interruptible: true
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\//'
+  before_script:
+    - apk add --no-cache git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+  script:
+    - git fetch --quiet origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+    - python3 scripts/release-record-policy.py --remote origin
+
 # ---------------------------------------------------------------------------
 # LINT
 # ---------------------------------------------------------------------------
