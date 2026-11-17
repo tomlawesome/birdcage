@@ -911,3 +911,39 @@ func (w *syncWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	return w.buf.Write(p)
 }
+
+// TestOpenStartupDatabaseClampsLegacyPaceSettings proves start-up runs
+// the one-off fix-up (#213) after the migrations: a stored sub-1s
+// pace_floor, written by v0.1.0, is raised to 1s when the database is
+// next opened through openStartupDatabase.
+func TestOpenStartupDatabaseClampsLegacyPaceSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "birdcage.db")
+	seed, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := db.Migrate(context.Background(), seed); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	if _, err := seed.Exec(`INSERT INTO canary_settings (agent_id, key, value, version, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"canary-a", "pace_floor", "300ms", 1, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	database, err := openStartupDatabase(context.Background(), startupConfig{databaseURL: path}, discardLog())
+	if err != nil {
+		t.Fatalf("openStartupDatabase: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+	var value string
+	var version int
+	if err := database.QueryRow(`SELECT value, version FROM canary_settings WHERE agent_id = ? AND key = ?`, "canary-a", "pace_floor").Scan(&value, &version); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if value != "1s" || version != 2 {
+		t.Errorf("after start-up pace_floor = (%q, v%d), want (\"1s\", v2)", value, version)
+	}
+}
