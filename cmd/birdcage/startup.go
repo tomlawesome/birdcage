@@ -460,7 +460,9 @@ func checkStartupDatabase(cfg startupConfig) error {
 // past it without the backup is the operator's deliberate `birdcage ca
 // reset` (#213), which removes those certificates. Runs before
 // loadStartupCA, which otherwise cannot tell "fresh install" apart from
-// "the CA directory was lost" and mints in both cases.
+// "the CA directory was lost" and mints in both cases. The check itself
+// is checkCAContinuity, shared with every command-line path that loads
+// the CA (#214), so the refusal reads the same everywhere.
 //
 // database must already be open, so this needs to run after
 // openStartupDatabase rather than in loadStartupCA's usual position; see
@@ -470,24 +472,38 @@ func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *
 	if !cfg.caNeeded {
 		return nil
 	}
-	missing, err := ca.CAMissing(cfg.caDir)
+	if err := checkCAContinuity(ctx, cfg.caDir, database); err != nil {
+		return &startupError{caLog, err.Error()}
+	}
+	return nil
+}
+
+// checkCAContinuity is issue #149's rule for any caller about to
+// ca.Load caDir, which mints a CA when none is there: it refuses when
+// caDir (or its key file) is missing but database already holds an
+// issued client certificate. Server start-up (checkStartupCAContinuity),
+// `agent enrol` and `agent upgrade-command` all call it before ca.Load
+// (#214), so none of them can mint a replacement CA and the wording
+// cannot drift between them.
+func checkCAContinuity(ctx context.Context, caDir string, database *db.DB) error {
+	missing, err := ca.CAMissing(caDir)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check CA directory (%s=%q): %v", envCADir, cfg.caDir, err)}
+		return fmt.Errorf("check CA directory (%s=%q): %v", envCADir, caDir, err)
 	}
 	if missing == "" {
 		return nil
 	}
 	enrolled, err := store.AnyClientCertsIssued(ctx, database)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check for issued client certificates before minting a new CA: %v", err)}
+		return fmt.Errorf("check for issued client certificates before minting a new CA: %v", err)
 	}
 	if !enrolled {
 		return nil
 	}
-	return &startupError{caLog, fmt.Sprintf(
+	return fmt.Errorf(
 		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, or, if no backup exists, cleared with `birdcage ca reset` (every enrolled agent must then enrol again)",
 		missing,
-	)}
+	)
 }
 
 // loadStartupCA loads birdcage's own CA when cfg.caNeeded, and logs

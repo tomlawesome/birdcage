@@ -392,15 +392,6 @@ func runCanaryEnrol(args []string) error {
 		return fmt.Errorf("%s must be set to the address canaries reach this birdcage instance on", envAdvertiseHost)
 	}
 
-	caDir := os.Getenv(envCADir)
-	if caDir == "" {
-		caDir = defaultCADir
-	}
-	birdcageCA, _, err := ca.Load(caDir, nil)
-	if err != nil {
-		return fmt.Errorf("load CA (%s=%q): %w", envCADir, caDir, err)
-	}
-
 	enrolAddr := os.Getenv(envEnrolAddr)
 	if enrolAddr == "" {
 		enrolAddr = defaultEnrolAddr
@@ -410,6 +401,9 @@ func runCanaryEnrol(args []string) error {
 		return fmt.Errorf("%s=%q is not a valid address: %w", envEnrolAddr, enrolAddr, err)
 	}
 
+	// The database opens before the CA loads so checkCAContinuity can
+	// refuse to mint a replacement CA when certificates are already
+	// issued (#214); ca.Load would otherwise mint one silently.
 	database, err := openCanaryDB()
 	if err != nil {
 		return err
@@ -417,6 +411,18 @@ func runCanaryEnrol(args []string) error {
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
+	caDir := os.Getenv(envCADir)
+	if caDir == "" {
+		caDir = defaultCADir
+	}
+	if err := checkCAContinuity(ctx, caDir, database); err != nil {
+		return err
+	}
+	birdcageCA, _, err := ca.Load(caDir, nil)
+	if err != nil {
+		return fmt.Errorf("load CA (%s=%q): %w", envCADir, caDir, err)
+	}
+
 	if err := requireEnrolAddresses(ctx, database); err != nil {
 		return err
 	}
