@@ -1,0 +1,3 @@
+# Paths where the owner's real name is intended (reviewed, ai/birdcage#192).
+# One anchored regex per line. Everything else must be clean.
+^LICENSE$
