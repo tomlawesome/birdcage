@@ -530,6 +530,15 @@ func openStartupDatabase(ctx context.Context, cfg startupConfig, dbLog *slog.Log
 	if err := db.Migrate(ctx, database); err != nil {
 		return nil, fmt.Errorf("migrate database: %v", err)
 	}
+	// v0.1.0 accepted pace settings below 1s that today's validation and
+	// the canary refuse (#213): raise them before anything reads them.
+	clamped, err := store.ClampLegacyPaceSettings(ctx, database, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("raise legacy pace settings: %v", err)
+	}
+	if clamped > 0 {
+		dbLog.Info(fmt.Sprintf("raised %d stored pace setting(s) below 1s to 1s", clamped))
+	}
 	dbLog.Info(fmt.Sprintf("opened %s database, storing alerts via %s", database.Engine, redactDatabaseURL(cfg.databaseURL)))
 	return database, nil
 }
