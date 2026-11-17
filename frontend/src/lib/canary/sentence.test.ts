@@ -284,31 +284,38 @@ describe('canaryFooter', () => {
 })
 
 describe('canaryActions: only the ones the state earns', () => {
-  it('quiet offers the self-test and maintenance, and nothing to look back at', () => {
-    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([
-      'run the self-test now ▸',
-      'mark as maintenance',
-    ])
+  it('quiet offers nothing: no lookback target, and the write pills wait for their routes (#228)', () => {
+    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
   })
 
   it('a failed self-test earns the lookback too', () => {
-    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([
-      'run the self-test now ▸',
-      'lookback in mikroview ▸',
-      'mark as maintenance',
-    ])
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
   })
 
-  it('a silent canary is not offered a probe it cannot answer', () => {
-    const labels = canaryActions(sceneInput('silent')).map((a) => a.label)
-    expect(labels).not.toContain('run the self-test now ▸')
-    expect(labels).toEqual(['lookback in mikroview ▸', 'mark as maintenance'])
+  it('a silent canary is offered the lookback only', () => {
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
   })
 
   it('a live visit leads with the lookback and the raw lines', () => {
     const actions = canaryActions(sceneInput('night'))
-    expect(actions.map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸', 'run the self-test now'])
-    expect(actions[2].quiet).toBe(true)
+    expect(actions.map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸'])
+  })
+})
+
+describe('canaryActions: write pills are hidden until their routes exist (#228)', () => {
+  const scenes = ['quiet', 'failed', 'silent', 'night', 'pending', 'agentOutOfDate', 'upgradeInProgress'] as const
+
+  it.each(scenes)('%s offers neither the self-test nor maintenance pill', (scene) => {
+    const labels = canaryActions(sceneInput(scene)).map((a) => a.label)
+    expect(labels.filter((l) => /run the self-test now/.test(l))).toEqual([])
+    expect(labels.filter((l) => /mark as maintenance/.test(l))).toEqual([])
+  })
+
+  it('keeps the read-only pills where the state earns them', () => {
+    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
+    expect(canaryActions(sceneInput('night')).map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸'])
   })
 })
 

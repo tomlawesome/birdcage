@@ -6,6 +6,7 @@
 // canary, so "the other three are fine" has no place here and "it" does.
 import type { Canary, TraceHit, Visitor, VisitorKind } from '../types'
 import type { Segment } from '../sentence/types'
+import { WRITE_ROUTES_LIVE } from '../writeActions'
 import { agoWords, durationCoarse, durationExact } from '../sentence/duration'
 import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } from '../sentence/time'
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
@@ -840,13 +841,13 @@ export function canaryActions(input: CanaryPageInput): CanaryAction[] {
     out.push({ label: 'lookback in mikroview ▸', quiet: false })
     if (hits.length > 0) out.push({ label: 'raw lines ▸', quiet: false })
     // Reachable, but not what this page is about right now.
-    if (canary.status !== 'silent') out.push({ label: 'run the self-test now', quiet: true })
+    if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now', quiet: true })
     return out
   }
 
-  if (canary.status !== 'silent') out.push({ label: 'run the self-test now ▸', quiet: false })
+  if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now ▸', quiet: false })
   if (canary.status !== 'ok' || hits.length > 0) out.push({ label: 'lookback in mikroview ▸', quiet: false })
-  out.push({ label: 'mark as maintenance', quiet: true })
+  if (WRITE_ROUTES_LIVE) out.push({ label: 'mark as maintenance', quiet: true })
   return out
 }
 
