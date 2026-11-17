@@ -51,7 +51,7 @@
 #   docker network create covfloor-net-$$
 #   docker run -d --rm --name covfloor-pg-$$ --network covfloor-net-$$ \
 #     --network-alias postgres -e POSTGRES_PASSWORD=birdcage-ci \
-#     --entrypoint sh postgres:17-alpine -c '
+#     --entrypoint sh postgres:18-alpine -c '
 #       apk add --no-cache openssl >/dev/null
 #       mkdir -p /certs
 #       openssl req -new -x509 -days 1 -nodes -subj "/CN=postgres" \
@@ -76,6 +76,11 @@
 #     openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
 #       | openssl x509 -outform pem > /tmp/covfloor-ca.pem
 #     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
+#   # test:go runs the tests as a non-root user (uid 1001); so must this.
+#   # As root, permission tests skip or fail (internal/agent/tailer's
+#   # TestTailer_SkippedChainFileClearsPositionFound fails) and several
+#   # packages read below their floors. Simplest: copy test:go's own
+#   # script, useradd and `su tester` included, into the container.
 #   docker run --rm --network covfloor-net-$$ \
 #     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
 #     -v "$PWD":/work -w /work golang:1.27.4 \
@@ -107,6 +112,11 @@
 # cannot move the counting under a merge request again. Measured as described
 # above, with postgres:18-alpine to match test:go. Per-package before/after
 # numbers are in the commit message that made this change.
+#
+# Checked 2026-11-17 on the pinned golang:1.27.4 image (#213), run as test:go
+# runs it: no package is below its floor or more than 5 points above it, so
+# no floor changed. internal/tlssniff, new since the last measure, got its
+# first floor.
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
@@ -455,4 +465,5 @@ floors:
   internal/stream: 100
   internal/term: 100
   internal/tlsconfig: 82
+  internal/tlssniff: 94      # 94.8% measured 2026-11-17 on golang:1.27.4, matching test:go (#212 added the package).
   web: 77
