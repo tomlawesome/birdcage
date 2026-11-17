@@ -836,7 +836,9 @@ one burst shortly after it starts up.
 The floor and ceiling defaults above are **provisional guesses**, not
 measured values. They will be replaced with real numbers taken from a
 packet capture (issue #121). Meanwhile you can change them yourself
-with the two variables above.
+with the two variables above. Neither may be
+below `1s`: a lower value is refused, because a canary that fast would
+broadcast continuously.
 
 ### Changing these later
 

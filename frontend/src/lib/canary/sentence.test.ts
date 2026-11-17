@@ -78,6 +78,16 @@ describe('the four round-7 scenes', () => {
     expect(clientSeg?.title).toBe('curl/8.5.0')
   })
 
+  it('the client clause is followed by a space before the next sentence (#213)', () => {
+    const input = sceneInput('night')
+    const scene = canaryScene(input)
+    if (scene.kind !== 'visited') throw new Error('expected a visited scene')
+    scene.hit.client = 'curl/8.5.0'
+    const text = plainText(canarySentence(input).sub)
+    expect(text).toContain('Said it was curl/8.5.0. Underneath it,')
+    expect(text).not.toContain('curl/8.5.0.Underneath')
+  })
+
   it('a single silence is a bad minute, not a pattern', () => {
     const input = sceneInput('silent')
     input.history!.periods = input.history!.periods.filter((p) => p.ended_at === null)

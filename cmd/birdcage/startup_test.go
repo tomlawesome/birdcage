@@ -426,9 +426,9 @@ func TestLoadStartupCAUnwritableDir(t *testing.T) {
 
 // --- checkStartupCAContinuity ---------------------------------------------
 //
-// insertTestCanary (canary_test.go) gives checkStartupCAContinuity's
-// "state exists" signal (store.AnyCanariesEnrolled) a row to find --
-// it only needs one registered canary, not a real enrolment round trip.
+// insertTestClientCert gives checkStartupCAContinuity's "state exists"
+// signal (store.AnyClientCertsIssued) a row to find -- it only needs one
+// issued certificate, not a real enrolment round trip.
 
 // TestCheckStartupCAContinuityNotNeeded proves the check is a no-op when
 // no CA is needed at all (operator certificate, ingest off) -- there is
@@ -459,6 +459,7 @@ func TestCheckStartupCAContinuityFreshInstall(t *testing.T) {
 func TestCheckStartupCAContinuityRefusesWhenStateExists(t *testing.T) {
 	database := openTestDB(t)
 	insertTestCanary(t, database, "canary-ca-continuity-test")
+	insertTestClientCert(t, database, "canary-ca-continuity-test")
 
 	caDir := filepath.Join(t.TempDir(), "ca")
 	cfg := startupConfig{caNeeded: true, caDir: caDir}
@@ -471,6 +472,30 @@ func TestCheckStartupCAContinuityRefusesWhenStateExists(t *testing.T) {
 	}
 	if _, statErr := os.Stat(caDir); !os.IsNotExist(statErr) {
 		t.Errorf("checkStartupCAContinuity created %s, want it to leave a missing CA directory untouched", caDir)
+	}
+}
+
+// insertTestClientCert records a client_certs row, the CA-signed state
+// checkStartupCAContinuity looks for (#213, PS2-S1).
+func insertTestClientCert(t *testing.T, database *db.DB, agentID string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := database.Exec(`INSERT INTO client_certs (agent_id, serial, fingerprint_sha256, not_before, not_after)
+		VALUES (?, ?, ?, ?, ?)`, agentID, "01", "fp-"+agentID, now, now); err != nil {
+		t.Fatalf("insertTestClientCert(%s): %v", agentID, err)
+	}
+}
+
+// TestCheckStartupCAContinuityAllowsAgentWithoutCert is #213's PS2-S1:
+// `agent add` before the first start leaves an agents row but no signed
+// certificate, so a missing CA is not a refusal and a new one may be made.
+func TestCheckStartupCAContinuityAllowsAgentWithoutCert(t *testing.T) {
+	database := openTestDB(t)
+	insertTestCanary(t, database, "canary-no-cert")
+
+	cfg := startupConfig{caNeeded: true, caDir: filepath.Join(t.TempDir(), "ca")}
+	if err := checkStartupCAContinuity(context.Background(), cfg, database, discardLog()); err != nil {
+		t.Fatalf("checkStartupCAContinuity with an agents row but no client_certs row = %v, want nil", err)
 	}
 }
 
@@ -885,4 +910,40 @@ func (w *syncWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buf.Write(p)
+}
+
+// TestOpenStartupDatabaseClampsLegacyPaceSettings proves start-up runs
+// the one-off fix-up (#213) after the migrations: a stored sub-1s
+// pace_floor, written by v0.1.0, is raised to 1s when the database is
+// next opened through openStartupDatabase.
+func TestOpenStartupDatabaseClampsLegacyPaceSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "birdcage.db")
+	seed, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := db.Migrate(context.Background(), seed); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	if _, err := seed.Exec(`INSERT INTO canary_settings (agent_id, key, value, version, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"canary-a", "pace_floor", "300ms", 1, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	database, err := openStartupDatabase(context.Background(), startupConfig{databaseURL: path}, discardLog())
+	if err != nil {
+		t.Fatalf("openStartupDatabase: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+	var value string
+	var version int
+	if err := database.QueryRow(`SELECT value, version FROM canary_settings WHERE agent_id = ? AND key = ?`, "canary-a", "pace_floor").Scan(&value, &version); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if value != "1s" || version != 2 {
+		t.Errorf("after start-up pace_floor = (%q, v%d), want (\"1s\", v2)", value, version)
+	}
 }

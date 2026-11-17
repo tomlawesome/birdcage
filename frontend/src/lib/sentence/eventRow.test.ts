@@ -24,6 +24,7 @@ function visitor(overrides: Partial<Visitor> & { kind: VisitorKind }): Visitor {
     services: ['ssh'],
     tried: ['root / root'],
     clients: [],
+    latest_client: '',
     still_arriving: false,
     ...overrides,
   }
@@ -161,13 +162,31 @@ describe('whoSentence: touch credential is the part before the slash', () => {
 
 describe('whoSentence: client clause', () => {
   it('appends "Said it was <client>" from the newest client', () => {
-    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'] })
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'], latest_client: 'nuclei' })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(plainText(row.who)).toContain('Said it was nuclei.')
     expect(plainText(row.who)).not.toContain('curl/8.5.0')
     const client = row.who.find((s) => s.cls === 'client')
     expect(client?.text).toBe('nuclei')
     expect(client?.title).toBe('nuclei')
+  })
+
+  it('uses latest_client, not the last of the four oldest clients (#213)', () => {
+    const v = visitor({
+      kind: 'touch',
+      clients: ['c-one', 'c-two', 'c-three', 'c-four'],
+      latest_client: 'c-five',
+    })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(plainText(row.who)).toContain('Said it was c-five.')
+    expect(plainText(row.who)).not.toContain('c-four')
+    expect(row.who.find((s) => s.cls === 'client')?.text).toBe('c-five')
+  })
+
+  it('omits the clause when latest_client is empty even if clients is not (#213)', () => {
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0'], latest_client: '' })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(row.who.some((s) => s.cls === 'client')).toBe(false)
   })
 
   it('omits the clause when clients is empty', () => {

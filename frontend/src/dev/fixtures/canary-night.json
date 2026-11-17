@@ -101,6 +101,7 @@
           "root / 123456"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": true
       },
       {
@@ -122,6 +123,7 @@
           "smb"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       },
       {
@@ -144,6 +146,7 @@
           "/admin"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       },
       {
@@ -165,6 +168,7 @@
           "anonymous / (empty)"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       }
     ],

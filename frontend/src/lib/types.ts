@@ -262,6 +262,8 @@ export interface Visitor {
    * REMOTEVERSION) -- deduped, empties skipped, first four in time order,
    * the same shape as tried. Empty for a visitor with no http or ssh hits. */
   clients: string[]
+  /** The newest hit's client; "" if none. Unlike clients, not capped. */
+  latest_client: string
   /** Present only for a visitor with a poisoner hit (#86 slice D): what it
    * claimed to be, over which of the three bait protocols, and its hardware
    * address if the canary's neighbour table had one. Absent for every other

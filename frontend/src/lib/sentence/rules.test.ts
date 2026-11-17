@@ -83,6 +83,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     },
     {
@@ -95,6 +96,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       services: ['ftp'],
       tried: ['anonymous / (empty)'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     },
   ]
@@ -539,6 +541,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: true,
     }
     const s = computeSentence(fleet(bad), [sweep], '14d', now, lastHit)
@@ -557,6 +560,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     }
     const s = computeSentence(fleet(bad), [touch], '14d', now, lastHit)

@@ -646,6 +646,47 @@ func TestClientSummariesDedupesSkipsEmptiesCapsAtFour(t *testing.T) {
 	}
 }
 
+func TestBuildVisitorLatestClientIsNewestOfFiveDistinct(t *testing.T) {
+	// hits is newest first. Five distinct clients: Clients keeps the first
+	// four in time order, so the newest ("fifth-unique") is not in it, but
+	// LatestClient must still name it (#213).
+	hits := []Alert{
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 5, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "fifth-unique"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 4, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "fourth-unique"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 3, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "nuclei"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 2, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "Go-http-client/1.1"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "fifth-unique" {
+		t.Errorf("LatestClient = %q, want %q", v.LatestClient, "fifth-unique")
+	}
+	if len(v.Clients) != 4 {
+		t.Errorf("Clients = %v, want the unchanged first four", v.Clients)
+	}
+}
+
+func TestBuildVisitorLatestClientSkipsNewerHitsWithNoClient(t *testing.T) {
+	hits := []Alert{
+		{Service: "ssh", ReceivedAt: time.Date(2026, 9, 12, 22, 2, 0, 0, time.UTC), Raw: datagram(`{"logdata": {}, "logtype": 4000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "curl/8.5.0" {
+		t.Errorf("LatestClient = %q, want %q", v.LatestClient, "curl/8.5.0")
+	}
+}
+
+func TestBuildVisitorLatestClientEmptyWithNoClients(t *testing.T) {
+	hits := []Alert{
+		{Service: "ssh", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {}, "logtype": 4000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "" {
+		t.Errorf("LatestClient = %q, want empty", v.LatestClient)
+	}
+}
+
 // --- ListVisitors: exercises the database.
 
 // insertAlertRaw is store_test.go's insertFixtures loop, generalized so

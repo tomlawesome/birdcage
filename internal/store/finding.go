@@ -351,14 +351,24 @@ func ListFindings(ctx context.Context, database *db.DB, filter FindingFilter) ([
 		query += ` WHERE agent_id = ?`
 		args = append(args, filter.AgentID)
 	}
-	query += ` ORDER BY last_seen DESC, id DESC`
+	// No SQL ordering on last_seen: it is RFC3339Nano text with trailing
+	// zeros trimmed, so text order is not time order (see timeCompare in
+	// store.go). The result is fully loaded (no LIMIT or paging), so it is
+	// ordered in Go on the parsed value, as FindingsStaleness does. A
+	// stable id DESC order from SQL breaks ties.
+	query += ` ORDER BY id DESC`
 
 	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query findings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanFindingRows(rows)
+	out, err := scanFindingRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
+	return out, nil
 }
 
 // AgentScanStatus is the staleness fact one agent's findings carry --

@@ -76,6 +76,11 @@
 #     openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
 #       | openssl x509 -outform pem > /tmp/covfloor-ca.pem
 #     cp /tmp/covfloor-ca.pem /work/covfloor-ca.pem'
+#   # test:go runs the tests as a non-root user (uid 1001); so must this.
+#   # As root, permission tests skip or fail (internal/agent/tailer's
+#   # TestTailer_SkippedChainFileClearsPositionFound fails) and several
+#   # packages read below their floors. Simplest: copy test:go's own
+#   # script, useradd and `su tester` included, into the container.
 #   docker run --rm --network covfloor-net-$$ \
 #     -e BIRDCAGE_TEST_DATABASE_URL='postgres://postgres:birdcage-ci@postgres:5432/postgres?sslmode=verify-full&sslrootcert=/work/covfloor-ca.pem' \
 #     -v "$PWD":/work -w /work golang:1.27.4 \
@@ -107,6 +112,11 @@
 # cannot move the counting under a merge request again. Measured as described
 # above, with postgres:18-alpine to match test:go. Per-package before/after
 # numbers are in the commit message that made this change.
+#
+# Checked 2026-11-17 on the pinned golang:1.27.4 image (#213), run as test:go
+# runs it: no package is below its floor or more than 5 points above it, so
+# no floor changed. internal/tlssniff, new since the last measure, got its
+# first floor.
 
 floors:
   # --- below the 70% band: known debt, tracked on issue #74 ---
@@ -166,6 +176,9 @@ floors:
                              # scope -- not a real process) and the
                              # port-scan/SNMP detector branches that need
                              # CAP_NET_RAW, unchanged from before.
+                            # Dated: the figures above are older readings; the floor was re-set to 79
+                            # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                            # longer follows them.
 
   # --- no test files at all: floor 0, listed rather than silently absent ---
   cmd/seed-story: 0         # dev-data seeding CLI, not shipped; no _test.go.
@@ -241,6 +254,9 @@ floors:
                               # failure branches (temp-dir Chmod/Sync/Rename
                               # errors) exercised by cmd/mockingbird's own
                               # token_test.go, not duplicated here.
+                                 # Dated: the figures above are older readings; the floor was re-set to 65
+                                 # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                                 # longer follows them.
   internal/agent/certkey: 88  # New package (#130, ADR-0012 Part B1/B2):
                               # ECDSA P-256 key/CSR generation and
                               # certificate half-life parsing. 89.5%
@@ -249,6 +265,9 @@ floors:
                               # ateKey/x509.CreateCertificateRequest's own
                               # internal error returns, which this package
                               # has no seam to induce deterministically.
+                              # Dated: the figures above are older readings; the floor was re-set to 88
+                              # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                              # longer follows them.
   internal/agent/client: 87
   internal/agent/enrol: 78
   internal/agent/enrolment: 92  # 92.5% measured with -race, 2026-09-24
@@ -291,6 +310,9 @@ floors:
                              # 98.0% measured on this checkout; the only gap
                              # is a context-cancellation race in Check that
                              # is exercised but not always the branch hit.
+                               # Dated: the figures above are older readings; the floor was re-set to 97
+                               # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                               # longer follows them.
   internal/agent/receiver: 95
   internal/agent/renewal: 80  # New package (#130, ADR-0012 Part B2): the
                               # crash-safe key/certificate swap and the
@@ -303,6 +325,9 @@ floors:
                               # branches (Rename/Remove errors) this
                               # package has no seam to induce
                               # deterministically.
+                              # Dated: the figures above are older readings; the floor was re-set to 80
+                              # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                              # longer follows them.
   internal/agent/smbaudit: 98 # New package (#87): the parse of the SMB
                              # lure's audit file. 98.9% measured with
                              # -race, 2026-09-23. A small, closed parser
@@ -328,6 +353,9 @@ floors:
                              # birdcage's database; passes gauntlet's persisttest.
                              # 82.9% measured the same way, 2026-11-13.
   internal/ca: 76             # 79.6% locally, 2026-09-30, with CAMissing's tests (#149)
+                              # Dated: the figures above are older readings; the floor was re-set to 76
+                              # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                              # longer follows them.
   internal/crowdsec: 91      # 91.6% measured by test:go in pipeline 1931,
                              # 2026-10-01 (#4, ADR-0014): the permanent-ban
                              # publisher (Blocker.Block's floor/allowlist/
@@ -358,6 +386,9 @@ floors:
                              # every agent behind birdcage's version.
                              # 72.7% measured by test:go in pipeline 1766,
                              # 2026-09-27.
+                             # Dated: the figures above are older readings; the floor was re-set to 70
+                             # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                             # longer follows them.
   internal/enrol: 96         # 96.0% measured with -race and Postgres,
                              # 2026-09-24 (#130): handleHello/handleProvision's
                              # trailing-data and storage-error branches,
@@ -384,6 +415,9 @@ floors:
                              # several heartbeat/batch branches gained
                              # tests, all through the real handler and
                              # mTLS test harness.
+                              # Dated: the figures above are older readings; the floor was re-set to 83
+                              # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                              # longer follows them.
   internal/logging: 90
   internal/mail: 88
   internal/mailbox: 85
@@ -403,6 +437,9 @@ floors:
                               # slice 3, was floored at 96): the portscan
                               # DestPort-0 carve-out in Validate gained
                               # its own tests.
+                             # Dated: the figures above are older readings; the floor was re-set to 96
+                             # in the go1.27.2 re-measure (2026-10-10, note at the top), so it no
+                             # longer follows them.
   internal/selftestsched: 100 # 100.0% measured with -race on SQLite and
                              # Postgres, 2026-09-23 (#46 slice 1, #74).
                              # Every error branch -- a settings read that
@@ -428,4 +465,5 @@ floors:
   internal/stream: 100
   internal/term: 100
   internal/tlsconfig: 82
+  internal/tlssniff: 94      # 94.8% measured 2026-11-17 on golang:1.27.4, matching test:go (#212 added the package).
   web: 77

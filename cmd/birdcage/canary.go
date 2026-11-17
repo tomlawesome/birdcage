@@ -28,14 +28,7 @@ import (
 // precedence as the main server (main.go) so the CLI always points at the
 // same database a running birdcage instance would.
 func openCanaryDB() (*db.DB, error) {
-	databaseURL := os.Getenv(envDatabaseURL)
-	if databaseURL == "" {
-		databaseURL = os.Getenv(envDBPath)
-	}
-	if databaseURL == "" {
-		databaseURL = defaultDBPath
-	}
-	database, err := db.Open(databaseURL)
+	database, err := db.Open(canaryDatabaseURL())
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -46,6 +39,18 @@ func openCanaryDB() (*db.DB, error) {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	return database, nil
+}
+
+// canaryDatabaseURL is the database the CLI subcommands open:
+// DATABASE_URL, else BIRDCAGE_DB_PATH, else the default SQLite file.
+func canaryDatabaseURL() string {
+	if u := os.Getenv(envDatabaseURL); u != "" {
+		return u
+	}
+	if p := os.Getenv(envDBPath); p != "" {
+		return p
+	}
+	return defaultDBPath
 }
 
 func closeCanaryDB(database *db.DB) {

@@ -214,6 +214,21 @@ func TestPaceSettingsNormalise(t *testing.T) {
 	}
 }
 
+// TestPaceSettingsNormaliseHoldsFloorToMinCeilingGap is #213's PF3-F1:
+// whatever normalise is given, neither gap leaves it under MinCeilingGap.
+func TestPaceSettingsNormaliseHoldsFloorToMinCeilingGap(t *testing.T) {
+	for _, in := range []PaceSettings{
+		{FloorGap: 10 * time.Millisecond, Hours: AllHours()},
+		{FloorGap: 10 * time.Millisecond, CeilingGap: 5 * time.Millisecond, Hours: AllHours()},
+		{FloorGap: time.Hour, CeilingGap: 10 * time.Millisecond, Hours: AllHours()},
+	} {
+		got := in.normalise()
+		if got.FloorGap < MinCeilingGap || got.CeilingGap < MinCeilingGap {
+			t.Errorf("normalise(%+v) = floor %v ceiling %v, want both at least %v", in, got.FloorGap, got.CeilingGap, MinCeilingGap)
+		}
+	}
+}
+
 // TestProvisionalNumbersAreMarked is a check on the code, not the maths.
 // Issue #86's "Done when" requires the provisional floor and ceiling to be
 // marked as provisional in the code -- this fails if somebody quietly turns

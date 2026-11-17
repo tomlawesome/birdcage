@@ -206,6 +206,21 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage ca reset [--backup-taken]` (cmd/birdcage/ca_reset.go) is
+	// #213's deliberate way back from a lost CA with no backup, which
+	// checkStartupCAContinuity below otherwise refuses forever. Exits
+	// immediately like the others.
+	if len(args) > 1 && args[1] == "ca" {
+		caLog := logging.New("ca")
+		if err := runCA(args[2:], os.Stdin, stdout, os.Stderr); err != nil {
+			if !errors.Is(err, errCAResetDeclined) {
+				caLog.Error(err.Error())
+			}
+			return true, 1
+		}
+		return true, 0
+	}
+
 	// `birdcage crowdsec add <ip> --reason "<why>"` (cmd/birdcage/
 	// crowdsec.go) is ADR-0014's one operator door onto a CrowdSec ban:
 	// CLI-only for the same reason `agent settings` is, and add-only by
@@ -437,18 +452,20 @@ func checkStartupDatabase(cfg startupConfig) error {
 }
 
 // checkStartupCAContinuity refuses to start when cfg.caDir (or its key
-// file) is missing but the store already shows an enrolled canary --
+// file) is missing but the store already holds an issued client certificate --
 // owner rule (issue #149): birdcage never mints a replacement CA just to
 // get going again, since every certificate that CA vouches for (a
 // canary's client certificate, an operator's already-trusted dashboard
-// pin) would silently stop verifying against a new one. Runs before
+// pin) would silently stop verifying against a new one. The only way
+// past it without the backup is the operator's deliberate `birdcage ca
+// reset` (#213), which removes those certificates. Runs before
 // loadStartupCA, which otherwise cannot tell "fresh install" apart from
 // "the CA directory was lost" and mints in both cases.
 //
 // database must already be open, so this needs to run after
 // openStartupDatabase rather than in loadStartupCA's usual position; see
-// main()'s call site. A genuinely fresh install (no canaries yet) has no
-// state to lose and falls through so loadStartupCA may still mint.
+// main()'s call site. A fresh install, or one with only `agent add` rows
+// and no certificate yet, has no state to lose and falls through so loadStartupCA may still mint.
 func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *db.DB, caLog *slog.Logger) error {
 	if !cfg.caNeeded {
 		return nil
@@ -460,15 +477,15 @@ func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *
 	if missing == "" {
 		return nil
 	}
-	enrolled, err := store.AnyCanariesEnrolled(ctx, database)
+	enrolled, err := store.AnyClientCertsIssued(ctx, database)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check for enrolled canaries before minting a new CA: %v", err)}
+		return &startupError{caLog, fmt.Sprintf("check for issued client certificates before minting a new CA: %v", err)}
 	}
 	if !enrolled {
 		return nil
 	}
 	return &startupError{caLog, fmt.Sprintf(
-		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, never regenerated",
+		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, or, if no backup exists, cleared with `birdcage ca reset` (every enrolled agent must then enrol again)",
 		missing,
 	)}
 }
@@ -512,6 +529,15 @@ func openStartupDatabase(ctx context.Context, cfg startupConfig, dbLog *slog.Log
 
 	if err := db.Migrate(ctx, database); err != nil {
 		return nil, fmt.Errorf("migrate database: %v", err)
+	}
+	// v0.1.0 accepted pace settings below 1s that today's validation and
+	// the canary refuse (#213): raise them before anything reads them.
+	clamped, err := store.ClampLegacyPaceSettings(ctx, database, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("raise legacy pace settings: %v", err)
+	}
+	if clamped > 0 {
+		dbLog.Info(fmt.Sprintf("raised %d stored pace setting(s) below 1s to 1s", clamped))
 	}
 	dbLog.Info(fmt.Sprintf("opened %s database, storing alerts via %s", database.Engine, redactDatabaseURL(cfg.databaseURL)))
 	return database, nil

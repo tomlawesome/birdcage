@@ -236,8 +236,8 @@ func DefaultPaceSettings() PaceSettings {
 	}
 }
 
-// normalise fills in any zero field from the defaults, holds the ceiling
-// to MinCeilingGap, and makes sure the ceiling is not looser than the
+// normalise fills in any zero field from the defaults, holds the floor
+// and the ceiling to MinCeilingGap, and makes sure the ceiling is not looser than the
 // floor, which would otherwise make the two clamps in matchedGap fight.
 func (s PaceSettings) normalise() PaceSettings {
 	if s.FloorGap <= 0 {
@@ -246,11 +246,17 @@ func (s PaceSettings) normalise() PaceSettings {
 	if s.CeilingGap <= 0 {
 		s.CeilingGap = DefaultCeilingGap
 	}
+	if s.FloorGap < MinCeilingGap {
+		// Belt-and-braces, as for the ceiling below: the ceiling is
+		// never above the floor, so a sub-minimum floor would drag it
+		// down to broadcaster speed too.
+		s.FloorGap = MinCeilingGap
+	}
 	if s.CeilingGap < MinCeilingGap {
-		// Belt-and-braces: cmd/mockingbird's two entry points already
-		// refuse a sub-floor ceiling before it gets this far, but
+		// Belt-and-braces: cmd/mockingbird's entry points already
+		// refuse a sub-minimum value before it gets this far, but
 		// normalise runs on every PaceSettings, however constructed, so
-		// this is the one place a broadcaster-speed ceiling can never
+		// this is the one place a broadcaster-speed gap can never
 		// survive.
 		s.CeilingGap = MinCeilingGap
 	}

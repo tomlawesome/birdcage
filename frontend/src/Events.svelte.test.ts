@@ -33,6 +33,7 @@ function visitor(overrides: Partial<Visitor> & { kind: Visitor['kind'] }): Visit
     services: ['ssh'],
     tried: ['administrator / hunter2'],
     clients: [],
+    latest_client: '',
     still_arriving: false,
     ...overrides,
   }
@@ -99,7 +100,7 @@ describe('Events.svelte: a who-segment renders as bold, coloured, or plain', () 
   })
 
   it('.client span has title equal to its text (#143)', () => {
-    const v = visitor({ kind: 'inside', tried: ['/', '/admin'], clients: ['curl/8.5.0'] })
+    const v = visitor({ kind: 'inside', tried: ['/', '/admin'], clients: ['curl/8.5.0'], latest_client: 'curl/8.5.0' })
     const { container } = render(Events, { canaries: [canary()], visitors: [v], trace, range: '24h' })
     const client = container.querySelector('.who .client')
     expect(client?.textContent).toBe('curl/8.5.0')
