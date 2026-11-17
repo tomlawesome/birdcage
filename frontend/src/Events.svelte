@@ -60,7 +60,7 @@
         {#each row.who as seg, j (j)}{#if seg.bold}<b>{seg.text}</b>{:else if seg.cls}<span class={seg.cls} title={seg.title}>{seg.text}</span>{:else}{seg.text}{/if}{/each}
       </div>
       <div class="acts">
-        {#each row.actions as a, k (k)}<span class="pill" class:quiet={a.quiet}>{a.label}</span>{/each}
+        {#each row.actions as a, k (k)}{#if a.href}<a class="pill" class:quiet={a.quiet} href={a.href}>{a.label}</a>{:else}<span class="pill" class:quiet={a.quiet}>{a.label}</span>{/if}{/each}
       </div>
     </div>
   {/each}
@@ -191,6 +191,7 @@
     flex-wrap: wrap;
   }
   .pill {
+    text-decoration: none;
     font: 600 11px var(--sans);
     color: var(--accent);
     border: 1px solid var(--hair-2);

@@ -12,7 +12,8 @@ import { canariesPhrase, minutesPhrase, rangeLong, servicesNarrative, triedNarra
 import { portForService } from './ports'
 import { wordOrNumber } from './words'
 import type { Segment } from './types'
-import { WRITE_ROUTES_LIVE } from '../writeActions'
+import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
+import { canaryHref } from '../route'
 
 export interface EventTime {
   primary: string
@@ -28,6 +29,9 @@ export interface EventKind {
 export interface EventAction {
   label: string
   quiet?: boolean
+  /** Where the pill goes, when it goes anywhere (#229): rendered as a
+   * link; without one the pill is a plain label. */
+  href?: string
 }
 
 export interface EventRow {
@@ -82,7 +86,7 @@ function timeColumn(v: Visitor, now: string): EventTime {
 function defaultActions(v: Visitor): EventAction[] {
   switch (v.kind) {
     case 'sweep':
-      return [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }]
+      return MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }] : []
     case 'repeat':
       return [{ label: 'already blocked', quiet: true }]
     case 'inside':
@@ -216,8 +220,8 @@ export function computeDroppedOutRow(canary: Canary): EventRow {
       },
     ],
     actions: [
-      { label: `open ${canary.name} ▸` },
-      { label: 'lookback in mikroview ▸' },
+      { label: `open ${canary.name} ▸`, href: canaryHref(canary.id) },
+      ...(MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }] : []),
       ...(WRITE_ROUTES_LIVE ? [{ label: 'mark as maintenance', quiet: true }] : []),
     ],
   }
