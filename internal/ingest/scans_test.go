@@ -623,3 +623,48 @@ func TestHandleScanFailedScanNeverResolvesFindings(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleScanDuplicateFindingStoredOnce: a scan listing the same
+// package/CVE twice with different versions is accepted and stored as one
+// finding, while the snapshot still counts the two posted findings.
+func TestHandleScanDuplicateFindingStoredOnce(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanaryKind(t, database, "canary-a", agentkind.Scanner)
+		raw := mintToken(t, database, "canary-a")
+		clock := stepClock(mustParseTime(t, "2026-01-01T00:00:00Z"))
+		h := newHandler(database, nil, clock, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		body := `{
+	"taken_at": "2026-01-02T00:00:00Z",
+	"agent_version": "1.0.0",
+	"engine": {"name": "grype", "version": "v0.119.0", "db_built_at": "2026-01-01T12:00:00Z"},
+	"status": "ok",
+	"findings": [
+		{"target": "dir:/host", "package": "libc6", "version": "2.0", "type": "deb",
+		 "vulnerability": "CVE-2024-0001", "severity": "low", "fix_version": "2.1"},
+		{"target": "dir:/host", "package": "libc6", "version": "1.0", "type": "deb",
+		 "vulnerability": "CVE-2024-0001", "severity": "high", "fix_version": "1.1"}
+	],
+	"masked_paths": []
+}`
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/scans", raw, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		findings := listFindingsFor(t, database, "canary-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+		}
+		f := findings[0]
+		if f.InstalledVersion != "1.0, 2.0" || f.FixingVersion != "1.1, 2.1" || f.Severity != "high" {
+			t.Errorf("Installed/Fixing/Severity = %q/%q/%q, want 1.0, 2.0/1.1, 2.1/high",
+				f.InstalledVersion, f.FixingVersion, f.Severity)
+		}
+		snaps := listScans(t, database)
+		if len(snaps) != 1 || snaps[0].FindingCount != 2 {
+			t.Fatalf("snapshots = %+v, want one with FindingCount 2", snaps)
+		}
+	})
+}

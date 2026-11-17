@@ -78,7 +78,10 @@ variables:
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
   ALPINE_IMAGE: alpine:3.24
-  DOCKER_CLI_IMAGE: docker:29-cli
+  # Must match .dind's image (tag and digest); scripts/ci-config.test.sh
+  # holds them together. Straight from Docker Hub, no cache prefix:
+  # release:attest runs on the signing runner, which may not reach the cache.
+  DOCKER_CLI_IMAGE: docker:29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144
   # Postgres 18 everywhere (owner, 2026-09-27, #140 decision 2b): this is
   # now the one Postgres pin in this file, used by both test:go's service
   # and scripts/e2e/stack.sh's own TLS-enabled image below -- kept as two
@@ -88,8 +91,8 @@ variables:
   # build/e2e-samba and build/e2e-snmp are CI-only fixture images (never
   # shipped), built during the e2e stage.
   DEBIAN_TRIXIE_SLIM_IMAGE: debian:trixie-slim
-  # What the release jobs install on $DOCKER_CLI_IMAGE (.registry_login),
-  # and what test:release-scripts installs to run their tests there.
+  # What the release jobs install on .dind's image (.registry_login), and
+  # what test:release-scripts installs on $DOCKER_CLI_IMAGE to run their tests.
   # python3: scripts/verify-validation-evidence.sh judges evidence in it.
   RELEASE_APK_PACKAGES: bash curl python3
 
@@ -1048,8 +1051,8 @@ build:images:
         # image I am pushing" the same statement.
         image_id="$(docker image inspect --format '{{.Id}}' "$local_tag")"
         # Pushed to this project's OWN registry, never GHCR -- this is
-        # transport between this pipeline's own jobs (#112), so a shared
-        # daemon's prune below can never delete the only copy. It is not a
+        # transport between this pipeline's own jobs (#112), so a local
+        # tag going missing can never lose the only copy. It is not a
         # release: release:push alone publishes anywhere a consumer would
         # ever pull from. scripts/publish-image.sh both pushes and proves
         # the round trip, the same guarantee release:push already relies on
@@ -1091,9 +1094,8 @@ test:image:birdcage:
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned the local tag
-    # between when it was built and now (#112) -- this recovers it from the
-    # registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the image
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     # The image under test is the one build:images produced, not a fresh
     # build of the same source -- see that job's header for why that
@@ -1180,9 +1182,8 @@ test:image:mockingbird:
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned the local tag
-    # between when it was built and now (#112) -- this recovers it from the
-    # registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the image
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     # As in test:image:birdcage: the image under test is the one
     # build:images produced, so the bytes that answer these checks are the
@@ -1426,9 +1427,8 @@ test:image:nightjar:
     # bash for scripts/ci-ensure-image.sh; docker:29-cli ships busybox ash.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned the local tag
-    # between when it was built and now (#112) -- this recovers it from the
-    # registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the image
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
     - docker tag "$NIGHTJAR_BUILD_IMAGE" "$APP"
     - |
@@ -1571,9 +1571,8 @@ e2e:enrol-and-hit:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -1627,9 +1626,8 @@ e2e:enrol-and-hit:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -1771,9 +1769,8 @@ e2e:smb:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -1824,9 +1821,8 @@ e2e:smb-lure:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
@@ -1904,9 +1900,8 @@ e2e:smb-lure:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$SMB_LURE_BUILD_IMAGE" "$SMB_LURE_BUILD_DIGEST"
@@ -1983,9 +1978,8 @@ e2e:mail:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2032,9 +2026,8 @@ e2e:mail:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2080,9 +2073,8 @@ e2e:dashboard-own-ca:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2124,9 +2116,8 @@ e2e:snmp:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2176,9 +2167,8 @@ e2e:portscan:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2244,9 +2234,8 @@ e2e:poisoner:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2309,9 +2298,8 @@ e2e:crowdsec:
     # JSON on this host (scripts/e2e/crowdsec.sh says why).
     - apk add --no-cache bash jq >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2356,9 +2344,8 @@ e2e:crowdsec:postgres:
     # Postgres image this backend needs; jq for scripts/e2e/crowdsec.sh.
     - apk add --no-cache bash openssl jq >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2435,9 +2422,8 @@ e2e:scanner:
     # variables); docker:29-cli ships busybox ash only.
     - apk add --no-cache bash >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2488,9 +2474,8 @@ e2e:smb:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2535,9 +2520,8 @@ e2e:snmp:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2577,9 +2561,8 @@ e2e:dashboard-own-ca:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2624,9 +2607,8 @@ e2e:scanner:postgres:
     # the one-line derived Postgres image this backend needs.
     - apk add --no-cache bash openssl >/dev/null
   script:
-    # A concurrent pipeline's build:images may have pruned one of these
-    # local tags between when it was built and now (#112) -- this recovers
-    # it from the registry if so, and does nothing if it is still there.
+    # This job's own daemon starts empty, so this pulls the images
+    # build:images pushed, by digest (#112).
     - scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
     - scripts/ci-ensure-image.sh "$OPENCANARY_BUILD_IMAGE" "$OPENCANARY_BUILD_DIGEST"
@@ -2753,11 +2735,8 @@ release:push:
         exit 1
       fi
       anchor="sha-${CI_COMMIT_SHA}"
-      # release:push has no `needs:`, so it waits for every earlier job --
-      # the longest exposure window in the pipeline (#112) -- which means
-      # the local tag build:images built is the most likely of anyone's to
-      # have been pruned by a concurrent pipeline by the time this runs.
-      # Recovers it from this project's own registry if so.
+      # This job's own daemon starts empty, so this pulls the image
+      # build:images pushed to this project's registry, by digest (#112).
       scripts/ci-ensure-image.sh "$BIRDCAGE_BUILD_IMAGE" "$BIRDCAGE_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$MOCKINGBIRD_BUILD_IMAGE" "$MOCKINGBIRD_BUILD_DIGEST"
       scripts/ci-ensure-image.sh "$NIGHTJAR_BUILD_IMAGE" "$NIGHTJAR_BUILD_DIGEST"
@@ -2778,8 +2757,7 @@ release:push:
       docker tag "$OPENCANARY_BUILD_IMAGE" "${OPENCANARY_RELEASE_REPO}:${anchor}"
       # The second argument is the config ID build:images recorded, so this
       # refuses if what is in the local daemon is not what was tested --
-      # which is also what would happen if a second runner host ever meant
-      # "the same pipeline" no longer implied "the same daemon".
+      # which is also what would happen if the local tag were ever replaced.
       birdcage_digest="$(scripts/publish-image.sh "${BIRDCAGE_RELEASE_REPO}:${anchor}" "$BIRDCAGE_BUILD_ID")"
       mockingbird_digest="$(scripts/publish-image.sh "${MOCKINGBIRD_RELEASE_REPO}:${anchor}" "$MOCKINGBIRD_BUILD_ID")"
       nightjar_digest="$(scripts/publish-image.sh "${NIGHTJAR_RELEASE_REPO}:${anchor}" "$NIGHTJAR_BUILD_ID")"
@@ -2787,7 +2765,7 @@ release:push:
       holder_digest="$(scripts/publish-image.sh "${HOLDER_RELEASE_REPO}:${anchor}" "$HOLDER_BUILD_ID")"
       opencanary_digest="$(scripts/publish-image.sh "${OPENCANARY_RELEASE_REPO}:${anchor}" "$OPENCANARY_BUILD_ID")"
       # Passed on as plain variables rather than parsed back out of JSON:
-      # docker:29-cli has no python and no jq, and a digest read wrongly is
+      # docker:29-cli has no jq, and a digest read wrongly is
       # a digest published wrongly. RELEASE_-prefixed on purpose -- a variable
       # called BIRDCAGE_DIGEST would be inherited by every later job and
       # silently answer for scripts/verify-validation-evidence.sh, which

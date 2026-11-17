@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -113,6 +114,11 @@ const findingColumns = `id, agent_id, target, vulnerability_id, severity, instal
 // complete ok scan snapshot (ADR-0010 decision 5). It loads every
 // existing row for agentID, then for each observed finding:
 //
+//   - duplicates in one snapshot (same target and vulnerability id) are
+//     merged first: installed and fixing versions become the sorted,
+//     distinct non-empty values joined with ", ", and severity the most
+//     severe (critical > high > medium > low > negligible > unknown >
+//     unrecognised; ties take the alphabetically first).
 //   - unseen before: inserted as FindingOpen, first_seen == last_seen ==
 //     observedAt.
 //   - seen before, currently open or accepted: last_seen and the
@@ -156,11 +162,13 @@ func ApplyFindingSnapshot(ctx context.Context, conn findingConn, agentID string,
 		byKey[findingKey{f.Target, f.VulnerabilityID}] = f
 	}
 
-	seen := make(map[findingKey]bool, len(observed))
-	for _, o := range observed {
-		if o.Target == "" || o.VulnerabilityID == "" {
-			return fmt.Errorf("store: ApplyFindingSnapshot: observed finding has empty target or vulnerability id: %+v", o)
-		}
+	merged, err := mergeObservedFindings(observed)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[findingKey]bool, len(merged))
+	for _, o := range merged {
 		key := findingKey{o.Target, o.VulnerabilityID}
 		seen[key] = true
 
@@ -191,6 +199,54 @@ func ApplyFindingSnapshot(ctx context.Context, conn findingConn, agentID string,
 		}
 	}
 	return nil
+}
+
+var severityRank = map[string]int{"critical": 6, "high": 5, "medium": 4, "low": 3, "negligible": 2, "unknown": 1}
+
+// mergeObservedFindings validates every input finding and collapses those
+// sharing a findingKey into one, in order of first appearance.
+func mergeObservedFindings(observed []ObservedFinding) ([]ObservedFinding, error) {
+	type acc struct {
+		o              ObservedFinding
+		installed, fix map[string]bool
+	}
+	var order []findingKey
+	byKey := make(map[findingKey]*acc, len(observed))
+	for _, o := range observed {
+		if o.Target == "" || o.VulnerabilityID == "" {
+			return nil, fmt.Errorf("store: ApplyFindingSnapshot: observed finding has empty target or vulnerability id: %+v", o)
+		}
+		key := findingKey{o.Target, o.VulnerabilityID}
+		a, ok := byKey[key]
+		if !ok {
+			a = &acc{o: o, installed: map[string]bool{}, fix: map[string]bool{}}
+			byKey[key] = a
+			order = append(order, key)
+		} else if r, cur := severityRank[o.Severity], severityRank[a.o.Severity]; r > cur || (r == cur && o.Severity < a.o.Severity) {
+			a.o.Severity = o.Severity
+		}
+		if o.InstalledVersion != "" {
+			a.installed[o.InstalledVersion] = true
+		}
+		if o.FixingVersion != "" {
+			a.fix[o.FixingVersion] = true
+		}
+	}
+	join := func(m map[string]bool) string {
+		vs := make([]string, 0, len(m))
+		for v := range m {
+			vs = append(vs, v)
+		}
+		sort.Strings(vs)
+		return strings.Join(vs, ", ")
+	}
+	out := make([]ObservedFinding, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		a.o.InstalledVersion, a.o.FixingVersion = join(a.installed), join(a.fix)
+		out = append(out, a.o)
+	}
+	return out, nil
 }
 
 // findingKey is one finding's identity within an agent -- the issue's

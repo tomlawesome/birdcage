@@ -71,7 +71,7 @@
 #   # way test:go's before_script does it: the certificate above is
 #   # self-signed, so the leaf the server presents back over the wire IS
 #   # the root verify-full is told to trust.
-#   docker run --rm --network covfloor-net-$$ -v "$PWD":/work postgres:17-alpine sh -c '
+#   docker run --rm --network covfloor-net-$$ -v "$PWD":/work postgres:18-alpine sh -c '
 #     apk add --no-cache openssl >/dev/null
 #     openssl s_client -starttls postgres -connect postgres:5432 -showcerts </dev/null 2>/dev/null \
 #       | openssl x509 -outform pem > /tmp/covfloor-ca.pem
