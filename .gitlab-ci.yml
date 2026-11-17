@@ -1044,6 +1044,7 @@ build:images:
         # on is release:attest's own cosign signature, not BuildKit's.
         docker build --provenance=false --sbom=false \
           --build-arg VERSION="$stamp" \
+          --label org.opencontainers.image.source=https://github.com/tomlawesome/birdcage \
           --file "build/${name}/Dockerfile" --tag "$local_tag" .
         # The config ID is the identity later jobs check back against. It is
         # not the registry digest -- that only exists once something is
