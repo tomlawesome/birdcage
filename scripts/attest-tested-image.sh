@@ -52,7 +52,7 @@ repo_root="$(cd "$here/.." && pwd)"
 
 # The predicate type names what this attestation claims. Verifiers filter on
 # it; scripts/verify-validation-evidence.sh carries the same constant.
-readonly PREDICATE_TYPE="https://tomlawson.io/attestations/birdcage-validation/v1"
+readonly PREDICATE_TYPE="https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1"
 
 # Cleaned up on any exit, including a fail()-triggered one; declared here
 # (not `local` inside a function) so the trap can always find it.

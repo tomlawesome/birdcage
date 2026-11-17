@@ -34,7 +34,7 @@ class FakeEventSource {
   }
 }
 
-const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'tom', role: 'admin' }
+const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'avery', role: 'admin' }
 
 function stubSuccessfulFetch() {
   vi.stubGlobal(

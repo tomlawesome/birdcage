@@ -225,7 +225,7 @@ syslog's ident and we do not use that parser (`docs/opencanary.md`). One
 line per audited operation, captured from this image:
 
 ```
-[2026/09/23 22:25:19.041076,  1]   root|172.21.0.3|shared|close|ok|/srv/shares/public/IT/vpn-setup.pdf
+[2026/09/23 22:25:19.041076,  1]   root|203.0.113.3|shared|close|ok|/srv/shares/public/IT/vpn-setup.pdf
 ```
 
 `close`, not `open`: on SMB2 an open arrives as `openat`, whose message

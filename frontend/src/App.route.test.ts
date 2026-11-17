@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
 import fixture from './dev/fixtures/canary-quiet.json'
 
-const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'tom', role: 'admin' }
+const signedIn = { setupRequired: false, ssoAvailable: false, authenticated: true, hasLocalPassword: true, ssoConnected: false, mustChangePassword: false, mustEnrolSecondFactor: false, mustEnrolPasskey: false, hasTOTP: true, username: 'avery', role: 'admin' }
 
 function stubFetch(canaryStatus = 200) {
   vi.stubGlobal(

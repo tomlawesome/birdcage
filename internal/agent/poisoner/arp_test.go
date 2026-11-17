@@ -11,11 +11,11 @@ import (
 // The addresses and MACs in this fixture are documentation-range and
 // locally-administered values, not anything from a real network.
 const arpFixture = `IP address       HW type     Flags       HW address            Mask     Device
-10.0.0.66        0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
-10.0.0.70        0x1         0x0         00:00:00:00:00:00     *        eth0
-10.0.0.71        0x1         0x2         AA:BB:CC:00:11:22     *        eth0
-10.0.0.72        0x1         0x2         not-a-mac             *        eth0
-10.0.0.73        0x1         0x2         aa:bb:cc:dd:ee         *       eth0
+198.51.100.66        0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
+198.51.100.70        0x1         0x0         00:00:00:00:00:00     *        eth0
+198.51.100.71        0x1         0x2         AA:BB:CC:00:11:22     *        eth0
+198.51.100.72        0x1         0x2         not-a-mac             *        eth0
+198.51.100.73        0x1         0x2         aa:bb:cc:dd:ee         *       eth0
 `
 
 // writeARP puts the fixture in a temp file and returns its path.
@@ -38,17 +38,17 @@ func TestLookupMAC(t *testing.T) {
 		ip   string
 		want string
 	}{
-		{name: "the answering host", ip: "10.0.0.66", want: "aa:bb:cc:dd:ee:ff"},
+		{name: "the answering host", ip: "198.51.100.66", want: "aa:bb:cc:dd:ee:ff"},
 		// Lower-cased, so an alert's MAC is comparable whatever case the
 		// kernel wrote.
-		{name: "upper case in the table", ip: "10.0.0.71", want: "aa:bb:cc:00:11:22"},
+		{name: "upper case in the table", ip: "198.51.100.71", want: "aa:bb:cc:00:11:22"},
 		// An incomplete entry: the neighbour has been asked and has not
 		// answered. Reporting all-zeroes as the attacker's MAC would be
 		// worse than reporting none.
-		{name: "an incomplete entry", ip: "10.0.0.70", want: ""},
-		{name: "an unparseable MAC", ip: "10.0.0.72", want: ""},
-		{name: "a truncated MAC", ip: "10.0.0.73", want: ""},
-		{name: "a host with no entry", ip: "10.0.0.99", want: ""},
+		{name: "an incomplete entry", ip: "198.51.100.70", want: ""},
+		{name: "an unparseable MAC", ip: "198.51.100.72", want: ""},
+		{name: "a truncated MAC", ip: "198.51.100.73", want: ""},
+		{name: "a host with no entry", ip: "198.51.100.99", want: ""},
 		// An IPv6 answer has no entry to find: Linux does not expose IPv6
 		// neighbours here at all. The empty string is the ordinary answer,
 		// not a failure.
@@ -69,24 +69,24 @@ func TestLookupMAC(t *testing.T) {
 // MAC and nothing else: the alert still goes out, naming the address, which
 // is the part that matters.
 func TestLookupMACOnAMissingFile(t *testing.T) {
-	if got := lookupMAC(filepath.Join(t.TempDir(), "absent"), "10.0.0.66"); got != "" {
+	if got := lookupMAC(filepath.Join(t.TempDir(), "absent"), "198.51.100.66"); got != "" {
 		t.Errorf("lookupMAC on a missing file = %q, want the empty string", got)
 	}
-	if got := lookupMAC(writeARP(t, "total nonsense\n"), "10.0.0.66"); got != "" {
+	if got := lookupMAC(writeARP(t, "total nonsense\n"), "198.51.100.66"); got != "" {
 		t.Errorf("lookupMAC on a garbled file = %q, want the empty string", got)
 	}
 }
 
 // TestLookupMACMatchesAddressesNotText proves the match is on the parsed
-// address rather than the text, so 10.0.0.6 never matches the 10.0.0.66 row.
+// address rather than the text, so 198.51.100.6 never matches the 198.51.100.66 row.
 func TestLookupMACMatchesAddressesNotText(t *testing.T) {
 	path := writeARP(t, arpFixture)
-	if got := lookupMAC(path, "10.0.0.6"); got != "" {
-		t.Errorf("lookupMAC(\"10.0.0.6\") = %q: it matched a longer address as text", got)
+	if got := lookupMAC(path, "198.51.100.6"); got != "" {
+		t.Errorf("lookupMAC(\"198.51.100.6\") = %q: it matched a longer address as text", got)
 	}
 	// The same address written differently still matches, because ParseIP
 	// is what does the comparing.
-	if got := lookupMAC(path, "::ffff:10.0.0.66"); got == "" {
+	if got := lookupMAC(path, "::ffff:198.51.100.66"); got == "" {
 		t.Error("an IPv4-mapped form of the same address did not match")
 	}
 }
@@ -122,7 +122,7 @@ func TestLookupMACWithRetryFindsALateEntry(t *testing.T) {
 		_ = os.WriteFile(path, []byte(arpFixture), 0o600)
 	}()
 
-	if got := lookupMACWithRetry(path, "10.0.0.66"); got != "aa:bb:cc:dd:ee:ff" {
+	if got := lookupMACWithRetry(path, "198.51.100.66"); got != "aa:bb:cc:dd:ee:ff" {
 		t.Errorf("lookupMACWithRetry = %q, want the late entry", got)
 	}
 	<-done
@@ -133,7 +133,7 @@ func TestLookupMACWithRetryFindsALateEntry(t *testing.T) {
 // off-segment, legitimately has no MAC and the alert still goes out.
 func TestLookupMACWithRetryReturnsEmptyWhenThereIsNothing(t *testing.T) {
 	path := writeARP(t, arpFixture)
-	if got := lookupMACWithRetry(path, "10.9.9.9"); got != "" {
+	if got := lookupMACWithRetry(path, "198.51.100.99"); got != "" {
 		t.Errorf("lookupMACWithRetry = %q, want the empty string", got)
 	}
 }
@@ -144,7 +144,7 @@ func TestLookupMACWithRetryReturnsEmptyWhenThereIsNothing(t *testing.T) {
 func TestLookupMACWithRetrySkipsTheSleepOnAHit(t *testing.T) {
 	path := writeARP(t, arpFixture)
 	start := time.Now()
-	if got := lookupMACWithRetry(path, "10.0.0.66"); got != "aa:bb:cc:dd:ee:ff" {
+	if got := lookupMACWithRetry(path, "198.51.100.66"); got != "aa:bb:cc:dd:ee:ff" {
 		t.Fatalf("lookupMACWithRetry = %q", got)
 	}
 	if took := time.Since(start); took >= macRetryDelay {

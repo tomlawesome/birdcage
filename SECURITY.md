@@ -32,7 +32,7 @@ the top-level status, ranked against — not below — an active attack.
 [ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
 self-hosted-only OIDC, following
 [mikroview](https://github.com/tomlawesome/mikroview)'s model. Until
-[#8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8) lands, nothing gates
+#8 lands, nothing gates
 the dashboard, so the network-exposure guidance below is the only control.
 This section is rewritten route-by-route when #8 lands.
 
@@ -339,7 +339,7 @@ only at the point that text is displayed, per surface:
   See [docs/configuration.md](docs/configuration.md#dashboard-tls).
 
   Everything under `/api/` needs a signed-in session or a read API token
-  ([issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8),
+  (issue #8,
   ADR-0016); only the frontend files, which hold the sign-in screen, load
   without one. The gate is the shared auth module gauntlet, and its own
   routes (`/api/auth/*`, `/api/tokens`) sit beside the ones below. A read

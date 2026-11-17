@@ -195,7 +195,7 @@
         "kind": "scanner",
         "lane": "iot",
         "ports": "",
-        "address": "10.0.30.12",
+        "address": "198.51.100.12",
         "heartbeat_interval_s": 60,
         "self_test_enabled": true,
         "self_test_schedule": "04:00",

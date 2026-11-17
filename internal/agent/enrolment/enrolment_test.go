@@ -454,8 +454,8 @@ func TestRedactErrStripsPathAndAddress(t *testing.T) {
 		t.Errorf("redactErr(%v) = %q, still contains the path", pathErr, got)
 	}
 
-	opErr := &net.OpError{Op: "dial", Addr: &net.TCPAddr{IP: net.ParseIP("10.0.0.5"), Port: 443}, Err: errors.New("refused")}
-	if got := redactErr(opErr); strings.Contains(got, "10.0.0.5:443") {
+	opErr := &net.OpError{Op: "dial", Addr: &net.TCPAddr{IP: net.ParseIP("198.51.100.5"), Port: 443}, Err: errors.New("refused")}
+	if got := redactErr(opErr); strings.Contains(got, "198.51.100.5:443") {
 		t.Errorf("redactErr(%v) = %q, still contains the address", opErr, got)
 	}
 

@@ -454,7 +454,7 @@ quiet one unless something proves the chain works.
 
 So birdcage proves it once, automatically, the moment the agent's new
 credential is first used for anything: it mints a self-test run for that
-canary -- the same round trip [issue #46](https://gitlab.tomlawson.io/-/issues/46)
+canary -- the same round trip issue #46
 runs daily thereafter -- regardless of whether the operator has the daily
 self-test schedule turned on. The agent picks the command up on its
 ordinary poll and probes its own services. Most targets answer with a
@@ -659,7 +659,7 @@ itself still shows those three failures.
 Once registered, nothing re-proves a scanner on its own -- there is no
 daily self-test the way a honeypot gets one. An admin-ordered scan from
 the canary page, behind a fresh sign-in, is planned
-([#129](https://gitlab.tomlawson.io/ai/birdcage/-/issues/129)); it will
+(#129); it will
 run the same proof again without touching pending.
 
 ### The database refresh is loud, not just late

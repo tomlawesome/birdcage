@@ -12,7 +12,7 @@ import (
 // filesystem path -- a dial or listen failure against the birdcage
 // origin must not leak that address into a log line either.
 func TestSafeErrRedactsNetworkAddress(t *testing.T) {
-	addr := &net.TCPAddr{IP: net.ParseIP("10.20.30.40"), Port: 8443}
+	addr := &net.TCPAddr{IP: net.ParseIP("203.0.113.40"), Port: 8443}
 	err := &net.OpError{Op: "dial", Net: "tcp", Addr: addr, Err: errNoSuchHost}
 
 	got := safeErr(err)

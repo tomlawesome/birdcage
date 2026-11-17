@@ -274,7 +274,7 @@ func TestRunPoisonerRoadWithNoDetector(t *testing.T) {
 // deduplication works across all of them.
 func TestSubmitPoisonerEventQueuesWithAnID(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
-	message := []byte(`{"dst_host":"10.0.0.5","logtype":30001,"src_host":"10.0.0.66"}`)
+	message := []byte(`{"dst_host":"198.51.100.5","logtype":30001,"src_host":"198.51.100.66"}`)
 	if err := in.SubmitPoisonerEvent(message); err != nil {
 		t.Fatalf("SubmitPoisonerEvent: %v", err)
 	}
@@ -379,7 +379,7 @@ func (f *fakeBait) LookupOnce(_ context.Context, proto poisoner.Protocol, name s
 func selfTestParams(service, marker string) selftest.Params {
 	return selftest.Params{
 		RunID:   "run-1",
-		Address: "10.0.0.5",
+		Address: "198.51.100.5",
 		Targets: []selftest.Target{{Service: service, DestPort: 0, Marker: marker}},
 	}
 }
@@ -465,7 +465,7 @@ func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
 
 	bait := &fakeBait{answers: []poisoner.Answer{{
-		Source:   "10.0.0.66",
+		Source:   "198.51.100.66",
 		Protocol: poisoner.ProtocolLLMNR,
 		Name:     "fs-lon-02",
 		MAC:      "aa:bb:cc:dd:ee:ff",
@@ -478,7 +478,7 @@ func TestRunAgentHandledTargetReportsAnAnswer(t *testing.T) {
 	}
 
 	line := buf.String()
-	if !strings.Contains(line, "ANSWERED") || !strings.Contains(line, "10.0.0.66") {
+	if !strings.Contains(line, "ANSWERED") || !strings.Contains(line, "198.51.100.66") {
 		t.Errorf("the answer was not reported with its source: %q", line)
 	}
 	// The bait name and the MAC belong in the event, not on this box's
@@ -574,7 +574,7 @@ func TestRunAgentHandledTargetRefusesAnUnknownService(t *testing.T) {
 func TestTargetForPairsByService(t *testing.T) {
 	params := selftest.Params{
 		RunID:   "run-1",
-		Address: "10.0.0.5",
+		Address: "198.51.100.5",
 		Targets: []selftest.Target{
 			{Service: "ssh", DestPort: 22, Marker: "m-ssh"},
 			{Service: "poisoner", DestPort: 0, Marker: "m-poisoner"},

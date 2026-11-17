@@ -3,7 +3,7 @@
 ## Storage: `DATABASE_URL`
 
 Birdcage supports two database engines, per
-[issue #7](https://gitlab.tomlawson.io/ai/birdcage/-/issues/7) -- both are
+issue #7 -- both are
 mandatory in v1, not SQLite-with-Postgres-as-an-option: every migration and
 every query in `internal/db` and `internal/store` runs on both, and CI tests
 both on every change.
@@ -26,7 +26,7 @@ beyond having an empty database and a user with permission to create tables
 in it.
 
 **A Postgres `DATABASE_URL` must set `sslmode=verify-full`, or birdcage
-refuses to start** ([issue #84](https://gitlab.tomlawson.io/ai/birdcage/-/issues/84)).
+refuses to start** (issue #84).
 That database holds every canary's bearer-token hash, the CA, enrolment
 sessions and the whole alert history, so a connection to it that could run
 unencrypted -- or encrypt without checking which server it actually reached
@@ -209,7 +209,7 @@ plaintext listener reachable off loopback, and there is no fifth mode.
 
    ```
    docker run \
-     -e BIRDCAGE_DASHBOARD_HOST=birdcage.lan,192.168.11.30 \
+     -e BIRDCAGE_DASHBOARD_HOST=birdcage.lan,192.0.2.30 \
      -p 8080:8080 \
      birdcage
    ```
@@ -254,7 +254,7 @@ isn't absolute -- refuses to start rather than guessing what was meant.
 ## Sign-in
 
 The dashboard needs a sign-in
-([issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8),
+(issue #8,
 ADR-0016). Everything under `/api/` answers `401` without a signed-in
 session or a read API token; the dashboard's own files load without one,
 so the sign-in screen can. The canary listeners (enrolment and ingest) are

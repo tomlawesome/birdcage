@@ -4,7 +4,7 @@ Outside pull requests are not accepted at all — see `CONTRIBUTING.md`.
 
 ## Delivery host
 
-GitLab-first: `gitlab.tomlawson.io/ai/birdcage` (project 51, default branch
+GitLab-first: `ai/birdcage` on the project's GitLab (project 51, default branch
 `dev`) holds branches, merge requests, issues and the gate
 (`.gitlab-ci.yml`). Remote `gitlab` is primary; `origin` is the read-only GitHub
 mirror `tomlawesome/birdcage`, which keeps CodeQL, dependency review and the manual

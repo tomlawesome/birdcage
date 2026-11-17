@@ -88,9 +88,9 @@ func TestSelect(t *testing.T) {
 		},
 		{
 			name:     "a LAN IP with no certificate mints its own",
-			addr:     "192.168.1.5:8080",
+			addr:     "192.0.2.5:8080",
 			wantMode: ModeMintedCert,
-			wantAddr: "192.168.1.5:8080",
+			wantAddr: "192.0.2.5:8080",
 		},
 		{
 			name:     "a non-loopback IPv6 address with no certificate mints its own",

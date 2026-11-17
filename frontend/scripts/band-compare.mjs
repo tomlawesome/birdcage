@@ -37,6 +37,14 @@ const shotsDir = join(frontendDir, '..', 'docs', 'design', 'concepts', 'round-6'
 const outDir = join(frontendDir, 'scripts', '.out')
 mkdirSync(outDir, { recursive: true })
 
+// --update re-bakes the build-generated references (alerts, poisoner) from
+// the current build: the reference is the full page screenshot (what
+// below-band-compare.mjs reads) with the band crop overlaid at its
+// page-space offset (what this script reads). Concept-mockup scenes are never
+// rewritten.
+const UPDATE = process.argv.includes('--update')
+const BUILD_GENERATED = ['alerts', 'poisoner']
+
 const SCENES = ['quiet', 'silent', 'night', 'alerts', 'poisoner']
 const THRESHOLD_PCT = 2
 const DPR = 2
@@ -117,6 +125,12 @@ async function main() {
         const livePng = PNG.sync.read(liveBuf)
 
         const shotPath = join(shotsDir, `m-${scene}.png`)
+        if (UPDATE && BUILD_GENERATED.includes(scene)) {
+          const canvas = PNG.sync.read(await page.screenshot())
+          PNG.bitblt(livePng, canvas, 0, 0, livePng.width, livePng.height, 0, Math.round(box.pageY * DPR))
+          writeFileSync(shotPath, PNG.sync.write(canvas))
+          console.log(`updated ${shotPath}`)
+        }
         const shotPng = PNG.sync.read(readFileSync(shotPath))
         // Same page-space region, converted to the shot's pixels (the
         // shots are the 1600x1000 page at @2x, so page-space * DPR).

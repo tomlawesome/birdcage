@@ -113,10 +113,10 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
+    input.page.canary.credential_conflict = { addresses: ['198.51.100.1', '198.51.100.2'] }
     const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
     expect(hero).toBe("canary-iot's credential is live in two places at once.")
-    expect(sub).toContain('credential in use from two addresses: 10.0.0.1 and 10.0.0.2.')
+    expect(sub).toContain('credential in use from two addresses: 198.51.100.1 and 198.51.100.2.')
     expect(sub).toContain('Revoke the node (birdcage agent revoke <agent-id>) and re-enrol it.')
   })
 
@@ -172,7 +172,7 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
+    input.page.canary.credential_conflict = { addresses: ['198.51.100.1', '198.51.100.2'] }
     expect(plainText(canaryCrumb(input))).toContain('credential conflict')
     expect(plainText(canaryFooter(input))).toContain('credential conflict')
   })

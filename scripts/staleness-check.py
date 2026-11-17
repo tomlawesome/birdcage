@@ -1313,6 +1313,16 @@ def check_registry_fixture(root, fetcher):
     repo_ref, pinned_digest = m.group(1), m.group(2)
     row_id = "fixture:poisoner"
 
+    # The pin names the registry as $CI_REGISTRY, which GitLab expands in
+    # the job; expand it the same way here (set in every CI job).
+    m3 = re.match(r"\$(?:\{CI_REGISTRY\}|CI_REGISTRY(?![A-Za-z0-9_]))", repo_ref)
+    if m3:
+        ci_registry = os.environ.get("CI_REGISTRY")
+        if not ci_registry:
+            return [unverifiable(row_id, pinned_digest,
+                                  "CI_REGISTRY not set -- cannot tell which registry the pin names")]
+        repo_ref = ci_registry + repo_ref[m3.end():]
+
     registry, repo = repo_ref.split("/", 1)
     if not (os.environ.get("CI_REGISTRY_USER") and os.environ.get("CI_REGISTRY_PASSWORD")):
         if fetcher.fixture is None:

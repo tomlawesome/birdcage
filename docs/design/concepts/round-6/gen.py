@@ -23,7 +23,7 @@ ports = {'lan': 'ssh 22 · http 80 · smb 445', 'srv': 'ssh 22 · mysql 3306 · 
 # what rises from each line on the sweep night: (kind, [ago...], label line 1, label line 2)
 NIGHT_HITS = {
     'lan': [('sw', [531, 532], 'root / root · session libssh2', '203.0.113.42 → canary-lan · 21:55'),
-            ('in', [10389, 10407], '/ then /admin', '10.0.40.23 → canary-lan :80 · 19:11')],
+            ('in', [10389, 10407], '/ then /admin', '192.0.2.23 → canary-lan :80 · 19:11')],
     'srv': [('sw', [429, 453], 'mysql root / (empty) · root / password', '203.0.113.42 → canary-srv · 21:56'),
             ('tc', [153951], 'anonymous ftp, once', '192.0.2.88 → canary-srv :21 · yesterday 03:18')],
     'iot': [('sw', [164], 'root / toor', '203.0.113.42 → canary-iot · 22:01'),
@@ -292,7 +292,7 @@ def chrome(status):
     tb = ''.join(f'<span{" class=on" if i == 0 else ""}>{t}</span>' for i, t in enumerate(TABS))
     dk = ''.join(f'<span{" class=on" if i == 0 else ""}>{d}</span>' for i, d in enumerate(DECK))
     return (f'  <div class="wordmark">BIRD<em>CAGE</em></div>\n  <div class="tabs">{tb}</div>\n'
-            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">tom (admin)</span></div>\n'
+            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">avery (admin)</span></div>\n'
             f'  <div class="deck">{dk}</div>\n')
 
 
@@ -352,7 +352,7 @@ EVENTS_NIGHT = [
      '<span class="ip">198.51.100.7</span> knocks on <b>canary-iot :445</b> every ~20 minutes through the night, six nights running. Community-blocked since Tuesday.',
      '<span class="pill quiet">already blocked</span>'),
     ('k-in', '19:11:22<small>3 h ago</small>', '✱ FROM INSIDE<small>2× · 1 of 4</small>',
-     '<span class="ip">10.0.40.23</span>, a guest device, browsed <b>canary-lan :80</b> and tried /admin. Never auto-blocked (#33).',
+     '<span class="ip">192.0.2.23</span>, a guest device, browsed <b>canary-lan :80</b> and tried /admin. Never auto-blocked (#33).',
      '<span class="pill">which device? ▸</span>'),
     ('k-tc', 'yesterday<small>03:18:40</small>', '▲ ONE TOUCH<small>1× · 1 of 4</small>',
      '<span class="ip">192.0.2.88</span> logged in to <b>canary-srv :21</b> as anonymous, once, and left.',

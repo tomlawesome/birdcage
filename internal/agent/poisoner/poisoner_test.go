@@ -171,7 +171,7 @@ func TestObserveCountsQueriesAndCatchesAnswers(t *testing.T) {
 	d.names = Names{"fs-lon-02", WPADName}
 
 	l := listener{proto: ProtocolLLMNR, port: LLMNRPort, conn: nil}
-	src := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 66), Port: LLMNRPort}
+	src := &net.UDPAddr{IP: net.IPv4(198, 51, 100, 66), Port: LLMNRPort}
 
 	// Another host's query: counted, never an alert.
 	query, err := encodeLLMNRQuery(0x1111, "someone-elses-host", typeA)
@@ -220,7 +220,7 @@ func TestObserveCountsQueriesAndCatchesAnswers(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("the alert does not parse: %v", err)
 	}
-	if out.SrcHost != "10.0.0.66" || out.LogData.NAME != "fs-lon-02" ||
+	if out.SrcHost != "198.51.100.66" || out.LogData.NAME != "fs-lon-02" ||
 		out.LogData.PROTOCOL != string(ProtocolLLMNR) || out.LogData.MAC != "aa:bb:cc:dd:ee:ff" {
 		t.Errorf("alert = %+v, want the answering address, name, protocol and MAC", out)
 	}
@@ -238,7 +238,7 @@ func TestObserveIgnoresAResponseForAnotherName(t *testing.T) {
 	d.names = Names{"fs-lon-02", WPADName}
 
 	l := listener{proto: ProtocolMDNS, port: MDNSPort}
-	src := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 20), Port: MDNSPort}
+	src := &net.UDPAddr{IP: net.IPv4(198, 51, 100, 20), Port: MDNSPort}
 
 	for _, tc := range []struct {
 		name     string
@@ -281,7 +281,7 @@ func TestObserveIgnoresAResponseForAnotherName(t *testing.T) {
 func TestObserveDropsAShortDatagram(t *testing.T) {
 	submit, got, mu := collect()
 	d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05", Now: func() time.Time { return base }}, submit, quietLogger())
-	d.observe(listener{proto: ProtocolLLMNR}, []byte{0x00, 0x01}, &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1)})
+	d.observe(listener{proto: ProtocolLLMNR}, []byte{0x00, 0x01}, &net.UDPAddr{IP: net.IPv4(198, 51, 100, 1)})
 	mu.Lock()
 	alerts := len(*got)
 	mu.Unlock()
@@ -300,10 +300,10 @@ func TestEmitLogsTheAddressAndNothingElse(t *testing.T) {
 	submit, _, _ := collect()
 	d, _ := New(Config{ConfPath: writeConf(t, "canary"), Hostname: "fs-lon-05", Now: func() time.Time { return base }}, submit, log)
 
-	d.emit(Answer{Source: "10.0.0.66", SourcePort: 5355, Protocol: ProtocolLLMNR, Name: "fs-lon-02", MAC: "aa:bb:cc:dd:ee:ff"})
+	d.emit(Answer{Source: "198.51.100.66", SourcePort: 5355, Protocol: ProtocolLLMNR, Name: "fs-lon-02", MAC: "aa:bb:cc:dd:ee:ff"})
 
 	line := buf.String()
-	if !strings.Contains(line, "10.0.0.66") {
+	if !strings.Contains(line, "198.51.100.66") {
 		t.Errorf("the log line does not name the answering address: %q", line)
 	}
 	// The address is the attacker's own, so naming it tells them nothing.
@@ -677,7 +677,7 @@ func TestPaceReportSaysWhereTheRateCameFrom(t *testing.T) {
 		t.Errorf("a silent segment's gap is %v, want the floor %v", quiet.Gap, d.pace.FloorGap)
 	}
 
-	for _, host := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"} {
+	for _, host := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"} {
 		for i := 0; i < 70; i++ {
 			d.counter.Observe(host, now)
 		}

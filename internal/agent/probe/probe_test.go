@@ -95,12 +95,12 @@ func TestSweepWithConfig_ClassifiesEachTargetIndependently(t *testing.T) {
 // otherwise block for its full ProbeTimeout -- the house rule that a
 // canary must never hang in a self-test.
 func TestSweepWithConfig_BoundsTheWholeRun(t *testing.T) {
-	// 10.255.255.1 is routable but answers nothing in CI/sandbox
+	// 198.51.100.254 is routable but answers nothing in CI/sandbox
 	// networks, so the dial blocks until its context expires rather
 	// than failing fast the way a refused local port does.
 	params := selftest.Params{
 		RunID:   "run-2",
-		Address: "10.255.255.1",
+		Address: "198.51.100.254",
 		Targets: []selftest.Target{
 			{Service: "ftp", DestPort: 21, Marker: "m1"},
 			{Service: "ftp", DestPort: 21, Marker: "m2"},

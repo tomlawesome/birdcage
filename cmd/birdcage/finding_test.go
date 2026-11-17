@@ -49,21 +49,21 @@ func TestFindingsAcceptThenListRoundTrips(t *testing.T) {
 	}
 
 	acceptOut, err := captureStdout(t, func() error {
-		return runFindingsAccept([]string{"scanner-a", "deb:openssl", "CVE-2014-0160", "tom"})
+		return runFindingsAccept([]string{"scanner-a", "deb:openssl", "CVE-2014-0160", "avery"})
 	})
 	if err != nil {
 		t.Fatalf("runFindingsAccept: %v", err)
 	}
-	if !strings.Contains(acceptOut, "accepted") || !strings.Contains(acceptOut, "by=tom") {
-		t.Fatalf("accept output = %q, want it to confirm acceptance by tom", acceptOut)
+	if !strings.Contains(acceptOut, "accepted") || !strings.Contains(acceptOut, "by=avery") {
+		t.Fatalf("accept output = %q, want it to confirm acceptance by avery", acceptOut)
 	}
 
 	listOut, err := captureStdout(t, func() error { return runFindingsList([]string{"scanner-a"}) })
 	if err != nil {
 		t.Fatalf("runFindingsList: %v", err)
 	}
-	if !strings.Contains(listOut, "state=accepted") || !strings.Contains(listOut, "accepted_by=tom") {
-		t.Fatalf("list output = %q, want state=accepted and accepted_by=tom", listOut)
+	if !strings.Contains(listOut, "state=accepted") || !strings.Contains(listOut, "accepted_by=avery") {
+		t.Fatalf("list output = %q, want state=accepted and accepted_by=avery", listOut)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestFindingsAcceptUnknownReturnsError(t *testing.T) {
 	defer closeCanaryDB(database)
 	insertTestCanary(t, database, "scanner-a")
 
-	if err := runFindingsAccept([]string{"scanner-a", "deb:openssl", "CVE-2014-0160", "tom"}); err == nil {
+	if err := runFindingsAccept([]string{"scanner-a", "deb:openssl", "CVE-2014-0160", "avery"}); err == nil {
 		t.Fatal("runFindingsAccept(unknown finding) returned no error")
 	}
 }

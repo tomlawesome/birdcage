@@ -107,7 +107,7 @@ func TestCertificateSignalFollowsTheCertificateInUse(t *testing.T) {
 func TestApplyCredentialHealthRanks(t *testing.T) {
 	now := mustParse(t, "2026-01-01T00:00:00Z")
 	recent := now.Add(-30 * time.Second).Format(receivedAtLayout)
-	pair := `["10.0.0.1","10.0.0.2"]`
+	pair := `["198.51.100.1","198.51.100.2"]`
 
 	c := Canary{Status: "silent"}
 	conflictSince := now.Add(-time.Minute)
@@ -182,7 +182,7 @@ func TestListCanariesCredentialStatesAndJSON(t *testing.T) {
 			}
 		}
 
-		if err := RecordCredentialDualUse(ctx, database, "dual", DualUseAddresses, "10.0.0.1", "10.0.0.2", now); err != nil {
+		if err := RecordCredentialDualUse(ctx, database, "dual", DualUseAddresses, "198.51.100.1", "198.51.100.2", now); err != nil {
 			t.Fatalf("RecordCredentialDualUse: %v", err)
 		}
 		if err := RecordCredentialDualUse(ctx, database, "dual", DualUseVersions, "1.0.0", "0.9.9", now); err != nil {
@@ -224,7 +224,7 @@ func TestListCanariesCredentialStatesAndJSON(t *testing.T) {
 		if got := string(decoded["status"]); got != `"credential_conflict"` {
 			t.Errorf("status = %s, want \"credential_conflict\"", got)
 		}
-		want := `{"addresses":["10.0.0.1","10.0.0.2"],"versions":["1.0.0","0.9.9"]}`
+		want := `{"addresses":["198.51.100.1","198.51.100.2"],"versions":["1.0.0","0.9.9"]}`
 		if got := string(decoded["credential_conflict"]); got != want {
 			t.Errorf("credential_conflict = %s, want %s", got, want)
 		}
