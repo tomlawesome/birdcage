@@ -7,7 +7,7 @@ Only hashes are committed, never the words. Output gives counts and paths,
 never the matched word.
 
 --history scans every blob reachable from any ref (all branches and tags,
-not only the checked-out tree) and reports path and commit for each hit.
+not only the checked-out tree) and reports path and commit for each hit,\nat every path the blob appears at that is not allowlisted.
 Files over MAX_BYTES are skipped and counted, never read.
 
 usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--history]
@@ -110,8 +110,10 @@ def scan_tree(root, salt, hashes, allow):
 
 
 def history_blobs(root):
-    """{blob: (path, commit)} for every blob any commit on any ref adds,
-    earliest commit first; merges are diffed against each parent."""
+    """{blob: {path: commit}} for every blob any commit on any ref adds,
+    with the earliest commit that adds it at each path; merges are diffed
+    against each parent. Gitlinks (submodules) are not blobs and are left
+    out."""
     out = git(root, "log", "--all", "--reverse", "--raw", "--no-abbrev", "--no-renames",
               "-m", "-z", "--format=%x01%H")
     blobs, commit = {}, None
@@ -121,10 +123,11 @@ def history_blobs(root):
         if f.startswith(b"\x01"):
             commit = f[1:].decode()
         elif f.startswith(b":"):
-            new = f.split(b" ")[3].decode()
+            meta = f.split(b" ")
+            mode, new = meta[1], meta[3].decode()
             path = next(fields, b"").decode("utf-8", "replace")
-            if new.strip("0") and new not in blobs:
-                blobs[new] = (path, commit)
+            if new.strip("0") and mode != b"160000":
+                blobs.setdefault(new, {}).setdefault(path, commit)
     return blobs
 
 
@@ -166,20 +169,26 @@ def read_blobs(root, shas):
 
 
 def scan_history(root, salt, hashes, allow):
-    blobs = history_blobs(root)
-    bad, big, todo = [], 0, []
-    for sha, (path, commit) in blobs.items():
-        if path_skipped(path, allow):
-            continue
-        if any(digest(salt, w) in hashes for w in words(path)):
-            bad.append((path, commit))
-        elif os.path.basename(path) not in LOCK_NAMES:
-            todo.append(sha)
-    for sha, data in read_blobs(root, todo):
+    """Each blob's content is read once; every path it appears at that is not
+    allowlisted is checked, so content first committed at an allowlisted path
+    and later copied elsewhere is still reported, at the later path."""
+    bad, big, todo = [], 0, {}
+    for sha, paths in history_blobs(root).items():
+        content_paths = []
+        for path, commit in paths.items():
+            if path_skipped(path, allow):
+                continue
+            if any(digest(salt, w) in hashes for w in words(path)):
+                bad.append((path, commit))
+            elif os.path.basename(path) not in LOCK_NAMES:
+                content_paths.append((path, commit))
+        if content_paths:
+            todo[sha] = content_paths
+    for sha, data in read_blobs(root, list(todo)):
         if data is None:
             big += 1
         elif text_hit(salt, hashes, data):
-            bad.append(blobs[sha])
+            bad.extend(todo[sha])
     return bad, big
 
 

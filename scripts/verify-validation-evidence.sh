@@ -122,8 +122,21 @@ fetch_verified_attestations() {
   local hashes
   hashes="$(sed 's/#.*//' "$(legacy_types_file)" 2>/dev/null | tr -d ' \t' | grep -x '[0-9a-f]\{64\}' || true)"
   [ -n "$hashes" ] || return "$found"
+  # The unverified download is bounded in time and size: at most
+  # ATTESTATION_DOWNLOAD_TIMEOUT seconds, and anything over
+  # ATTESTATION_DOWNLOAD_MAX_BYTES is refused rather than parsed. A refused
+  # download ends legacy discovery only; the current type's result stands.
+  local dl="${outfile}.download" max="${ATTESTATION_DOWNLOAD_MAX_BYTES:-10485760}"
+  timeout "${ATTESTATION_DOWNLOAD_TIMEOUT:-300}" \
+    "$cosign_cmd" download attestation "$subject" 2>/dev/null \
+    | head -c "$((max + 1))" > "$dl" || true
+  if [ "$(wc -c < "$dl")" -gt "$max" ]; then
+    rm -f "$dl"
+    echo "attestation download for $subject is too large (over $((max / 1048576)) MB); legacy types not checked" >&2
+    return "$found"
+  fi
   local listed
-  listed="$("$cosign_cmd" download attestation "$subject" 2>/dev/null | python3 -c '
+  listed="$(python3 -c '
 import base64, hashlib, json, sys
 wanted = set(sys.argv[1].split())
 seen = set()
@@ -136,7 +149,8 @@ for line in sys.stdin:
             and hashlib.sha256(t.encode()).hexdigest() in wanted:
         seen.add(t)
         print(t)
-' "$hashes" || true)"
+' "$hashes" < "$dl" || true)"
+  rm -f "$dl"
   while IFS= read -r t; do
     [ -n "$t" ] || continue
     if "$cosign_cmd" verify-attestation \
