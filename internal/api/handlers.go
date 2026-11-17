@@ -198,10 +198,22 @@ func (h *handler) handleScans(w http.ResponseWriter, r *http.Request) {
 // ever posted a scan appears here, not only ones with open findings
 // right now, since staleness is a fact about the agent's last attempt,
 // not about any one finding.
+//
+// Truncated is true when the limit cut the list: more findings matched
+// than Findings holds (issue #213).
 type findingsResponse struct {
-	Findings []store.Finding                  `json:"findings"`
-	Agents   map[string]store.AgentScanStatus `json:"agents"`
+	Findings  []store.Finding                  `json:"findings"`
+	Agents    map[string]store.AgentScanStatus `json:"agents"`
+	Truncated bool                             `json:"truncated"`
 }
+
+// findingsDefaultLimit and findingsMaxLimit bound GET /api/findings'
+// list (issue #213, CWE-770). A ?limit= above the maximum is clamped,
+// not refused, and the response says it was cut.
+const (
+	findingsDefaultLimit = 1000
+	findingsMaxLimit     = 5000
+)
 
 // handleFindings serves GET /api/findings[?agent_id=], issue #109's
 // read-back of the findings store -- the filter-and-page-over
@@ -211,9 +223,37 @@ type findingsResponse struct {
 // acceptance is the store method and CLI `birdcage findings accept`
 // (cmd/birdcage/finding.go), not an API call, per the dashboard's
 // read-only rule (dashboardRouteSpecs' own comment).
+//
+// ?state= picks which findings (issue #213): unset, the standing ones
+// (open and accepted, what ADR-0010 decision 4 says the table is for);
+// "fixed" only resolved ones; "all" every state. ?limit= caps the list,
+// newest last_seen first: default findingsDefaultLimit, clamped to
+// findingsMaxLimit.
 func (h *handler) handleFindings(w http.ResponseWriter, r *http.Request) {
-	agentID := r.URL.Query().Get("agent_id")
-	findings, err := store.ListFindings(r.Context(), h.db, store.FindingFilter{AgentID: agentID})
+	q := r.URL.Query()
+	agentID := q.Get("agent_id")
+	filter := store.FindingFilter{AgentID: agentID, Limit: findingsDefaultLimit}
+	switch q.Get("state") {
+	case "":
+		filter.States = []store.FindingState{store.FindingOpen, store.FindingAccepted}
+	case "fixed":
+		filter.States = []store.FindingState{store.FindingFixed}
+	case "all":
+	default:
+		writeError(w, http.StatusBadRequest, `state must be "fixed" or "all"`)
+		return
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		filter.Limit = min(n, findingsMaxLimit)
+	}
+	limit := filter.Limit
+	filter.Limit++ // one more than shown says whether the list was cut
+	findings, err := store.ListFindings(r.Context(), h.db, filter)
 	if err != nil {
 		log.Printf("api: list findings: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -225,7 +265,11 @@ func (h *handler) handleFindings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, findingsResponse{Findings: findings, Agents: agents})
+	truncated := len(findings) > limit
+	if truncated {
+		findings = findings[:limit]
+	}
+	writeJSON(w, http.StatusOK, findingsResponse{Findings: findings, Agents: agents, Truncated: truncated})
 }
 
 // visitorsResponse is GET /api/visitors' body. NextBefore mirrors

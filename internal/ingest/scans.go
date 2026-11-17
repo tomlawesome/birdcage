@@ -21,6 +21,43 @@ import (
 // set would be a false partial all-clear.
 const scanMaxBodyBytes = 4 * 1024 * 1024
 
+// Bounds on one scan's content (issue #213): positive input validation
+// with per-field length limits and a per-request item cap (OWASP ASVS
+// V5.1.3/V5.1.4, CWE-770), batch.go's maxEventsPerBatch applied to scans.
+// The body cap alone still lets a few megabytes of tiny findings or one
+// huge field through. Over-limit is a 400 naming the count or field and
+// nothing is stored; never a truncation, for the same false-all-clear
+// reason scanMaxBodyBytes gives (and a cut target or vulnerability id
+// would merge distinct findings).
+const (
+	// maxFindingsPerScan is about three times the realistic worst: Grype
+	// on an unpatched distro's root finds tens to about 3,000 matches. A
+	// finding is 150-300 bytes of JSON, so the count bites before the
+	// body cap does.
+	maxFindingsPerScan = 10000
+	// maxMaskedPaths and maxMaskedPathLen (PATH_MAX) bound masked_paths.
+	maxMaskedPaths   = 256
+	maxMaskedPathLen = 4096
+)
+
+// findingFieldLimits is each finding field's byte limit, in check order,
+// keyed by its JSON name: npm names are at most 214 bytes with scope,
+// CVE and GHSA ids about 20 and distro advisories under 64, Grype
+// artifact types are short words.
+var findingFieldLimits = []struct {
+	name  string
+	limit int
+	value func(ingestScanFinding) string
+}{
+	{"target", 256, func(f ingestScanFinding) string { return f.Target }},
+	{"package", 256, func(f ingestScanFinding) string { return f.Package }},
+	{"version", 128, func(f ingestScanFinding) string { return f.Version }},
+	{"type", 64, func(f ingestScanFinding) string { return f.Type }},
+	{"vulnerability", 128, func(f ingestScanFinding) string { return f.Vulnerability }},
+	{"severity", 16, func(f ingestScanFinding) string { return f.Severity }},
+	{"fix_version", 128, func(f ingestScanFinding) string { return f.FixVersion }},
+}
+
 // ingestScanEngine identifies the scanner and vulnerability database
 // that produced a snapshot -- internal/scan.Engine's wire shape,
 // mirrored here deliberately rather than imported: this package must
@@ -155,9 +192,17 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 			writeIngestError(w, http.StatusBadRequest, "engine name, version and db_built_at are required when status is ok")
 			return
 		}
+		if len(body.Findings) > maxFindingsPerScan {
+			h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("findings exceed %d", maxFindingsPerScan))
+			return
+		}
 		for i, f := range body.Findings {
 			if reason, ok := validateFinding(f); !ok {
 				writeIngestError(w, http.StatusBadRequest, fmt.Sprintf("finding %d: %s", i, reason))
+				return
+			}
+			if reason, ok := checkFindingBounds(f); !ok {
+				h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("finding %d: %s", i, reason))
 				return
 			}
 		}
@@ -187,7 +232,15 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(body.MaskedPaths) > maxMaskedPaths {
+		h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("masked_paths exceeds %d entries", maxMaskedPaths))
+		return
+	}
 	for i, p := range body.MaskedPaths {
+		if len(p) > maxMaskedPathLen {
+			h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("masked_paths[%d] exceeds %d bytes", i, maxMaskedPathLen))
+			return
+		}
 		if !strings.HasPrefix(p, "/") {
 			writeIngestError(w, http.StatusBadRequest, fmt.Sprintf("masked_paths[%d]: %q is not an absolute path", i, p))
 			return
@@ -322,6 +375,29 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 	}
 	committed = true
 	return result, nil
+}
+
+// refuseOversizeScan answers a scan that broke one of issue #213's
+// bounds: 400 with reason (the count or field name and its limit, never
+// the content), a warning log line, and a scan.refused_oversize audit
+// row through the coalescer, so a stolen or buggy token is visible to
+// the operator without a flood of rows.
+func (h *ingestHandler) refuseOversizeScan(w http.ResponseWriter, r *http.Request, canaryID, reason string) {
+	slog.Warn("ingest: scan refused, over a size limit", "canary", canaryID, "limit", reason)
+	recordCoalesced(r.Context(), h.db, h.now, h.coalescer, canaryID, "scan.refused_oversize",
+		"scan refused, nothing stored: "+reason, "refusals")
+	writeIngestError(w, http.StatusBadRequest, reason)
+}
+
+// checkFindingBounds checks f's fields against findingFieldLimits; the
+// reason names the first field over its limit.
+func checkFindingBounds(f ingestScanFinding) (reason string, ok bool) {
+	for _, b := range findingFieldLimits {
+		if len(b.value(f)) > b.limit {
+			return fmt.Sprintf("%s exceeds %d bytes", b.name, b.limit), false
+		}
+	}
+	return "", true
 }
 
 // truncate cuts s to at most n bytes.
