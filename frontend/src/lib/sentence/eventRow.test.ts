@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildEventRows, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
+import { buildEventRows, computeDroppedOutRow, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
 import { plainText } from './types'
 import type { Canary, Visitor, VisitorKind } from '../types'
 
@@ -222,6 +222,14 @@ describe('defaultActions: one action set per kind', () => {
     const v = visitor({ kind })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(row.actions).toEqual(expected)
+  })
+})
+
+describe('computeDroppedOutRow: write actions wait for their routes (#228)', () => {
+  it('offers open and lookback but no "mark as maintenance"', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const labels = computeDroppedOutRow(silent).actions.map((a) => a.label)
+    expect(labels).toEqual(['open canary-lan ▸', 'lookback in mikroview ▸'])
   })
 })
 
