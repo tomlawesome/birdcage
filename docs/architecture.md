@@ -31,7 +31,7 @@ Each OpenCanary instance's own agent (#48, not yet landed) tails its
 node's syslog-formatted OpenCanary output locally and posts batches of
 events to birdcage's HTTPS ingest listener (issue #32, landed), bearer-
 token authenticated per canary -- birdcage never polls, since OpenCanary
-has no query API. See [issue #1](https://gitlab.tomlawson.io/ai/birdcage/-/issues/1)
+has no query API. See issue #1
 for how nodes get configured to point at their birdcage instance at
 install time.
 
@@ -39,14 +39,14 @@ install time.
 
 | Boundary | Responsibility | Status |
 | --- | --- | --- |
-| Ingestion bridge | HTTPS listener authenticating a canary's agent by bearer token, normalizing posted batches into `alerts` | Landed (#32); the canary-side agent that posts to it is [#48](https://gitlab.tomlawson.io/ai/birdcage/-/issues/48), not yet implemented |
+| Ingestion bridge | HTTPS listener authenticating a canary's agent by bearer token, normalizing posted batches into `alerts` | Landed (#32); the canary-side agent that posts to it is #48, not yet implemented |
 | Storage | Persist alerts and the audit log (SQLite and Postgres, both mandatory in v1, selected by `DATABASE_URL`; Postgres 18 is the supported and tested version, moving to each new major as it ships and CI proves it) | Landed with #2/#7; see [ADR-0001](adr/0001-stack-and-storage.md) and [docs/configuration.md](configuration.md) |
 | Dashboard | Multi-instance alert view, filtering, canary registry/heartbeats, visitors grouped by source and the trace | API landed (#3, #34, #35); UI pending |
-| Analysis | Turn raw alert volume into an actionable signal | Not yet defined -- [#6](https://gitlab.tomlawson.io/ai/birdcage/-/issues/6) |
-| CrowdSec integration | Place a permanent ban in the CrowdSec Local API on an operator's request (`birdcage crowdsec add`), add-only, over the stdlib; no automatic trigger until #6 | Landed with [#4](https://gitlab.tomlawson.io/ai/birdcage/-/issues/4); see [ADR-0014](adr/0014-crowdsec-permanent-ban-publisher.md) |
-| RouterOS mitigation | Apply firewall/address-list changes via a service account | Not yet implemented -- [#5](https://gitlab.tomlawson.io/ai/birdcage/-/issues/5) |
+| Analysis | Turn raw alert volume into an actionable signal | Not yet defined -- #6 |
+| CrowdSec integration | Place a permanent ban in the CrowdSec Local API on an operator's request (`birdcage crowdsec add`), add-only, over the stdlib; no automatic trigger until #6 | Landed with #4; see [ADR-0014](adr/0014-crowdsec-permanent-ban-publisher.md) |
+| RouterOS mitigation | Apply firewall/address-list changes via a service account | Not yet implemented -- #5 |
 | Audit log | Append-only record of every automated action taken | Write path landed (`internal/audit`); every CrowdSec outcome is a row (#4), RouterOS follows with #5 |
-| Auth | Local accounts, OIDC, sessions, API/ingest tokens -- copied model from mikroview | Not yet implemented -- [#8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8); see [ADR-0003](adr/0003-mikroview-sidecar.md) |
+| Auth | Local accounts, OIDC, sessions, API/ingest tokens -- copied model from mikroview | Not yet implemented -- #8; see [ADR-0003](adr/0003-mikroview-sidecar.md) |
 
 ## Data model
 

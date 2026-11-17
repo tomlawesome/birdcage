@@ -9,6 +9,9 @@
 # exactly the JSONL shape `cosign verify-attestation` would have already
 # verified and handed to this script.
 set -euo pipefail
+# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
+# rather than inherit the job's.
+export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/verify-validation-evidence.sh"
@@ -41,11 +44,11 @@ import json, sys
 digest, commit, ref, pipeline_id, policy_version, recorded_at = sys.argv[1:7]
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
-    "predicateType": "https://tomlawson.io/attestations/birdcage-validation/v1",
-    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
+    "predicateType": "https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1",
+    "subject": [{"name": "registry.example.test/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
-        "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
+        "pipelineUrl": "https://gitlab.example.test/ai/birdcage/-/pipelines/%s" % pipeline_id,
         "imageDigest": digest, "policyVersion": policy_version, "recordedAt": recorded_at,
     },
 }))
@@ -61,11 +64,11 @@ import json, sys
 digest, commit, ref, pipeline_id, policy_version, recorded_at = sys.argv[1:7]
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
-    "predicateType": "https://tomlawson.io/attestations/some-other-check/v1",
-    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
+    "predicateType": "https://github.com/tomlawesome/birdcage/attestations/some-other-check/v1",
+    "subject": [{"name": "registry.example.test/ai/birdcage/birdcage", "digest": {"sha256": digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
-        "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
+        "pipelineUrl": "https://gitlab.example.test/ai/birdcage/-/pipelines/%s" % pipeline_id,
         "imageDigest": digest, "policyVersion": policy_version, "recordedAt": recorded_at,
     },
 }))
@@ -86,11 +89,11 @@ import json, sys
 subject_digest, predicate_digest, commit, ref, pipeline_id, policy_version, recorded_at = sys.argv[1:8]
 print(json.dumps({
     "_type": "https://in-toto.io/Statement/v0.1",
-    "predicateType": "https://tomlawson.io/attestations/birdcage-validation/v1",
-    "subject": [{"name": "registry.tomlawson.io/ai/birdcage/birdcage", "digest": {"sha256": subject_digest.split(":", 1)[1]}}],
+    "predicateType": "https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1",
+    "subject": [{"name": "registry.example.test/ai/birdcage/birdcage", "digest": {"sha256": subject_digest.split(":", 1)[1]}}],
     "predicate": {
         "commit": commit, "ref": ref, "pipelineId": int(pipeline_id),
-        "pipelineUrl": "https://gitlab.tomlawson.io/ai/birdcage/-/pipelines/%s" % pipeline_id,
+        "pipelineUrl": "https://gitlab.example.test/ai/birdcage/-/pipelines/%s" % pipeline_id,
         "imageDigest": predicate_digest, "policyVersion": policy_version, "recordedAt": recorded_at,
     },
 }))
@@ -223,7 +226,7 @@ expect 13 "evidence dated in the future is refused" "$f"
 fetch_verified_attestations() { return 1; }
 : > "$work/unused.pub"
 got=0
-out="$(BIRDCAGE_IMAGE=registry.tomlawson.io/ai/birdcage/birdcage BIRDCAGE_DIGEST="$digest" \
+out="$(BIRDCAGE_IMAGE=registry.example.test/ai/birdcage/birdcage BIRDCAGE_DIGEST="$digest" \
   BIRDCAGE_COMMIT="$commit" BIRDCAGE_POLICY_VERSION="$policy" \
   COSIGN_PUBLIC_KEY="$work/unused.pub" BIRDCAGE_COSIGN=/bin/true \
   main 2>&1)" || got=$?

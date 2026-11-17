@@ -4,6 +4,9 @@
 # program; the per-script suites (publish-image, publish-channel,
 # promote-release, mirror-image) prove each caller actually consults it.
 set -euo pipefail
+# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
+# rather than inherit the job's.
+export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/image-tag-policy.sh"
@@ -30,7 +33,7 @@ assert_refused() { # assert_refused <name> <args...>
   fi
 }
 
-gitlab="registry.tomlawson.io/ai/birdcage/birdcage"
+gitlab="registry.example.test/ai/birdcage/birdcage"
 ghcr="ghcr.io/tomlawesome/birdcage"
 sha40="$(printf 'a%.0s' $(seq 40))"
 hex64="$(printf 'b%.0s' $(seq 64))"
@@ -47,6 +50,7 @@ assert_allowed "ci-1234 is allowed on the GitLab registry" "$gitlab" ci-1234
 assert_refused "ci-x is refused: transport tags are ci-<pipeline id>" "$gitlab" ci-x
 assert_refused "ci-x is refused on GHCR" "$ghcr" ci-x
 assert_refused "ci-1234 is refused on any other registry" "registry.example.com/a/b" ci-1234
+CI_REGISTRY= assert_refused "ci-1234 is refused everywhere when CI_REGISTRY is unset (outside CI)" "$gitlab" ci-1234
 assert_refused "a bare ci- with nothing after it is refused" "$gitlab" ci-
 
 # --- cosign attestation objects: only when the caller opts in ---------------

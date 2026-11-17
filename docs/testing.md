@@ -46,7 +46,7 @@ So a change to enrolment, credentials, the ingest path, the images or
 anything else the live checks cover lands with its journey in the same merge
 request, not a follow-up issue.
 
-Browser journeys run in Firefox, which is what the owner uses (#83). Safari
+Browser journeys run in Firefox, the primary test browser (#83). Safari
 and Edge are added at the `preview` -> `main` promotion, not on every change.
 A check that looks enforced and is not is the thing this rule exists to
 prevent.

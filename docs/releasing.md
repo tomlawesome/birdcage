@@ -3,7 +3,7 @@
 Issue #90, note 22233; extended to four images by #125, to five by #126,
 and to six by #132. Six images are published and promoted in this
 project's own GitLab container registry —
-`registry.tomlawson.io/ai/birdcage/birdcage`, the server;
+`$CI_REGISTRY_IMAGE/birdcage`, the server;
 `.../mockingbird`, the agent; `.../opencanary`, the honeypot itself, its
 own container since #132; `.../nightjar`, the scanner; `.../smb-lure`;
 and `.../holder`, the do-nothing container that owns the network address
@@ -218,7 +218,7 @@ as the example, and are identical for `mockingbird`, `opencanary`,
 scripts/ensure-cosign.sh ~/.local/bin
 cosign verify-attestation \
   --key cosign.pub \
-  --type https://tomlawson.io/attestations/birdcage-validation/v1 \
+  --type https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1 \
   --insecure-ignore-tlog=true \
   ghcr.io/tomlawesome/birdcage@sha256:<digest>
 ```

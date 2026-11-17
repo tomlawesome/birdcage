@@ -8,6 +8,9 @@
 # parsing, and the round-trip comparison logic this script exists to get
 # right.
 set -euo pipefail
+# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
+# rather than inherit the job's.
+export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/publish-image.sh"
@@ -19,7 +22,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="registry.tomlawson.io/ai/birdcage/birdcage"
+repo="registry.example.test/ai/birdcage/birdcage"
 ref="${repo}:sha-$(printf 'b%.0s' $(seq 40))"
 tested_id="sha256:$(printf 'a%.0s' $(seq 64))"
 good_digest="sha256:$(printf 'c%.0s' $(seq 64))"
@@ -142,7 +145,7 @@ else
 fi
 
 reset_fixtures
-RESOLVED_REPO_DIGEST="registry.tomlawson.io/ai/someone-else/other@${good_digest}"
+RESOLVED_REPO_DIGEST="registry.example.test/ai/someone-else/other@${good_digest}"
 split "$(run "$ref" "$tested_id")"
 if [ "$GOT" = 2 ] && [[ "$OUT" == *"no RepoDigests entry for ${repo}"* ]]; then
   ok "a resolved digest belonging only to a different repository is refused (exit 2), naming the cause"
@@ -194,7 +197,7 @@ PUSH_CALLED_MARKER="$(mktemp)"; rm -f "$PUSH_CALLED_MARKER"
 trap 'rm -f "$PUSH_CALLED_MARKER"' EXIT
 run_docker_push() { : > "$PUSH_CALLED_MARKER"; [ "$PUSH_SHOULD_FAIL" = 1 ] && return 1; return 0; }
 
-build_repo="registry.tomlawson.io/ai/birdcage/birdcage-build"
+build_repo="registry.example.test/ai/birdcage/birdcage-build"
 reset_fixtures
 split "$(run_stdout_only "$ref" "$tested_id")"
 [ "$GOT" = 0 ] && ok "an allowed sha-<commit> anchor is pushed" \

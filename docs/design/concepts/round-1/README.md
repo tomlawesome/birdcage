@@ -29,7 +29,7 @@ every ~20 min for 6 days (221 hits; community-blocked). 10.0.40.23, a guest
 device, fetched `/` then `/admin` on canary-lan http at 19:11 (never
 auto-blocked: inside, #33). 192.0.2.88 tried anonymous ftp on canary-srv
 yesterday 03:18, once. Totals: 232 hits today, 4 visitors. Logged in as
-`tom (admin)`.
+`avery (admin)`.
 
 ## Palette
 

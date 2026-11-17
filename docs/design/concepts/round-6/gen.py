@@ -292,7 +292,7 @@ def chrome(status):
     tb = ''.join(f'<span{" class=on" if i == 0 else ""}>{t}</span>' for i, t in enumerate(TABS))
     dk = ''.join(f'<span{" class=on" if i == 0 else ""}>{d}</span>' for i, d in enumerate(DECK))
     return (f'  <div class="wordmark">BIRD<em>CAGE</em></div>\n  <div class="tabs">{tb}</div>\n'
-            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">tom (admin)</span></div>\n'
+            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">avery (admin)</span></div>\n'
             f'  <div class="deck">{dk}</div>\n')
 
 

@@ -229,6 +229,20 @@ must_contain='| fixture:poisoner | '"$fixture_pin_digest"' | v1.0.0 | behind |' 
   expect 1 "fixture pin no longer matches the newest tag's digest -- behind" \
   "$(upstream_json "$alpine_current" 0 "$fixture_behind")" "$no_config"
 
+# The real pin names its registry as $CI_REGISTRY (#192): expanded from
+# the environment, as GitLab does in the job; unverifiable when unset.
+cp "$root/.gitlab-ci.yml" "$work/ci.yml.orig"
+sed -i 's|registry\.example\.test/group/poisoner@|$CI_REGISTRY/group/poisoner@|' "$root/.gitlab-ci.yml"
+must_contain='| fixture:poisoner | '"$fixture_pin_digest"' | v1.2.0 | current |' \
+CI_REGISTRY=registry.example.test \
+  expect 0 "fixture pin written as \$CI_REGISTRY expands from the environment -- current" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_current")" "$no_config"
+must_contain='CI_REGISTRY not set' \
+CI_REGISTRY= \
+  expect 1 "fixture pin written as \$CI_REGISTRY with CI_REGISTRY unset -- unverifiable" \
+  "$(upstream_json "$alpine_current" 0 "$fixture_current")" "$no_config"
+cp "$work/ci.yml.orig" "$root/.gitlab-ci.yml"
+
 # No tag in the repository parses as a version at all.
 fixture_no_version_tags="{
   \"$fixture_repo_url/tags/list\": {\"tags\": [\"latest\", \"dev\"]}

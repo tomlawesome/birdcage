@@ -33,7 +33,7 @@ it. They differ only in how the lower half is set.
 
 ## Data story and palette
 
-canary-iot, iot lane, 10.0.30.9, enrolled Wed 12 Aug 09:41 by tom,
+canary-iot, iot lane, 198.51.100.9, enrolled Wed 12 Aug 09:41 by avery,
 mockingbird 0.4.1. Two short silences on Tue 1 Sep (11 min) and Thu 3 Sep
 (1 min). Scenes 1–3 are Sat 5 Sep 22:04:31; scene 4 is Fri 12 Sep, the
 round-5/6 sweep night seen from this one canary (198.51.100.7 on :445
@@ -71,7 +71,7 @@ visioning for #115 ends here; the build follows O.
 `test:frontend` runs on every merge request. They exist because the
 build cannot reproduce two things in `o-*.png` — the ledger's `ntp`
 card is a lure birdcage has no catalogue for, and the facts column's
-"by tom" needs an operator identity that arrives with #8 — so the
+"by avery" needs an operator identity that arrives with #8 — so the
 mockups are what the page was judged against by eye, and these are what
 it is held to pixel by pixel.
 

@@ -42,7 +42,7 @@
 #
 # Inputs (environment):
 #   BIRDCAGE_IMAGE          Image repository without tag or digest, e.g.
-#                           registry.tomlawson.io/ai/birdcage/birdcage.
+#                           ${CI_REGISTRY_IMAGE}/birdcage.
 #   BIRDCAGE_DIGEST         The digest about to be given a name,
 #                           "sha256:<64 hex>".
 #   BIRDCAGE_COMMIT         The commit the publisher is acting for (40 hex).
@@ -73,7 +73,7 @@ repo_root="$(cd "$here/.." && pwd)"
 
 # Must match scripts/attest-tested-image.sh; scripts/verify-validation-evidence.test.sh
 # asserts the two agree.
-readonly PREDICATE_TYPE="https://tomlawson.io/attestations/birdcage-validation/v1"
+readonly PREDICATE_TYPE="https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1"
 
 # Cleaned up on any exit, including a refuse()-triggered one; declared here
 # (not `local` inside a function) so the trap can always find it.

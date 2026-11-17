@@ -128,13 +128,13 @@ func TestApplyFindingSnapshotAcceptedSurvivesRescan(t *testing.T) {
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t2); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t2); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 		findings := listFindings(t, database, "scanner-a")
 		f := findByVuln(t, findings, "CVE-2014-0160")
-		if f.State != FindingAccepted || f.AcceptedBy != "tom" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
-			t.Fatalf("after accept: %+v, want state=accepted accepted_by=tom accepted_at=%v", f, t2)
+		if f.State != FindingAccepted || f.AcceptedBy != "avery" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
+			t.Fatalf("after accept: %+v, want state=accepted accepted_by=avery accepted_at=%v", f, t2)
 		}
 
 		// A rescan that still reports the same finding must not revert
@@ -145,8 +145,8 @@ func TestApplyFindingSnapshotAcceptedSurvivesRescan(t *testing.T) {
 		if f.State != FindingAccepted {
 			t.Errorf("State after rescan = %q, want still accepted", f.State)
 		}
-		if f.AcceptedBy != "tom" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
-			t.Errorf("acceptance after rescan = by=%q at=%v, want unchanged (by=tom at=%v)", f.AcceptedBy, f.AcceptedAt, t2)
+		if f.AcceptedBy != "avery" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
+			t.Errorf("acceptance after rescan = by=%q at=%v, want unchanged (by=avery at=%v)", f.AcceptedBy, f.AcceptedAt, t2)
 		}
 		if !f.LastSeen.Equal(t3) {
 			t.Errorf("LastSeen after rescan = %v, want moved to %v", f.LastSeen, t3)
@@ -164,7 +164,7 @@ func TestApplyFindingSnapshotAcceptedThenRemovedStillResolves(t *testing.T) {
 		t2 := mustParse(t, "2026-01-02T00:00:00Z")
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t1); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t1); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 
@@ -199,7 +199,7 @@ func TestApplyFindingSnapshotFixedFindingReopensOnReturn(t *testing.T) {
 		t3 := mustParse(t, "2026-01-03T00:00:00Z")
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t1); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t1); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{}, t2) // resolved
@@ -244,7 +244,7 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 		t1 := mustParse(t, "2026-01-01T00:00:00Z")
 		t2 := mustParse(t, "2026-01-02T00:00:00Z")
 
-		err := AcceptFinding(context.Background(), database, "scanner-a", "deb:openssl", "CVE-2014-0160", "tom", t1)
+		err := AcceptFinding(context.Background(), database, "scanner-a", "deb:openssl", "CVE-2014-0160", "avery", t1)
 		if !errors.Is(err, ErrFindingNotFound) {
 			t.Fatalf("accept on never-seen finding: err = %v, want ErrFindingNotFound", err)
 		}
@@ -253,7 +253,7 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{}, t2) // now fixed
 
 		err = AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t2)
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t2)
 		if !errors.Is(err, ErrFindingNotFound) {
 			t.Fatalf("accept on fixed finding: err = %v, want ErrFindingNotFound", err)
 		}
@@ -272,11 +272,11 @@ func TestAcceptFindingValidatesArguments(t *testing.T) {
 			agentID, target, vulnID, acceptedBy string
 			now                                 time.Time
 		}{
-			{"empty agent", "", target, vuln, "tom", now},
-			{"empty target", "scanner-a", "", vuln, "tom", now},
-			{"empty vuln", "scanner-a", target, "", "tom", now},
+			{"empty agent", "", target, vuln, "avery", now},
+			{"empty target", "scanner-a", "", vuln, "avery", now},
+			{"empty vuln", "scanner-a", target, "", "avery", now},
 			{"empty acceptedBy", "scanner-a", target, vuln, "", now},
-			{"zero now", "scanner-a", target, vuln, "tom", time.Time{}},
+			{"zero now", "scanner-a", target, vuln, "avery", time.Time{}},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {

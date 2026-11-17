@@ -9,7 +9,7 @@
 #   preview, latest    channel names; move
 #   sha-<40 hex>       per-commit anchor, lowercase hex
 #   ci-<...>           build:images transport tags; only on the GitLab
-#                      registry (registry.tomlawson.io), never GHCR
+#                      registry ($CI_REGISTRY), never GHCR
 #   sha256-<64 hex>    cosign v3's attestation: the OCI referrers fallback
 #                      tag, an index listing the Sigstore bundles attached
 #                      to that digest. Named by cosign, not us; only when
@@ -24,9 +24,9 @@
 #     returns 1. Never exits, so the caller keeps its own exit codes.
 # Usage, run directly: the same arguments; exit 0 allowed, 1 refused.
 
-# GitLab sets $CI_REGISTRY in every job; outside CI, the project's own
-# registry. Never typed as registry.gitlab.<host>: that name does not exist.
-IMAGE_TAG_POLICY_GITLAB_REGISTRY="${CI_REGISTRY:-registry.tomlawson.io}"
+# GitLab sets $CI_REGISTRY in every job. Outside CI it is unset, and ci-
+# transport tags are then refused everywhere (they only exist in CI).
+IMAGE_TAG_POLICY_GITLAB_REGISTRY="${CI_REGISTRY:-}"
 
 image_tag_check() {
   local repo="${1:-}" tag="${2:-}" allow_att="${3:-}"
@@ -43,9 +43,10 @@ image_tag_check() {
     return 0
   fi
   if [[ "$tag" =~ ^ci-[0-9]{1,20}$ ]]; then
-    [ "$host" = "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" ] && return 0
+    [ -n "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" ] &&
+      [ "$host" = "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" ] && return 0
     printf 'image-tag-policy: refused tag %s on %s: ci- transport tags live on %s only\n' \
-      "'$tag'" "$repo" "$IMAGE_TAG_POLICY_GITLAB_REGISTRY" >&2
+      "'$tag'" "$repo" "${IMAGE_TAG_POLICY_GITLAB_REGISTRY:-the GitLab registry (\$CI_REGISTRY, unset here)}" >&2
     return 1
   fi
   if [ "$allow_att" = "--cosign-attestation" ] && [[ "$tag" =~ ^sha256-[0-9a-f]{64}$ ]]; then

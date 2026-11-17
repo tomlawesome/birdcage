@@ -20,18 +20,18 @@ func TestDashboardHostsExplicit(t *testing.T) {
 		},
 		{
 			name:     "several hosts and IPs, comma separated",
-			envValue: "dashboard.example.com,192.168.11.30,10.0.0.5",
-			want:     []string{"dashboard.example.com", "192.168.11.30", "10.0.0.5"},
+			envValue: "dashboard.example.com,192.0.2.30,203.0.113.5",
+			want:     []string{"dashboard.example.com", "192.0.2.30", "203.0.113.5"},
 		},
 		{
 			name:     "surrounding whitespace is trimmed",
-			envValue: " dashboard.example.com , 192.168.11.30 ",
-			want:     []string{"dashboard.example.com", "192.168.11.30"},
+			envValue: " dashboard.example.com , 192.0.2.30 ",
+			want:     []string{"dashboard.example.com", "192.0.2.30"},
 		},
 		{
 			name:     "blank entries from stray commas are dropped",
-			envValue: "dashboard.example.com,,192.168.11.30,",
-			want:     []string{"dashboard.example.com", "192.168.11.30"},
+			envValue: "dashboard.example.com,,192.0.2.30,",
+			want:     []string{"dashboard.example.com", "192.0.2.30"},
 		},
 		{
 			name:     "only commas and whitespace is a configuration error, not an empty list",

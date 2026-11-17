@@ -10,7 +10,7 @@
 # and left the registry-named tag on the very same image -- which kept the
 # image alive forever, since nothing else ever untags it. On the runner
 # host on 2026-09-27: 9 local mockingbird-build tags against 70
-# registry.tomlawson.io/ai/birdcage/mockingbird-build tags, and 268 of the
+# ${CI_REGISTRY_IMAGE}/mockingbird-build tags, and 268 of the
 # host's 305 images in all were this project's build images. The fix is to
 # prune both repo names for each build, with the keep-guard extended to
 # both tag forms so this pipeline's own images are never touched.
@@ -28,7 +28,7 @@
 #   CI_PIPELINE_ID        this pipeline's id -- both of its own tag forms
 #                          are always kept, however old.
 #   CI_REGISTRY_IMAGE     this project's registry path, e.g.
-#                          registry.tomlawson.io/ai/birdcage.
+#                          registry.example.test/ai/birdcage.
 #   PRUNE_MAX_AGE_SECONDS override for the age cutoff, tests only.
 #                          Defaults to 21600 (6 hours) -- see build:images'
 #                          own comment for why that margin was chosen.
