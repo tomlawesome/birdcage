@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -232,7 +233,9 @@ func TestCAResetPrintsHowManyAgentsMustEnrolAgain(t *testing.T) {
 	e.enrolTwoAgents(t)
 
 	_, out := runCAReset(t, "no\n")
-	if !strings.Contains(out, "2") || strings.Contains(out, "3") {
+	// Match the count next to the word "agent", so a log timestamp's
+	// digits cannot pass or fail this.
+	if !regexp.MustCompile(`\b2\b[^.\n]*agent`).MatchString(out) || regexp.MustCompile(`\b3\b[^.\n]*agent`).MatchString(out) {
 		t.Errorf("output %q, want the count 2 (agents holding certificates), not 3", out)
 	}
 	if !strings.Contains(out, "reset") {
@@ -257,7 +260,7 @@ func TestCAResetSQLiteBacksUpThenResets(t *testing.T) {
 	if n := e.count(t, `SELECT COUNT(*) FROM findings`); n != 1 {
 		t.Errorf("findings = %d, want kept (1)", n)
 	}
-	if n := e.count(t, `SELECT COUNT(*) FROM canaries`); n != 3 {
+	if n := e.count(t, `SELECT COUNT(*) FROM agents`); n != 3 {
 		t.Errorf("agents = %d, want all 3 kept", n)
 	}
 
