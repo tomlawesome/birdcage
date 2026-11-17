@@ -206,6 +206,21 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage ca reset [--backup-taken]` (cmd/birdcage/ca_reset.go) is
+	// #213's deliberate way back from a lost CA with no backup, which
+	// checkStartupCAContinuity below otherwise refuses forever. Exits
+	// immediately like the others.
+	if len(args) > 1 && args[1] == "ca" {
+		caLog := logging.New("ca")
+		if err := runCA(args[2:], os.Stdin, stdout, os.Stderr); err != nil {
+			if !errors.Is(err, errCAResetDeclined) {
+				caLog.Error(err.Error())
+			}
+			return true, 1
+		}
+		return true, 0
+	}
+
 	// `birdcage crowdsec add <ip> --reason "<why>"` (cmd/birdcage/
 	// crowdsec.go) is ADR-0014's one operator door onto a CrowdSec ban:
 	// CLI-only for the same reason `agent settings` is, and add-only by
@@ -441,7 +456,9 @@ func checkStartupDatabase(cfg startupConfig) error {
 // owner rule (issue #149): birdcage never mints a replacement CA just to
 // get going again, since every certificate that CA vouches for (a
 // canary's client certificate, an operator's already-trusted dashboard
-// pin) would silently stop verifying against a new one. Runs before
+// pin) would silently stop verifying against a new one. The only way
+// past it without the backup is the operator's deliberate `birdcage ca
+// reset` (#213), which removes those certificates. Runs before
 // loadStartupCA, which otherwise cannot tell "fresh install" apart from
 // "the CA directory was lost" and mints in both cases.
 //
@@ -468,7 +485,7 @@ func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *
 		return nil
 	}
 	return &startupError{caLog, fmt.Sprintf(
-		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, never regenerated",
+		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, or, if no backup exists, cleared with `birdcage ca reset` (every enrolled agent must then enrol again)",
 		missing,
 	)}
 }

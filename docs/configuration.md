@@ -119,6 +119,19 @@ that directory, so a restore that omits it cannot be used as it stands:
 once any client certificate has been issued, birdcage refuses to start
 without the CA rather than mint a new, unrelated one.
 
+If the CA is lost and no backup of it exists, `birdcage ca reset` is the
+deliberate way back. It refuses while the CA is present, and on a fresh
+install with no certificate issued. Otherwise it backs up the
+database first (SQLite: a consistent copy beside the database file, named
+after it plus the time; Postgres: take your own backup with `pg_dump`
+above, then pass `--backup-taken`). It prints how many enrolled agents
+will need to enrol again and waits for you to type `reset`; anything
+else changes nothing. Then it removes every issued client certificate and
+records the reset in the audit log, keeping agents, findings and event
+history. The next start mints a new CA. Enrol each agent again, and
+re-trust the dashboard's new pin if the dashboard uses the minted
+certificate.
+
 Birdcage refuses to start unless the restored directory is owned by the
 uid the container runs as (1000 in the shipped image) and has mode
 `0700`. It does not check the files inside, so restore them with the

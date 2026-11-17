@@ -479,3 +479,30 @@ func RevokeCanaryCredentials(ctx context.Context, tx *db.Tx, canaryID string, at
 	}
 	return out, nil
 }
+
+// CountAgentsWithLiveClientCerts returns how many agents hold an
+// unrevoked client certificate: the agents that must enrol again after
+// `birdcage ca reset` (#213) removes every certificate.
+func CountAgentsWithLiveClientCerts(ctx context.Context, database db.Conn) (int, error) {
+	var n int
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT agent_id) FROM client_certs WHERE revoked_at IS NULL`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count agents with client certificates: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteAllClientCerts removes every client_certs row, inside the
+// caller's transaction: `birdcage ca reset` (#213) after the CA that
+// signed them is lost, so start-up no longer refuses and mints a new CA.
+func DeleteAllClientCerts(ctx context.Context, tx *db.Tx) (int64, error) {
+	res, err := tx.ExecContext(ctx, `DELETE FROM client_certs`)
+	if err != nil {
+		return 0, fmt.Errorf("delete client certificates: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete client certificates: %w", err)
+	}
+	return n, nil
+}
