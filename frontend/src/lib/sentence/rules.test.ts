@@ -20,11 +20,11 @@ describe('rule 1 -- a sweep with still_arriving (night fixture)', () => {
     expect(plainText(s.hero)).toBe('One address is walking the cage.')
   })
 
-  it('sub matches NIGHT_SUB from gen.py', () => {
+  it('sub matches NIGHT_SUB from gen.py, minus the mikroview pointer (#229)', () => {
     const s = computeSentence(night.canaries.canaries, night.visitors.visitors, '14d', night.trace.now)
     expect(plainText(s.sub)).toBe(
       '203.0.113.42 has reached all four canaries in nine minutes — ssh, then mysql, default passwords — ' +
-        'and is still arriving. Three more visitors in the fortnight. Nothing here blocks: lookback in mikroview ▸ to act.',
+        'and is still arriving. Three more visitors in the fortnight. Nothing here blocks.',
     )
   })
 

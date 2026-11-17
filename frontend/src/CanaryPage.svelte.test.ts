@@ -44,10 +44,14 @@ describe('the four blocks', () => {
     }
   })
 
-  it('shows only the actions the state earns', () => {
-    const { container } = mount('silent')
-    const pills = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent)
-    expect(pills).toEqual(['lookback in mikroview ▸'])
+  it('renders no lookback or raw-lines pill and no empty actions container (#229)', () => {
+    for (const scene of ['quiet', 'failed', 'silent', 'night'] as const) {
+      const { container, unmount } = mount(scene)
+      const pills = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent ?? '')
+      expect(pills.filter((t) => /mikroview|raw lines/.test(t))).toEqual([])
+      expect(container.querySelector('.acts')).toBeNull()
+      unmount()
+    }
   })
 })
 

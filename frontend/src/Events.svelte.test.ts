@@ -6,6 +6,7 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
 import Events from './Events.svelte'
+import { canaryHref } from './lib/route'
 import type { Canary, TraceResponse, Visitor } from './lib/types'
 
 const trace: TraceResponse = { now: '2026-09-12T22:04:00Z', range: '24h', canaries: [], last_hit: null }
@@ -117,11 +118,40 @@ describe('Events.svelte: an action pill can read quiet or not', () => {
     expect(pill?.classList.contains('quiet')).toBe(true)
   })
 
-  it('a sweep visitor\'s action pills are not quiet', () => {
-    const v = visitor({ kind: 'sweep' })
-    const { container } = render(Events, { canaries: [canary()], visitors: [v], trace, range: '24h' })
+  it('a dropped-out row\'s action pills are not quiet', () => {
+    const { container } = render(Events, {
+      canaries: [canary({ status: 'silent', last_heartbeat_at: '2026-09-12T20:00:00Z' })],
+      visitors: [],
+      trace,
+      range: '24h',
+    })
     const pills = Array.from(container.querySelectorAll('.pill'))
     expect(pills.length).toBeGreaterThan(0)
     expect(pills.every((p) => !p.classList.contains('quiet'))).toBe(true)
+  })
+})
+
+describe('Events.svelte: inert pills hidden, open pill is a link (#229)', () => {
+  it('a dropped-out row\'s open pill is a real link to the canary page', () => {
+    const { container } = render(Events, {
+      canaries: [canary({ status: 'silent', last_heartbeat_at: '2026-09-12T20:00:00Z' })],
+      visitors: [],
+      trace,
+      range: '24h',
+    })
+    const a = container.querySelector('.row.k-off .acts a.pill')
+    expect(a?.textContent).toBe('open canary-lan ▸')
+    expect(a?.getAttribute('href')).toBe(canaryHref('canary-lan'))
+  })
+
+  it('no row renders a lookback or raw lines pill', () => {
+    const { container } = render(Events, {
+      canaries: [canary({ status: 'silent', last_heartbeat_at: '2026-09-12T20:00:00Z' }), canary({ id: 'c2', name: 'c2' })],
+      visitors: [visitor({ kind: 'sweep' })],
+      trace,
+      range: '24h',
+    })
+    const text = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent ?? '').join('|')
+    expect(text).not.toMatch(/mikroview|raw lines/)
   })
 })

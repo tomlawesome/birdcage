@@ -20,6 +20,7 @@ import { wordOrNumber } from './words'
 import { shortVersion } from './version'
 import { stageLabel } from './stage'
 import type { Segment } from './types'
+import { MIKROVIEW_LINKS_LIVE } from '../writeActions'
 
 export interface SentenceResult {
   rule: 1 | 2 | 3 | 4
@@ -53,9 +54,9 @@ function rule1(visitor: Visitor, canaries: Canary[], visitors: Visitor[], range:
       { text: `${services}, ${tried}` },
       { text: ' — and is still arriving. ' },
       { text: `${capitalize(wordOrNumber(more))} more visitor${more === 1 ? '' : 's'} in the ${rangeNoun(range)}. ` },
-      { text: 'Nothing here blocks: ' },
-      { text: 'lookback in mikroview ▸', bold: true },
-      { text: ' to act.' },
+      ...(MIKROVIEW_LINKS_LIVE
+        ? [{ text: 'Nothing here blocks: ' }, { text: 'lookback in mikroview ▸', bold: true }, { text: ' to act.' }]
+        : [{ text: 'Nothing here blocks.' }]),
     ],
   }
 }
@@ -113,7 +114,8 @@ function rule2(silent: Canary, canaries: Canary[], now: string, lastHit: LastHit
 // bold state clause; sub = the concrete fact first (with its duration
 // bold, as rule 2 bolds the heartbeat clock), what it means in plain
 // words, the operator's next step in bold (as rule 1 bolds "lookback in
-// mikroview ▸"), then othersFine when it is true. Each keeps to what
+// mikroview ▸" once MIKROVIEW_LINKS_LIVE, #229), then othersFine when it
+// is true. Each keeps to what
 // birdcage actually knows -- health.go's comments draw the lines
 // (throttled is delay, not loss; not-delivering is the agent's own
 // log-read report; rotation-stalled has two triggers the frontend
