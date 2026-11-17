@@ -11,8 +11,8 @@
 # refused exactly like publish-image.sh refuses a mismatched push-back --
 # this script exists for the same reason, one registry hop further along.
 set -euo pipefail
-# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
-# rather than inherit the job's.
+# The policy reads $CI_REGISTRY, so pin a test registry here rather than
+# inherit the job's.
 export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"

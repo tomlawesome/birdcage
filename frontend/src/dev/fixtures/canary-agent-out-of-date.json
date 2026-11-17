@@ -161,7 +161,7 @@
         "kind": "honeypot",
         "lane": "iot",
         "ports": "telnet 23 · ssh 22 · smb 445",
-        "address": "10.0.30.9",
+        "address": "198.51.100.9",
         "heartbeat_interval_s": 60,
         "self_test_enabled": true,
         "self_test_schedule": "04:00",

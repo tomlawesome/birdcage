@@ -9,8 +9,8 @@
 # exactly the JSONL shape `cosign verify-attestation` would have already
 # verified and handed to this script.
 set -euo pipefail
-# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
-# rather than inherit the job's.
+# The policy reads $CI_REGISTRY, so pin a test registry here rather than
+# inherit the job's.
 export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"

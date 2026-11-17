@@ -7,8 +7,8 @@
 # for real over everything else: reference validation (including the
 # digest-only rule), signing-key resolution, and predicate construction.
 set -euo pipefail
-# Invented registry (#192); the policy reads $CI_REGISTRY, so pin it here
-# rather than inherit the job's.
+# The policy reads $CI_REGISTRY, so pin a test registry here rather than
+# inherit the job's.
 export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"

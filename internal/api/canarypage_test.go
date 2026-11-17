@@ -25,7 +25,7 @@ func TestHandleCanaryReturnsCanaryFactsAndRuns(t *testing.T) {
 		ID: "canary-iot", Name: "canary-iot", Lane: "iot",
 		Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
 	})
-	if err := store.SetCanaryLastSeenAddr(ctx, database, "canary-iot", "10.0.30.9"); err != nil {
+	if err := store.SetCanaryLastSeenAddr(ctx, database, "canary-iot", "198.51.100.9"); err != nil {
 		t.Fatalf("SetCanaryLastSeenAddr: %v", err)
 	}
 	if err := store.RecordCanaryCommonHeartbeat(ctx, database, "canary-iot", enrolledAt, "0.4.1"); err != nil {
@@ -40,7 +40,7 @@ func TestHandleCanaryReturnsCanaryFactsAndRuns(t *testing.T) {
 	// and a run that passed today.
 	idx := store.NewSelfTestIndex()
 	failedAt := enrolledAt.Add(24 * time.Hour)
-	if _, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "10.0.30.9",
+	if _, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "198.51.100.9",
 		[]store.SelfTestTarget{{Service: "telnet", DestPort: 23}}, failedAt, failedAt.Add(10*time.Minute)); err != nil {
 		t.Fatalf("MintSelfTestCommand (failing run): %v", err)
 	}
@@ -49,7 +49,7 @@ func TestHandleCanaryReturnsCanaryFactsAndRuns(t *testing.T) {
 	}
 
 	passedAt := enrolledAt.Add(48 * time.Hour)
-	cmd, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "10.0.30.9",
+	cmd, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "198.51.100.9",
 		[]store.SelfTestTarget{{Service: "ssh", DestPort: 22}}, passedAt, passedAt.Add(10*time.Minute))
 	if err != nil {
 		t.Fatalf("MintSelfTestCommand (passing run): %v", err)
@@ -83,8 +83,8 @@ func TestHandleCanaryReturnsCanaryFactsAndRuns(t *testing.T) {
 	if resp.Canary.ID != "canary-iot" {
 		t.Errorf("canary.id = %q, want canary-iot", resp.Canary.ID)
 	}
-	if resp.Facts.Address == nil || *resp.Facts.Address != "10.0.30.9" {
-		t.Errorf("facts.address = %v, want 10.0.30.9", resp.Facts.Address)
+	if resp.Facts.Address == nil || *resp.Facts.Address != "198.51.100.9" {
+		t.Errorf("facts.address = %v, want 198.51.100.9", resp.Facts.Address)
 	}
 	if resp.Facts.HeartbeatIntervalS != 60 {
 		t.Errorf("facts.heartbeat_interval_s = %d, want 60", resp.Facts.HeartbeatIntervalS)

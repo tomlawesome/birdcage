@@ -6,10 +6,16 @@ lowercase word with a salt and fails if any hash is in the committed list.
 Only hashes are committed, never the words. Output gives counts and paths,
 never the matched word.
 
-usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE]
+--history scans every blob reachable from any ref (all branches and tags,
+not only the checked-out tree) and reports path and commit for each hit.
+Files over MAX_BYTES are skipped and counted, never read.
+
+usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--history]
 Exit 0 clean, 1 matches found, 2 usage or config error.
 """
-import argparse, hashlib, os, re, subprocess, sys
+import argparse, hashlib, os, re, subprocess, sys, threading
+
+MAX_BYTES = 5 * 1024 * 1024
 
 LOCK_NAMES = {"go.sum", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
               "poetry.lock", "Cargo.lock", "uv.lock"}
@@ -17,9 +23,19 @@ WORD = re.compile(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*")  # dotted runs, e.g. a dom
 PART = re.compile(r"[A-Za-z0-9]+")
 
 
+def config_error(msg):
+    print(f"no-real-names: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
 def load_hashes(path):
     salt, hashes = None, set()
-    for raw in open(path, encoding="utf-8"):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        config_error(f"cannot read hashes file {path}: {exc.strerror}")
+    for raw in lines:
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
@@ -28,7 +44,7 @@ def load_hashes(path):
         else:
             hashes.add(line.lower())
     if salt is None:
-        sys.exit("hashes file has no salt: line")
+        config_error(f"hashes file {path} has no salt: line")
     return salt, hashes
 
 
@@ -55,40 +71,151 @@ def digest(salt, word):
     return hashlib.sha256((salt + word).encode("utf-8")).hexdigest()
 
 
+def text_hit(salt, hashes, data):
+    if b"\0" in data[:8192]:
+        return False
+    return any(digest(salt, w) in hashes for w in words(data.decode("utf-8", "replace")))
+
+
+def path_skipped(rel, allow):
+    return any(p.search(rel) for p in allow)
+
+
+def git(root, *args):
+    r = subprocess.run(["git", "-C", root, *args], capture_output=True)
+    if r.returncode != 0:
+        msg = r.stderr.decode("utf-8", "replace").strip().splitlines()
+        config_error(f"git {args[0]} failed in {root}: {msg[-1] if msg else 'no message'}")
+    return r.stdout
+
+
+def scan_tree(root, salt, hashes, allow):
+    files = git(root, "ls-files", "-z").decode("utf-8", "replace").split("\0")
+    bad, big = [], 0
+    for rel in filter(None, files):
+        if path_skipped(rel, allow):
+            continue
+        hit = any(digest(salt, w) in hashes for w in words(rel))
+        full = os.path.join(root, rel)
+        if (not hit and os.path.basename(rel) not in LOCK_NAMES
+                and os.path.isfile(full) and not os.path.islink(full)):
+            if os.path.getsize(full) > MAX_BYTES:
+                big += 1
+                continue
+            with open(full, "rb") as fh:
+                hit = text_hit(salt, hashes, fh.read(MAX_BYTES + 1))
+        if hit:
+            bad.append(rel)
+    return bad, big
+
+
+def history_blobs(root):
+    """{blob: (path, commit)} for every blob any commit on any ref adds,
+    earliest commit first; merges are diffed against each parent."""
+    out = git(root, "log", "--all", "--reverse", "--raw", "--no-abbrev", "--no-renames",
+              "-m", "-z", "--format=%x01%H")
+    blobs, commit = {}, None
+    fields = iter(out.split(b"\0"))
+    for f in fields:
+        f = f.lstrip(b"\n")
+        if f.startswith(b"\x01"):
+            commit = f[1:].decode()
+        elif f.startswith(b":"):
+            new = f.split(b" ")[3].decode()
+            path = next(fields, b"").decode("utf-8", "replace")
+            if new.strip("0") and new not in blobs:
+                blobs[new] = (path, commit)
+    return blobs
+
+
+def read_blobs(root, shas):
+    """Yield (sha, size, data-or-None) via one cat-file process; data is
+    None for anything over MAX_BYTES (never read into memory)."""
+    p = subprocess.Popen(["git", "-C", root, "cat-file",
+                          "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    out, _ = p.communicate("".join(s + "\n" for s in shas).encode())
+    sizes = {}
+    for line in out.decode().splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            sizes[parts[0]] = int(parts[2])
+    small = [s for s in shas if sizes.get(s, MAX_BYTES + 1) <= MAX_BYTES]
+    small_set = set(small)
+    for s in shas:
+        if s not in small_set:
+            yield s, None
+    p = subprocess.Popen(["git", "-C", root, "cat-file", "--batch"],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    def feed():
+        for s in small:
+            p.stdin.write((s + "\n").encode())
+        p.stdin.close()
+
+    t = threading.Thread(target=feed, daemon=True)
+    t.start()
+    for s in small:
+        header = p.stdout.readline().split()
+        size = int(header[2])
+        data = p.stdout.read(size)
+        p.stdout.read(1)
+        yield s, data
+    t.join()
+    p.wait()
+
+
+def scan_history(root, salt, hashes, allow):
+    blobs = history_blobs(root)
+    bad, big, todo = [], 0, []
+    for sha, (path, commit) in blobs.items():
+        if path_skipped(path, allow):
+            continue
+        if any(digest(salt, w) in hashes for w in words(path)):
+            bad.append((path, commit))
+        elif os.path.basename(path) not in LOCK_NAMES:
+            todo.append(sha)
+    for sha, data in read_blobs(root, todo):
+        if data is None:
+            big += 1
+        elif text_hit(salt, hashes, data):
+            bad.append(blobs[sha])
+    return bad, big
+
+
 def main():
     ap = argparse.ArgumentParser()
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--root", default=os.path.join(here, ".."))
     ap.add_argument("--hashes", default=os.path.join(here, "no-real-names.hashes"))
     ap.add_argument("--allow", default=os.path.join(here, "no-real-names.allow"))
+    ap.add_argument("--history", action="store_true",
+                    help="scan every blob reachable from any ref, not just the tree")
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     salt, hashes = load_hashes(a.hashes)
     allow = load_allow(a.allow)
-    files = subprocess.run(["git", "-C", root, "ls-files", "-z"], check=True,
-                           capture_output=True).stdout.decode("utf-8", "replace").split("\0")
-    bad = []
-    for rel in filter(None, files):
-        if any(p.search(rel) for p in allow):
-            continue
-        hit = any(digest(salt, w) in hashes for w in words(rel))
-        full = os.path.join(root, rel)
-        if (not hit and os.path.basename(rel) not in LOCK_NAMES
-                and os.path.isfile(full) and not os.path.islink(full)):
-            data = open(full, "rb").read()
-            if b"\0" not in data[:8192]:
-                hit = any(digest(salt, w) in hashes
-                          for w in words(data.decode("utf-8", "replace")))
-        if hit:
-            bad.append(rel)
+    skipped = lambda n: f" ({n} file(s) over {MAX_BYTES // (1024 * 1024)} MB skipped)" if n else ""
+    if a.history:
+        bad, big = scan_history(root, salt, hashes, allow)
+        if bad:
+            print(f"no-real-names: {len(bad)} blob(s) in history contain a hashed word"
+                  f"{skipped(big)}:")
+            for path, commit in sorted(bad):
+                print(f"  {path} (commit {commit[:12]})")
+            print("Rewriting history is an owner-only step; report counts and paths only.")
+            return 1
+        print(f"no-real-names: history clean{skipped(big)}")
+        return 0
+    bad, big = scan_tree(root, salt, hashes, allow)
     if bad:
-        print(f"no-real-names: {len(bad)} tracked file(s) contain a hashed word:")
+        print(f"no-real-names: {len(bad)} tracked file(s) contain a hashed word{skipped(big)}:")
         for rel in bad:
             print(f"  {rel}")
         print("Replace with invented names/placeholders; for an intended use add the path to"
               " scripts/no-real-names.allow (reviewed).")
         return 1
-    print("no-real-names: clean")
+    print(f"no-real-names: clean{skipped(big)}")
     return 0
 
 

@@ -175,8 +175,8 @@
           <tr class="sweep"><td class="time">21:56:58</td><td><i class="lane" style="background:var(--lane-srv)"></i>canary-srv</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 2/4</span>login attempt root / password</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr class="sweep"><td class="time same">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
-          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
-          <tr><td class="time same">19:11:58</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">192.0.2.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time same">19:11:58</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">192.0.2.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr><td class="time">14:40:12</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>session setup, share IPC$</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr><td class="time">14:39:47</td><td><i class="lane" style="background:var(--lane-iot)"></i>canary-iot</td><td class="src">198.51.100.7</td><td class="svc">smb <span class="port">445</span></td><td class="note"><span class="tag repeat">repeat · 6 days</span>negotiate, NT LM 0.12</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr class="day"><td colspan="6">yesterday · thu 11 sep</td></tr>
@@ -351,7 +351,7 @@
               </div>
               <div>
                 <h3>raw from opencanary</h3>
-<pre>{"dst_host": "10.0.20.250", "dst_port": 22,
+<pre>{"dst_host": "192.0.2.251", "dst_port": 22,
  "local_time": "2026-09-12 21:56:58.114",
  "logdata": {"LOCALVERSION": "SSH-2.0-OpenSSH_7.9p1",
              "PASSWORD": "<b>password</b>", "USERNAME": "<b>root</b>",
@@ -365,7 +365,7 @@
           </td></tr>
           <tr class="sweep"><td class="time">21:55:40</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag sweep">sweep 1/4</span>login attempt root / root</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
           <tr class="sweep"><td class="time same">21:55:39</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">203.0.113.42</td><td class="svc">ssh <span class="port">22</span></td><td class="note"><span class="tag first">first seen</span>connection opened</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
-          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">10.0.40.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
+          <tr><td class="time">19:12:05</td><td><i class="lane" style="background:var(--lane-lan)"></i>canary-lan</td><td class="src">192.0.2.23<span class="int">inside · guest</span></td><td class="svc">http <span class="port">80</span></td><td class="note"><span class="tag inside">from inside</span>GET /admin</td><td class="act"><a href="#">lookback ▸</a><a href="#">open ▸</a></td></tr>
         </tbody>
       </table>
     </div>
