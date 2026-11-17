@@ -38,8 +38,9 @@ Ecosystems covered, and where each pin comes from:
   - build/opencanary/requirements.txt's `name==ver` lines -- compared
     against pypi.org's JSON API.
   - Container image tags: every `FROM` in build/*/Dockerfile and every
-    `*_IMAGE:` variable in .gitlab-ci.yml (golang: handled above, not
-    here) -- compared within the same tag family (same suffix, same
+    `*_IMAGE:` variable and literal `services:` image in .gitlab-ci.yml
+    (golang: handled above, not here; `name:tag@digest` and
+    `name@digest` pins read too) -- compared within the same tag family (same suffix, same
     precision) against Docker Hub or gcr.io's own registry API.
   - `apk add name=ver` pins -- compared against the APKINDEX of the
     pinning Dockerfile's own Alpine branch.
@@ -833,7 +834,6 @@ def image_ci_vars(ci_doc):
     # Hub through the image cache, ai/agent-infra#14); the one prefix still
     # understood is the Docker Hub cache host. $CI_IMAGE_CACHE_GHCR / _MCR
     # names are not Docker Hub images and fall to the "$" skip below.
-    prefixes = ("${CI_IMAGE_CACHE_DOCKERHUB}/", "$CI_IMAGE_CACHE_DOCKERHUB/")
     variables = ci_doc.get("variables") if isinstance(ci_doc, dict) else None
     if not isinstance(variables, dict):
         return out
@@ -842,16 +842,57 @@ def image_ci_vars(ci_doc):
             continue
         if var == "GOLANG_IMAGE":
             continue
-        for prefix in prefixes:
-            if value.startswith(prefix):
-                value = value[len(prefix):]
-                break
-        if value.startswith("library/"):
-            value = value[len("library/"):]
+        value = strip_hub_cache(value)
         if "$" in value or ":" not in value:
             continue
         out[var] = value
     return out
+
+
+def strip_hub_cache(value):
+    """value without a leading Docker Hub cache prefix or `library/`."""
+    for prefix in ("${CI_IMAGE_CACHE_DOCKERHUB}/", "$CI_IMAGE_CACHE_DOCKERHUB/"):
+        if value.startswith(prefix):
+            value = value[len(prefix):]
+            break
+    if value.startswith("library/"):
+        value = value[len("library/"):]
+    return value
+
+
+def image_ci_services(ci_doc):
+    """Literal image refs named by any job's (or `default:`'s) `services:`
+    list -- a plain string or a mapping's `name:` -- with the Docker Hub
+    cache prefix stripped. Refs still holding a `$` are other CI variables
+    (`$POSTGRES18_IMAGE`), already covered by image_ci_vars, and skipped.
+    """
+    out = []
+    if not isinstance(ci_doc, dict):
+        return out
+    for job in ci_doc.values():
+        services = job.get("services") if isinstance(job, dict) else None
+        if not isinstance(services, list):
+            continue
+        for entry in services:
+            name = entry.get("name") if isinstance(entry, dict) else entry
+            if not isinstance(name, str):
+                continue
+            name = strip_hub_cache(name)
+            if "$" in name or ":" not in name:
+                continue
+            out.append(name)
+    return out
+
+
+def split_image_ref(ref):
+    """(repo, tag_or_None, digest_or_None) for `repo:tag`, `repo:tag@digest`
+    or `repo@digest` (#226: the digest's own `sha256:` colon is not the
+    tag separator). A `:` before the last `/` is a registry port."""
+    ref, _, digest = ref.partition("@")
+    repo, tag = ref, None
+    if ":" in ref.rsplit("/", 1)[-1]:
+        repo, tag = ref.rsplit(":", 1)
+    return repo, tag, digest or None
 
 
 def docker_hub_tag_exists(fetcher, repo, tag):
@@ -928,7 +969,17 @@ def hub_repo_path(repo):
     return repo if "/" in repo else f"library/{repo}"
 
 
-def check_one_image(fetcher, repo, tag):
+def check_one_image(fetcher, repo, tag, digest=None):
+    if tag is None:
+        # Pinned by digest alone: nothing to compare a version against.
+        return Row(f"image:{repo}", digest, "", "floating", "pinned by digest only")
+    row = _check_one_image(fetcher, repo, tag)
+    if digest:
+        row.pinned = f"{tag}@{digest}"
+    return row
+
+
+def _check_one_image(fetcher, repo, tag):
     row_id = f"image:{repo}:{tag}"
     pin_nums, suffix = split_version(tag)
 
@@ -986,25 +1037,27 @@ def check_images(root, fetcher):
     rows = []
     seen = set()
 
+    def add(ref):
+        repo, tag, digest = split_image_ref(ref)
+        if (repo, tag) in seen:
+            return
+        seen.add((repo, tag))
+        rows.append(check_one_image(fetcher, repo, tag, digest))
+
     dockerfiles = find_dockerfiles(root)
     for path in dockerfiles:
         for ref in dockerfile_from_lines(path):
             if ref.startswith("golang:") or ":" not in ref:
                 continue
-            repo, tag = ref.rsplit(":", 1)
-            if (repo, tag) in seen:
-                continue
-            seen.add((repo, tag))
-            rows.append(check_one_image(fetcher, repo, tag))
+            add(ref)
 
     ci_path = os.path.join(root, ".gitlab-ci.yml")
     if os.path.isfile(ci_path):
-        for var, ref in image_ci_vars(load_gitlab_ci(ci_path)).items():
-            repo, tag = ref.rsplit(":", 1)
-            if (repo, tag) in seen:
-                continue
-            seen.add((repo, tag))
-            rows.append(check_one_image(fetcher, repo, tag))
+        ci_doc = load_gitlab_ci(ci_path)
+        for ref in image_ci_vars(ci_doc).values():
+            add(ref)
+        for ref in image_ci_services(ci_doc):
+            add(ref)
 
     return rows
 
