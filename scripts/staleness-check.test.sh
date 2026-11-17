@@ -198,10 +198,25 @@ unchecked_config="accepted: []
 unchecked:
   - pin: \"pypi:gadget\"
     reason: \"test fixture -- deliberately unreachable, covered for the test\"
+    review-by: \"2099-01-01\"
 alpine-branch: {}"
 
 expect 0 "an unchecked entry covers the unreachable pin" \
-  "$missing_url_upstream" "$unchecked_config"
+  "$missing_url_upstream" "$unchecked_config" --today 2026-01-01
+
+# #215 D11: an unchecked: entry needs a review-by date, like a hold.
+must_contain='unchecked entry expired on 2099-01-01' \
+  expect 1 "an unchecked entry past its review-by excuses nothing" \
+  "$missing_url_upstream" "$unchecked_config" --today 2099-06-01
+
+unchecked_undated="accepted: []
+unchecked:
+  - pin: \"pypi:gadget\"
+    reason: \"test fixture -- no review-by\"
+alpine-branch: {}"
+must_contain='unchecked entry has no review-by' \
+  expect 1 "an unchecked entry without review-by excuses nothing" \
+  "$missing_url_upstream" "$unchecked_undated"
 
 # fixture:poisoner (#147): the private fixtures project publishes the
 # poisoner fixture only under a version tag, never `latest`, so this
@@ -421,6 +436,201 @@ row_has "digest pin: name@digest with no tag is a floating row noted as pinned b
   "| image:busybox |" "floating" "pinned by digest only" "$d3"
 row_has "plain name:tag still parses (node:26-trixie)" \
   "| image:node:26-trixie |" "| 26-trixie |"
+
+# ---------------------------------------------------------------------------
+# #215: --json rows, --deadline, --timeout, fuzzy apk pins, lapsed holds,
+# release dates and the credential flag the release-readiness check reads.
+# ---------------------------------------------------------------------------
+json_ok() { # name python-assertions (j = parsed --json output, rows = by id)
+  local name="$1" body="$2"
+  if python3 - "$work/rows.json" "$body" <<'PYEOF'
+import json, sys
+j = json.load(open(sys.argv[1]))
+rows = {r["id"]: r for r in j["rows"]}
+exec(sys.argv[2])
+PYEOF
+  then echo "ok   $name"; pass=$((pass + 1))
+  else echo "FAIL $name"; sed 's/^/       /' "$work/rows.json"; fail=$((fail + 1)); fi
+}
+
+# A behind pin whose newer tag carries its push date, and a hold on it that
+# expired: the row says when the newer version came out and why the hold
+# no longer applies.
+alpine_behind_dated="$(python3 - "$(upstream_json "$alpine_behind")" <<'PYEOF'
+import json, sys
+m = json.loads(sys.argv[1])
+m["https://hub.docker.com/v2/repositories/library/alpine/tags/3.21"] = json.dumps(
+    {"name": "3.21", "tag_last_pushed": "2026-11-10T08:00:00Z"})
+print(json.dumps(m))
+PYEOF
+)"
+printf '%s\n' "$alpine_behind_dated" > "$work/upstream.json"
+printf '%s\n' "$accepted_far" > "$root/supply-chain/staleness.yml"
+python3 "$check" --root "$root" --upstream "$work/upstream.json" --today 2099-06-01 \
+  --json "$work/rows.json" > /dev/null 2>&1 || true
+json_ok "--json: a behind row carries the newer version's release date" '
+r = rows["image:alpine:3.20"]
+assert (r["status"], r["latest"]) == ("behind", "3.21"), r
+assert r["released"].startswith("2026-11-10"), r'
+json_ok "--json: an expired hold is named, with its review-by date" '
+r = rows["image:alpine:3.20"]
+assert r["hold"]["lapsed"] == "expired" and r["hold"]["review_by"] == "2099-01-01", r
+assert "hold expired on 2099-01-01" in r["note"], r'
+json_ok "--json: current rows carry id, pinned, latest, status, note" '
+r = rows["npm:widget"]
+assert set(r) >= {"id", "pinned", "latest", "status", "note"} and r["status"] == "current", r
+assert "released" not in r and "hold" not in r, r'
+
+held_at_other="accepted:
+  - pin: \"image:alpine:3.20\"
+    held-at: \"3.19\"
+    reason: \"test fixture -- held at another tag\"
+    review-by: \"2099-01-01\"
+unchecked: []
+alpine-branch: {}"
+printf '%s\n' "$held_at_other" > "$root/supply-chain/staleness.yml"
+python3 "$check" --root "$root" --upstream "$work/upstream.json" --today 2026-01-01 \
+  --json "$work/rows.json" > /dev/null 2>&1 || true
+json_ok "--json: a hold for another held-at is named as not applying" '
+r = rows["image:alpine:3.20"]
+assert r["status"] == "behind" and r["hold"]["lapsed"] == "held-at-differs", r'
+
+# The fixture digest row without registry credentials (a real run, so no
+# --upstream for that row): unverifiable only for a missing credential.
+cred_root="$work/cred-repo"; mkdir -p "$cred_root/supply-chain"
+printf 'variables:\n  E2E_POISONER_FIXTURE_DIGEST: registry.example.test/group/poisoner@%s\n' \
+  "$fixture_pin_digest" > "$cred_root/.gitlab-ci.yml"
+printf 'accepted: []\nunchecked: []\nalpine-branch: {}\n' > "$cred_root/supply-chain/staleness.yml"
+(unset CI_REGISTRY_USER CI_REGISTRY_PASSWORD
+ python3 "$check" --root "$cred_root" --json "$work/rows.json" > /dev/null 2>&1) || true
+json_ok "--json: a row unverifiable for a missing CI credential says so" '
+r = rows["fixture:poisoner"]
+assert r["status"] == "unverifiable" and r.get("credential_missing") is True, r'
+
+# --deadline cuts a slow run short: each npm/pypi answer takes 1.5 s, the
+# run may take 2 s, so the second slow lookup is "deadline reached" and
+# its row unverifiable -- and the run ends well inside the time a full
+# wait would take.
+slow_upstream="$(python3 - "$(upstream_json "$alpine_current")" <<'PYEOF'
+import json, sys
+m = json.loads(sys.argv[1])
+for url in ("https://registry.npmjs.org/widget/latest", "https://pypi.org/pypi/gadget/json"):
+    m[url] = {"delay": 1.5, "body": m[url]}
+print(json.dumps(m))
+PYEOF
+)"
+printf '%s\n' "$slow_upstream" > "$work/upstream.json"
+printf '%s\n' "$no_config" > "$root/supply-chain/staleness.yml"
+start=$(date +%s)
+code=0; python3 "$check" --root "$root" --upstream "$work/upstream.json" --deadline 2 \
+  --json "$work/rows.json" > /dev/null 2>&1 || code=$?
+took=$(( $(date +%s) - start ))
+json_ok "--deadline: the lookup after the deadline is unverifiable, deadline reached" '
+assert rows["npm:widget"]["status"] == "current", rows["npm:widget"]
+r = rows["pypi:gadget"]
+assert r["status"] == "unverifiable" and "deadline reached" in r["note"], r'
+if [ "$code" = 1 ] && [ "$took" -lt 6 ]; then echo "ok   --deadline: exit 1, finished in ${took}s"; pass=$((pass + 1))
+else echo "FAIL --deadline: exit $code after ${took}s (want 1, under 6s)"; fail=$((fail + 1)); fi
+
+code=0; python3 "$check" --root "$root" --upstream "$work/upstream.json" --deadline 0 > /dev/null 2>&1 || code=$?
+if [ "$code" = 2 ]; then echo "ok   --deadline 0 is a usage error"; pass=$((pass + 1))
+else echo "FAIL --deadline 0: exit $code (want 2)"; fail=$((fail + 1)); fi
+
+# Unit level: fuzzy `~=` apk pins (git~=2.54 produced no row before #215),
+# the Dockerfile on each apk row, --timeout reaching urlopen, the Git-host
+# tag for a Go module's release date (never the proxy), and the
+# per-ecosystem date readers.
+apk_root="$work/apk-repo"; mkdir -p "$apk_root/build/x" "$apk_root/build/y"
+cat > "$apk_root/build/x/Dockerfile" <<'EOF'
+FROM alpine:3.24
+RUN apk add --no-cache git~=2.54 \
+    curl=8.17.0-r0 jq~=1.7
+EOF
+cat > "$apk_root/build/y/Dockerfile" <<'EOF'
+FROM golang:1.27.4-alpine AS backend
+RUN apk add --no-cache git~=2.5
+EOF
+if python3 - "$check" "$apk_root" <<'PYEOF'
+import importlib.util, io, json, sys, tarfile
+spec = importlib.util.spec_from_file_location("staleness_check", sys.argv[1])
+sc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sc)
+
+def apkindex(entries):
+    text = "".join(f"P:{n}\nV:{v}\n\n" for n, v in entries).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        info = tarfile.TarInfo("APKINDEX"); info.size = len(text)
+        tf.addfile(info, io.BytesIO(text))
+    return buf.getvalue()
+
+index = apkindex([("git", "2.54.1-r0"), ("curl", "8.17.0-r1"), ("jq", "1.70-r0")])
+
+class F:
+    fixture = None
+    def get(self, url, headers=None):
+        if url.endswith("/main/x86_64/APKINDEX.tar.gz"):
+            return True, index, None
+        return False, None, "HTTP 404"
+
+rows = {(r.file, r.id): r for r in sc.check_apk(sys.argv[2], F(), {"build/y/Dockerfile": "v3.24"})}
+g = rows[("build/x/Dockerfile", "apk:git")]
+assert (g.pinned, g.latest, g.status) == ("~=2.54", "2.54.1-r0", "current"), vars(g)
+c = rows[("build/x/Dockerfile", "apk:curl")]
+assert (c.pinned, c.status) == ("8.17.0-r0", "behind"), vars(c)
+j = rows[("build/x/Dockerfile", "apk:jq")]
+assert j.status == "behind", "1.7 must not fuzzy-match 1.70: " + repr(vars(j))
+y = rows[("build/y/Dockerfile", "apk:git")]
+assert y.status == "behind", "2.5 must not fuzzy-match 2.54.1: " + repr(vars(y))
+assert g.as_json()["file"] == "build/x/Dockerfile"
+
+# --timeout reaches every real call.
+sc._LIMITS["timeout"] = 7.0
+assert sc._call_timeout() == 7.0
+import time
+sc._LIMITS["deadline_at"] = time.monotonic() + 3
+assert sc._call_timeout() <= 3.0
+sc._LIMITS["deadline_at"] = time.monotonic() - 1
+try:
+    sc._call_timeout()
+except sc.DeadlineReached:
+    pass
+else:
+    raise AssertionError("no DeadlineReached after the deadline")
+assert sc._fetch_with_retry("https://example.invalid/x", {}) == (False, None, "deadline reached")
+sc._LIMITS["deadline_at"] = None
+
+# Release dates come from the Git host for Go modules, never the proxy.
+assert sc.go_module_git_tag("github.com/a/b", "v1.2.3") == ("github_commit", "a/b", "v1.2.3")
+assert sc.go_module_git_tag("github.com/a/b/v2", "v2.0.1") == ("github_commit", "a/b", "v2.0.1")
+assert sc.go_module_git_tag("github.com/a/b/sub", "v0.3.0") == ("github_commit", "a/b", "sub/v0.3.0")
+assert sc.go_module_git_tag("golang.org/x/net", "v0.40.0") == ("github_commit", "golang/net", "v0.40.0")
+assert sc.go_module_git_tag("go.example.invalid/m", "v1.0.0") is None
+
+class D:
+    fixture = None
+    def __init__(self): self.urls = []
+    def get(self, url, headers=None):
+        self.urls.append(url)
+        bodies = {
+            "https://api.github.com/repos/a/b/commits/sub%2Fv0.3.0":
+                {"commit": {"committer": {"date": "2026-11-01T00:00:00Z"}}},
+            "https://registry.npmjs.org/w": {"time": {"2.0.0": "2026-10-02T03:04:05.000Z"}},
+            "https://api.github.com/repos/s/c/releases/latest": {"published_at": "2026-09-09T00:00:00Z"},
+        }
+        if url in bodies:
+            return True, json.dumps(bodies[url]).encode(), None
+        return False, None, "HTTP 404"
+d = D()
+assert sc.release_date(d, ("github_commit", "a/b", "sub/v0.3.0")).startswith("2026-11-01")
+assert sc.release_date(d, ("npm", "w", "2.0.0")).startswith("2026-10-02")
+assert sc.release_date(d, ("github_release", "s/c")).startswith("2026-09-09")
+assert sc.release_date(d, ("github_commit", "a/b", "v9.9.9")) is None
+assert sc.release_date(d, ("value", "2026-01-01T00:00:00Z")) == "2026-01-01T00:00:00Z"
+assert not [u for u in d.urls if "proxy.golang.org" in u]
+PYEOF
+then echo "ok   fuzzy apk pins, apk row files, time limits, Git-host release dates"; pass=$((pass + 1))
+else echo "FAIL fuzzy apk pins, apk row files, time limits, Git-host release dates"; fail=$((fail + 1)); fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
