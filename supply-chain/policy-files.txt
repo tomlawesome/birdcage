@@ -42,3 +42,7 @@ scripts/verify-validation-evidence.sh
 scripts/publish-image.sh
 scripts/publish-channel.sh
 scripts/promote-release.sh
+scripts/quarantine.txt
+scripts/ci/quarantine-pattern.sh
+scripts/ci/flake-check.sh
+scripts/release-candidate.sh

@@ -67,6 +67,22 @@ jobs:
     steps:
       - uses: actions/checkout@1111111 # v1.2.3" "$good_policy" "not a full 40-hex commit SHA"
 
+# Rule (#207): a tag, branch or dotted/slashed ref is not a full commit SHA
+# either. Each must be refused, with the message naming the workflow line.
+for ref in "v4" "main" "v4.2.1" "releases/v1"; do
+  expect 1 "a non-SHA ref @$ref is caught" "on: push
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@$ref" "$good_policy" "w.yml:5 (actions/checkout): pinned to \`$ref\`, not a full 40-hex commit SHA"
+done
+
+expect 1 "a non-SHA ref with a version comment is caught" "on: push
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4 # v4.0.0" "$good_policy" "not a full 40-hex commit SHA"
+
 # Rule: pin the policy does not record at all.
 expect 1 "an unrecorded pin is caught" "on: push
 jobs:

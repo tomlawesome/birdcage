@@ -98,9 +98,9 @@ type ingestScan struct {
 // registry. Fail-closed the same way handleHeartbeat is: an invalid
 // body is a 4xx and nothing is stored.
 //
-// Findings are validated and counted, never persisted -- migration
-// 0014's own comment and #109, which adds the store they will hang off
-// this table's id.
+// Findings are validated and counted here, then applied to #109's
+// findings store by storeScan (migration 0014's own comment; the store
+// hangs off this table's id).
 func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	tok, ok := canaryTokenFromContext(r.Context())
 	if !ok {
