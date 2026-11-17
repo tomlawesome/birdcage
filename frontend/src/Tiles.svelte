@@ -10,6 +10,7 @@
   import type { Canary, Range, TraceResponse } from './lib/types'
   import { computeTileStatus, type TileHit } from './lib/sentence'
   import { canaryHref } from './lib/route'
+  import { WRITE_ROUTES_LIVE } from './lib/writeActions'
 
   let { canaries, trace, range }: { canaries: Canary[]; trace: TraceResponse; range: Range } = $props()
 
@@ -86,7 +87,7 @@
       {#if c.status === 'silent'}
         <div class="acts">
           <a class="pill" href={canaryHref(c.id)}>open {c.name} &#9656;</a>
-          <span class="pill quiet">mark as maintenance</span>
+          {#if WRITE_ROUTES_LIVE}<span class="pill quiet">mark as maintenance</span>{/if}
         </div>
       {/if}
     </div>
