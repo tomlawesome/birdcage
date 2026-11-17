@@ -352,5 +352,61 @@ else
   fail=$((fail + 1)); echo "FAIL image_ci_vars: got $got"
 fi
 
+# Digest-pinned image refs (#226). Own root holding only a .gitlab-ci.yml,
+# own --upstream (Docker Hub single-tag probes only), so nothing here can
+# reach the network, the Go proxy included.
+d_root="$work/digest-repo"
+mkdir -p "$d_root/supply-chain"
+d1="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+d2="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+d3="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+cat > "$d_root/.gitlab-ci.yml" <<YML
+variables:
+  DOCKER_CLI_IMAGE: docker:29.6.2-cli@$d1
+  DIGEST_ONLY_IMAGE: busybox@$d3
+  NODE_IMAGE: node:26-trixie
+
+.dind_service:
+  services:
+    - name: \${CI_IMAGE_CACHE_DOCKERHUB}/library/docker:29.6.2-dind@$d2
+      alias: docker
+YML
+printf 'accepted: []\nunchecked: []\nalpine-branch: {}\n' > "$d_root/supply-chain/staleness.yml"
+python3 - > "$work/digest-upstream.json" <<'PYEOF'
+import json
+hub = "https://hub.docker.com/v2/repositories/library"
+m = {}
+for suffix in ("-cli", "-dind"):
+    m[f"{hub}/docker/tags/29.6.2{suffix}"] = "{}"
+    for tag in ("29.6.3", "29.6.4", "29.6.5", "29.6.6", "29.7.0"):
+        m[f"{hub}/docker/tags/{tag}{suffix}"] = {"status": 404}
+m[f"{hub}/node/tags/26-trixie"] = "{}"
+for n in (27, 28, 29, 30):
+    m[f"{hub}/node/tags/{n}-trixie"] = {"status": 404}
+print(json.dumps(m))
+PYEOF
+digest_out="$(python3 "$check" --root "$d_root" --upstream "$work/digest-upstream.json" 2>&1 || true)"
+
+# row_has <name> <row-prefix> [must-also-contain...]: the first output line
+# containing the prefix has to contain every further string.
+row_has() {
+  local name="$1" prefix="$2" row ok=1 want
+  shift 2
+  row="$(printf '%s\n' "$digest_out" | grep -F -- "$prefix" | head -1 || true)"
+  [ -n "$row" ] || ok=0
+  for want in "$@"; do printf '%s' "$row" | grep -qF -- "$want" || ok=0; done
+  if [ "$ok" = 1 ]; then echo "ok   $name"; pass=$((pass + 1))
+  else echo "FAIL $name"; echo "       row: ${row:-<none>}"; fail=$((fail + 1)); fi
+}
+
+row_has "digest pin: CI variable name:tag@digest gives a docker / 29.6.2-cli row, digest kept" \
+  "| image:docker:29.6.2-cli |" "$d1"
+row_has "digest pin: services: entry name:tag@digest gives a docker / 29.6.2-dind row, digest kept" \
+  "| image:docker:29.6.2-dind |" "$d2"
+row_has "digest pin: name@digest with no tag is a floating row noted as pinned by digest only" \
+  "| image:busybox |" "floating" "pinned by digest only" "$d3"
+row_has "plain name:tag still parses (node:26-trixie)" \
+  "| image:node:26-trixie |" "| 26-trixie |"
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
