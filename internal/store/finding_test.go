@@ -399,3 +399,83 @@ func findingsStaleness(t *testing.T, database *db.DB, agentID string) AgentScanS
 	}
 	return status
 }
+
+// TestApplyFindingSnapshotDuplicateKeyInOneSnapshotCollapses: the same
+// (target, vulnerability) observed twice in one scan is stored once, with
+// sorted joined versions and the most severe severity, in either order.
+func TestApplyFindingSnapshotDuplicateKeyInOneSnapshotCollapses(t *testing.T) {
+	target := BuildFindingTarget("deb", "libc6")
+	a := ObservedFinding{Target: target, VulnerabilityID: "CVE-2024-0001", Severity: "low", InstalledVersion: "2.0", FixingVersion: "2.1"}
+	b := ObservedFinding{Target: target, VulnerabilityID: "CVE-2024-0001", Severity: "high", InstalledVersion: "1.0", FixingVersion: "1.1"}
+	cases := []struct {
+		name string
+		in   []ObservedFinding
+	}{
+		{"as posted", []ObservedFinding{a, b}},
+		{"reversed", []ObservedFinding{b, a}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				applySnapshot(t, database, "scanner-a", tc.in, mustParse(t, "2026-01-01T00:00:00Z"))
+				findings := listFindings(t, database, "scanner-a")
+				if len(findings) != 1 {
+					t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+				}
+				f := findings[0]
+				if f.InstalledVersion != "1.0, 2.0" || f.FixingVersion != "1.1, 2.1" || f.Severity != "high" {
+					t.Errorf("Installed/Fixing/Severity = %q/%q/%q, want %q/%q/%q",
+						f.InstalledVersion, f.FixingVersion, f.Severity, "1.0, 2.0", "1.1, 2.1", "high")
+				}
+			})
+		})
+	}
+}
+
+// TestApplyFindingSnapshotDuplicateKeyDropsEmptyAndRepeatedValues: empty
+// versions are dropped and identical values appear once in the join.
+func TestApplyFindingSnapshotDuplicateKeyDropsEmptyAndRepeatedValues(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		target := BuildFindingTarget("deb", "zlib")
+		in := []ObservedFinding{
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "1.2", FixingVersion: ""},
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "1.2", FixingVersion: "1.3"},
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "", FixingVersion: "1.3"},
+		}
+		applySnapshot(t, database, "scanner-a", in, mustParse(t, "2026-01-01T00:00:00Z"))
+		findings := listFindings(t, database, "scanner-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+		}
+		if f := findings[0]; f.InstalledVersion != "1.2" || f.FixingVersion != "1.3" {
+			t.Errorf("Installed/Fixing = %q/%q, want 1.2/1.3", f.InstalledVersion, f.FixingVersion)
+		}
+	})
+}
+
+// TestApplyFindingSnapshotDistinctKeysAreNotCollapsed: a different CVE on
+// the same package, or the same CVE on a different package, stays separate.
+func TestApplyFindingSnapshotDistinctKeysAreNotCollapsed(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		in := []ObservedFinding{
+			{Target: BuildFindingTarget("deb", "libc6"), VulnerabilityID: "CVE-2024-0001", Severity: "low", InstalledVersion: "1.0"},
+			{Target: BuildFindingTarget("deb", "libc6"), VulnerabilityID: "CVE-2024-0002", Severity: "high", InstalledVersion: "1.0"},
+			{Target: BuildFindingTarget("deb", "zlib"), VulnerabilityID: "CVE-2024-0001", Severity: "medium", InstalledVersion: "2.0"},
+		}
+		applySnapshot(t, database, "scanner-a", in, mustParse(t, "2026-01-01T00:00:00Z"))
+		findings := listFindings(t, database, "scanner-a")
+		if len(findings) != 3 {
+			t.Fatalf("got %d findings, want 3: %+v", len(findings), findings)
+		}
+		for _, f := range findings {
+			want := map[string]string{
+				BuildFindingTarget("deb", "libc6") + "|CVE-2024-0001": "low",
+				BuildFindingTarget("deb", "libc6") + "|CVE-2024-0002": "high",
+				BuildFindingTarget("deb", "zlib") + "|CVE-2024-0001":  "medium",
+			}[f.Target+"|"+f.VulnerabilityID]
+			if f.Severity != want {
+				t.Errorf("%s %s severity = %q, want %q", f.Target, f.VulnerabilityID, f.Severity, want)
+			}
+		}
+	})
+}
