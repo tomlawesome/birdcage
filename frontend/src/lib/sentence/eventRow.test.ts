@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildEventRows, computeDroppedOutRow, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
 import { plainText } from './types'
+import { canaryHref } from '../route'
 import type { Canary, Visitor, VisitorKind } from '../types'
 
 // Hand-built canaries and visitors (like rules.test.ts's rule-3 and issue #45
@@ -212,7 +213,7 @@ describe('whoSentence: client clause', () => {
 
 describe('defaultActions: one action set per kind', () => {
   const cases: [VisitorKind, EventAction[]][] = [
-    ['sweep', [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }]],
+    ['sweep', []],
     ['repeat', [{ label: 'already blocked', quiet: true }]],
     ['inside', [{ label: 'which device? ▸' }]],
     ['touch', [{ label: 'clear with a note', quiet: true }]],
@@ -226,10 +227,22 @@ describe('defaultActions: one action set per kind', () => {
 })
 
 describe('computeDroppedOutRow: write actions wait for their routes (#228)', () => {
-  it('offers open and lookback but no "mark as maintenance"', () => {
+  it('offers only open, no lookback and no "mark as maintenance" (#229)', () => {
     const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
     const labels = computeDroppedOutRow(silent).actions.map((a) => a.label)
-    expect(labels).toEqual(['open canary-lan ▸', 'lookback in mikroview ▸'])
+    expect(labels).toEqual(['open canary-lan ▸'])
+  })
+
+  it('the open pill carries the canary page href (#229)', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    expect(computeDroppedOutRow(silent).actions[0].href).toBe(canaryHref('canary-lan'))
+  })
+
+  it('no row anywhere offers lookback or raw lines (#229)', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const kinds: VisitorKind[] = ['sweep', 'repeat', 'inside', 'touch']
+    const rows = [computeDroppedOutRow(silent), ...kinds.map((kind) => computeEventRow(visitor({ kind }), canaries, '2026-09-12T22:04:00Z'))]
+    for (const r of rows) expect(r.actions.map((a) => a.label).filter((l) => /mikroview|raw lines/.test(l))).toEqual([])
   })
 })
 

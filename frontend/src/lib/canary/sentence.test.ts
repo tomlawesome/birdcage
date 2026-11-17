@@ -60,7 +60,8 @@ describe('the four round-7 scenes', () => {
     expect(sub).toContain('203.0.113.42 tried root / toor on telnet at 22:01')
     expect(sub).toContain('the same address that walked all four canaries tonight')
     expect(sub).toContain('198.51.100.7 has knocked on :445 every twenty minutes for six nights')
-    expect(sub).toContain('Nothing here blocks: lookback in mikroview ▸ to act.')
+    expect(sub).toContain('Nothing here blocks')
+    expect(sub).not.toContain('mikroview')
   })
 
   it('visited sentence says what the hit called itself', () => {
@@ -288,17 +289,17 @@ describe('canaryActions: only the ones the state earns', () => {
     expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
   })
 
-  it('a failed self-test earns the lookback too', () => {
-    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
+  it('a failed self-test earns nothing until a target exists (#229)', () => {
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([])
   })
 
-  it('a silent canary is offered the lookback only', () => {
-    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
+  it('a silent canary is offered nothing (#229)', () => {
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual([])
   })
 
-  it('a live visit leads with the lookback and the raw lines', () => {
+  it('a live visit offers neither lookback nor raw lines (#229)', () => {
     const actions = canaryActions(sceneInput('night'))
-    expect(actions.map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸'])
+    expect(actions.map((a) => a.label)).toEqual([])
   })
 })
 
@@ -311,11 +312,11 @@ describe('canaryActions: write pills are hidden until their routes exist (#228)'
     expect(labels.filter((l) => /mark as maintenance/.test(l))).toEqual([])
   })
 
-  it('keeps the read-only pills where the state earns them', () => {
+  it('keeps no inert read-only pills (#229)', () => {
     expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
-    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
-    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual(['lookback in mikroview ▸'])
-    expect(canaryActions(sceneInput('night')).map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸'])
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('night')).map((a) => a.label)).toEqual([])
   })
 })
 
