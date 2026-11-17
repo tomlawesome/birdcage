@@ -184,6 +184,48 @@ expect 11 "an empty evidence file is missing" "$f"
 f="$(fixture wrong_type "$(wrong_predicate_type "$digest" "$commit" main 1 "$policy" "$recent")")"
 expect 11 "evidence of another predicate type is missing, not accepted" "$f"
 
+# --- legacy predicate types (decided, #192 follow-up): evidence attested
+# before the type moved, including the published v0.1.0 attestation, must
+# still verify. The verifier accepts the current type or any type whose
+# sha256 is listed in LEGACY_PREDICATE_TYPES_FILE; the old string itself is
+# never in the tree. Tests use an invented legacy type.
+new_type="https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1"
+fake_legacy="https://example.invalid/old-type/v1"
+unrelated_type="https://example.test/attestations/something-else/v1"
+with_type() { sed "s#$new_type#$1#"; } # with_type <type> < statement-json
+sha_of() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+
+printf '# fixture\n%s\n' "$(sha_of "$fake_legacy")" > "$work/legacy.sha256"
+: > "$work/legacy-none.sha256"
+
+f="$(fixture legacy_type "$(statement "$digest" "$commit" main 1 "$policy" "$recent" | with_type "$fake_legacy")")"
+LEGACY_PREDICATE_TYPES_FILE="$work/legacy.sha256" \
+  expect 0 "evidence of a listed legacy predicate type is accepted" "$f"
+LEGACY_PREDICATE_TYPES_FILE="$work/legacy-none.sha256" \
+  expect 11 "the same evidence with no matching hash is missing" "$f"
+
+f="$(fixture unrelated_type "$(statement "$digest" "$commit" main 1 "$policy" "$recent" | with_type "$unrelated_type")")"
+LEGACY_PREDICATE_TYPES_FILE="$work/legacy.sha256" \
+  expect 11 "evidence of an unrelated predicate type is still missing" "$f"
+
+# the shipped list holds exactly the previous type's hash
+shipped="$here/legacy-predicate-types.sha256"
+entries="$(sed 's/#.*//' "$shipped" 2>/dev/null | tr -d ' \t' | grep -c . || true)"
+if [ "$entries" = 1 ] && sed 's/#.*//' "$shipped" | tr -d ' \t' | grep -qx '[0-9a-f]\{64\}'; then
+  ok "scripts/legacy-predicate-types.sha256 holds exactly one 64-hex entry"
+else
+  bad "scripts/legacy-predicate-types.sha256 holds exactly one 64-hex entry" "found $entries entries (or file missing/malformed)"
+fi
+prev="$(git -C "$here" show 7c5774a^:scripts/attest-tested-image.sh 2>/dev/null \
+  | sed -n 's/^readonly PREDICATE_TYPE="\(.*\)"$/\1/p' || true)"
+if [ -z "$prev" ]; then
+  echo "skip shipped hash vs 7c5774a^ (commit not reachable, e.g. shallow clone)"
+elif sed 's/#.*//' "$shipped" 2>/dev/null | tr -d ' \t' | grep -qx "$(sha_of "$prev")"; then
+  ok "shipped legacy hash equals sha256 of the previous predicate type"
+else
+  bad "shipped legacy hash equals sha256 of the previous predicate type" "no entry matches"
+fi
+
 # --- ambiguous (12): two verified items disagreeing on the claim -------
 f="$(fixture ambiguous \
   "$(statement "$digest" "$commit" main 1 "$policy" "$recent")" \

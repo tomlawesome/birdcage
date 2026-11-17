@@ -54,6 +54,33 @@ expect 0 "binary file is skipped"
 printf 'zanzibar v1\n' > "$repo/go.sum"; track
 expect 0 "lockfile is skipped"
 
+# --- history mode: every blob reachable from any ref, not just the tree ---
+run() { # run <want> <name> <args...>; sets $out
+  local want="$1" name="$2" got=0; shift 2
+  out="$(python3 "$guard" --hashes "$work/hashes" --allow "$work/allow" "$@" 2>&1)" || got=$?
+  if [ "$got" = "$want" ]; then echo "ok   $name"; pass=$((pass+1))
+  else echo "FAIL $name: exit $got, want $want"; echo "$out" | sed 's/^/       /'; fail=$((fail+1)); fi
+}
+hrepo="$work/hist"; mkdir "$hrepo"
+git -C "$hrepo" init -q
+git -C "$hrepo" config user.email t@example.invalid; git -C "$hrepo" config user.name t
+echo 'nothing personal' > "$hrepo/a.txt"; git -C "$hrepo" add -A; git -C "$hrepo" commit -qm one
+run 0 "history mode: clean history passes" --root "$hrepo" --history
+echo 'written by zanzibar' > "$hrepo/old.txt"; git -C "$hrepo" add -A; git -C "$hrepo" commit -qm two
+git -C "$hrepo" branch side
+git -C "$hrepo" rm -qf old.txt; git -C "$hrepo" commit -qm three
+run 0 "tree mode ignores a word already removed from the tree" --root "$hrepo"
+run 1 "history mode finds a word removed in a later commit" --root "$hrepo" --history
+if echo "$out" | grep -qi zanzibar; then echo "FAIL history output leaks the word"; fail=$((fail+1)); else echo "ok   history output omits the word"; pass=$((pass+1)); fi
+if echo "$out" | grep -q 'old.txt'; then echo "ok   history output names the path"; pass=$((pass+1)); else echo "FAIL history output lacks path"; fail=$((fail+1)); fi
+
+# --- config errors exit 2 ---
+printf '%s\n' "$h" > "$work/nosalt"
+run 2 "missing salt line exits 2" --root "$repo" --hashes "$work/nosalt"
+run 2 "missing hashes file exits 2" --root "$repo" --hashes "$work/absent"
+if echo "$out" | grep -q Traceback; then echo "FAIL missing hashes file prints a traceback"; fail=$((fail+1)); else echo "ok   missing hashes file prints no traceback"; pass=$((pass+1)); fi
+if [ -n "$out" ]; then echo "ok   missing hashes file gives a message"; pass=$((pass+1)); else echo "FAIL missing hashes file gives no message"; fail=$((fail+1)); fi
+
 echo "fixtures: $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
 
