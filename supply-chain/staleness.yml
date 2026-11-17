@@ -83,14 +83,13 @@ accepted:
     held-at: "7.2.0"
     reason: "8.0 measures colour difference in OKLab (HyAB), not YIQ, so every pixel-gate threshold reads differently (the dashboard gate read 6.7% against a 1.326% baseline); staying keeps a dev-only tool a major behind; move once the thresholds are re-measured under 8 as their own change (#211, inventory row 110)"
     review-by: "2026-12-27"
-  # The row id carries the digest: scripts/staleness-check.py splits an
-  # image reference on its last ':', so a `tag@sha256:...` pin becomes
-  # repo `docker:29.6.2-cli@sha256`, "tag" = the digest, and the row can
-  # only read unverifiable. This entry names the id the script produces
-  # today; a digest bump changes the id and ends the entry, as intended.
-  # The dind image is not a top-level *_IMAGE variable and gets no row.
-  - pin: "image:docker:29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144"
-    held-at: "be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144"
+  # A digest bump changes held-at and ends these entries, as intended.
+  - pin: "image:docker:29.6.2-cli"
+    held-at: "29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144"
+    reason: "docker 29.6.2 cli/dind held on purpose: 29.7.0 and later can fail pushes (moby/moby#53293, open on 2026-11-17); staying misses 29.7-29.10 fixes in CI-only images; move when that issue closes or a release names the fix (inventory row 197)"
+    review-by: "2026-12-27"
+  - pin: "image:docker:29.6.2-dind"
+    held-at: "29.6.2-dind@sha256:bfec1f5159c63a81ca6fdedbd81404d2c0e16378ed0feec3bb3fbf3998847659"
     reason: "docker 29.6.2 cli/dind held on purpose: 29.7.0 and later can fail pushes (moby/moby#53293, open on 2026-11-17); staying misses 29.7-29.10 fixes in CI-only images; move when that issue closes or a release names the fix (inventory row 197)"
     review-by: "2026-12-27"
 
