@@ -146,6 +146,31 @@ chmod 0600 /var/lib/birdcage/ca/ca-key.pem
 chmod 0644 /var/lib/birdcage/ca/ca.pem
 ```
 
+## Keeping old findings: `BIRDCAGE_FINDINGS_RETENTION_DAYS`
+
+A scanner agent posts its current vulnerability findings with every scan.
+A finding that stops being reported is marked fixed and kept for a while,
+so you can see what was there. `BIRDCAGE_FINDINGS_RETENTION_DAYS` says for
+how long.
+
+| Value | What happens |
+| --- | --- |
+| unset or empty | 90 days. |
+| a whole number, such as `30` | Fixed findings last seen more than that many days ago are removed, and so are scan records received more than that many days ago. |
+| `0` | Nothing is removed by age: fixed findings and scan records are kept for good. |
+| anything else (negative, a fraction, `90d`, text) | Birdcage refuses to start and names the setting. |
+
+The removal happens each time an agent posts a scan, for that agent only.
+
+- Open and accepted findings are never removed by age, however old.
+- The agent's newest scan record is always kept, even when it is older
+  than the window, so the dashboard can still say whether its last scan
+  worked.
+- Each scan that removes something writes one audit log entry giving how
+  many fixed findings and scan records went, not one per finding.
+- Whatever this is set to, including `0`, no agent keeps more than 50,000
+  fixed findings: past that, the oldest fixed ones are removed.
+
 ## Dashboard TLS
 
 Issue #63, owner decision: "we must never allow the GUI to run without

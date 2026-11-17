@@ -294,6 +294,18 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// DefaultFindingsRetentionDays is how many days fixed findings and scan
+// snapshots are kept when no WithFindingsRetentionDays option is given
+// (issue #213; BIRDCAGE_FINDINGS_RETENTION_DAYS's default).
+const DefaultFindingsRetentionDays = 90
+
+// WithFindingsRetentionDays sets how many days a scan ingest keeps the
+// agent's fixed findings and scan snapshots (store.PruneByAge); 0 keeps
+// them for good. Negative values are refused at start-up, before this.
+func WithFindingsRetentionDays(days int) Option {
+	return func(h *ingestHandler) { h.findingsRetentionDays = days }
+}
+
 // noRunAudit is storeScan's "nothing to audit" result: a timer scan, or
 // a run that passed or failed.
 const noRunAudit store.ScanRunOutcome = -1
@@ -355,6 +367,13 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 		if err := store.ApplyFindingSnapshot(ctx, tx, snapshot.CanaryID, observed, snapshot.ReceivedAt); err != nil {
 			return noRunAudit, fmt.Errorf("apply finding snapshot: %w", err)
 		}
+	}
+	// Issue #213: remove this agent's fixed findings and snapshots older
+	// than the retention window, in this transaction. Run for a failed
+	// scan too, so an agent that only ever fails does not grow its
+	// snapshot history without bound.
+	if _, err := store.PruneByAge(ctx, tx, snapshot.CanaryID, h.findingsRetentionDays, snapshot.ReceivedAt); err != nil {
+		return noRunAudit, fmt.Errorf("prune by age: %w", err)
 	}
 	// Decision 10: a snapshot whose refresh failed marks the node
 	// failing (from birdcage's clock, if not already); an ok snapshot
