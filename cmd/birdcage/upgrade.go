@@ -13,6 +13,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/ca"
+	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/runcmd"
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/term"
@@ -73,11 +74,16 @@ func startupUpgradeConfig(cfg startupConfig, birdcageCA *ca.CA, getenv func(stri
 // reading the same environment the server started from: the same
 // ingest, enrolment and advertise settings, the same CA directory, the
 // same image overrides. Unlike the server, which answers "no command"
-// quietly, it says what is missing.
-func cliUpgradeConfig(getenv func(string) string) (api.UpgradeConfig, error) {
+// quietly, it says what is missing. database is checked, as at start-up,
+// before the CA loads, so a lost CA is refused rather than replaced
+// (#214).
+func cliUpgradeConfig(ctx context.Context, getenv func(string) string, database *db.DB) (api.UpgradeConfig, error) {
 	caDir := getenv(envCADir)
 	if caDir == "" {
 		caDir = defaultCADir
+	}
+	if err := checkCAContinuity(ctx, caDir, database); err != nil {
+		return api.UpgradeConfig{}, err
 	}
 	birdcageCA, _, err := ca.Load(caDir, nil)
 	if err != nil {
@@ -124,11 +130,6 @@ func runAgentUpgradeCommand(args []string, getenv func(string) string, stdout, s
 	}
 	agentID := args[0]
 
-	cfg, err := cliUpgradeConfig(getenv)
-	if err != nil {
-		return err
-	}
-
 	database, err := openCanaryDB()
 	if err != nil {
 		return err
@@ -136,6 +137,11 @@ func runAgentUpgradeCommand(args []string, getenv func(string) string, stdout, s
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
+	cfg, err := cliUpgradeConfig(ctx, getenv, database)
+	if err != nil {
+		return err
+	}
+
 	in, err := api.UpgradeInputFor(ctx, database, cfg, agentID)
 	if err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {
