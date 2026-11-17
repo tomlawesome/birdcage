@@ -127,7 +127,11 @@ fetch_verified_attestations() {
   # ATTESTATION_DOWNLOAD_MAX_BYTES is refused rather than parsed. A refused
   # download ends legacy discovery only; the current type's result stands.
   local dl="${outfile}.download" max="${ATTESTATION_DOWNLOAD_MAX_BYTES:-10485760}"
-  timeout "${ATTESTATION_DOWNLOAD_TIMEOUT:-300}" \
+  local limit="${ATTESTATION_DOWNLOAD_TIMEOUT:-300}"
+  # 0 would mean no limit to timeout(1); only a positive whole number counts.
+  case "$limit" in ''|*[!0-9]*) limit=300 ;; esac
+  [ "$((10#$limit))" -ge 1 ] || limit=300
+  timeout "$limit" \
     "$cosign_cmd" download attestation "$subject" 2>/dev/null \
     | head -c "$((max + 1))" > "$dl" || true
   if [ "$(wc -c < "$dl")" -gt "$max" ]; then

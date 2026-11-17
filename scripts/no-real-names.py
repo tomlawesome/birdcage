@@ -7,7 +7,8 @@ Only hashes are committed, never the words. Output gives counts and paths,
 never the matched word.
 
 --history scans every blob reachable from any ref (all branches and tags,
-not only the checked-out tree) and reports path and commit for each hit,\nat every path the blob appears at that is not allowlisted.
+not only the checked-out tree) and reports path and commit for each hit,
+at every path the blob appears at that is not allowlisted.
 Files over MAX_BYTES are skipped and counted, never read.
 
 usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--history]
