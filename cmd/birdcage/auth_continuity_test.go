@@ -328,3 +328,32 @@ func TestAuthResetConfirmedLetsStartUpPastTheGuard(t *testing.T) {
 		}
 	})
 }
+
+// The reset acknowledgement is not a standing off switch: once the first
+// admin exists it is spent, so a later empty accounts store on a used
+// database is refused again.
+func TestAuthResetAcknowledgementIsSpentOnceAnAccountExists(t *testing.T) {
+	e := newAuthResetEnv(t)
+	e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164") })
+	if code, out := runAuthReset(t, "reset\n"); code != 0 {
+		t.Fatalf("auth reset exit = %d, want 0; output %q", code, out)
+	}
+	if err := e.guard(t); err != nil {
+		t.Fatalf("guard right after reset = %v, want nil", err)
+	}
+
+	e.seed(t, func(d *db.DB) { seedAccount(t, d) }) // the first admin registers
+	if err := e.guard(t); err != nil {              // a start with an account present
+		t.Fatalf("guard with the first admin present = %v, want nil", err)
+	}
+
+	// The accounts are lost again (a botched restore over a used database).
+	e.seed(t, func(d *db.DB) {
+		if _, err := d.Exec(`DELETE FROM auth_documents WHERE name = 'accounts'`); err != nil {
+			t.Fatalf("empty the accounts store: %v", err)
+		}
+	})
+	if err := e.guard(t); err == nil {
+		t.Error("guard = nil after the accounts were emptied again, want a refusal: the reset must not stay in force")
+	}
+}
