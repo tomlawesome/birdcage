@@ -84,7 +84,7 @@ base() {
 import re, sys
 p, ident, issuer = sys.argv[1:4]
 s = open(p).read()
-s = re.sub(r"cosign verify \\\n  --certificate-identity-regexp [^\n]*\n  --certificate-oidc-issuer [^\n]*\n",
+s = re.sub(r"cosign verify \\\n  --certificate-identity(?:-regexp)? [^\n]*\n  --certificate-oidc-issuer [^\n]*\n",
            f"cosign verify \\\n  --certificate-identity {ident} \\\n  --certificate-oidc-issuer {issuer} \\\n", s)
 open(p, "w").write(s)
 PY
