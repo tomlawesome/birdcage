@@ -156,16 +156,19 @@ how long.
 | Value | What happens |
 | --- | --- |
 | unset or empty | 90 days. |
-| a whole number, such as `30` | Fixed findings last seen more than that many days ago are removed, and so are scan records received more than that many days ago. |
+| a whole number, such as `30` | Fixed findings last seen more than that many days ago are removed, and so are scan records received more than that many days ago. Write digits only. |
 | `0` | Nothing is removed by age: fixed findings and scan records are kept for good. |
-| anything else (negative, a fraction, `90d`, text) | Birdcage refuses to start and names the setting. |
+| over `366000` (about 1,000 years) | Treated like `0`: everything is kept. |
+| anything else (negative, signed such as `+30`, a fraction, `90d`, text) | Birdcage refuses to start and names the setting. |
 
 The removal happens each time an agent posts a scan, for that agent only.
 
 - Open and accepted findings are never removed by age, however old.
-- The agent's newest scan record is always kept, even when it is older
-  than the window, so the dashboard can still say whether its last scan
-  worked.
+- The agent's newest scan record, and its newest successful one, are
+  always kept, even when older than the window, so the dashboard can
+  still say whether its last scan worked and when one last did.
+- A scan record whose time cannot be read is left in place and named in
+  the log; it never stops a scan from being stored.
 - Each scan that removes something writes one audit log entry giving how
   many fixed findings and scan records went, not one per finding.
 - Whatever this is set to, including `0`, no agent keeps more than 50,000

@@ -405,8 +405,9 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 
 	cfg.findingsRetentionDays = ingest.DefaultFindingsRetentionDays
 	if raw := getenv(envFindingsRetentionDays); raw != "" {
+		// Digits only: Atoi alone would take "+30" (and "-0").
 		days, err := strconv.Atoi(raw)
-		if err != nil || days < 0 {
+		if err != nil || days < 0 || strings.TrimLeft(raw, "0123456789") != "" {
 			return startupConfig{}, &startupError{configLog, fmt.Sprintf("%s=%q must be a whole number of days, 0 or more (0 keeps fixed findings and scan snapshots for good); refusing to start", envFindingsRetentionDays, raw)}
 		}
 		cfg.findingsRetentionDays = days

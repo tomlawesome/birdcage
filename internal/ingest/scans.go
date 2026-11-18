@@ -315,12 +315,17 @@ const noRunAudit store.ScanRunOutcome = -1
 // -- ADR-0010 decision 5/the issue's own "a dropped or failed scan ...
 // never resolves anything"), and, when runID is set, settles the run it
 // answers -- all in one transaction (ADR-0012 decision 4). It also
-// records the node's database refresh state from the snapshot. It
-// returns store.ScanRunUnknown (nothing stored; the caller refuses the
-// request) or store.ScanRunStale (stored, settles nothing) for the
+// records the node's database refresh state from the snapshot, and
+// removes the agent's fixed findings and snapshots older than the
+// retention window (store.PruneByAge, issue #213), ok or failed scan.
+// It returns store.ScanRunUnknown (nothing stored; the caller refuses
+// the request) or store.ScanRunStale (stored, settles nothing) for the
 // caller to audit after the transaction is over, and noRunAudit
-// otherwise. Audits are written after commit: SQLite serves one
-// connection, which the open transaction holds.
+// otherwise. Those run audits go through the coalescer, which writes
+// with the database handle, so they wait for commit: SQLite serves one
+// connection, which the open transaction holds. The retention audit
+// row is the exception: PruneByAge writes it on the transaction
+// itself, so it commits, or rolls back, with the removal it records.
 func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, findings []ingestScanFinding, runID string, now time.Time) (store.ScanRunOutcome, error) {
 	ctx := r.Context()
 	tx, err := h.db.Begin(ctx)

@@ -8,9 +8,9 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -31,15 +31,12 @@ type PruneCounts struct {
 // nothing, the same as 0.
 const maxRetentionDays = 366000
 
-// pruneDeleteChunk bounds how many ids one DELETE ... IN (...) names.
-const pruneDeleteChunk = 500
-
 // PruneByAge removes agentID's fixed findings whose last_seen, and scan
 // snapshots whose received_at, is more than retentionDays days before
 // now. Open and accepted findings are never removed by age. The agent's
-// newest snapshot is always kept, so FindingsStaleness can still say
-// whether the last scan failed; an ok snapshot older than the window
-// does go, so LastOKScan reads as none once no ok scan is left in it.
+// newest snapshot and its newest ok snapshot are always kept, so
+// FindingsStaleness still reads Stale and LastOKScan after any window.
+// A snapshot whose received_at does not parse is skipped and logged.
 // retentionDays 0 removes nothing; negative is an error.
 // A run that removes anything writes one audit row with both counts.
 //
@@ -71,8 +68,7 @@ func PruneByAge(ctx context.Context, conn findingConn, agentID string, retention
 	if now.IsZero() {
 		return PruneCounts{}, errors.New("store: PruneByAge: now is zero; callers must set it")
 	}
-	cutoffAt := now.UTC().AddDate(0, 0, -retentionDays).Truncate(time.Second)
-	cutoff := cutoffAt.Format("2006-01-02T15:04:05")
+	cutoff := now.UTC().AddDate(0, 0, -retentionDays).Format("2006-01-02T15:04:05")
 
 	var counts PruneCounts
 	res, err := conn.ExecContext(ctx, `
@@ -85,7 +81,7 @@ func PruneByAge(ctx context.Context, conn findingConn, agentID string, retention
 		return PruneCounts{}, fmt.Errorf("count pruned fixed findings for %s: %w", agentID, err)
 	}
 
-	if counts.Snapshots, err = pruneOldSnapshots(ctx, conn, agentID, cutoff, cutoffAt); err != nil {
+	if counts.Snapshots, err = pruneOldSnapshots(ctx, conn, agentID, cutoff); err != nil {
 		return PruneCounts{}, err
 	}
 
@@ -106,106 +102,184 @@ func PruneByAge(ctx context.Context, conn findingConn, agentID string, retention
 }
 
 // pruneOldSnapshots removes agentID's snapshots received before cutoff
-// (a whole-second prefix; see PruneByAge), keeping the agent's newest
-// snapshot when it is among them. Only the old rows are read, so a run
-// reads what accumulated since the last one.
-func pruneOldSnapshots(ctx context.Context, conn findingConn, agentID, cutoff string, cutoffAt time.Time) (int64, error) {
-	type snap struct {
-		id         int64
-		receivedAt time.Time
-	}
-	rows, err := conn.QueryContext(ctx, `
-		SELECT id, received_at FROM scan_snapshots WHERE agent_id = ? AND received_at < ?`,
-		agentID, cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("query old scan snapshots for %s: %w", agentID, err)
-	}
-	var old []snap
-	for rows.Next() {
-		var (
-			s   snap
-			raw string
-		)
-		if err := rows.Scan(&s.id, &raw); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("scan old scan snapshot: %w", err)
-		}
-		if s.receivedAt, err = time.Parse(receivedAtLayout, raw); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("parse scan snapshot received_at %q: %w", raw, err)
-		}
-		old = append(old, s)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, fmt.Errorf("iterate old scan snapshots for %s: %w", agentID, err)
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close old scan snapshots for %s: %w", agentID, err)
-	}
-	if len(old) == 0 {
-		return 0, nil
-	}
-
-	hasNewer, err := snapshotExistsSince(ctx, conn, agentID, cutoffAt)
+// (a whole-second prefix; see PruneByAge). It keeps the agent's newest
+// snapshot and its newest ok snapshot when either is among the old rows:
+// FindingsStaleness reads Stale from the first and LastOKScan from the
+// second, and losing the second would make an agent that has only failed
+// for longer than the window read as never having scanned at all.
+//
+// Old rows are read pruneBatch at a time, in (received_at, id) order
+// from the index, and each batch's removals are deleted before the next
+// read, so neither memory nor one statement grows with the backlog. The
+// candidates for keeping are tracked across batches: one displaced by a
+// newer row is deleted with the batch that displaced it.
+//
+// A row whose received_at does not parse is skipped and logged, never
+// removed and never an error: one bad row must not block every later
+// scan from the agent.
+func pruneOldSnapshots(ctx context.Context, conn findingConn, agentID, cutoff string) (int64, error) {
+	hasNewer, err := snapshotSince(ctx, conn, agentID, cutoff, false)
 	if err != nil {
 		return 0, err
 	}
-	// Newest by parsed received_at, then id: never by SQL order on the
-	// stored text (FindingsStaleness picks the same row the same way).
-	keep := int64(-1)
-	if !hasNewer {
-		newest := old[0]
-		for _, s := range old[1:] {
-			if s.receivedAt.After(newest.receivedAt) || (s.receivedAt.Equal(newest.receivedAt) && s.id > newest.id) {
-				newest = s
+	hasNewerOK, err := snapshotSince(ctx, conn, agentID, cutoff, true)
+	if err != nil {
+		return 0, err
+	}
+
+	// keepNewest and keepOK are the old rows currently held back; nil
+	// when a row in the window already plays that part.
+	var keepNewest, keepOK *snapRow
+	held := func(id int64) bool {
+		return (keepNewest != nil && keepNewest.id == id) || (keepOK != nil && keepOK.id == id)
+	}
+
+	var removed int64
+	cursorAt, cursorID := "", int64(0)
+	for {
+		batch, err := readSnapshotBatch(ctx, conn, agentID, `received_at < ?`, []any{cutoff}, cursorAt, cursorID)
+		if err != nil {
+			return 0, err
+		}
+		var doomed []any
+		for _, r := range batch.rows {
+			var displaced []*snapRow
+			if !hasNewer && (keepNewest == nil || r.newerThan(*keepNewest)) {
+				displaced = append(displaced, keepNewest)
+				keepNewest = &r
+			}
+			if !hasNewerOK && r.ok && (keepOK == nil || r.newerThan(*keepOK)) {
+				displaced = append(displaced, keepOK)
+				keepOK = &r
+			}
+			for _, d := range displaced {
+				if d != nil && !held(d.id) {
+					doomed = append(doomed, d.id)
+				}
+			}
+			if !held(r.id) {
+				doomed = append(doomed, r.id)
 			}
 		}
-		keep = newest.id
-	}
-
-	var doomed []any
-	for _, s := range old {
-		if s.id != keep {
-			doomed = append(doomed, s.id)
+		if len(doomed) > 0 {
+			args := append([]any{agentID}, doomed...)
+			res, err := conn.ExecContext(ctx,
+				`DELETE FROM scan_snapshots WHERE agent_id = ? AND id IN (`+placeholders(len(doomed))+`)`, args...)
+			if err != nil {
+				return 0, fmt.Errorf("prune old scan snapshots for %s: %w", agentID, err)
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return 0, fmt.Errorf("count pruned scan snapshots for %s: %w", agentID, err)
+			}
+			removed += n
 		}
-	}
-	var removed int64
-	for start := 0; start < len(doomed); start += pruneDeleteChunk {
-		end := min(start+pruneDeleteChunk, len(doomed))
-		chunk := doomed[start:end]
-		args := append([]any{agentID}, chunk...)
-		res, err := conn.ExecContext(ctx,
-			`DELETE FROM scan_snapshots WHERE agent_id = ? AND id IN (`+placeholders(len(chunk))+`)`, args...)
-		if err != nil {
-			return 0, fmt.Errorf("prune old scan snapshots for %s: %w", agentID, err)
+		if !batch.more {
+			return removed, nil
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return 0, fmt.Errorf("count pruned scan snapshots for %s: %w", agentID, err)
-		}
-		removed += n
+		cursorAt, cursorID = batch.lastAt, batch.lastID
 	}
-	return removed, nil
 }
 
-// snapshotExistsSince reports whether agentID has a snapshot received at
-// or after cutoff. MAX on the leading-agent_id index is one index probe
-// on both engines; the value is then compared in Go, by parsed time.
-func snapshotExistsSince(ctx context.Context, conn findingConn, agentID string, cutoff time.Time) (bool, error) {
-	var latest sql.NullString
-	if err := conn.QueryRowContext(ctx, `
-		SELECT MAX(received_at) FROM scan_snapshots WHERE agent_id = ?`, agentID).Scan(&latest); err != nil {
-		return false, fmt.Errorf("query latest scan snapshot for %s: %w", agentID, err)
+// pruneBatch is how many snapshot rows one retention read returns. Each
+// batch's deletes also name at most this many ids (two displaced keep
+// candidates can add to a batch, so the bound is pruneBatch+2).
+const pruneBatch = 500
+
+// snapRow is one parsed scan_snapshots row as retention reads it.
+type snapRow struct {
+	id int64
+	at time.Time
+	ok bool
+}
+
+// newerThan orders by parsed received_at, then id: never by SQL order on
+// the stored text (FindingsStaleness picks the same rows the same way).
+func (r snapRow) newerThan(o snapRow) bool {
+	if !r.at.Equal(o.at) {
+		return r.at.After(o.at)
 	}
-	if !latest.Valid {
-		return false, nil
-	}
-	t, err := time.Parse(receivedAtLayout, latest.String)
+	return r.id > o.id
+}
+
+// snapshotBatch is one keyset page: the rows that parsed, whether a
+// full page came back, and the cursor (raw text, id) to continue from.
+type snapshotBatch struct {
+	rows   []snapRow
+	more   bool
+	lastAt string
+	lastID int64
+}
+
+// readSnapshotBatch reads up to pruneBatch of agentID's snapshots
+// matching where, after the (received_at, id) cursor, in that order.
+// Unparseable received_at values are logged and left out of rows.
+func readSnapshotBatch(ctx context.Context, conn findingConn, agentID, where string, whereArgs []any, cursorAt string, cursorID int64) (snapshotBatch, error) {
+	args := append([]any{agentID}, whereArgs...)
+	args = append(args, cursorAt, cursorAt, cursorID, pruneBatch)
+	rows, err := conn.QueryContext(ctx, `
+		SELECT id, received_at, status FROM scan_snapshots
+		WHERE agent_id = ? AND `+where+` AND (received_at > ? OR (received_at = ? AND id > ?))
+		ORDER BY received_at, id LIMIT ?`, args...)
 	if err != nil {
-		return false, fmt.Errorf("parse scan snapshot received_at %q: %w", latest.String, err)
+		return snapshotBatch{}, fmt.Errorf("query scan snapshots for retention, %s: %w", agentID, err)
 	}
-	return !t.Before(cutoff), nil
+	var b snapshotBatch
+	n := 0
+	for rows.Next() {
+		var (
+			id          int64
+			raw, status string
+		)
+		if err := rows.Scan(&id, &raw, &status); err != nil {
+			_ = rows.Close()
+			return snapshotBatch{}, fmt.Errorf("scan scan snapshot for retention: %w", err)
+		}
+		n++
+		b.lastAt, b.lastID = raw, id
+		at, err := time.Parse(receivedAtLayout, raw)
+		if err != nil {
+			slog.Warn("store: retention skipped a scan snapshot whose received_at does not parse",
+				"agent", agentID, "snapshot_id", id, "received_at", raw, "err", err)
+			continue
+		}
+		b.rows = append(b.rows, snapRow{id: id, at: at, ok: status == ScanStatusOK})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return snapshotBatch{}, fmt.Errorf("iterate scan snapshots for retention, %s: %w", agentID, err)
+	}
+	if err := rows.Close(); err != nil {
+		return snapshotBatch{}, fmt.Errorf("close scan snapshots for retention, %s: %w", agentID, err)
+	}
+	b.more = n == pruneBatch
+	return b, nil
+}
+
+// snapshotSince reports whether agentID has a snapshot (an ok one when
+// okOnly) received at or after cutoff whose received_at parses. It reads
+// up from the cutoff in index order and normally stops at the first row;
+// an unparseable value (which can sort anywhere) is skipped.
+func snapshotSince(ctx context.Context, conn findingConn, agentID, cutoff string, okOnly bool) (bool, error) {
+	where, whereArgs := `received_at >= ?`, []any{cutoff}
+	if okOnly {
+		where += ` AND status = ?`
+		whereArgs = append(whereArgs, ScanStatusOK)
+	}
+	cursorAt, cursorID := "", int64(0)
+	for {
+		b, err := readSnapshotBatch(ctx, conn, agentID, where, whereArgs, cursorAt, cursorID)
+		if err != nil {
+			return false, err
+		}
+		if len(b.rows) > 0 {
+			return true, nil
+		}
+		if !b.more {
+			return false, nil
+		}
+		cursorAt, cursorID = b.lastAt, b.lastID
+	}
 }
 
 // placeholders returns n comma-separated "?" for an IN list; db.DB and
