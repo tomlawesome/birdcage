@@ -17,9 +17,14 @@
 #   GITHUB_REPOSITORY  owner/name of the repository holding countersign.yml
 #   GITHUB_API_URL     optional, default https://api.github.com
 #
+# It does NOT test Deployments write (approving a waiting run), which would
+# need a real deployment to probe; that stays a documented rule
+# (docs/releasing.md).
+#
 # Exit 0: no Actions write (dispatch answered 403 or 404).
 # Exit 1: the credential can dispatch (422), or a run may have started (2xx).
-# Exit 2: inconclusive -- bad input, the ref lookup failed or found the ref,
+# Exit 2: inconclusive -- bad input (GITHUB_API_URL not https://), the
+#         workflow not found (anything but 200), the ref lookup failed or found the ref,
 #         a network failure, or any other answer (401, 5xx, ...). Never a pass.
 #
 # Run it after any change to a GitHub credential or its token scopes.
@@ -31,6 +36,9 @@ die() { echo "check-no-actions-write: $*" >&2; exit 2; }
 repo="${GITHUB_REPOSITORY:-}"
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "GITHUB_REPOSITORY must be owner/name"
 api="${GITHUB_API_URL:-https://api.github.com}"
+# The credential goes in a header: never to anything but TLS.
+case "$api" in https://?*) ;; *) die "GITHUB_API_URL must start with https://" ;; esac
+api="${api%/}"
 command -v curl >/dev/null || die "curl is required"
 
 # A ref that no branch here would ever be called: prefix, time and 128
@@ -55,7 +63,13 @@ call() {
   printf '%s' "$status"
 }
 
-# 1. The ref must be provably absent. Branches and tags share the name
+# 1. The workflow must be visible (200). A wrong repository name or a
+#    renamed workflow answers 404 to the dispatch too, which would otherwise
+#    read as a pass.
+status="$(call GET "$api/repos/$repo/actions/workflows/countersign.yml")"
+[ "$status" = 200 ] || die "inconclusive: looking up countersign.yml on $repo answered HTTP $status (want 200); wrong repository, renamed workflow, or no read access -- nothing was dispatched"
+
+# 2. The ref must be provably absent. Branches and tags share the name
 #    space a dispatch resolves, so both are looked up.
 for kind in heads tags; do
   status="$(call GET "$api/repos/$repo/git/ref/$kind/$ref")"
@@ -66,7 +80,7 @@ for kind in heads tags; do
   esac
 done
 
-# 2. The dispatch.
+# 3. The dispatch.
 status="$(call POST "$api/repos/$repo/actions/workflows/countersign.yml/dispatches" "{\"ref\":\"$ref\"}")"
 case "$status" in
   403|404)

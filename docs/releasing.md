@@ -235,11 +235,15 @@ And the keyless countersignature, which is in the public transparency log:
 cosign verify \
   --certificate-identity https://github.com/tomlawesome/birdcage/.github/workflows/countersign.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-trigger workflow_dispatch \
   ghcr.io/tomlawesome/birdcage@sha256:<digest>
 ```
 
-The identity is exact: that one workflow file, run from `main`, and the
-GitHub Actions issuer. Never loosen it to an identity regular expression
+The identity is exact: that one workflow file, run from `main`, started
+by hand (`workflow_dispatch`), and the GitHub Actions issuer. The trigger
+pin matters: a `countersign.yml` pushed to `main` with an `on: push`
+trigger and no `environment:` would carry the same identity, and only the
+trigger tells its signature apart. Never loosen it to an identity regular expression
 over the repository: that accepts a signature from any workflow on any
 ref, which is exactly what a rogue branch pushed to the mirror would
 produce (#169). `scripts/verify-identity-pin.test.sh` fails if any verify
@@ -313,6 +317,23 @@ the environment, never an argument:
 GITHUB_REPOSITORY=tomlawesome/birdcage GH_TOKEN="$(cat /path/to/token-file)" \
   scripts/check-no-actions-write.sh
 ```
+
+No credential on the runner host, or readable by a CI job, may hold
+**Deployments write** either, for the same reason as Actions write: a token
+with Deployments write can approve the run waiting in the `countersign`
+Environment through the API, so no human is involved. Never grant either
+permission to such a credential.
+
+`scripts/check-no-actions-write.sh` does not test Deployments write.
+Probing it would mean creating or approving a real deployment, which is a
+side effect this check must never have, so Deployments write stays a rule
+you keep when making a token, not something the script proves.
+
+No token on the owner's account (classic or fine-grained) may hold
+**contents** write or **workflows** write, and such a token must never be stored on
+the runner host or in GitLab: such a token acts as you, so it passes the
+`main` ruleset's admin bypass (setup step 7) and can change
+`countersign.yml` on GitHub without you.
 
 Run it after **any** change to a GitHub credential or its token scopes, for
 each credential above, and record the result on the issue for that change.
@@ -440,13 +461,37 @@ A ruleset closes that by making workflow changes on GitHub need you:
    **Active**. Tick **Restrict file paths**, add `.github/**`. Bypass list:
    add **Repository admin** only, so the mirror key cannot push a change
    under `.github/` and you push one by hand after reviewing it. Create.
-4. If push rulesets are not offered, say so on #169: the remaining
-   protection is steps 5 and 6 (an untrusted run still waits for your
-   approval in the Environment, which admits only `main`).
+4. If push rulesets are not offered, say so on #169. Without one, steps 5
+   and 6 do **not** protect the workflow: whoever holds the mirror key can
+   push a changed `countersign.yml` to `main` (drop `environment:`, change
+   what it signs), and your next dispatch runs that version with the
+   pinned identity and trigger. Until it is closed, read the history of
+   `.github/workflows/countersign.yml` on GitHub's `main` before every
+   dispatch.
 
-Afterwards a normal mirror push of `dev`, `preview` and `main` must still
-succeed; a mirror push that touches `.github/` is refused, and you push
-that commit to GitHub yourself.
+A normal mirror push of `dev`, `preview` and `main` still succeeds. A failed
+`sync:mirror-to-github` job is expected whenever the commits being mirrored
+change a workflow file under `.github/`: the push ruleset refuses that push
+for every branch and tag, by design. Review the change, then push it to
+GitHub by hand from a trusted checkout of the GitLab branch, as yourself
+(an admin, so the ruleset's bypass applies), and re-run the job:
+
+```sh
+git fetch gitlab dev
+git push git@github.com:tomlawesome/birdcage.git refs/remotes/gitlab/dev:refs/heads/dev
+```
+
+Swap `dev` for `preview` or `main` as needed; the re-run job then finds
+GitHub up to date and passes.
+
+### The one-person gap
+
+The Environment's only required reviewer is you, and you are also the one
+who dispatches the run: you both start and approve it. That is one person,
+not the SLSA two-person rule; the approval step protects against a host
+credential or a pushed workflow, not against your own account being
+compromised. Adding a second approver account as a required reviewer would
+close it; whether to do that is your open choice (#169).
 
 ## What has not been run yet
 
