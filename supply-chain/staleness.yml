@@ -93,6 +93,8 @@ accepted:
     reason: "docker 29.6.2 cli/dind held on purpose: 29.7.0 and later can fail pushes (moby/moby#53293, open on 2026-11-17); staying misses 29.7-29.10 fixes in CI-only images; move when that issue closes or a release names the fix (inventory row 197)"
     review-by: "2026-12-27"
 
+# An `unchecked:` entry needs pin, reason and review-by, like a hold: one
+# without a date, or past it, excuses nothing (#215).
 unchecked: []
 
 alpine-branch:
@@ -104,3 +106,8 @@ alpine-branch:
   build/e2e-dns/Dockerfile: v3.24
   build/e2e-mail/Dockerfile: v3.24
   build/e2e-smbclient/Dockerfile: v3.24
+  # build/birdcage/Dockerfile's apk pin (git~=2.54) is in its
+  # `FROM golang:<ver>-alpine` stage, whose base is Alpine 3.24 (read from
+  # that pinned image's /etc/alpine-release, 3.24.4, 2026-11-17; #215).
+  # Bump this when the golang image's Alpine moves.
+  build/birdcage/Dockerfile: v3.24

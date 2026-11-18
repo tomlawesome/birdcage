@@ -289,10 +289,72 @@ policy:promotion-hop:
       esac
 
 # ---------------------------------------------------------------------------
+# RELEASE READINESS (#215): the check that runs first on every promotion MR
+# into preview or main. The name is fixed by the global delivery rule
+# ("Release-readiness check, first on every promotion"); not `release:`,
+# which scripts/ci-release-guard.py owns. It runs every check in
+# scripts/release-readiness.py and lists every failure with what to do.
+#
+# Every other job of a promotion pipeline waits on it through
+# `needs: [{job: release_readiness, optional: true}]`. Optional: on any
+# pipeline without this job (MRs into dev or a batch, pushes, the push that
+# lands on dev) the need is ignored, so nothing else slows. Only four cheap
+# jobs start beside it: policy:promotion-hop, policy:release-record,
+# lint:gitleaks and lint:flake-check (#215 D6). scripts/release-readiness.test.sh
+# fails if any other job gains `needs: []`.
+#
+# Exit 3 (something unchecked) fails the job like 1: CI never leaves a
+# check unchecked. BIRDCAGE_READ_TOKEN (Reporter, read_api only; masked and
+# protected) lets it read the review issues; the script never prints it.
+# GIT_DEPTH 0: the record's guide-commit and sign-off are checked in history.
+# A green job never replaces the owner's approval of the promotion.
+# ---------------------------------------------------------------------------
+release_readiness:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  needs: []
+  interruptible: true
+  timeout: 10m
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - !reference [.dev-landing, job_rule]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+    - when: never
+  before_script:
+    - apk add --no-cache bash curl git >/dev/null
+    # Pinned (#215 design check): supply-chain/dependency-inventory.md row 202.
+    - pip install --quiet pyyaml==6.0.3
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+  script:
+    - git fetch --quiet --tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+    - python3 scripts/release-readiness.py --target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --remote origin
+
+# The fence on the one release/vX.Y.Z MR per release (#215, owner answer
+# 41b; the exception is recorded centrally): straight into dev, changing only
+# CHANGELOG.md and docs/releases/v<VERSION>.md. Starts at once (seconds).
+policy:release-record:
+  stage: lint
+  image: $PYTHON_ALPINE_IMAGE
+  needs: []
+  interruptible: true
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\//'
+  before_script:
+    - apk add --no-cache git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+  script:
+    - git fetch --quiet origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+    - python3 scripts/release-record-policy.py --remote origin
+
+# ---------------------------------------------------------------------------
 # LINT
 # ---------------------------------------------------------------------------
 lint:go:
   stage: lint
+  needs: [{job: release_readiness, optional: true}]
   image: $GOLANG_IMAGE
   <<: [*static_gate, *git_safe]
   script:
@@ -311,6 +373,7 @@ lint:go:
 # Ported from licence.yml; the script is host independent by design.
 lint:licences:
   stage: lint
+  needs: [{job: release_readiness, optional: true}]
   image: $GOLANG_IMAGE
   <<: [*static_gate, *git_safe]
   script:
@@ -331,6 +394,7 @@ lint:licences:
 # shape for the same reason, on a python image with *gate alone.
 lint:licences-python:
   stage: lint
+  needs: [{job: release_readiness, optional: true}]
   image: $PYTHON_SLIM_IMAGE
   <<: *static_gate
   script:
@@ -353,7 +417,7 @@ lint:ci:
   image: $PYTHON_ALPINE_IMAGE
   extends: .dev-landing-check
   <<: *fast_gate
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   before_script:
     - apk add --no-cache bash >/dev/null
     - pip install --quiet pyyaml
@@ -403,7 +467,7 @@ lint:scripts:
   stage: lint
   image: $PYTHON_ALPINE_IMAGE
   <<: *static_gate
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   before_script:
     # curl is not padding: ensure-cosign.sh downloads with it, and its suite
     # drives that path against a file:// fixture. Without curl the suite goes
@@ -460,7 +524,7 @@ test:release-scripts:
   image: $DOCKER_CLI_IMAGE
   extends: .dev-landing-check
   <<: *fast_gate
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   before_script:
     - apk add --no-cache $RELEASE_APK_PACKAGES git >/dev/null
   script:
@@ -490,6 +554,7 @@ test:release-scripts:
 
 lint:agent-deps:
   stage: lint
+  needs: [{job: release_readiness, optional: true}]
   image: $GOLANG_IMAGE
   extends: .dev-landing-check
   <<: [*fast_gate, *git_safe]
@@ -524,6 +589,7 @@ lint:agent-deps:
 # exits 3; this project's own tree, run the same way, exits 0.
 lint:govulncheck:
   stage: lint
+  needs: [{job: release_readiness, optional: true}]
   image: $GOLANG_IMAGE
   <<: *static_gate
   script:
@@ -620,7 +686,7 @@ test:frontend:
   # pipeline cannot show the effect. See docs/ci-hops.md, which explains
   # why quoting a figure from a single run is a mistake. The dependency
   # was simply never real.
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   cache:
     key:
       files:
@@ -696,7 +762,7 @@ test:go:
   stage: test
   image: $GOLANG_IMAGE
   <<: [*gate, *git_safe]
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   services:
     - name: $POSTGRES18_IMAGE
       alias: postgres
@@ -804,7 +870,7 @@ test:go:quarantine:
   stage: test
   image: $GOLANG_IMAGE
   <<: [*gate, *git_safe]
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   allow_failure: true
   script:
     - |
@@ -1019,7 +1085,7 @@ build:images:
   stage: test
   extends: .dind
   <<: *gate
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   before_script:
     - *dind_ready
     # bash for scripts/release-version.sh; docker:29-cli ships busybox ash.
@@ -2376,7 +2442,7 @@ e2e:postgres-requires-tls:
   stage: e2e
   extends: .dind
   <<: *gate
-  needs: []
+  needs: [{job: release_readiness, optional: true}]
   variables:
     E2E_PREFIX: birdcage-e2e-tls-refusal-$CI_JOB_ID
   before_script:

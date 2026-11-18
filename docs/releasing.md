@@ -170,13 +170,20 @@ server that issued it, so it names a version rather than a moving tag.
 
 ## Cutting a release
 
+Before step 1, the release record and the change-log rename reach `dev`
+(next section), and a local run of `scripts/release-readiness.py --target
+preview` shows no FAIL. The gate itself is CI's `release_readiness` job on
+the promotion MR (see "The readiness check").
+
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
    runs the full gate, then the release jobs: the six published images are pushed under
    `sha-<commit>`, attested, given the `preview` tag on GitLab, and mirrored
    to the `preview` tag on GHCR.
 2. Do the production-like manual test on `preview`. That test is the point
    of the hop, not a formality.
-3. `preview` -> `main` by merge request.
+3. `preview` -> `main` by merge request, with a `Step 2: <what the test
+   covered and its result>` line near the top of its description, once a
+   local `scripts/release-readiness.py --target main` shows no FAIL.
 4. **Press the button.** On `main`'s pipeline, play the manual
    `release:promote` job. That press is what authorises the release.
 
@@ -198,16 +205,110 @@ server that issued it, so it names a version rather than a moving tag.
    start it and only the owner can approve it: no GitHub credential on the
    shared runner host has Actions write, and the Environment's required
    reviewer is you (#169; setup steps 5 to 7).
+6. Back-merge after each promotion, or the next one reports `BEHIND`.
+   After the release, complete the GitLab Release that `release:gitlab`
+   created: add the step 2 evidence, the `release:promote` job, the six
+   digests and the link to the countersigning run. `docs/releases/` is not
+   touched again.
 
 Two buttons for a complete release: one on GitLab, one on GitHub. The
 second cannot be folded into the first without giving away what it is
 for — a second signer that fires from the same trigger as the first stops
 nothing.
-6. Back-merge after each promotion, or the next one reports `BEHIND`.
 
 Evidence expires after seven days, so step 1 to step 4 has to happen inside
 a week. If it does not, merge to `preview` again and start from a fresh
 build — that is the rule working, not a nuisance to route around.
+
+## The release record
+
+One record per release, `docs/releases/vX.Y.Z.md`, copied from
+[TEMPLATE.md](releases/TEMPLATE.md), which says what each line must hold.
+It names the guide it followed (`guide-commit:`, `guide-blob:`), the
+review issues that cover the release, one line per step above, and a
+name-only `Signed-off-by:`. The sign-off is a DCO-style attestation, not a
+signature. It is committed once, before the `preview` leg, and the
+readiness check re-verifies it on both legs: present in the tree being
+promoted, matching this guide (#215, D9). Editing this guide after the
+record is written fails the check until the record is redone.
+
+How it reaches `dev`: features go through a batch, but the record and the
+change-log rename go through **one `release/vX.Y.Z` merge request per
+release**, straight into `dev` (central exception, owner answer 41b):
+
+- cut `release/v<VERSION>` from `dev` once the batch carrying the release
+  has merged and its review issue is closed;
+- add `docs/releases/v<VERSION>.md` and, in `CHANGELOG.md`, rename
+  `## [Unreleased]` to `## [<VERSION>] - <date>` with a new empty
+  Unreleased above it. Nothing else: `policy:release-record` fails the MR
+  if the target is not `dev`, the name does not match `VERSION` on `dev`,
+  or it changes any other path. A `VERSION` bump goes through a batch;
+- green pipeline and inline review as for any MR into `dev`, then open
+  `dev` -> `preview`. A mistake found after it merges is a question for the
+  owner, not a second release MR.
+
+The change log is renamed before `preview`, not at the `main` promotion,
+because `main`'s tree must equal `preview`'s and any commit to `preview`
+rebuilds the images.
+
+**Hotfix leg.** A `hotfix/<name>` branch is not `dev`, so the exception
+does not apply: the record, the change-log section and the `VERSION` bump
+are commits on the hotfix branch itself.
+
+## The readiness check
+
+`release_readiness` runs first on every merge request into `preview` or
+`main`, and only there; every other job of a promotion
+pipeline waits on it, except the cheap policy and secret-scan jobs
+(`policy:promotion-hop`, `policy:release-record`, `lint:gitleaks`,
+`lint:flake-check`). It checks what the repository and registries can
+show: the version is valid, new and not burnt; the change log; the review
+issues are closed; the source contains `preview`; the hop; pins are current
+(a pin counts as behind once any newer version is 14 days old; this
+fails on the `preview` leg and is information only on `main`); apk pins can build;
+`cosign.pub`; the release record; on the `main` leg also that the merge
+lands `preview` exactly, `preview`'s images are published and their
+evidence has at least a day left, and the step 2 line. It prints one line
+per check and a `Failed:` list saying what to do.
+
+How a pin is dated: its date is its oldest newer version's, since that is
+when it fell behind. npm and PyPI dates come from the registry itself. Go
+modules, GitHub Actions and the checksum-pinned tools are dated from the
+Git host's tag list: the oldest tag newer than the pin, then that tag's
+commit date. The Go proxy is never used for dates. Docker Hub dates are not
+used either, because an official image's tag date moves on every rebuild:
+a newer image version always counts as newer. A version with no date
+found counts as old.
+
+Run it locally before opening a promotion:
+
+```sh
+scripts/release-readiness.py --target preview
+scripts/release-readiness.py --target main --description-file mr.txt
+```
+
+Exit 0 passed, 1 something failed, 3 nothing failed but something could
+not be checked. A local run exits 3 as a rule, and that is expected: the
+fixture-digest row needs the CI registry login, which a workstation does
+not have, and a missing `glab` login or a registry timeout does the same.
+A local 3 decides nothing; read it for FAIL lines and leave the rest to CI.
+The gate is CI's `release_readiness` run on the promotion MR, where
+anything unchecked is a failure. A green run never replaces the owner's
+approval.
+
+### What it cannot check, and who does it
+
+| step | who |
+| --- | --- |
+| Run `scripts/release-readiness.py --target preview` locally; open the `release/vX.Y.Z` MR into `dev`; after it merges, run it again and open `dev` -> `preview` once it shows no FAIL; CI's `release_readiness` is the gate | agent |
+| Before `preview` -> `main`: run `--target main`, write `Step 2: ...` in the first 2,700 characters of the MR description, open once it shows no FAIL | agent |
+| Approve each promotion MR (a green job never replaces it) | owner |
+| Step 2, the production-like test on `preview` (#168) | owner |
+| Review the change log against the issues merged since the last release | inline reviewer of the `release/vX.Y.Z` MR; the owner's approval of the promotion covers it |
+| Step 4 `release:promote`; step 5 countersign on GitHub (#169) | owner |
+| Step 6 back-merges, then completing the GitLab Release (step 2 evidence, promote job, six digests, countersign link) | agent |
+| Setup still valid: GHCR token unexpired, cosign key on the host, `birdcage-signing` runner online, GHCR packages name the repository, `BIRDCAGE_READ_TOKEN` unexpired | owner (protected variables and runners are invisible to the job and to agents) |
+| Delete burnt registry tags (#171) | owner |
 
 ## Verifying a published image
 
@@ -493,36 +594,45 @@ credential or a pushed workflow, not against your own account being
 compromised. Adding a second approver account as a required reviewer would
 close it; whether to do that is your open choice (#169).
 
+### 8. The read-only token for the readiness check
+
+`release_readiness` checks that the review issues named in the release
+record are closed. The project is private and `CI_JOB_TOKEN` cannot read
+issues, so it needs a token of its own (#215, owner answer 40a):
+
+- a project access token on this project, role **Reporter**, scope
+  **`read_api` only**, expiry as you choose;
+- stored as the CI/CD variable `BIRDCAGE_READ_TOKEN`, **masked and
+  protected**. Never in a file or the repository. The job prints only
+  "review token: present" or "absent", never the value;
+- `hotfix/*` is not protected, so a hotfix promotion's pipeline does not
+  get the token and the review check fails. Protect `hotfix/*` (developers
+  may push), or the hotfix leg needs that check done another way.
+
+Whether a protected variable reaches a merge-request pipeline from a
+protected branch is confirmed on the first promotion MR: the job's
+"review token" line shows it.
+
 ## What has not been run yet
 
-The whole path above has never executed. The scripts have unit tests — 100
-or so across `scripts/*.test.sh`, every refusal ground covered — but every
-one of them stubs the registry, so no call has ever been made to a real
-registry. In particular, the functions that resolve a tag to a digest have
-never seen a registry's actual output.
+v0.1.0 (2026-10-03) went through this path on GitLab: `release:gitlab`,
+acting with `CI_JOB_TOKEN`, created the protected `v0.1.0` tag and its
+release on this CE instance, so the tag-push fallback was not needed.
+Not confirmed here, so still worth watching on the next cut:
 
-Four things in particular to watch on the first cut:
-
-- Whether `release-cli`, acting with `CI_JOB_TOKEN`, can create a
-  protected `v*` tag on this CE instance. If it cannot, the fallback is
-  the tag-push flow this replaced — you push the annotated tag by hand and
-  the rest is unchanged.
 - What `release:gitlab` does on a `main` pipeline where nobody presses the
   button. It should end up skipped once the pipeline finishes, since the
   job it needs was never played. If it instead sits pending and holds the
   pipeline open, give it its own `when: manual` and press both.
 - Whether the attestation reaches GHCR intact. The first real run
   (pipeline 1900) found no `.att` tag: cosign v3 had written the bundle as a
-  referrer under `sha256-<digest-hex>` instead (#162). Copying that tag with
-  `imagetools create --prefer-index=false`, then `cosign verify-attestation`
-  against the copy, passed on a local registry; GitLab to GHCR has not yet
-  run. If `cosign verify-attestation` finds nothing on the GHCR side, this
-  is the first place to look.
-- Setup step 4 above (each GHCR package page names the repository) is unchecked
-  until the first `preview` merge actually pushes through
-  `release:mirror-preview` and the countersigning workflow is run against
-  it.
-
-A release path that has never run is not a release path. The
-first `preview` merge after the setup above is the run that proves it, and
-until then this document describes an intention.
+  referrer under `sha256-<digest-hex>` instead (#162). If
+  `cosign verify-attestation` finds nothing on the GHCR side, this is the
+  first place to look.
+- Setup step 4 (each GHCR package page names the repository) until the
+  countersigning workflow has run against a mirror pushed after #167.
+- The readiness check (#215) has run only against stubs and locally. Its CI
+  paths -- the read token, the registry token flow from inside the job, the
+  evidence check with a throwaway Docker config -- run for the first time on
+  the first promotion MR after it lands. Until it passes there, read its
+  output rather than trusting its exit code alone.
