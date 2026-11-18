@@ -75,10 +75,10 @@ release-readiness check passes 10 and 300).
 --json PATH writes every row as JSON for scripts/release-readiness.py:
 id, pinned, latest, status, note, and where known `released` (the date
 the oldest version newer than the pin was published -- read from the
-registry's own answer, or for Go and GitHub tags from the Git host's commit
-date, never from the Go proxy; a row dated only by its latest version
-carries a date only when that is the pin's next patch; an image row never
-carries one, since Docker Hub's tag date moves on every rebuild), `file` (the Dockerfile of an apk pin), `credential_missing`
+registry's own answer, or for Go modules, actions and tools from the Git host's tag list (the
+oldest tag newer than the pin, then that tag's commit date), never from
+the Go proxy; an image row never carries one, since Docker Hub's tag date
+moves on every rebuild), `file` (the Dockerfile of an apk pin), `credential_missing`
 (unverifiable only because a CI credential is absent) and `hold` (a hold
 in supply-chain/staleness.yml that names this row but no longer applies:
 {lapsed: expired | held-at-differs, review_by, held_at}). A release date
@@ -192,13 +192,19 @@ def _read_capped(resp, limit=None):
     return body
 
 
+def _origin(url):
+    """(scheme, host[:port]): a change of either, an https -> http downgrade
+    included, is another origin, and credentials do not follow."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
 class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
     """Follow redirects, dropping credential headers when the host changes."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and (urllib.parse.urlsplit(newurl).netloc.lower()
-                                != urllib.parse.urlsplit(req.full_url).netloc.lower()):
+        if new is not None and _origin(newurl) != _origin(req.full_url):
             for name in list(new.headers):
                 if name.lower() in _CREDENTIAL_HEADERS:
                     del new.headers[name]
@@ -823,8 +829,7 @@ def check_go_modules(root, fetcher):
             else:
                 row = Row(row_id, pinned, latest, "behind")
                 repo, _ = owner_module_repo_and_major(module)
-                if is_patch_successor(pinned, latest):
-                    row.date_hint = ("github_commit", f"tomlawesome/{repo}", latest)
+                row.date_hint = ("github_tags", f"tomlawesome/{repo}", "", pinned, latest)
                 rows.append(row)
             continue
         latest, err = go_proxy_latest(fetcher, module)
@@ -846,13 +851,11 @@ def check_go_modules(root, fetcher):
                 rows.append(Row(row_id, pinned, newest, "current"))
                 continue
             row = Row(row_id, pinned, newest, "behind")
-            if is_patch_successor(pinned, newest):
-                row.date_hint = go_module_git_tag(module, newest)
+            row.date_hint = go_module_tags_hint(module, pinned, newest)
             rows.append(row)
             continue
         row = Row(row_id, pinned, latest, "behind")
-        if is_patch_successor(pinned, latest):
-            row.date_hint = go_module_git_tag(module, latest)
+        row.date_hint = go_module_tags_hint(module, pinned, latest)
         rows.append(row)
     return rows
 
@@ -1459,8 +1462,8 @@ def _tool_row(row_id, pinned, latest, err, owner_repo=None):
     if latest == pinned:
         return Row(row_id, pinned, latest, "current")
     row = Row(row_id, pinned, latest, "behind")
-    if owner_repo and is_patch_successor(pinned, latest):
-        row.date_hint = ("github_release", owner_repo)
+    if owner_repo:
+        row.date_hint = ("github_tags", owner_repo, "", pinned, latest)
     return row
 
 
@@ -1499,8 +1502,7 @@ def check_actions(root, fetcher):
                 rows.append(Row(row_id, pinned_norm, latest_norm, "current"))
             else:
                 row = Row(row_id, pinned_norm, latest_norm, "behind")
-                if is_patch_successor(pinned_norm, latest_norm):
-                    row.date_hint = ("github_commit", owner_repo, latest)
+                row.date_hint = ("github_tags", owner_repo, "", pinned_norm, latest_norm)
                 rows.append(row)
     return rows
 
@@ -1748,6 +1750,12 @@ def release_date(fetcher, hint):
                f"{urllib.parse.quote(tag, safe='')}")
         ok, body, _ = fetcher.get(url, headers=github_headers())
         return _date_from(body, "commit.committer.date") if ok else None
+    if kind == "github_tags":
+        _, owner_repo, prefix, pinned, latest = hint
+        tag = oldest_newer_tag(fetcher, owner_repo, prefix, pinned, latest)
+        if tag is None:
+            return None
+        return release_date(fetcher, ("github_commit", owner_repo, tag))
     if kind == "github_release":
         url = f"https://api.github.com/repos/{hint[1]}/releases/latest"
         ok, body, _ = fetcher.get(url, headers=github_headers())
@@ -1794,15 +1802,50 @@ def oldest_newer_date(dates, pinned, latest):
     return min(found) if found else None
 
 
-def is_patch_successor(pinned, latest):
-    """True when latest is the next patch of pinned (1.2.3 -> 1.2.4), the one
-    case where latest is known to be the only newer version, so its date is
-    the oldest newer one's. Otherwise a row dated only by its latest version
-    carries no date: undated counts as old (#215, 49b)."""
-    a, _ = split_version(pinned.lstrip("v"))
-    b, _ = split_version(latest.lstrip("v"))
-    return (a is not None and b is not None and len(a) == len(b) == 3
-            and a[:2] == b[:2] and b[2] == a[2] + 1)
+def go_module_tags_hint(module, pinned, latest):
+    """("github_tags", owner/repo, tag prefix, pinned, latest) for a Go
+    module whose repository is on GitHub, or None: dated from the Git host's
+    tags, never the Go proxy."""
+    hint = go_module_git_tag(module, latest)
+    if hint is None:
+        return None
+    tag = hint[2]
+    return ("github_tags", hint[1], tag[: len(tag) - len(latest)], pinned, latest)
+
+
+def oldest_newer_tag(fetcher, owner_repo, prefix, pinned, latest):
+    """The oldest stable tag newer than `pinned`, up to `latest`, from the
+    Git host's tag list (one page of 100, newest first), or None."""
+    url = f"https://api.github.com/repos/{owner_repo}/tags?per_page=100"
+    ok, body, _ = fetcher.get(url, headers=github_headers())
+    if not ok:
+        return None
+    try:
+        names = [t["name"] for t in json.loads(body) if isinstance(t, dict)]
+    except Exception:  # noqa: BLE001
+        return None
+    lo, _ = split_version(pinned.lstrip("v"))
+    hi, _ = split_version(latest.lstrip("v"))
+    if lo is None or hi is None:
+        return None
+    # A package path inside a module (golang.org/x/vuln/cmd/govulncheck)
+    # has no tags of its own: fall back to shorter prefixes, then the root.
+    parts = [p for p in prefix.split("/") if p]
+    for cut in range(len(parts), -1, -1):
+        pre = "".join(p + "/" for p in parts[:cut])
+        found = []
+        for name in names:
+            if not name.startswith(pre):
+                continue
+            rest = name[len(pre):]
+            if not re.match(r"^v?\d+\.\d+\.\d+$", rest):
+                continue
+            nums, _ = split_version(rest.lstrip("v"))
+            if lo < nums <= hi:
+                found.append((nums, name))
+        if found:
+            return min(found)[1]
+    return None
 
 
 def add_release_dates(rows, fetcher):

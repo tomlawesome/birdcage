@@ -20,6 +20,13 @@ Usage:
                       is N days old (default 14, owner answer 49b); a newer
                       image: version always counts (Docker Hub dates move)
 
+Release dates (staleness-check): a pin's date is its oldest newer
+version's. npm and PyPI dates come from the registry; Go modules, actions
+and tools are dated from the Git host's tag list (the oldest newer tag's
+commit), and the Go proxy is never used for dates. Docker Hub dates are not
+used: a newer image version always counts as newer. A missing date counts
+as old.
+
 It runs every check, never stopping at the first failure, and prints one
 line per check -- `PASS|FAIL|UNCHECKED|INFO <id> <name>: <message>` --
 then a `Failed:` list repeating each FAIL with what to do.
@@ -108,13 +115,19 @@ def read_capped(resp, limit=MAX_BODY):
     return body
 
 
+def _origin(url):
+    """(scheme, host[:port]): a change of either, an https -> http downgrade
+    included, is another origin, and credentials do not follow."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
 class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
     """Follow redirects, but never carry a credential header to another host."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and (urllib.parse.urlsplit(newurl).netloc.lower()
-                                != urllib.parse.urlsplit(req.full_url).netloc.lower()):
+        if new is not None and _origin(newurl) != _origin(req.full_url):
             for bag in (new.headers, new.unredirected_hdrs):
                 for name in list(bag):
                     if name.lower() in _CREDENTIAL_HEADERS:

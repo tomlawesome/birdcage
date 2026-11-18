@@ -264,13 +264,21 @@ pipeline waits on it, except the cheap policy and secret-scan jobs
 `lint:flake-check`). It checks what the repository and registries can
 show: the version is valid, new and not burnt; the change log; the review
 issues are closed; the source contains `preview`; the hop; pins are current
-(a pin counts as behind once any newer version is 14 days old; a newer
-image version always counts, since Docker Hub's tag date moves on every
-rebuild; this fails on the `preview` leg and is information only on `main`); apk pins can build;
+(a pin counts as behind once any newer version is 14 days old; this
+fails on the `preview` leg and is information only on `main`); apk pins can build;
 `cosign.pub`; the release record; on the `main` leg also that the merge
 lands `preview` exactly, `preview`'s images are published and their
 evidence has at least a day left, and the step 2 line. It prints one line
 per check and a `Failed:` list saying what to do.
+
+How a pin is dated: its date is its oldest newer version's, since that is
+when it fell behind. npm and PyPI dates come from the registry itself. Go
+modules, GitHub Actions and the checksum-pinned tools are dated from the
+Git host's tag list: the oldest tag newer than the pin, then that tag's
+commit date. The Go proxy is never used for dates. Docker Hub dates are not
+used either, because an official image's tag date moves on every rebuild:
+a newer image version always counts as newer. A version with no date
+found counts as old.
 
 Run it locally before opening a promotion:
 
