@@ -79,8 +79,21 @@ func TestScanIngestRemovesOldFixedFindingsAndSnapshots(t *testing.T) {
 		if n := fixedFindingCount(t, database); n != 0 {
 			t.Errorf("fixed findings = %d, want 0 (all older than 90 days)", n)
 		}
-		if n := len(listScans(t, database)); n != 1 {
-			t.Errorf("snapshots = %d, want 1 (just the one just received)", n)
+		// The posted scan is stored as failed (its vulnerability DB is
+		// older than five days), so the agent's newest old ok snapshot is
+		// kept as well (note 63709): one ok, one failed.
+		snaps := listScans(t, database)
+		var ok, failed int
+		for _, s := range snaps {
+			switch s.Status {
+			case store.ScanStatusOK:
+				ok++
+			case store.ScanStatusFailed:
+				failed++
+			}
+		}
+		if len(snaps) != 2 || ok != 1 || failed != 1 {
+			t.Errorf("snapshots = %+v, want one ok (newest old) and one failed (just received)", snaps)
 		}
 		if n := auditCount(t, database, store.AuditActionRetentionPruned, "canary-a"); n != 1 {
 			t.Errorf("%s audit rows = %d, want 1", store.AuditActionRetentionPruned, n)

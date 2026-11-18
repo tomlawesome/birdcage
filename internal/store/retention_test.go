@@ -478,3 +478,31 @@ func TestPruneByAgeLargeSnapshotHistoryFullyPruned(t *testing.T) {
 		}
 	})
 }
+
+// The dashboard read FindingsStaleness must skip one unparseable
+// received_at row, as PruneByAge does, and answer from the rest.
+func TestFindingsStalenessSkipsUnparseableReceivedAt(t *testing.T) {
+	for _, bad := range []string{"2020-13-45T99:00:00Z", "not-a-time"} {
+		t.Run(bad, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				retentionAgent(t, database, "scanner-a")
+				okAt := retentionRecent
+				recordSnapshotAt(t, database, "scanner-a", okAt)
+				recordFailedSnapshotAt(t, database, "scanner-a", retentionRecent.Add(time.Hour))
+				recordSnapshotAt(t, database, "scanner-a", retentionOld)
+				if _, err := database.Exec(`UPDATE scan_snapshots SET received_at = ? WHERE agent_id = ? AND received_at = ?`,
+					bad, "scanner-a", retentionOld.UTC().Format(receivedAtLayout)); err != nil {
+					t.Fatalf("corrupt received_at: %v", err)
+				}
+				st, err := FindingsStaleness(context.Background(), database, "scanner-a")
+				if err != nil {
+					t.Fatalf("FindingsStaleness with one unparseable received_at = %v, want nil", err)
+				}
+				s := st["scanner-a"]
+				if s.LastOKScan == nil || !s.LastOKScan.Equal(okAt) || !s.Stale {
+					t.Errorf("status = %+v, want LastOKScan %v and Stale true from the parseable rows", s, okAt)
+				}
+			})
+		})
+	}
+}
