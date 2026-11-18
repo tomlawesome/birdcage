@@ -80,7 +80,42 @@ type usedHistory struct {
 	seed func(t *testing.T, d *db.DB)
 }
 
+// The two signals that "an account has existed" (note 63923): a settings
+// row accounts_initialised (written when user.register is recorded) or a
+// user.register audit row. Either one with zero accounts is a refusal.
+func seedInitialisedMarker(t *testing.T, d *db.DB) {
+	t.Helper()
+	if _, err := d.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`,
+		"accounts_initialised", "true", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert accounts_initialised: %v", err)
+	}
+}
+
+func seedAuditRow(t *testing.T, d *db.DB, action string) {
+	t.Helper()
+	if _, err := audit.Append(context.Background(), d, audit.Entry{
+		Action: action, Target: "erebus-admin", Reason: "r", TriggeredBy: "erebus-admin", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("audit.Append(%s): %v", action, err)
+	}
+}
+
+// seedUsed is a database with an account's history: the marker, plus a
+// canary the operator would lose a hold on.
+func seedUsed(t *testing.T, d *db.DB) {
+	t.Helper()
+	insertTestCanary(t, d, "canary-164")
+	seedInitialisedMarker(t, d)
+}
+
 var usedDatabaseHistories = []usedHistory{
+	{"the accounts_initialised marker", seedInitialisedMarker},
+	{"a user.register audit row", func(t *testing.T, d *db.DB) { seedAuditRow(t, d, "user.register") }},
+}
+
+// ordinaryFreshInstallHistories are events a fresh install produces before
+// its first admin: they must never count as "not new".
+var ordinaryFreshInstallHistories = []usedHistory{
 	{"a canary", func(t *testing.T, d *db.DB) { insertTestCanary(t, d, "canary-164") }},
 	{"a finding", func(t *testing.T, d *db.DB) {
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -89,13 +124,27 @@ var usedDatabaseHistories = []usedHistory{
 			t.Fatalf("insert finding: %v", err)
 		}
 	}},
-	{"an audit row", func(t *testing.T, d *db.DB) {
-		if _, err := audit.Append(context.Background(), d, audit.Entry{
-			Action: "test.event", Target: "t", Reason: "r", TriggeredBy: "tester", CreatedAt: time.Now().UTC(),
-		}); err != nil {
-			t.Fatalf("audit.Append: %v", err)
-		}
+	{"a failed sign-in", func(t *testing.T, d *db.DB) { seedAuditRow(t, d, "user.login_failed") }},
+	{"rate-limit hits", func(t *testing.T, d *db.DB) {
+		seedAuditRow(t, d, "user.login_failed")
+		seedAuditRow(t, d, "user.login_throttled")
 	}},
+}
+
+// startsAndPrintsSetupCode opens the sign-in service the way a start does
+// after the guard passes and expects exactly one setup code in its log.
+func startsAndPrintsSetupCode(t *testing.T, database *db.DB) {
+	t.Helper()
+	var logged bytes.Buffer
+	svc, err := auth.Open(t.Context(), database, auth.Config{Key: authTestKey()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	if err != nil {
+		t.Fatalf("auth.Open: %v", err)
+	}
+	defer svc.Close()
+	svc.ReleaseCodes()
+	if got := authSetupCodeLine.FindAllString(logged.String(), -1); len(got) != 1 {
+		t.Errorf("setup code lines after a normal start = %d, want 1; log:\n%s", len(got), logged.String())
+	}
 }
 
 func authCfg() startupConfig { return startupConfig{auth: auth.Config{Key: authTestKey()}} }
@@ -135,12 +184,74 @@ func TestCheckStartupAuthContinuityAllowsANewDatabase(t *testing.T) {
 		t.Errorf("fresh database: error = %v, want nil", err)
 	}
 	// A setting alone (an operator ran `settings set` before the first
-	// start) is not "in use": only canaries, agents, findings and audit rows count.
+	// start) is not "in use".
 	if err := store.SetSetting(context.Background(), database, store.SettingAdminApprovalAddress, "admin@example.net", time.Now().UTC()); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	if err := checkStartupAuthContinuity(context.Background(), authCfg(), database, discardLog()); err != nil {
 		t.Errorf("database with only a setting: error = %v, want nil", err)
+	}
+}
+
+// A fresh install restarting after ordinary pre-admin events starts
+// normally and prints a setup code.
+func TestCheckStartupAuthContinuityAllowsAFreshInstallAfterOrdinaryEvents(t *testing.T) {
+	for _, h := range ordinaryFreshInstallHistories {
+		t.Run(h.name, func(t *testing.T) {
+			database := openTestDB(t)
+			h.seed(t, database)
+			if err := checkStartupAuthContinuity(context.Background(), authCfg(), database, discardLog()); err != nil {
+				t.Fatalf("error = %v, want nil: this is an ordinary fresh install", err)
+			}
+			startsAndPrintsSetupCode(t, database)
+		})
+	}
+}
+
+// The CLI-only commands an operator runs before the first start (`agent
+// add`, `agent enrol`) leave audit rows and agents; the next start is
+// still a fresh install.
+func TestCheckStartupAuthContinuityAllowsAFreshInstallAfterCLIAddAndEnrol(t *testing.T) {
+	t.Setenv(envDBPath, testDBPath(t))
+	t.Setenv(envDatabaseURL, "")
+	t.Setenv(envAdvertiseHost, "203.0.113.10")
+	t.Setenv(envCADir, filepath.Join(t.TempDir(), "ca"))
+	enrolDBWithCert(t, false)
+	if _, err := captureStdout(t, func() error {
+		return runCanaryAdd([]string{"canary-add-164", "front desk", "office", "22,80"})
+	}); err != nil {
+		t.Fatalf("runCanaryAdd: %v", err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return runCanaryEnrol([]string{"--name", "scanner-1", "--lane", "front-door", "--kind", "scanner"})
+	}); err != nil {
+		t.Fatalf("runCanaryEnrol: %v", err)
+	}
+	database, err := openCanaryDB()
+	if err != nil {
+		t.Fatalf("openCanaryDB: %v", err)
+	}
+	defer closeCanaryDB(database)
+	if err := checkStartupAuthContinuity(context.Background(), authCfg(), database, discardLog()); err != nil {
+		t.Fatalf("after agent add and enrol: error = %v, want nil", err)
+	}
+	startsAndPrintsSetupCode(t, database)
+}
+
+// The marker is written outside auth_documents, so a restore that loses
+// that table (and with it every account) still leaves the guard armed.
+func TestCheckStartupAuthContinuityMarkerSurvivesLosingAuthDocuments(t *testing.T) {
+	database := openTestDB(t)
+	seedAccount(t, database) // registering records the marker and the audit row
+	if _, err := database.Exec(`DELETE FROM auth_documents`); err != nil {
+		t.Fatalf("lose auth_documents: %v", err)
+	}
+	if err := checkStartupAuthContinuity(context.Background(), authCfg(), database, discardLog()); err == nil {
+		t.Error("guard = nil after auth_documents was lost, want a refusal")
+	}
+	var n int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'accounts_initialised'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("accounts_initialised rows = %d (err %v), want 1 written by the first registration", n, err)
 	}
 }
 
@@ -233,7 +344,7 @@ func runAuthReset(t *testing.T, stdin string, args ...string) (int, string) {
 
 func TestAuthResetRefusesWhenAccountsExist(t *testing.T) {
 	e := newAuthResetEnv(t)
-	e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164"); seedAccount(t, d) })
+	e.seed(t, func(d *db.DB) { seedUsed(t, d); seedAccount(t, d) })
 
 	code, out := runAuthReset(t, "reset\n")
 	if code == 0 {
@@ -263,13 +374,31 @@ func TestAuthResetRefusesOnANewDatabase(t *testing.T) {
 	}
 }
 
+// A canary and a failed sign-in are an ordinary fresh install, not "in
+// use": there is nothing to reset.
+func TestAuthResetRefusesOnAFreshInstallWithOrdinaryHistory(t *testing.T) {
+	for _, h := range ordinaryFreshInstallHistories {
+		t.Run(h.name, func(t *testing.T) {
+			e := newAuthResetEnv(t)
+			e.seed(t, func(d *db.DB) { h.seed(t, d) })
+			code, out := runAuthReset(t, "reset\n")
+			if code == 0 || !strings.Contains(strings.ToLower(out), "nothing to reset") {
+				t.Errorf("exit = %d, output %q, want a non-zero exit saying there is nothing to reset", code, out)
+			}
+			if n := e.resetAudits(t); n != 0 {
+				t.Errorf("%d reset audit rows, want 0", n)
+			}
+		})
+	}
+}
+
 func TestAuthResetWrongConfirmationChangesNothing(t *testing.T) {
 	for name, input := range map[string]string{
 		"empty line": "\n", "EOF": "", "yes": "yes\n", "upper case": "RESET\n", "with extra": "reset now\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newAuthResetEnv(t)
-			e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164") })
+			e.seed(t, func(d *db.DB) { seedUsed(t, d) })
 
 			code, out := runAuthReset(t, input)
 			if code == 0 {
@@ -287,7 +416,7 @@ func TestAuthResetWrongConfirmationChangesNothing(t *testing.T) {
 
 func TestAuthResetPromptsForResetAndWarnsAboutAdmins(t *testing.T) {
 	e := newAuthResetEnv(t)
-	e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164") })
+	e.seed(t, func(d *db.DB) { seedUsed(t, d) })
 	_, out := runAuthReset(t, "no\n")
 	if !strings.Contains(out, "reset") {
 		t.Errorf("output %q, want it to tell the operator to type reset", out)
@@ -299,7 +428,7 @@ func TestAuthResetPromptsForResetAndWarnsAboutAdmins(t *testing.T) {
 
 func TestAuthResetConfirmedLetsStartUpPastTheGuard(t *testing.T) {
 	e := newAuthResetEnv(t)
-	e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164") })
+	e.seed(t, func(d *db.DB) { seedUsed(t, d) })
 	if err := e.guard(t); err == nil {
 		t.Fatal("precondition: guard should refuse before the reset")
 	}
@@ -334,7 +463,7 @@ func TestAuthResetConfirmedLetsStartUpPastTheGuard(t *testing.T) {
 // database is refused again.
 func TestAuthResetAcknowledgementIsSpentOnceAnAccountExists(t *testing.T) {
 	e := newAuthResetEnv(t)
-	e.seed(t, func(d *db.DB) { insertTestCanary(t, d, "canary-164") })
+	e.seed(t, func(d *db.DB) { seedUsed(t, d) })
 	if code, out := runAuthReset(t, "reset\n"); code != 0 {
 		t.Fatalf("auth reset exit = %d, want 0; output %q", code, out)
 	}
@@ -355,5 +484,64 @@ func TestAuthResetAcknowledgementIsSpentOnceAnAccountExists(t *testing.T) {
 	})
 	if err := e.guard(t); err == nil {
 		t.Error("guard = nil after the accounts were emptied again, want a refusal: the reset must not stay in force")
+	}
+}
+
+// endlessInput yields 'a' forever (up to limit bytes) and counts what was read.
+type endlessInput struct {
+	limit, read int
+}
+
+func (r *endlessInput) Read(p []byte) (int, error) {
+	if r.read >= r.limit {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > r.limit-r.read {
+		n = r.limit - r.read
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'a'
+	}
+	r.read += n
+	return n, nil
+}
+
+// maxConfirmationRead is the most a reset command may read for its one
+// confirmation word; the answer is `reset`, so anything near this is not it.
+const maxConfirmationRead = 64 << 10
+
+func TestAuthResetRefusesOverLongInputWithoutReadingItAll(t *testing.T) {
+	e := newAuthResetEnv(t)
+	e.seed(t, func(d *db.DB) { seedUsed(t, d) })
+	in := &endlessInput{limit: 64 << 20}
+	err := runAuth([]string{"reset"}, in, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("auth reset accepted 64 MiB of input with no newline, want a refusal")
+	}
+	if in.read > maxConfirmationRead {
+		t.Errorf("auth reset read %d bytes of stdin, want at most %d", in.read, maxConfirmationRead)
+	}
+	if n := e.resetAudits(t); n != 0 {
+		t.Errorf("%d reset audit rows after a refused reset, want 0", n)
+	}
+	if err := e.guard(t); err == nil {
+		t.Error("guard passes after an over-long answer, want it still refusing")
+	}
+}
+
+func TestCAResetRefusesOverLongInputWithoutReadingItAll(t *testing.T) {
+	e := newCAResetEnv(t)
+	e.enrolTwoAgents(t)
+	in := &endlessInput{limit: 64 << 20}
+	err := runCA([]string{"reset"}, in, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("ca reset accepted 64 MiB of input with no newline, want a refusal")
+	}
+	if in.read > maxConfirmationRead {
+		t.Errorf("ca reset read %d bytes of stdin, want at most %d", in.read, maxConfirmationRead)
+	}
+	if n := e.count(t, `SELECT COUNT(*) FROM client_certs`); n != 2 {
+		t.Errorf("client_certs = %d after a refused reset, want 2 untouched", n)
 	}
 }
