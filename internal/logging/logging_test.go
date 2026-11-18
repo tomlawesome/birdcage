@@ -265,7 +265,7 @@ func TestPrintableIsTermEscape(t *testing.T) {
 		"alice\x1b[2K\rroot",
 		"alice\x00",
 		"alice\u202eeslaf",
-		"tom@example.com",
+		"avery@example.com",
 		"日本語",
 		"",
 	}
@@ -308,7 +308,7 @@ func TestPrintableNeutralisesTerminalControlSequences(t *testing.T) {
 }
 
 func TestPrintableLeavesOrdinaryTextAlone(t *testing.T) {
-	for _, s := range []string{"alice", "tom@example.com", "José", "日本語", "a-b_c.d"} {
+	for _, s := range []string{"alice", "avery@example.com", "José", "日本語", "a-b_c.d"} {
 		if got := Printable(s); got != s {
 			t.Errorf("Printable(%q) = %q, want it unchanged", s, got)
 		}

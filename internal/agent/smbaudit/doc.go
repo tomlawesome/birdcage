@@ -22,7 +22,7 @@
 // `full_audit:success = close` and `debug prefix timestamp = yes`, so one
 // audit record is one line:
 //
-//	[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
+//	[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
 //
 // captured from a real smbclient against the real image on 2026-09-23,
 // not written from the documentation. Six fields after the debug header:
@@ -45,7 +45,7 @@
 // arrives as the openat operation, whose audit message carries an extra
 // "r"/"w" field ahead of the path:
 //
-//	root|172.21.0.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf
+//	root|203.0.113.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf
 //
 // A parse that reads by position would take "r" for the filename, which
 // is #78's note, finding 2. This package refuses that line: the field

@@ -60,8 +60,10 @@ const (
 // is Secure then, or when the public address is https (a TLS-terminating
 // proxy in front). offBoxAddr is the dashboard's TCP address when it is
 // not a loopback bind, empty otherwise; trusted proxies on such a
-// listener draw a warning.
-func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, offBoxAddr string, configLog *slog.Logger) (auth.Config, error) {
+// listener draw a warning. onUnixSocket is whether the dashboard listens on
+// a unix socket; with no trusted proxies set, a socket (a proxy is almost
+// certainly in front) draws a warning and a loopback listener an info line.
+func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, offBoxAddr string, onUnixSocket bool, configLog *slog.Logger) (auth.Config, error) {
 	cfg := auth.Config{DataDir: dataDir, SecureCookie: servesTLS}
 	refuse := func(format string, args ...any) (auth.Config, error) {
 		return auth.Config{}, &startupError{configLog, fmt.Sprintf(format, args...)}
@@ -118,6 +120,13 @@ func loadAuthConfig(getenv func(string) string, dataDir string, servesTLS bool, 
 		// that connects directly may name any client.
 		if offBoxAddr != "" && (len(proxies) > 0 || trustUnix) {
 			configLog.Warn(fmt.Sprintf("%s is set but the dashboard listens on %s: any peer in the list may name the client; make the listener reachable only from the proxy", envTrustedProxies, offBoxAddr))
+		}
+	} else if onUnixSocket || offBoxAddr == "" {
+		msg := fmt.Sprintf("%s is empty: every visitor shares one sign-in limit and audit address until it names the proxy (`unix` for a socket)", envTrustedProxies)
+		if onUnixSocket {
+			configLog.Warn(msg)
+		} else {
+			configLog.Info(msg)
 		}
 	}
 	cfg.ClientIPHeader = defaultClientIPHeader

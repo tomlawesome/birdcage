@@ -15,7 +15,7 @@ die() { echo "e2e-dns: $*" >&2; exit 1; }
 
 [ -s /dns/dkim.conf ] || die "/dns/dkim.conf is missing or empty -- nothing to publish"
 
-# eth0's address with its prefix length, e.g. 172.18.0.5/16. unbound
+# eth0's address with its prefix length, e.g. 192.0.2.5/24. unbound
 # listens on the address alone -- not 0.0.0.0 -- and answers only the
 # subnet it is on; everything else is refused before it is read.
 cidr="$(ip -o -4 addr show dev eth0 | awk '{print $4; exit}')"

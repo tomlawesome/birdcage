@@ -70,6 +70,9 @@ on their own listeners and never pass through the dashboard's sign-in.
    birdcage's port, and `BIRDCAGE_TRUSTED_PROXIES` is never set while the
    dashboard is also browsed directly. Start-up warns when it is set on a
    TCP listener that is not loopback.
+   Correction 2026-11-16: `BIRDCAGE_TRUSTED_PROXIES` also accepts a `unix`
+   entry, for a proxy that connects over the dashboard's unix socket
+   (internal/auth/clientip.go, docs/configuration.md).
 5. **Admin passkey (ruling 1, settles #180).** Required when
    `BIRDCAGE_PUBLIC_URL` is an https URL on a domain name and passkeys are
    wired; optional otherwise. `BIRDCAGE_AUTH_ADMIN_PASSKEY`

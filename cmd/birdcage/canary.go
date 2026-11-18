@@ -28,14 +28,7 @@ import (
 // precedence as the main server (main.go) so the CLI always points at the
 // same database a running birdcage instance would.
 func openCanaryDB() (*db.DB, error) {
-	databaseURL := os.Getenv(envDatabaseURL)
-	if databaseURL == "" {
-		databaseURL = os.Getenv(envDBPath)
-	}
-	if databaseURL == "" {
-		databaseURL = defaultDBPath
-	}
-	database, err := db.Open(databaseURL)
+	database, err := db.Open(canaryDatabaseURL())
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -46,6 +39,18 @@ func openCanaryDB() (*db.DB, error) {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	return database, nil
+}
+
+// canaryDatabaseURL is the database the CLI subcommands open:
+// DATABASE_URL, else BIRDCAGE_DB_PATH, else the default SQLite file.
+func canaryDatabaseURL() string {
+	if u := os.Getenv(envDatabaseURL); u != "" {
+		return u
+	}
+	if p := os.Getenv(envDBPath); p != "" {
+		return p
+	}
+	return defaultDBPath
 }
 
 func closeCanaryDB(database *db.DB) {
@@ -387,15 +392,6 @@ func runCanaryEnrol(args []string) error {
 		return fmt.Errorf("%s must be set to the address canaries reach this birdcage instance on", envAdvertiseHost)
 	}
 
-	caDir := os.Getenv(envCADir)
-	if caDir == "" {
-		caDir = defaultCADir
-	}
-	birdcageCA, _, err := ca.Load(caDir, nil)
-	if err != nil {
-		return fmt.Errorf("load CA (%s=%q): %w", envCADir, caDir, err)
-	}
-
 	enrolAddr := os.Getenv(envEnrolAddr)
 	if enrolAddr == "" {
 		enrolAddr = defaultEnrolAddr
@@ -405,6 +401,9 @@ func runCanaryEnrol(args []string) error {
 		return fmt.Errorf("%s=%q is not a valid address: %w", envEnrolAddr, enrolAddr, err)
 	}
 
+	// The database opens before the CA loads so checkCAContinuity can
+	// refuse to mint a replacement CA when certificates are already
+	// issued (#214); ca.Load would otherwise mint one silently.
 	database, err := openCanaryDB()
 	if err != nil {
 		return err
@@ -412,6 +411,18 @@ func runCanaryEnrol(args []string) error {
 	defer closeCanaryDB(database)
 
 	ctx := context.Background()
+	caDir := os.Getenv(envCADir)
+	if caDir == "" {
+		caDir = defaultCADir
+	}
+	if err := checkCAContinuity(ctx, caDir, database); err != nil {
+		return err
+	}
+	birdcageCA, _, err := ca.Load(caDir, nil)
+	if err != nil {
+		return fmt.Errorf("load CA (%s=%q): %w", envCADir, caDir, err)
+	}
+
 	if err := requireEnrolAddresses(ctx, database); err != nil {
 		return err
 	}

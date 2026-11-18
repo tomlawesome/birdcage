@@ -59,7 +59,7 @@ DEFAULT_POLICY_PATH = "supply-chain/action-pins.json"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 USES_LINE = re.compile(
-    r"^\s*(?:-\s+)?uses:\s*([^\s@'\"]+)@([0-9A-Fa-f]+)\s*(?:#\s*(\S.*?)\s*)?$"
+    r"^\s*(?:-\s+)?uses:\s*([^\s@'\"]+)@([^\s'\"#]+)\s*(?:#\s*(\S.*?)\s*)?$"
 )
 
 

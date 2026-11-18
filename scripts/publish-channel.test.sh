@@ -13,6 +13,9 @@
 # that a refusal stops before the tag is ever touched -- so those get their
 # own named assertions rather than being folded into one loop.
 set -euo pipefail
+# The policy reads $CI_REGISTRY, so pin a test registry here rather than
+# inherit the job's.
+export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/publish-channel.sh"
@@ -26,7 +29,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-repo="registry.tomlawson.io/ai/birdcage/birdcage"
+repo="registry.example.test/ai/birdcage/birdcage"
 digest="sha256:$(printf 'a%.0s' $(seq 64))"
 other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
 commit="$(printf 'b%.0s' $(seq 40))"

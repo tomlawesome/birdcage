@@ -21,6 +21,43 @@ import (
 // set would be a false partial all-clear.
 const scanMaxBodyBytes = 4 * 1024 * 1024
 
+// Bounds on one scan's content (issue #213): positive input validation
+// with per-field length limits and a per-request item cap (OWASP ASVS
+// V5.1.3/V5.1.4, CWE-770), batch.go's maxEventsPerBatch applied to scans.
+// The body cap alone still lets a few megabytes of tiny findings or one
+// huge field through. Over-limit is a 400 naming the count or field and
+// nothing is stored; never a truncation, for the same false-all-clear
+// reason scanMaxBodyBytes gives (and a cut target or vulnerability id
+// would merge distinct findings).
+const (
+	// maxFindingsPerScan is about three times the realistic worst: Grype
+	// on an unpatched distro's root finds tens to about 3,000 matches. A
+	// finding is 150-300 bytes of JSON, so the count bites before the
+	// body cap does.
+	maxFindingsPerScan = 10000
+	// maxMaskedPaths and maxMaskedPathLen (PATH_MAX) bound masked_paths.
+	maxMaskedPaths   = 256
+	maxMaskedPathLen = 4096
+)
+
+// findingFieldLimits is each finding field's byte limit, in check order,
+// keyed by its JSON name: npm names are at most 214 bytes with scope,
+// CVE and GHSA ids about 20 and distro advisories under 64, Grype
+// artifact types are short words.
+var findingFieldLimits = []struct {
+	name  string
+	limit int
+	value func(ingestScanFinding) string
+}{
+	{"target", 256, func(f ingestScanFinding) string { return f.Target }},
+	{"package", 256, func(f ingestScanFinding) string { return f.Package }},
+	{"version", 128, func(f ingestScanFinding) string { return f.Version }},
+	{"type", 64, func(f ingestScanFinding) string { return f.Type }},
+	{"vulnerability", 128, func(f ingestScanFinding) string { return f.Vulnerability }},
+	{"severity", 16, func(f ingestScanFinding) string { return f.Severity }},
+	{"fix_version", 128, func(f ingestScanFinding) string { return f.FixVersion }},
+}
+
 // ingestScanEngine identifies the scanner and vulnerability database
 // that produced a snapshot -- internal/scan.Engine's wire shape,
 // mirrored here deliberately rather than imported: this package must
@@ -98,9 +135,9 @@ type ingestScan struct {
 // registry. Fail-closed the same way handleHeartbeat is: an invalid
 // body is a 4xx and nothing is stored.
 //
-// Findings are validated and counted, never persisted -- migration
-// 0014's own comment and #109, which adds the store they will hang off
-// this table's id.
+// Findings are validated and counted here, then applied to #109's
+// findings store by storeScan (migration 0014's own comment; the store
+// hangs off this table's id).
 func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	tok, ok := canaryTokenFromContext(r.Context())
 	if !ok {
@@ -155,9 +192,17 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 			writeIngestError(w, http.StatusBadRequest, "engine name, version and db_built_at are required when status is ok")
 			return
 		}
+		if len(body.Findings) > maxFindingsPerScan {
+			h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("findings exceed %d", maxFindingsPerScan))
+			return
+		}
 		for i, f := range body.Findings {
 			if reason, ok := validateFinding(f); !ok {
 				writeIngestError(w, http.StatusBadRequest, fmt.Sprintf("finding %d: %s", i, reason))
+				return
+			}
+			if reason, ok := checkFindingBounds(f); !ok {
+				h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("finding %d: %s", i, reason))
 				return
 			}
 		}
@@ -187,7 +232,15 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(body.MaskedPaths) > maxMaskedPaths {
+		h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("masked_paths exceeds %d entries", maxMaskedPaths))
+		return
+	}
 	for i, p := range body.MaskedPaths {
+		if len(p) > maxMaskedPathLen {
+			h.refuseOversizeScan(w, r, tok.CanaryID, fmt.Sprintf("masked_paths[%d] exceeds %d bytes", i, maxMaskedPathLen))
+			return
+		}
 		if !strings.HasPrefix(p, "/") {
 			writeIngestError(w, http.StatusBadRequest, fmt.Sprintf("masked_paths[%d]: %q is not an absolute path", i, p))
 			return
@@ -241,6 +294,18 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// DefaultFindingsRetentionDays is how many days fixed findings and scan
+// snapshots are kept when no WithFindingsRetentionDays option is given
+// (issue #213; BIRDCAGE_FINDINGS_RETENTION_DAYS's default).
+const DefaultFindingsRetentionDays = 90
+
+// WithFindingsRetentionDays sets how many days a scan ingest keeps the
+// agent's fixed findings and scan snapshots (store.PruneByAge); 0 keeps
+// them for good. Negative values are refused at start-up, before this.
+func WithFindingsRetentionDays(days int) Option {
+	return func(h *ingestHandler) { h.findingsRetentionDays = days }
+}
+
 // noRunAudit is storeScan's "nothing to audit" result: a timer scan, or
 // a run that passed or failed.
 const noRunAudit store.ScanRunOutcome = -1
@@ -250,12 +315,17 @@ const noRunAudit store.ScanRunOutcome = -1
 // -- ADR-0010 decision 5/the issue's own "a dropped or failed scan ...
 // never resolves anything"), and, when runID is set, settles the run it
 // answers -- all in one transaction (ADR-0012 decision 4). It also
-// records the node's database refresh state from the snapshot. It
-// returns store.ScanRunUnknown (nothing stored; the caller refuses the
-// request) or store.ScanRunStale (stored, settles nothing) for the
+// records the node's database refresh state from the snapshot, and
+// removes the agent's fixed findings and snapshots older than the
+// retention window (store.PruneByAge, issue #213), ok or failed scan.
+// It returns store.ScanRunUnknown (nothing stored; the caller refuses
+// the request) or store.ScanRunStale (stored, settles nothing) for the
 // caller to audit after the transaction is over, and noRunAudit
-// otherwise. Audits are written after commit: SQLite serves one
-// connection, which the open transaction holds.
+// otherwise. Those run audits go through the coalescer, which writes
+// with the database handle, so they wait for commit: SQLite serves one
+// connection, which the open transaction holds. The retention audit
+// row is the exception: PruneByAge writes it on the transaction
+// itself, so it commits, or rolls back, with the removal it records.
 func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, findings []ingestScanFinding, runID string, now time.Time) (store.ScanRunOutcome, error) {
 	ctx := r.Context()
 	tx, err := h.db.Begin(ctx)
@@ -303,6 +373,13 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 			return noRunAudit, fmt.Errorf("apply finding snapshot: %w", err)
 		}
 	}
+	// Issue #213: remove this agent's fixed findings and snapshots older
+	// than the retention window, in this transaction. Run for a failed
+	// scan too, so an agent that only ever fails does not grow its
+	// snapshot history without bound.
+	if _, err := store.PruneByAge(ctx, tx, snapshot.CanaryID, h.findingsRetentionDays, snapshot.ReceivedAt); err != nil {
+		return noRunAudit, fmt.Errorf("prune by age: %w", err)
+	}
 	// Decision 10: a snapshot whose refresh failed marks the node
 	// failing (from birdcage's clock, if not already); an ok snapshot
 	// with a fresh refresh and no error clears it. A snapshot that says
@@ -322,6 +399,29 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 	}
 	committed = true
 	return result, nil
+}
+
+// refuseOversizeScan answers a scan that broke one of issue #213's
+// bounds: 400 with reason (the count or field name and its limit, never
+// the content), a warning log line, and a scan.refused_oversize audit
+// row through the coalescer, so a stolen or buggy token is visible to
+// the operator without a flood of rows.
+func (h *ingestHandler) refuseOversizeScan(w http.ResponseWriter, r *http.Request, canaryID, reason string) {
+	slog.Warn("ingest: scan refused, over a size limit", "canary", canaryID, "limit", reason)
+	recordCoalesced(r.Context(), h.db, h.now, h.coalescer, canaryID, "scan.refused_oversize",
+		"scan refused, nothing stored: "+reason, "refusals")
+	writeIngestError(w, http.StatusBadRequest, reason)
+}
+
+// checkFindingBounds checks f's fields against findingFieldLimits; the
+// reason names the first field over its limit.
+func checkFindingBounds(f ingestScanFinding) (reason string, ok bool) {
+	for _, b := range findingFieldLimits {
+		if len(b.value(f)) > b.limit {
+			return fmt.Sprintf("%s exceeds %d bytes", b.name, b.limit), false
+		}
+	}
+	return "", true
 }
 
 // truncate cuts s to at most n bytes.

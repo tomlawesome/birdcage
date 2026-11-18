@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/store"
 	"github.com/tomlawesome/birdcage/internal/stream"
 	"github.com/tomlawesome/birdcage/internal/tlsconfig"
+	"github.com/tomlawesome/birdcage/internal/tlssniff"
 	"github.com/tomlawesome/birdcage/web"
 )
 
@@ -203,6 +207,35 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage ca reset [--backup-taken]` (cmd/birdcage/ca_reset.go) is
+	// #213's deliberate way back from a lost CA with no backup, which
+	// checkStartupCAContinuity below otherwise refuses forever. Exits
+	// immediately like the others.
+	if len(args) > 1 && args[1] == "ca" {
+		caLog := logging.New("ca")
+		if err := runCA(args[2:], os.Stdin, stdout, os.Stderr); err != nil {
+			if !errors.Is(err, errCAResetDeclined) {
+				caLog.Error(err.Error())
+			}
+			return true, 1
+		}
+		return true, 0
+	}
+
+	// `birdcage auth reset` (cmd/birdcage/auth_reset.go) is #164's
+	// deliberate way past checkStartupAuthContinuity when the accounts are
+	// lost for good on a database in use. Exits immediately like the others.
+	if len(args) > 1 && args[1] == "auth" {
+		authLog := logging.New("auth")
+		if err := runAuth(args[2:], os.Stdin, stdout, os.Stderr); err != nil {
+			if !errors.Is(err, errAuthResetDeclined) {
+				authLog.Error(err.Error())
+			}
+			return true, 1
+		}
+		return true, 0
+	}
+
 	// `birdcage crowdsec add <ip> --reason "<why>"` (cmd/birdcage/
 	// crowdsec.go) is ADR-0014's one operator door onto a CrowdSec ban:
 	// CLI-only for the same reason `agent settings` is, and add-only by
@@ -254,6 +287,10 @@ type startupConfig struct {
 	// test fixture that needs a certificate to reach half-life and
 	// expiry in minutes.
 	testClientCertTTL time.Duration
+
+	// findingsRetentionDays is envFindingsRetentionDays's parsed value
+	// (issue #213), handed to the ingest handler; 0 keeps for good.
+	findingsRetentionDays int
 
 	// auth is the sign-in layer's settings (issue #8, ADR-0016), read
 	// and checked by loadAuthConfig. Its secrets are held here only
@@ -380,6 +417,17 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 		ingestLog.Warn(fmt.Sprintf("TEST ONLY: %s=%s -- client certificates will expire in %s, not the normal 7 days; never set this in production", envTestClientCertTTL, raw, ttl))
 	}
 
+	cfg.findingsRetentionDays = ingest.DefaultFindingsRetentionDays
+	if raw := getenv(envFindingsRetentionDays); raw != "" {
+		// Digits only: Atoi alone would take "+30" (and "-0").
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 0 || strings.TrimLeft(raw, "0123456789") != "" {
+			return startupConfig{}, &startupError{configLog, fmt.Sprintf("%s=%q must be a whole number of days, 0 or more (0 keeps fixed findings and scan snapshots for good); refusing to start", envFindingsRetentionDays, raw)}
+		}
+		cfg.findingsRetentionDays = days
+	}
+	configLog.Info(fmt.Sprintf("%s=%d", envFindingsRetentionDays, cfg.findingsRetentionDays))
+
 	cfg.dashboardHostEnv = getenv(envDashboardHost)
 
 	cfg.internalRangesEnv = getenv(envInternalRanges)
@@ -389,7 +437,7 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 	}
 	cfg.internalRanges = internalRanges
 
-	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), dashboardOffBoxAddr(cfg.httpSelection), configLog)
+	authCfg, err := loadAuthConfig(getenv, authDataDir(cfg.dbPath), dashboardServesTLS(cfg.httpSelection), dashboardOffBoxAddr(cfg.httpSelection), cfg.httpSelection.Mode == tlsconfig.ModePlainUnixSocket, configLog)
 	if err != nil {
 		return startupConfig{}, err
 	}
@@ -434,40 +482,58 @@ func checkStartupDatabase(cfg startupConfig) error {
 }
 
 // checkStartupCAContinuity refuses to start when cfg.caDir (or its key
-// file) is missing but the store already shows an enrolled canary --
+// file) is missing but the store already holds an issued client certificate --
 // owner rule (issue #149): birdcage never mints a replacement CA just to
 // get going again, since every certificate that CA vouches for (a
 // canary's client certificate, an operator's already-trusted dashboard
-// pin) would silently stop verifying against a new one. Runs before
+// pin) would silently stop verifying against a new one. The only way
+// past it without the backup is the operator's deliberate `birdcage ca
+// reset` (#213), which removes those certificates. Runs before
 // loadStartupCA, which otherwise cannot tell "fresh install" apart from
-// "the CA directory was lost" and mints in both cases.
+// "the CA directory was lost" and mints in both cases. The check itself
+// is checkCAContinuity, shared with every command-line path that loads
+// the CA (#214), so the refusal reads the same everywhere.
 //
 // database must already be open, so this needs to run after
 // openStartupDatabase rather than in loadStartupCA's usual position; see
-// main()'s call site. A genuinely fresh install (no canaries yet) has no
-// state to lose and falls through so loadStartupCA may still mint.
+// main()'s call site. A fresh install, or one with only `agent add` rows
+// and no certificate yet, has no state to lose and falls through so loadStartupCA may still mint.
 func checkStartupCAContinuity(ctx context.Context, cfg startupConfig, database *db.DB, caLog *slog.Logger) error {
 	if !cfg.caNeeded {
 		return nil
 	}
-	missing, err := ca.CAMissing(cfg.caDir)
+	if err := checkCAContinuity(ctx, cfg.caDir, database); err != nil {
+		return &startupError{caLog, err.Error()}
+	}
+	return nil
+}
+
+// checkCAContinuity is issue #149's rule for any caller about to
+// ca.Load caDir, which mints a CA when none is there: it refuses when
+// caDir (or its key file) is missing but database already holds an
+// issued client certificate. Server start-up (checkStartupCAContinuity),
+// `agent enrol` and `agent upgrade-command` all call it before ca.Load
+// (#214), so none of them can mint a replacement CA and the wording
+// cannot drift between them.
+func checkCAContinuity(ctx context.Context, caDir string, database *db.DB) error {
+	missing, err := ca.CAMissing(caDir)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check CA directory (%s=%q): %v", envCADir, cfg.caDir, err)}
+		return fmt.Errorf("check CA directory (%s=%q): %v", envCADir, caDir, err)
 	}
 	if missing == "" {
 		return nil
 	}
-	enrolled, err := store.AnyCanariesEnrolled(ctx, database)
+	enrolled, err := store.AnyClientCertsIssued(ctx, database)
 	if err != nil {
-		return &startupError{caLog, fmt.Sprintf("check for enrolled canaries before minting a new CA: %v", err)}
+		return fmt.Errorf("check for issued client certificates before minting a new CA: %v", err)
 	}
 	if !enrolled {
 		return nil
 	}
-	return &startupError{caLog, fmt.Sprintf(
-		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, never regenerated",
+	return fmt.Errorf(
+		"%s -- birdcage has enrolled canaries whose certificates depend on this CA; it must be restored from backup, or, if no backup exists, cleared with `birdcage ca reset` (every enrolled agent must then enrol again)",
 		missing,
-	)}
+	)
 }
 
 // loadStartupCA loads birdcage's own CA when cfg.caNeeded, and logs
@@ -509,6 +575,15 @@ func openStartupDatabase(ctx context.Context, cfg startupConfig, dbLog *slog.Log
 
 	if err := db.Migrate(ctx, database); err != nil {
 		return nil, fmt.Errorf("migrate database: %v", err)
+	}
+	// v0.1.0 accepted pace settings below 1s that today's validation and
+	// the canary refuse (#213): raise them before anything reads them.
+	clamped, err := store.ClampLegacyPaceSettings(ctx, database, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("raise legacy pace settings: %v", err)
+	}
+	if clamped > 0 {
+		dbLog.Info(fmt.Sprintf("raised %d stored pace setting(s) below 1s to 1s", clamped))
 	}
 	dbLog.Info(fmt.Sprintf("opened %s database, storing alerts via %s", database.Engine, redactDatabaseURL(cfg.databaseURL)))
 	return database, nil
@@ -721,7 +796,7 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	// both WithClientCertTTL implementations already ignore ttl <= 0,
 	// so passing it unconditionally is safe whether or not the test
 	// knob is in use.
-	ingestOpts := []ingest.Option{ingest.WithClientCertSigner(birdcageCA)}
+	ingestOpts := []ingest.Option{ingest.WithClientCertSigner(birdcageCA), ingest.WithFindingsRetentionDays(cfg.findingsRetentionDays)}
 	enrolOpts := []enrol.Option{}
 	if cfg.testClientCertTTL > 0 {
 		ingestOpts = append(ingestOpts, ingest.WithClientCertTTL(cfg.testClientCertTTL))
@@ -733,6 +808,50 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	enrolServer = ingest.NewTLSServer(cfg.enrolAddr, enrol.NewHandler(database, birdcageCA, cfg.ingestURL, nil, enrolLog, enrolOpts...), getCert, nil)
 
 	return ingestServer, enrolServer, nil
+}
+
+// certHostAllower accepts a plain request's Host only if the dashboard's
+// current certificate names it: its DNSNames and IPAddresses are exactly
+// BIRDCAGE_DASHBOARD_HOST's list or the guessed names in minted mode, and
+// the operator's names for a given certificate. Asking getCert each time
+// follows a reloaded or renewed certificate. Wildcard SANs are not matched,
+// and a requested name containing '*' is refused.
+func certHostAllower(getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)) tlssniff.HostAllower {
+	return func(requested string) string {
+		host := requested
+		if h, _, err := net.SplitHostPort(requested); err == nil {
+			host = h
+		}
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+		// A literal wildcard SAN must never match a Host.
+		if host == "" || strings.Contains(host, "*") {
+			return ""
+		}
+		cert, err := getCert(&tls.ClientHelloInfo{})
+		if err != nil || cert == nil || len(cert.Certificate) == 0 {
+			return ""
+		}
+		leaf := cert.Leaf
+		if leaf == nil {
+			if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+				return ""
+			}
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			for _, c := range leaf.IPAddresses {
+				if c.Equal(ip) {
+					return c.String()
+				}
+			}
+			return ""
+		}
+		for _, name := range leaf.DNSNames {
+			if strings.EqualFold(name, host) {
+				return name
+			}
+		}
+		return ""
+	}
 }
 
 // serveAll runs the dashboard, ingest and enrolment listeners
@@ -768,8 +887,19 @@ func serveAll(ctx context.Context, stop context.CancelFunc, dashboard *http.Serv
 			// httpServer.TLSConfig above (tlsconfig.NewCertReloader for
 			// ModeCert, birdcageCA.ServerCertificateSource for
 			// ModeMintedCert), so both arguments here are empty, matching
-			// ingest.NewTLSServer's callers.
-			err = dashboard.ListenAndServeTLS("", "")
+			// ingest.NewTLSServer's callers. The listener is wrapped so a
+			// plain http:// visit to this port is redirected to https
+			// (#212) rather than failing the handshake.
+			var ln net.Listener
+			addr := dashboard.Addr
+			if addr == "" {
+				addr = ":https" // ListenAndServeTLS's own default
+			}
+			ln, err = net.Listen("tcp", addr)
+			if err == nil {
+				ln = tlssniff.Listener(ln, httpLog, certHostAllower(dashboard.TLSConfig.GetCertificate))
+				err = dashboard.ServeTLS(ln, "", "")
+			}
 		case tlsconfig.ModePlainUnixSocket:
 			httpLog.Info(fmt.Sprintf("serving dashboard HTTP on unix socket %s", unixPath))
 			var ln net.Listener

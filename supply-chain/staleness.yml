@@ -5,13 +5,14 @@
 # Entries below exist because the live run genuinely needs them, not on
 # spec: an `alpine-branch:` entry only for a Dockerfile whose own `FROM`
 # line does not literally name `alpine:X.Y` (so the script has nowhere
-# else to read the branch from), and nothing at all yet under `accepted:`
-# or `unchecked:` -- every row this check found either passes on its own
-# merits or is a real, unaccepted lag the report is supposed to surface.
-# A row that is unreachable from this repository's own CI runner (not
-# just from wherever this file happened to be edited) is the only reason
-# to add one of those, with an honest reason and, for `accepted:`, a
-# review-by date.
+# else to read the branch from). `accepted:` holds only deliberate holds:
+# pins that cannot move (OpenCanary 0.9.10's exact pins) or that the
+# owner chose to keep behind, each with what blocks it, what staying
+# costs, the trigger to move, and a review-by date; the issue or
+# dependency-inventory row it cites carries the detail. Nothing is under
+# `unchecked:`. A row that is unreachable from this repository's own CI
+# runner (not just from wherever this file happened to be edited) is the
+# only reason to add one there.
 accepted:
   # OpenCanary 0.9.10 names each of these with an exact `==` in its own
   # Requires-Dist (checked in its wheel's METADATA, 2026-09-27), so the
@@ -65,7 +66,35 @@ accepted:
     held-at: "6.0.3"
     reason: "svelte-check 4.7.6, the newest release, accepts TypeScript 5 or 6 only; lift when it supports 7"
     review-by: "2026-12-27"
+  # Same cause as the OpenCanary pins above, found later: both are exact
+  # `==` pins in opencanary 0.9.10's Requires-Dist (#204 comment,
+  # 2026-11-14; dependency-inventory rows 172 and 183).
+  - pin: "pypi:pyasn1"
+    held-at: "0.6.4"
+    reason: "opencanary==0.9.10 pins pyasn1==0.6.4 exactly (inventory row 172); 0.6.5 is a patch, so the cost is a missed patch in the canary image; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  - pin: "pypi:twisted"
+    held-at: "26.4.0"
+    reason: "opencanary==0.9.10 pins twisted==26.4.0 exactly (inventory row 183); staying misses 26.10's fixes in the canary image; moves only with a new OpenCanary release"
+    review-by: "2026-12-27"
+  # Owner-set holds, recorded here so the weekly check (#204) reports them
+  # as accepted instead of failing on them.
+  - pin: "npm:pixelmatch"
+    held-at: "7.2.0"
+    reason: "8.0 measures colour difference in OKLab (HyAB), not YIQ, so every pixel-gate threshold reads differently (the dashboard gate read 6.7% against a 1.326% baseline); staying keeps a dev-only tool a major behind; move once the thresholds are re-measured under 8 as their own change (#211, inventory row 110)"
+    review-by: "2026-12-27"
+  # A digest bump changes held-at and ends these entries, as intended.
+  - pin: "image:docker:29.6.2-cli"
+    held-at: "29.6.2-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144"
+    reason: "docker 29.6.2 cli/dind held on purpose: 29.7.0 and later can fail pushes (moby/moby#53293, open on 2026-11-17); staying misses 29.7-29.10 fixes in CI-only images; move when that issue closes or a release names the fix (inventory row 197)"
+    review-by: "2026-12-27"
+  - pin: "image:docker:29.6.2-dind"
+    held-at: "29.6.2-dind@sha256:bfec1f5159c63a81ca6fdedbd81404d2c0e16378ed0feec3bb3fbf3998847659"
+    reason: "docker 29.6.2 cli/dind held on purpose: 29.7.0 and later can fail pushes (moby/moby#53293, open on 2026-11-17); staying misses 29.7-29.10 fixes in CI-only images; move when that issue closes or a release names the fix (inventory row 197)"
+    review-by: "2026-12-27"
 
+# An `unchecked:` entry needs pin, reason and review-by, like a hold: one
+# without a date, or past it, excuses nothing (#215).
 unchecked: []
 
 alpine-branch:
@@ -77,3 +106,8 @@ alpine-branch:
   build/e2e-dns/Dockerfile: v3.24
   build/e2e-mail/Dockerfile: v3.24
   build/e2e-smbclient/Dockerfile: v3.24
+  # build/birdcage/Dockerfile's apk pin (git~=2.54) is in its
+  # `FROM golang:<ver>-alpine` stage, whose base is Alpine 3.24 (read from
+  # that pinned image's /etc/alpine-release, 3.24.4, 2026-11-17; #215).
+  # Bump this when the golang image's Alpine moves.
+  build/birdcage/Dockerfile: v3.24

@@ -32,6 +32,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/authstore"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
 // sessionIdle is how long a session may sit unused before it ends
@@ -51,7 +52,7 @@ const (
 	csrfValue = "birdcage"
 
 	// loginFailures and loginWindow: failed sign-ins allowed per client
-	// address and per account in the window before a 429 (docs/using.md).
+	// address and per account in the window before a 429.
 	loginFailures = 5
 	loginWindow   = time.Minute
 
@@ -129,15 +130,18 @@ type Service struct {
 	geo     *geoip.Manager
 	log     *slog.Logger
 
+	codes *heldCodes
+
 	cancel    context.CancelFunc
 	loops     sync.WaitGroup
 	closeOnce sync.Once
 }
 
 // Open builds the sign-in layer over database. When there is no account
-// yet it logs the one-time setup code on log, and the emergency unlock
-// code if one is due, in gauntlet's own words, but only once everything
-// below has opened: an Open that fails logs no code. It refuses a short
+// yet gauntlet announces the one-time setup code, and the emergency unlock
+// code if one is due; Open holds them and logs nothing until the caller
+// runs ReleaseCodes, so an Open that fails, or a later start-up step that
+// refuses, logs no code. It refuses a short
 // key, a key that cannot open the stored documents, and any setting
 // gauntlet refuses.
 //
@@ -185,9 +189,9 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if err != nil {
 		return fail(fmt.Errorf("auth: seal accounts: %w", err))
 	}
-	// The setup and unlock codes are held until Open has fully succeeded
-	// (below), so an operator never copies a code from a process that
-	// then refused to start.
+	// The setup and unlock codes are held until the caller runs
+	// ReleaseCodes, after its own later start-up steps, so an operator
+	// never copies a code from a process that then refused to start.
 	codes := &heldCodes{log: log}
 	users, err := gauntlet.OpenStore(accountsDoc, gauntlet.Options{
 		Log:               log,
@@ -310,6 +314,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 			return ClientIPWith(r, ProxyTrust{Peers: cfg.TrustedProxies, Hops: cfg.TrustedHops, Unix: cfg.TrustUnixSocket}, cfg.ClientIPHeader)
 		},
 		AdminPasskey: rule,
+		OnEscapeCode: escapeCode(log),
 		Audit:        auditor{db: database, log: log},
 		// PasskeySignIn stays off, and UnusualSignIns at gauntlet's default
 		// (flag): ADR-0016 decisions 7 and 9.
@@ -323,7 +328,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
-	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, cancel: cancel}
+	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, codes: codes, cancel: cancel}
 	s.loop(func() { sweepTokens(loopCtx, g, log) })
 	if refresher != nil {
 		s.loop(func() { refresher.Run(loopCtx) })
@@ -331,14 +336,23 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	if geo != nil {
 		s.loop(func() { geo.Run(loopCtx) })
 	}
-	codes.release()
 	return s, nil
 }
 
+// ReleaseCodes writes the setup and unlock codes Open held, in the order
+// gauntlet announced them, and lets later ones through. The caller runs it
+// once every start-up step that can refuse has passed, so an operator never
+// copies a code from a process that then refused to start. Until it runs no
+// code reaches the log. Safe to call more than once.
+func (s *Service) ReleaseCodes() {
+	s.codes.release()
+}
+
 // heldCodes keeps the one-time setup and unlock codes gauntlet announces
-// while the accounts store opens, and writes them to the log only once
-// Open has fully succeeded, in the words gauntlet's own default log line
-// uses. If Open fails they are never written. After release, a code
+// while the accounts store opens, and writes them to the log only when
+// Service.ReleaseCodes runs, in the words gauntlet's own default log line
+// uses. If Open fails, or start-up refuses before ReleaseCodes, they are
+// never written. After release, a code
 // gauntlet announces later (it re-issues the setup code if a reload finds
 // no accounts) is logged at once.
 type heldCodes struct {
@@ -351,18 +365,38 @@ type heldCodes struct {
 
 func (h *heldCodes) setup(code string) {
 	h.announce(func() {
-		h.log.Warn(fmt.Sprintf("no account exists yet -- create the first admin with setup code %s (valid until an account exists or this process restarts)", code))
+		announceCode(h.log, fmt.Sprintf("no account exists yet -- create the first admin with setup code %s (valid until an account exists or this process restarts)", code))
 	})
 }
 
 func (h *heldCodes) unlock(username, code string) {
 	h.announce(func() {
-		h.log.Warn(fmt.Sprintf("sign-in for the admin account %q is disabled after %d failed attempts in a row, and no other admin can unlock it -- "+
+		announceCode(h.log, fmt.Sprintf("sign-in for the admin account %q is disabled after %d failed attempts in a row, and no other admin can unlock it -- "+
 			"lift the disable with unlock code %s (valid until the account is unlocked or this process restarts; "+
 			"the admin then signs in with their existing password and second factor). "+
 			"Without it the disable lifts itself %s after it began",
 			username, gauntlet.MaxConsecutiveLoginFailures, code, gauntlet.LoginDisableDuration))
 	})
+}
+
+// announceCode writes a one-time code's line at Warn, whatever
+// BIRDCAGE_LOG_LEVEL says (issue #164): the log is the only channel a code
+// reaches, so a raised threshold would leave the operator no way in. Every
+// other line keeps following the threshold.
+func announceCode(log *slog.Logger, msg string) {
+	log.Log(logging.Always(context.Background()), slog.LevelWarn, msg)
+}
+
+// escapeCode writes gauntlet's escape code (gate.Config.OnEscapeCode) in
+// the words of gauntlet's own default line, through announceCode, so it
+// too survives a raised log level.
+func escapeCode(log *slog.Logger) gate.EscapeCodeFunc {
+	return func(username, address, code string) {
+		announceCode(log, fmt.Sprintf("sign-in for the admin account %q from %s was stopped by the unusual-sign-in policy (refused, or held for a code or passkey), and no other admin can act -- "+
+			"let that attempt through with escape code %s (valid %d minutes, in the browser that was refused; "+
+			"it then signs in with the password and second factor it already proved)",
+			username, address, code, int(gate.EscapeCodeLifetime/time.Minute)))
+	}
 }
 
 func (h *heldCodes) announce(write func()) {

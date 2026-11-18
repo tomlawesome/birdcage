@@ -66,3 +66,18 @@ the whole account.
   would a real hang -- birdcage logging its refusal and then not exiting
   -- so a refusal outliving the 15 s bound again is not to be waved off as
   this flake without looking.
+
+## Runner disk full during the Go tests (test:go) (host)
+
+- 2026-11-15 · 6dcffab · pipeline 4240 (!122) / test:go, job 51839 ·
+  two trusted-proxy tests failed at db.Migrate with "database or disk is
+  full (13)"; the runner also warned of a disconnected postgres service
+  container. Retried as job 51896, which passed.
+
+## TestSessionCookieSecureAttributeFollowsConfig (internal/auth) (host)
+
+- 2026-11-18 · d49652a · local
+  `go test ./... -race` against a throwaway Postgres on a shared host (load
+  average about 56) · SecureCookie_false: "POST .../api/auth/totp/confirm:
+  context deadline exceeded"; the package took 607 s. Passed alone straight
+  after (16 s) and in the full Postgres rerun on the same code.

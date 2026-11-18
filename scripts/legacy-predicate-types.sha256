@@ -1,0 +1,3 @@
+# Earlier attestation predicate types still accepted for already-published
+# evidence, as sha256 of the exact type string (one per line).
+38837ea6dd0810d06ac3929eb342c2803a70db5fceb1fb0d89aa682032b83e39

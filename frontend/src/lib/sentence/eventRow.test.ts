@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildEventRows, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
+import { buildEventRows, computeDroppedOutRow, computeEventRow, computeEventsHeading, type EventAction } from './eventRow'
 import { plainText } from './types'
+import { canaryHref } from '../route'
 import type { Canary, Visitor, VisitorKind } from '../types'
 
 // Hand-built canaries and visitors (like rules.test.ts's rule-3 and issue #45
@@ -24,6 +25,7 @@ function visitor(overrides: Partial<Visitor> & { kind: VisitorKind }): Visitor {
     services: ['ssh'],
     tried: ['root / root'],
     clients: [],
+    latest_client: '',
     still_arriving: false,
     ...overrides,
   }
@@ -161,13 +163,31 @@ describe('whoSentence: touch credential is the part before the slash', () => {
 
 describe('whoSentence: client clause', () => {
   it('appends "Said it was <client>" from the newest client', () => {
-    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'] })
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0', 'nuclei'], latest_client: 'nuclei' })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(plainText(row.who)).toContain('Said it was nuclei.')
     expect(plainText(row.who)).not.toContain('curl/8.5.0')
     const client = row.who.find((s) => s.cls === 'client')
     expect(client?.text).toBe('nuclei')
     expect(client?.title).toBe('nuclei')
+  })
+
+  it('uses latest_client, not the last of the four oldest clients (#213)', () => {
+    const v = visitor({
+      kind: 'touch',
+      clients: ['c-one', 'c-two', 'c-three', 'c-four'],
+      latest_client: 'c-five',
+    })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(plainText(row.who)).toContain('Said it was c-five.')
+    expect(plainText(row.who)).not.toContain('c-four')
+    expect(row.who.find((s) => s.cls === 'client')?.text).toBe('c-five')
+  })
+
+  it('omits the clause when latest_client is empty even if clients is not (#213)', () => {
+    const v = visitor({ kind: 'touch', clients: ['curl/8.5.0'], latest_client: '' })
+    const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
+    expect(row.who.some((s) => s.cls === 'client')).toBe(false)
   })
 
   it('omits the clause when clients is empty', () => {
@@ -193,7 +213,7 @@ describe('whoSentence: client clause', () => {
 
 describe('defaultActions: one action set per kind', () => {
   const cases: [VisitorKind, EventAction[]][] = [
-    ['sweep', [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }]],
+    ['sweep', []],
     ['repeat', [{ label: 'already blocked', quiet: true }]],
     ['inside', [{ label: 'which device? ▸' }]],
     ['touch', [{ label: 'clear with a note', quiet: true }]],
@@ -203,6 +223,26 @@ describe('defaultActions: one action set per kind', () => {
     const v = visitor({ kind })
     const row = computeEventRow(v, canaries, '2026-09-12T22:04:00Z')
     expect(row.actions).toEqual(expected)
+  })
+})
+
+describe('computeDroppedOutRow: write actions wait for their routes (#228)', () => {
+  it('offers only open, no lookback and no "mark as maintenance" (#229)', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const labels = computeDroppedOutRow(silent).actions.map((a) => a.label)
+    expect(labels).toEqual(['open canary-lan ▸'])
+  })
+
+  it('the open pill carries the canary page href (#229)', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    expect(computeDroppedOutRow(silent).actions[0].href).toBe(canaryHref('canary-lan'))
+  })
+
+  it('no row anywhere offers lookback or raw lines (#229)', () => {
+    const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
+    const kinds: VisitorKind[] = ['sweep', 'repeat', 'inside', 'touch']
+    const rows = [computeDroppedOutRow(silent), ...kinds.map((kind) => computeEventRow(visitor({ kind }), canaries, '2026-09-12T22:04:00Z'))]
+    for (const r of rows) expect(r.actions.map((a) => a.label).filter((l) => /mikroview|raw lines/.test(l))).toEqual([])
   })
 })
 
@@ -288,7 +328,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
   const poisoned = (mac: string) =>
     visitor({
       kind: 'inside',
-      source_ip: '10.30.0.51',
+      source_ip: '198.51.100.51',
       services: ['poisoner'],
       tried: ['llmnr'],
       poisoner: { name: 'fs-lon-02', protocol: 'llmnr', mac },
@@ -297,7 +337,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
   it('says what answered, for which name, and why that matters', () => {
     const row = computeEventRow(poisoned('52:54:00:8a:1c:3d'), canaries, '2026-09-12T21:05:00Z')
     expect(plainText(row.who)).toBe(
-      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr · 52:54:00:8a:1c:3d',
+      '198.51.100.51 answered for fs-lon-02, a name nobody should answer. llmnr · 52:54:00:8a:1c:3d',
     )
   })
 
@@ -311,7 +351,7 @@ describe('whoSentence: poisoner answered a name nobody should answer', () => {
     // (internal/agent/poisoner/arp.go), which is ordinary rather than a gap.
     const row = computeEventRow(poisoned(''), canaries, '2026-09-12T21:05:00Z')
     expect(plainText(row.who)).toBe(
-      '10.30.0.51 answered for fs-lon-02, a name nobody should answer. llmnr',
+      '198.51.100.51 answered for fs-lon-02, a name nobody should answer. llmnr',
     )
   })
 

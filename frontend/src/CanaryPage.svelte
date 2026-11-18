@@ -174,11 +174,13 @@
       {/if}
     {/each}
   </div>
-  <div class="acts">
-    {#each actions as action (action.label)}
-      <span class="pill" class:quiet={action.quiet}>{action.label}</span>
-    {/each}
-  </div>
+  {#if actions.length > 0}
+    <div class="acts">
+      {#each actions as action (action.label)}
+        <span class="pill" class:quiet={action.quiet}>{action.label}</span>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <!-- ADR-0012 decision 11 (issue #116): a scanner's own proof -- the

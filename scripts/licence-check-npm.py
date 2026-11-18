@@ -3,10 +3,11 @@
 
 Companion to scripts/licence-check.sh, which gates the Go modules linked
 into the Birdcage binary. This script covers the other half of the tree
-that ships anything: the frontend has no runtime `dependencies` (all 13
-direct entries are devDependencies), but Svelte compiles its runtime
-helpers into the built bundle, so dependency code reaches web/dist even
-though nothing is listed as a runtime dependency. A check that trusted
+that ships anything: the frontend has one runtime dependency
+(qrcode-generator, #8) and the rest of the direct entries are
+devDependencies, but Svelte compiles its runtime helpers into the built
+bundle, so dependency code reaches web/dist even though it is not listed
+as a runtime dependency. A check that trusted
 `dependencies` over `devDependencies` would therefore be wrong here, so
 this walks the whole installed tree rather than reasoning from
 package.json's dependency lists.

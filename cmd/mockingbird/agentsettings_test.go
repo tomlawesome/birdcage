@@ -136,3 +136,23 @@ func TestAgentSettingsApplyNilDetectorOrEmptyPushIsNoop(t *testing.T) {
 		t.Fatalf("Hash() = %q after a nil detector/empty push, want empty", s.Hash())
 	}
 }
+
+// TestAgentSettingsApplyRejectsFloorBelowMinCeilingGap is #213's A-1-F1:
+// a pushed pace_floor under poisoner.MinCeilingGap is refused exactly as
+// a ceiling is, leaving the floor already in force.
+func TestAgentSettingsApplyRejectsFloorBelowMinCeilingGap(t *testing.T) {
+	s := newAgentSettings(poisoner.Config{Profile: poisoner.ProfileWindows, Pace: poisoner.DefaultPaceSettings()})
+	fake := &fakeLiveSettable{}
+
+	s.Apply(map[string]string{"pace_floor": "30ms"}, fake, discardLogger())
+
+	if fake.calls != 0 {
+		t.Fatalf("SetLiveSettings was called %d times for a sub-minimum floor, want 0", fake.calls)
+	}
+	if s.pace.FloorGap != poisoner.DefaultFloorGap {
+		t.Errorf("pace floor = %v, want the previous value (the default) unchanged", s.pace.FloorGap)
+	}
+	if s.Hash() != "" {
+		t.Fatalf("Hash() after a rejected push = %q, want empty", s.Hash())
+	}
+}

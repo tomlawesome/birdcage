@@ -154,6 +154,22 @@ everything newer on `dev` (#89, owner 2026-10-02); after the slash its
 name may use only letters, digits, `.`, `_` and `-`. Back-merge
 `preview` into `dev` afterwards as usual.
 
+`release_readiness` (#215) runs first on every merge request into
+`preview` or `main`: the release-readiness check in
+[releasing.md](releasing.md#the-readiness-check) -- version, change log,
+review issues closed, pins, the release record and, on the `main` leg,
+published images with evidence that still has a day left. Every other job
+of those pipelines waits on it through an optional `needs`, so nothing
+expensive starts on a promotion that cannot ship; on pipelines without the
+job the optional need is dropped and nothing waits. Only
+`policy:promotion-hop`, `policy:release-record`, `lint:gitleaks` and
+`lint:flake-check` start beside it, being seconds each.
+
+`policy:release-record` is the fence on the one `release/vX.Y.Z` merge
+request per release that may go straight into `dev`: it fails unless the
+target is `dev`, the name matches `VERSION`, and only `CHANGELOG.md` and
+`docs/releases/v<VERSION>.md` change.
+
 ## Hop 3 -- publishing, on `preview` and on a `v*` tag
 
 Added by #90. These jobs are not checks and do not belong in the table

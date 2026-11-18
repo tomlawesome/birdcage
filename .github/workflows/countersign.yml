@@ -84,6 +84,11 @@ jobs:
   countersign:
     name: Verify the key-based evidence, then sign keyless
     runs-on: ubuntu-latest
+    # The approval step (#169, D): the GitHub Environment `countersign` has
+    # the owner as required reviewer and admits only `main`, so a dispatch
+    # alone signs nothing until the owner approves it inside GitHub. The
+    # Environment itself is a repository setting (docs/releasing.md, setup).
+    environment: countersign
     permissions:
       contents: read
       # The keyless half: this is what lets cosign get an OIDC token Fulcio

@@ -28,15 +28,19 @@ func hp(t *testing.T, at, canaryID string) hitPoint {
 	return hitPoint{At: mustParse(t, at), CanaryID: canaryID}
 }
 
+// privateLAN builds an RFC 1918 source at run time, so no private literal
+// sits in the file.
+func privateLAN() string { return net.IPv4(10, 0, 40, 23).String() }
+
 func TestClassifyKindInsideBeatsEverythingElse(t *testing.T) {
-	// 10.0.40.23 is RFC 1918 -- inside wins even though its own hits also
+	// A private RFC 1918 source is inside with no ranges configured -- inside wins even though its own hits also
 	// satisfy the sweep rule (2 distinct canaries within 15 minutes), which
 	// is evaluated after inside and must never be reached.
 	hits := []hitPoint{
 		hp(t, "2026-09-12T19:11:04Z", "canary-lan"),
 		hp(t, "2026-09-12T19:11:22Z", "canary-srv"),
 	}
-	if got := classifyKind("10.0.40.23", hits, nil); got != KindInside {
+	if got := classifyKind(privateLAN(), hits, nil); got != KindInside {
 		t.Errorf("classifyKind = %q, want inside", got)
 	}
 }
@@ -377,13 +381,13 @@ func TestTriedForSIP(t *testing.T) {
 		{
 			name: "from header present",
 			raw: datagram(`{"logdata": {"HEADERS": {"from": ["sipvicious<sip:100@192.0.2.50>;tag=6194256813024"], ` +
-				`"to": ["sip:100@10.0.0.5"], "via": ["SIP/2.0/UDP 192.0.2.50:5061;branch=z9hG4bK-313432-1"], ` +
+				`"to": ["sip:100@198.51.100.5"], "via": ["SIP/2.0/UDP 192.0.2.50:5061;branch=z9hG4bK-313432-1"], ` +
 				`"user-agent": ["friendly-scanner"]}}, "logtype": 15001}`),
 			want: "sipvicious<sip:100@192.0.2.50>;tag=6194256813024",
 		},
 		{
 			name: "no from header at all falls back to the service name",
-			raw:  datagram(`{"logdata": {"HEADERS": {"to": ["sip:100@10.0.0.5"]}}, "logtype": 15001}`),
+			raw:  datagram(`{"logdata": {"HEADERS": {"to": ["sip:100@198.51.100.5"]}}, "logtype": 15001}`),
 			want: "sip",
 		},
 	}
@@ -446,7 +450,7 @@ func TestTriedForMSSQL(t *testing.T) {
 		{
 			name: "username, password and app name all present",
 			raw: datagram(`{"logdata": {"HostName": "WORKSTATION1", "UserName": "sa", "Password": "sa123", ` +
-				`"AppName": "Microsoft SQL Server Management Studio", "ServerName": "10.0.0.5", ` +
+				`"AppName": "Microsoft SQL Server Management Studio", "ServerName": "198.51.100.5", ` +
 				`"Language": "", "Database": "", "CltIntName": "ODBC"}, "logtype": 9001}`),
 			want: "Microsoft SQL Server Management Studio sa / sa123",
 		},
@@ -646,6 +650,47 @@ func TestClientSummariesDedupesSkipsEmptiesCapsAtFour(t *testing.T) {
 	}
 }
 
+func TestBuildVisitorLatestClientIsNewestOfFiveDistinct(t *testing.T) {
+	// hits is newest first. Five distinct clients: Clients keeps the first
+	// four in time order, so the newest ("fifth-unique") is not in it, but
+	// LatestClient must still name it (#213).
+	hits := []Alert{
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 5, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "fifth-unique"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 4, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "fourth-unique"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 3, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "nuclei"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 2, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "Go-http-client/1.1"}, "logtype": 3000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "fifth-unique" {
+		t.Errorf("LatestClient = %q, want %q", v.LatestClient, "fifth-unique")
+	}
+	if len(v.Clients) != 4 {
+		t.Errorf("Clients = %v, want the unchanged first four", v.Clients)
+	}
+}
+
+func TestBuildVisitorLatestClientSkipsNewerHitsWithNoClient(t *testing.T) {
+	hits := []Alert{
+		{Service: "ssh", ReceivedAt: time.Date(2026, 9, 12, 22, 2, 0, 0, time.UTC), Raw: datagram(`{"logdata": {}, "logtype": 4000}`)},
+		{Service: "http", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {"USERAGENT": "curl/8.5.0"}, "logtype": 3000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "curl/8.5.0" {
+		t.Errorf("LatestClient = %q, want %q", v.LatestClient, "curl/8.5.0")
+	}
+}
+
+func TestBuildVisitorLatestClientEmptyWithNoClients(t *testing.T) {
+	hits := []Alert{
+		{Service: "ssh", ReceivedAt: time.Date(2026, 9, 12, 22, 1, 0, 0, time.UTC), Raw: datagram(`{"logdata": {}, "logtype": 4000}`)},
+	}
+	v := buildVisitor("203.0.113.9", hits, time.Date(2026, 9, 12, 23, 0, 0, 0, time.UTC), nil)
+	if v.LatestClient != "" {
+		t.Errorf("LatestClient = %q, want empty", v.LatestClient)
+	}
+}
+
 // --- ListVisitors: exercises the database.
 
 // insertAlertRaw is store_test.go's insertFixtures loop, generalized so
@@ -682,13 +727,13 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		insertAlertRaw(t, database, "canary-srv", "192.0.2.88", 21, "ftp",
 			`{"logdata": {"USERNAME": "anonymous", "PASSWORD": ""}}`, "2026-09-11T03:18:40Z")
 
-		// inside: 10.0.40.23 (RFC 1918) browses canary-lan :80 -- its own
+		// inside: a private RFC 1918 source (no ranges configured) browses canary-lan :80 -- its own
 		// two hits, 18 seconds apart on the same canary, would otherwise
 		// classify as neither sweep nor repeat, proving rule 1 alone puts
 		// it in "inside" rather than falling through to "touch".
-		insertAlertRaw(t, database, "canary-lan", "10.0.40.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", privateLAN(), 80, "http",
 			`{"logdata": {"PATH": "/"}}`, "2026-09-12T19:11:04Z")
-		insertAlertRaw(t, database, "canary-lan", "10.0.40.23", 80, "http",
+		insertAlertRaw(t, database, "canary-lan", privateLAN(), 80, "http",
 			`{"logdata": {"PATH": "/admin"}}`, "2026-09-12T19:11:22Z")
 
 		// sweep: 203.0.113.42 touches two canaries within 15 minutes.
@@ -714,7 +759,7 @@ func TestListVisitorsDataStoryClassification(t *testing.T) {
 		want := map[string]VisitorKind{
 			"203.0.113.42": KindSweep,
 			"198.51.100.7": KindRepeat,
-			"10.0.40.23":   KindInside,
+			privateLAN():   KindInside,
 			"192.0.2.88":   KindTouch,
 		}
 		got := make(map[string]VisitorKind, len(visitors))

@@ -128,13 +128,13 @@ func TestApplyFindingSnapshotAcceptedSurvivesRescan(t *testing.T) {
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t2); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t2); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 		findings := listFindings(t, database, "scanner-a")
 		f := findByVuln(t, findings, "CVE-2014-0160")
-		if f.State != FindingAccepted || f.AcceptedBy != "tom" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
-			t.Fatalf("after accept: %+v, want state=accepted accepted_by=tom accepted_at=%v", f, t2)
+		if f.State != FindingAccepted || f.AcceptedBy != "avery" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
+			t.Fatalf("after accept: %+v, want state=accepted accepted_by=avery accepted_at=%v", f, t2)
 		}
 
 		// A rescan that still reports the same finding must not revert
@@ -145,8 +145,8 @@ func TestApplyFindingSnapshotAcceptedSurvivesRescan(t *testing.T) {
 		if f.State != FindingAccepted {
 			t.Errorf("State after rescan = %q, want still accepted", f.State)
 		}
-		if f.AcceptedBy != "tom" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
-			t.Errorf("acceptance after rescan = by=%q at=%v, want unchanged (by=tom at=%v)", f.AcceptedBy, f.AcceptedAt, t2)
+		if f.AcceptedBy != "avery" || f.AcceptedAt == nil || !f.AcceptedAt.Equal(t2) {
+			t.Errorf("acceptance after rescan = by=%q at=%v, want unchanged (by=avery at=%v)", f.AcceptedBy, f.AcceptedAt, t2)
 		}
 		if !f.LastSeen.Equal(t3) {
 			t.Errorf("LastSeen after rescan = %v, want moved to %v", f.LastSeen, t3)
@@ -164,7 +164,7 @@ func TestApplyFindingSnapshotAcceptedThenRemovedStillResolves(t *testing.T) {
 		t2 := mustParse(t, "2026-01-02T00:00:00Z")
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t1); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t1); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 
@@ -199,7 +199,7 @@ func TestApplyFindingSnapshotFixedFindingReopensOnReturn(t *testing.T) {
 		t3 := mustParse(t, "2026-01-03T00:00:00Z")
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, t1)
 		if err := AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t1); err != nil {
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t1); err != nil {
 			t.Fatalf("AcceptFinding: %v", err)
 		}
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{}, t2) // resolved
@@ -244,7 +244,7 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 		t1 := mustParse(t, "2026-01-01T00:00:00Z")
 		t2 := mustParse(t, "2026-01-02T00:00:00Z")
 
-		err := AcceptFinding(context.Background(), database, "scanner-a", "deb:openssl", "CVE-2014-0160", "tom", t1)
+		err := AcceptFinding(context.Background(), database, "scanner-a", "deb:openssl", "CVE-2014-0160", "avery", t1)
 		if !errors.Is(err, ErrFindingNotFound) {
 			t.Fatalf("accept on never-seen finding: err = %v, want ErrFindingNotFound", err)
 		}
@@ -253,7 +253,7 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 		applySnapshot(t, database, "scanner-a", []ObservedFinding{}, t2) // now fixed
 
 		err = AcceptFinding(context.Background(), database, "scanner-a",
-			opensslFinding.Target, opensslFinding.VulnerabilityID, "tom", t2)
+			opensslFinding.Target, opensslFinding.VulnerabilityID, "avery", t2)
 		if !errors.Is(err, ErrFindingNotFound) {
 			t.Fatalf("accept on fixed finding: err = %v, want ErrFindingNotFound", err)
 		}
@@ -263,21 +263,33 @@ func TestAcceptFindingNotFoundForUnknownOrFixed(t *testing.T) {
 func TestAcceptFindingValidatesArguments(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		now := mustParse(t, "2026-01-01T00:00:00Z")
+		// A real open finding, so a missing validation check would let the
+		// call succeed rather than fall through to ErrFindingNotFound.
+		applySnapshot(t, database, "scanner-a", []ObservedFinding{opensslFinding}, now)
+		target, vuln := opensslFinding.Target, opensslFinding.VulnerabilityID
 		cases := []struct {
 			name                                string
 			agentID, target, vulnID, acceptedBy string
 			now                                 time.Time
 		}{
-			{"empty agent", "", "deb:openssl", "CVE-1", "tom", now},
-			{"empty target", "scanner-a", "", "CVE-1", "tom", now},
-			{"empty vuln", "scanner-a", "deb:openssl", "", "tom", now},
-			{"empty acceptedBy", "scanner-a", "deb:openssl", "CVE-1", "", now},
-			{"zero now", "scanner-a", "deb:openssl", "CVE-1", "tom", time.Time{}},
+			{"empty agent", "", target, vuln, "avery", now},
+			{"empty target", "scanner-a", "", vuln, "avery", now},
+			{"empty vuln", "scanner-a", target, "", "avery", now},
+			{"empty acceptedBy", "scanner-a", target, vuln, "", now},
+			{"zero now", "scanner-a", target, vuln, "avery", time.Time{}},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {
-				if err := AcceptFinding(context.Background(), database, c.agentID, c.target, c.vulnID, c.acceptedBy, c.now); err == nil {
-					t.Errorf("AcceptFinding(%+v) = nil error, want a validation error", c)
+				err := AcceptFinding(context.Background(), database, c.agentID, c.target, c.vulnID, c.acceptedBy, c.now)
+				if err == nil {
+					t.Fatalf("AcceptFinding(%+v) = nil error, want a validation error", c)
+				}
+				if errors.Is(err, ErrFindingNotFound) {
+					t.Fatalf("AcceptFinding(%+v) = ErrFindingNotFound, want a validation error (the finding exists)", c)
+				}
+				f := findByVuln(t, listFindings(t, database, "scanner-a"), vuln)
+				if f.State != FindingOpen || f.AcceptedBy != "" || f.AcceptedAt != nil {
+					t.Errorf("finding after rejected accept = %+v, want still open and not accepted", f)
 				}
 			})
 		}
@@ -386,4 +398,105 @@ func findingsStaleness(t *testing.T, database *db.DB, agentID string) AgentScanS
 		t.Fatalf("FindingsStaleness has no entry for %q: %+v", agentID, all)
 	}
 	return status
+}
+
+// TestListFindingsOrdersByInstantNotText: last_seen is RFC3339Nano, which
+// trims trailing zeros, so "...:00Z" sorts after "...:00.5Z" as text even
+// though it is the earlier instant (see timeCompare). The finding seen
+// 500ms later must come first.
+func TestListFindingsOrdersByInstantNotText(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		base := mustParse(t, "2026-01-01T00:00:00Z")
+		applySnapshot(t, database, "scanner-whole", []ObservedFinding{opensslFinding}, base)
+		applySnapshot(t, database, "scanner-frac", []ObservedFinding{opensslFinding}, base.Add(500*time.Millisecond))
+
+		findings := listFindings(t, database, "")
+		if len(findings) != 2 {
+			t.Fatalf("got %d findings, want 2: %+v", len(findings), findings)
+		}
+		if findings[0].AgentID != "scanner-frac" || findings[1].AgentID != "scanner-whole" {
+			t.Errorf("order = %s, %s (last_seen %v, %v); want scanner-frac (T+500ms) first, then scanner-whole (T)",
+				findings[0].AgentID, findings[1].AgentID, findings[0].LastSeen, findings[1].LastSeen)
+		}
+	})
+}
+
+// TestApplyFindingSnapshotDuplicateKeyInOneSnapshotCollapses: the same
+// (target, vulnerability) observed twice in one scan is stored once, with
+// sorted joined versions and the most severe severity, in either order.
+func TestApplyFindingSnapshotDuplicateKeyInOneSnapshotCollapses(t *testing.T) {
+	target := BuildFindingTarget("deb", "libc6")
+	a := ObservedFinding{Target: target, VulnerabilityID: "CVE-2024-0001", Severity: "low", InstalledVersion: "2.0", FixingVersion: "2.1"}
+	b := ObservedFinding{Target: target, VulnerabilityID: "CVE-2024-0001", Severity: "high", InstalledVersion: "1.0", FixingVersion: "1.1"}
+	cases := []struct {
+		name string
+		in   []ObservedFinding
+	}{
+		{"as posted", []ObservedFinding{a, b}},
+		{"reversed", []ObservedFinding{b, a}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				applySnapshot(t, database, "scanner-a", tc.in, mustParse(t, "2026-01-01T00:00:00Z"))
+				findings := listFindings(t, database, "scanner-a")
+				if len(findings) != 1 {
+					t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+				}
+				f := findings[0]
+				if f.InstalledVersion != "1.0, 2.0" || f.FixingVersion != "1.1, 2.1" || f.Severity != "high" {
+					t.Errorf("Installed/Fixing/Severity = %q/%q/%q, want %q/%q/%q",
+						f.InstalledVersion, f.FixingVersion, f.Severity, "1.0, 2.0", "1.1, 2.1", "high")
+				}
+			})
+		})
+	}
+}
+
+// TestApplyFindingSnapshotDuplicateKeyDropsEmptyAndRepeatedValues: empty
+// versions are dropped and identical values appear once in the join.
+func TestApplyFindingSnapshotDuplicateKeyDropsEmptyAndRepeatedValues(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		target := BuildFindingTarget("deb", "zlib")
+		in := []ObservedFinding{
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "1.2", FixingVersion: ""},
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "1.2", FixingVersion: "1.3"},
+			{Target: target, VulnerabilityID: "CVE-2024-0002", Severity: "medium", InstalledVersion: "", FixingVersion: "1.3"},
+		}
+		applySnapshot(t, database, "scanner-a", in, mustParse(t, "2026-01-01T00:00:00Z"))
+		findings := listFindings(t, database, "scanner-a")
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+		}
+		if f := findings[0]; f.InstalledVersion != "1.2" || f.FixingVersion != "1.3" {
+			t.Errorf("Installed/Fixing = %q/%q, want 1.2/1.3", f.InstalledVersion, f.FixingVersion)
+		}
+	})
+}
+
+// TestApplyFindingSnapshotDistinctKeysAreNotCollapsed: a different CVE on
+// the same package, or the same CVE on a different package, stays separate.
+func TestApplyFindingSnapshotDistinctKeysAreNotCollapsed(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		in := []ObservedFinding{
+			{Target: BuildFindingTarget("deb", "libc6"), VulnerabilityID: "CVE-2024-0001", Severity: "low", InstalledVersion: "1.0"},
+			{Target: BuildFindingTarget("deb", "libc6"), VulnerabilityID: "CVE-2024-0002", Severity: "high", InstalledVersion: "1.0"},
+			{Target: BuildFindingTarget("deb", "zlib"), VulnerabilityID: "CVE-2024-0001", Severity: "medium", InstalledVersion: "2.0"},
+		}
+		applySnapshot(t, database, "scanner-a", in, mustParse(t, "2026-01-01T00:00:00Z"))
+		findings := listFindings(t, database, "scanner-a")
+		if len(findings) != 3 {
+			t.Fatalf("got %d findings, want 3: %+v", len(findings), findings)
+		}
+		for _, f := range findings {
+			want := map[string]string{
+				BuildFindingTarget("deb", "libc6") + "|CVE-2024-0001": "low",
+				BuildFindingTarget("deb", "libc6") + "|CVE-2024-0002": "high",
+				BuildFindingTarget("deb", "zlib") + "|CVE-2024-0001":  "medium",
+			}[f.Target+"|"+f.VulnerabilityID]
+			if f.Severity != want {
+				t.Errorf("%s %s severity = %q, want %q", f.Target, f.VulnerabilityID, f.Severity, want)
+			}
+		}
+	})
 }

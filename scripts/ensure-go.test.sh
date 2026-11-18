@@ -124,5 +124,49 @@ else
   fail_ "an unknown flag exits 2"
 fi
 
+# --- 6: a target whose VERSION matches but which has no executable bin/go
+# is NOT "already installed" (a half-installed tree must not be trusted).
+# Either it is reinstalled or refused; what it must never do is skip and
+# print a go path that does not exist.
+t6="$work/t6"
+mkdir -p "$t6/go"
+printf '%s\n' "go1.27.1" > "$t6/go/VERSION"
+got=0; run "$t6" "file://$good_archive" || got=$?
+if ! grep -qi "skipping download" "$work/stderr" \
+   && { [ "$got" != 0 ] || { [ -x "$(cat "$work/stdout")" ]; }; }; then
+  ok "a target with a matching VERSION but no executable bin/go is not treated as installed"
+else
+  fail_ "a target with a matching VERSION but no executable bin/go is not treated as installed"
+fi
+
+# --- 7: an unpack that fails part-way (a fake tar writes go/VERSION then
+# dies) leaves nothing at the target that the next run would skip on, and
+# the next run, with a working tar, installs a usable go.
+t7="$work/t7"
+mkdir -p "$work/faketar"
+cat > "$work/faketar/tar" <<'FAKE'
+#!/usr/bin/env bash
+dest=""
+while [ $# -gt 0 ]; do
+  case "$1" in -C) dest="$2"; shift 2 ;; *) shift ;; esac
+done
+mkdir -p "$dest/go"
+printf '%s\n' "go1.27.1" > "$dest/go/VERSION"
+exit 1
+FAKE
+chmod +x "$work/faketar/tar"
+got=0
+PATH="$work/faketar:$PATH" run "$t7" "file://$good_archive" || got=$?
+leftover=0
+[ -e "$t7/go/VERSION" ] && leftover=1
+[ -e "$t7/go/bin/go" ] && leftover=1
+got2=0; run "$t7" "file://$good_archive" || got2=$?
+if [ "$got" != 0 ] && [ "$leftover" = 0 ] && [ "$got2" = 0 ] \
+   && [ -x "$t7/go/bin/go" ] && [ "$(cat "$work/stdout")" = "$t7/go/bin/go" ]; then
+  ok "a failed unpack leaves no half-installed target, and the next run installs cleanly"
+else
+  fail_ "a failed unpack leaves no half-installed target, and the next run installs cleanly (leftover=$leftover rerun=$got2)"
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

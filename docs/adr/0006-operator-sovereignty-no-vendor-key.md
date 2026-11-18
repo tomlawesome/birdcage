@@ -83,5 +83,3 @@ controls.
   answer, it will be proposed again, and the reason it is refused here is
   a principle about who owns a deployment rather than a judgement about
   how well a key can be stored.
-
-Written by Opus 5, 2026-09-16.

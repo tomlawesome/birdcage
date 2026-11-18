@@ -10,7 +10,7 @@ describe('factRows', () => {
     expect(rows('quiet')).toEqual({
       kind: 'honeypot',
       lane: 'iot',
-      address: '10.0.30.9',
+      address: '198.51.100.9',
       listening: 'telnet 23 · ssh 22 · smb 445',
       'lure only': 'portscan',
       heartbeat: 'every minute',

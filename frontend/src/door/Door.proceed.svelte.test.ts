@@ -63,7 +63,7 @@ describe('re-reading the session after a step', () => {
 })
 
 const ph = (p: string) => screen.getByPlaceholderText(p) as HTMLInputElement
-const owed = () => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { status: 'ready', signIn: false } })
+const owed = () => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { count: 0, status: 'ready' } })
 
 async function toPasskeyForm() {
   render(Door, { session: owed(), onenter: () => {} })
@@ -115,7 +115,7 @@ describe('second step refusals', () => {
 describe('session expired in passkey mode', () => {
   it('Use your password instead goes back to the password, which takes focus', async () => {
     stubServer({})
-    render(Door, { session: session({ resumable: true, username: 'ana', passkeys: { status: 'ready', signIn: true } }), onenter: () => {} })
+    render(Door, { session: session({ resumable: true, username: 'ana', passkeys: { count: 0, status: 'ready', signIn: true } }), onenter: () => {} })
     await fireEvent.click(screen.getByRole('button', { name: 'Use your passkey instead' }))
     expect(screen.queryByPlaceholderText('password')).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: 'Use your password instead' }))
@@ -126,7 +126,7 @@ describe('session expired in passkey mode', () => {
   it('the links are disabled while a request is in flight', async () => {
     const gate = deferred<Response>()
     stubServer({ 'POST /api/auth/reauthenticate': () => gate.promise })
-    render(Door, { session: session({ resumable: true, username: 'ana', passkeys: { status: 'ready', signIn: true } }), onenter: () => {} })
+    render(Door, { session: session({ resumable: true, username: 'ana', passkeys: { count: 0, status: 'ready', signIn: true } }), onenter: () => {} })
     await type(ph('password'), 'pw-fake-1')
     await fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     await screen.findByRole('button', { name: 'Please wait…' })

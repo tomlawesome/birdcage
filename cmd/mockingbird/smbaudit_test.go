@@ -25,9 +25,9 @@ import (
 var capturedAuditLines = []string{
 	`[2026/09/23 21:59:09.210719,  0]   smbd version 4.23.8 started.`,
 	`  Copyright Andrew Tridgell and the Samba Team 1992-2025`,
-	`[2026/09/23 22:01:53.984095,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-	`[2026/09/23 22:01:53.984907,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
-	`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+	`[2026/09/23 22:01:53.984095,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+	`[2026/09/23 22:01:53.984907,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
+	`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 }
 
 // newTestSMBRoad builds a road over a fresh audit file in a fresh state
@@ -142,7 +142,7 @@ func TestSMBAuditRoadQueuesAnAccessWithShareAndPath(t *testing.T) {
 		if fields.Service != "smb" {
 			t.Errorf("service = %q, want smb", fields.Service)
 		}
-		if fields.SourceIP != "172.21.0.3" {
+		if fields.SourceIP != "203.0.113.3" {
 			t.Errorf("src_host = %q, want the client address from the line", fields.SourceIP)
 		}
 		var decoded struct {
@@ -225,7 +225,7 @@ func TestSMBAuditRoadResumesWhereItLeftOff(t *testing.T) {
 	}
 
 	writeLines(t, auditPath, []string{
-		`[2026/09/23 22:05:00.000001,  1]   root|172.21.0.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
+		`[2026/09/23 22:05:00.000001,  1]   root|203.0.113.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
 	})
 	runRoadUntil(t, second, restarted, 1)
 
@@ -284,7 +284,7 @@ func TestSMBAuditRoadReportsAShiftedLineRatherThanMisreadingIt(t *testing.T) {
 	road, auditPath, _ := newTestSMBRoad(t, in)
 
 	writeLines(t, auditPath, []string{
-		`[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf`,
+		`[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf`,
 	})
 	runRoadUntil(t, road, in, 1)
 
@@ -341,7 +341,7 @@ func TestSMBAuditRoadQueuesAPanicAsItsOwnKind(t *testing.T) {
 func TestSubmitSMBEventQueuesWithTheSameIDTheOtherRoadsWouldMint(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{MaxEvents: 16, MaxBytes: 1 << 20})
 
-	ev, ok := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`))
+	ev, ok := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`))
 	if !ok {
 		t.Fatal("Parse returned no event")
 	}
@@ -381,7 +381,7 @@ func TestSubmitSMBEventAppendsNoLedgerEntry(t *testing.T) {
 
 	before := in.Ledger().Len()
 	for _, share := range []string{"public", "backup", "scans"} {
-		ev, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|` + share + `|close|ok|/srv/shares/` + share))
+		ev, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|` + share + `|close|ok|/srv/shares/` + share))
 		message, err := smbaudit.Encode(ev, "mockingbird")
 		if err != nil {
 			t.Fatalf("Encode: %v", err)
@@ -402,7 +402,7 @@ func TestSubmitSMBEventAppendsNoLedgerEntry(t *testing.T) {
 func TestSubmitSMBEventStopsOnShutdown(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{MaxEvents: 1, MaxBytes: 1 << 20})
 
-	first, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/a`))
+	first, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/a`))
 	body, err := smbaudit.Encode(first, "mockingbird")
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -413,7 +413,7 @@ func TestSubmitSMBEventStopsOnShutdown(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	second, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987125,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/b`))
+	second, _ := smbaudit.Parse([]byte(`[2026/09/23 22:01:53.987125,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/b`))
 	body2, err := smbaudit.Encode(second, "mockingbird")
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -441,7 +441,7 @@ func newBareSMBRoad(t *testing.T, submit func(context.Context, []byte) error) (*
 }
 
 var oneAuditLine = tailer.Line{
-	Data: []byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`),
+	Data: []byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`),
 	Pos:  queue.Position{Inode: 7, Offset: 120},
 }
 
@@ -591,11 +591,11 @@ func TestSMBAuditRoadKeepsTwoFilesAsTwoAlerts(t *testing.T) {
 	road, auditPath, _ := newTestSMBRoad(t, in)
 
 	writeLines(t, auditPath, []string{
-		`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-		`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
-		`[2026/09/23 22:01:53.300000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-		`[2026/09/23 22:01:53.400000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR`,
-		`[2026/09/23 22:01:53.500000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR/salaries-2025.xlsx`,
+		`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+		`[2026/09/23 22:01:53.200000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
+		`[2026/09/23 22:01:53.300000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+		`[2026/09/23 22:01:53.400000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/HR`,
+		`[2026/09/23 22:01:53.500000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/HR/salaries-2025.xlsx`,
 	})
 	runRoadUntil(t, road, in, 2)
 

@@ -11,6 +11,9 @@
 # refused exactly like publish-image.sh refuses a mismatched push-back --
 # this script exists for the same reason, one registry hop further along.
 set -euo pipefail
+# The policy reads $CI_REGISTRY, so pin a test registry here rather than
+# inherit the job's.
+export CI_REGISTRY=registry.example.test
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/mirror-image.sh"
@@ -24,7 +27,7 @@ bad() { echo "FAIL $1"; shift; [ $# -gt 0 ] && printf '%s\n' "$*" | sed 's/^/   
 # shellcheck source=/dev/null
 source "$script"
 
-source_repo="registry.tomlawson.io/ai/birdcage/birdcage"
+source_repo="registry.example.test/ai/birdcage/birdcage"
 dest_repo="ghcr.io/tomlawesome/birdcage"
 digest="sha256:$(printf 'a%.0s' $(seq 64))"
 other_digest="sha256:$(printf 'e%.0s' $(seq 64))"
