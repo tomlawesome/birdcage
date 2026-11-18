@@ -34,10 +34,10 @@ Origin: the person named says they followed the guide named above. It is not
 a signature. Nothing here proves who wrote it; the check only makes the name,
 the commit and the guide agree. Key-based signing is not set up.
 
-Everything from a `post-release:` line to the end of the file is ignored by
-the check. It is filled in at the step 6 back-merge, so the repository, not
-only the main merge request, carries the step 2 evidence and what the release
-actually did.
+The record is written once and not edited after its release MR merges.
+What the release then did -- the step 2 evidence, the `release:promote`
+job, the six digests, the countersigning run -- goes on the GitLab Release
+at step 6, not here.
 
 ---
 
@@ -54,8 +54,3 @@ step 5: after-merge
 step 6: after-merge
 
 Signed-off-by: <your name, as git config user.name>
-
-post-release:
-step 2 evidence: <what the production-like test on preview covered, and its result>
-released: <the release:promote job id and the six digests>
-countersigned: <the GitHub workflow run>

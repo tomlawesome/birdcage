@@ -74,9 +74,11 @@ release-readiness check passes 10 and 300).
 
 --json PATH writes every row as JSON for scripts/release-readiness.py:
 id, pinned, latest, status, note, and where known `released` (the date
-the `latest` version was published -- read from the registry's own answer,
-or for Go and GitHub tags from the Git host's commit date; never from the
-Go proxy), `file` (the Dockerfile of an apk pin), `credential_missing`
+the oldest version newer than the pin was published -- read from the
+registry's own answer, or for Go and GitHub tags from the Git host's commit
+date, never from the Go proxy; a row dated only by its latest version
+carries a date only when that is the pin's next patch; an image row never
+carries one, since Docker Hub's tag date moves on every rebuild), `file` (the Dockerfile of an apk pin), `credential_missing`
 (unverifiable only because a CI credential is absent) and `hold` (a hold
 in supply-chain/staleness.yml that names this row but no longer applies:
 {lapsed: expired | held-at-differs, review_by, held_at}). A release date
@@ -164,6 +166,56 @@ class DeadlineReached(Exception):
     pass
 
 
+# The most any one response may be (#215 review): the largest documents
+# read are full npm package documents (vite's was 39 MB on 2026-11-18). A
+# bigger answer is a failure, and is not read past the limit.
+MAX_BODY = 64 * 1024 * 1024
+# Headers that carry a credential: never sent to a host the request was not
+# addressed to (#215 review). urllib copies request headers onto a redirect.
+_CREDENTIAL_HEADERS = ("authorization", "private-token")
+
+
+class ResponseTooLarge(Exception):
+    pass
+
+
+def _read_capped(resp, limit=None):
+    """resp.read(), refusing (ResponseTooLarge) anything over the limit
+    without reading the rest."""
+    limit = MAX_BODY if limit is None else limit
+    length = resp.headers.get("Content-Length")
+    if length and length.isdigit() and int(length) > limit:
+        raise ResponseTooLarge(f"response of {length} bytes is over the {limit}-byte limit")
+    body = resp.read(limit + 1)
+    if len(body) > limit:
+        raise ResponseTooLarge(f"response is over the {limit}-byte limit")
+    return body
+
+
+class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, dropping credential headers when the host changes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (urllib.parse.urlsplit(newurl).netloc.lower()
+                                != urllib.parse.urlsplit(req.full_url).netloc.lower()):
+            for name in list(new.headers):
+                if name.lower() in _CREDENTIAL_HEADERS:
+                    del new.headers[name]
+            for name in list(new.unredirected_hdrs):
+                if name.lower() in _CREDENTIAL_HEADERS:
+                    del new.unredirected_hdrs[name]
+        return new
+
+
+_OPENER = urllib.request.build_opener(_SameHostCredentials())
+
+
+def urlopen(req, timeout):
+    """The one way this file opens a URL: the redirect rule above applies."""
+    return _OPENER.open(req, timeout=timeout)
+
+
 def _remaining():
     """Seconds left before the run's deadline, or None without one."""
     import time
@@ -211,8 +263,8 @@ def _fetch_with_retry(url, headers, attempts=8):
             return (False, None, "deadline reached")
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return (True, resp.read(), None)
+            with urlopen(req, timeout=timeout) as resp:
+                return (True, _read_capped(resp), None)
         except urllib.error.HTTPError as e:
             last = (False, None, f"HTTP {e.code}")
             if e.code not in (403, 429) or attempt == attempts - 1:
@@ -293,7 +345,7 @@ class Fetcher:
             return (True, body.decode("utf-8").strip(), None)
         try:
             req = urllib.request.Request(url, headers=headers or {}, method="HEAD")
-            with urllib.request.urlopen(req, timeout=_call_timeout()) as resp:
+            with urlopen(req, timeout=_call_timeout()) as resp:
                 digest = resp.headers.get("Docker-Content-Digest")
                 if not digest:
                     return (False, None, "no Docker-Content-Digest header in response")
@@ -338,8 +390,8 @@ class Fetcher:
             seen.add(url)
             try:
                 req = urllib.request.Request(url, headers=headers or {})
-                with urllib.request.urlopen(req, timeout=_call_timeout()) as resp:
-                    body = resp.read()
+                with urlopen(req, timeout=_call_timeout()) as resp:
+                    body = _read_capped(resp)
                     link = resp.headers.get("Link")
             except DeadlineReached:
                 return (False, None, "deadline reached")
@@ -552,11 +604,15 @@ def check_go_toolchain(root, fetcher):
         if candidates is None:
             return unverifiable(row_id, pin, err)
         row = go_family_status(pin, candidates, row_id)
-        nums, _ = split_version(row.latest or "")
-        if nums:
+        lo, _ = split_version(pin)
+        hi, _ = split_version(row.latest or "")
+        if row.status == "behind" and lo and hi:
             # go.dev/dl carries no dates; the Go repository's own tag does.
-            row.date_hint = ("github_commit", "golang/go",
-                             "go" + ".".join(str(n) for n in nums))
+            # The oldest version newer than the pin (#215, 49b).
+            newer = sorted(n for n, _ in candidates if lo < n <= hi)
+            if newer:
+                row.date_hint = ("github_commit", "golang/go",
+                                 "go" + ".".join(str(n) for n in newer[0]))
         return row
 
     go_mod = os.path.join(root, "go.mod")
@@ -767,7 +823,8 @@ def check_go_modules(root, fetcher):
             else:
                 row = Row(row_id, pinned, latest, "behind")
                 repo, _ = owner_module_repo_and_major(module)
-                row.date_hint = ("github_commit", f"tomlawesome/{repo}", latest)
+                if is_patch_successor(pinned, latest):
+                    row.date_hint = ("github_commit", f"tomlawesome/{repo}", latest)
                 rows.append(row)
             continue
         latest, err = go_proxy_latest(fetcher, module)
@@ -789,11 +846,13 @@ def check_go_modules(root, fetcher):
                 rows.append(Row(row_id, pinned, newest, "current"))
                 continue
             row = Row(row_id, pinned, newest, "behind")
-            row.date_hint = go_module_git_tag(module, newest)
+            if is_patch_successor(pinned, newest):
+                row.date_hint = go_module_git_tag(module, newest)
             rows.append(row)
             continue
         row = Row(row_id, pinned, latest, "behind")
-        row.date_hint = go_module_git_tag(module, latest)
+        if is_patch_successor(pinned, latest):
+            row.date_hint = go_module_git_tag(module, latest)
         rows.append(row)
     return rows
 
@@ -860,7 +919,7 @@ def check_npm(root, fetcher):
         latest_nums, _ = split_version(latest)
         if installed_nums is not None and latest_nums is not None and latest_nums > installed_nums:
             row = Row(row_id, installed, latest, "behind")
-            row.date_hint = ("npm", name, latest)
+            row.date_hint = ("npm", name, installed, latest)
             rows.append(row)
         else:
             rows.append(Row(row_id, installed, latest, "current",
@@ -892,8 +951,12 @@ def check_pypi(root, fetcher):
         except Exception as e:  # noqa: BLE001
             rows.append(unverifiable(row_id, version, f"bad JSON from {url}: {e}"))
             continue
-        uploaded = sorted(u.get("upload_time_iso_8601", "") for u in (data.get("urls") or [])
-                          if isinstance(u, dict) and u.get("upload_time_iso_8601"))
+        releases = data.get("releases") or {}
+        dates = {}
+        for v, files in releases.items():
+            stamps = sorted(f.get("upload_time_iso_8601") for f in (files or [])
+                            if isinstance(f, dict) and f.get("upload_time_iso_8601"))
+            dates[v] = stamps[0] if stamps else None
         if not latest:
             rows.append(unverifiable(row_id, version, f"no info.version in response from {url}"))
             continue
@@ -904,8 +967,9 @@ def check_pypi(root, fetcher):
         latest_nums, _ = split_version(latest)
         if pinned_nums is not None and latest_nums is not None and latest_nums > pinned_nums:
             row = Row(row_id, version, latest, "behind")
-            if uploaded:
-                row.date_hint = ("value", uploaded[0])
+            released = oldest_newer_date(dates, version, latest)
+            if released:
+                row.date_hint = ("value", released)
             rows.append(row)
         else:
             rows.append(Row(row_id, version, latest, "current",
@@ -1171,7 +1235,9 @@ def _check_one_image(fetcher, repo, tag):
 
     if compare_at_precision(pin_nums, target):
         row = Row(row_id, tag, format_nums(target, suffix), "behind", note)
-        row.date_hint = ("hub", hub_repo, format_nums(target, suffix))
+        # No date_hint: Docker Hub's tag date moves on every rebuild of an
+        # official image, so it is not a release date (#215 review). A newer
+        # image version always counts as newer.
         return row
     return Row(row_id, tag, format_nums(target, suffix), "current", note)
 
@@ -1393,7 +1459,7 @@ def _tool_row(row_id, pinned, latest, err, owner_repo=None):
     if latest == pinned:
         return Row(row_id, pinned, latest, "current")
     row = Row(row_id, pinned, latest, "behind")
-    if owner_repo:
+    if owner_repo and is_patch_successor(pinned, latest):
         row.date_hint = ("github_release", owner_repo)
     return row
 
@@ -1433,7 +1499,8 @@ def check_actions(root, fetcher):
                 rows.append(Row(row_id, pinned_norm, latest_norm, "current"))
             else:
                 row = Row(row_id, pinned_norm, latest_norm, "behind")
-                row.date_hint = ("github_commit", owner_repo, latest)
+                if is_patch_successor(pinned_norm, latest_norm):
+                    row.date_hint = ("github_commit", owner_repo, latest)
                 rows.append(row)
     return rows
 
@@ -1522,7 +1589,7 @@ def check_registry_fixture(root, fetcher):
             # WWW-Authenticate challenge.
             try:
                 req = urllib.request.Request(f"https://{registry}/v2/")
-                urllib.request.urlopen(req, timeout=_call_timeout())
+                urlopen(req, timeout=_call_timeout()).close()
             except urllib.error.HTTPError as e:
                 challenge = e.headers.get("WWW-Authenticate")
             except Exception:  # noqa: BLE001 -- deadline or transport: no challenge
@@ -1548,8 +1615,8 @@ def check_registry_fixture(root, fetcher):
             auth = f"{user}:{password}".encode()
             import base64
             req.add_header("Authorization", "Basic " + base64.b64encode(auth).decode())
-            with urllib.request.urlopen(req, timeout=_call_timeout()) as resp:
-                token = json.loads(resp.read()).get("token")
+            with urlopen(req, timeout=_call_timeout()) as resp:
+                token = json.loads(_read_capped(resp, 1024 * 1024)).get("token")
         except Exception as e:  # noqa: BLE001
             return [unverifiable(row_id, pinned_digest, f"could not get a registry token: {e}")]
         if not token:
@@ -1686,21 +1753,56 @@ def release_date(fetcher, hint):
         ok, body, _ = fetcher.get(url, headers=github_headers())
         return _date_from(body, "published_at") if ok else None
     if kind == "npm":
-        _, name, version = hint
+        # ("npm", name, version): that version's date; ("npm", name,
+        # pinned, latest): the oldest version newer than the pin.
+        name = hint[1]
         ok, body, _ = fetcher.get(f"https://registry.npmjs.org/{name}")
         if not ok:
             return None
         try:
-            when = (json.loads(body).get("time") or {}).get(version)
+            doc = json.loads(body)
         except Exception:  # noqa: BLE001
             return None
-        return when if isinstance(when, str) else None
-    if kind == "hub":
-        _, repo, tag = hint
-        url = f"https://hub.docker.com/v2/repositories/{repo}/tags/{urllib.parse.quote(tag)}"
-        ok, body, _ = fetcher.get(url)
-        return _date_from(body, "tag_last_pushed", "last_updated") if ok else None
+        times = doc.get("time") or {}
+        if len(hint) == 3:
+            when = times.get(hint[2])
+            return when if isinstance(when, str) else None
+        _, _, pinned, latest = hint
+        versions = set(times) | set(doc.get("versions") or {})
+        return oldest_newer_date({v: times.get(v) for v in versions}, pinned, latest)
     return None
+
+
+def oldest_newer_date(dates, pinned, latest):
+    """The date of the oldest stable version newer than `pinned`, up to
+    `latest` (#215, 49b: the pin is behind once any newer version is 14+
+    days old). dates maps version -> ISO date or None. A newer version
+    with no date makes the answer None, which the readiness check counts
+    as old."""
+    lo, _ = split_version(pinned)
+    hi, _ = split_version(latest)
+    if lo is None or hi is None:
+        return None
+    found = []
+    for v, when in dates.items():
+        nums, suffix = split_version(v)
+        if nums is None or suffix or not (lo < nums <= hi):
+            continue
+        if not (isinstance(when, str) and re.match(r"^\d{4}-\d{2}-\d{2}", when)):
+            return None
+        found.append(when)
+    return min(found) if found else None
+
+
+def is_patch_successor(pinned, latest):
+    """True when latest is the next patch of pinned (1.2.3 -> 1.2.4), the one
+    case where latest is known to be the only newer version, so its date is
+    the oldest newer one's. Otherwise a row dated only by its latest version
+    carries no date: undated counts as old (#215, 49b)."""
+    a, _ = split_version(pinned.lstrip("v"))
+    b, _ = split_version(latest.lstrip("v"))
+    return (a is not None and b is not None and len(a) == len(b) == 3
+            and a[:2] == b[:2] and b[2] == a[2] + 1)
 
 
 def add_release_dates(rows, fetcher):

@@ -171,7 +171,9 @@ server that issued it, so it names a version rather than a moving tag.
 ## Cutting a release
 
 Before step 1, the release record and the change-log rename reach `dev`
-(next section), and `scripts/release-readiness.py --target preview` exits 0.
+(next section), and a local run of `scripts/release-readiness.py --target
+preview` shows no FAIL. The gate itself is CI's `release_readiness` job on
+the promotion MR (see "The readiness check").
 
 1. `dev` -> `preview` by merge request, as usual. The merge's push pipeline
    runs the full gate, then the release jobs: the six published images are pushed under
@@ -180,8 +182,8 @@ Before step 1, the release record and the change-log rename reach `dev`
 2. Do the production-like manual test on `preview`. That test is the point
    of the hop, not a formality.
 3. `preview` -> `main` by merge request, with a `Step 2: <what the test
-   covered and its result>` line in its description, opened only once
-   `scripts/release-readiness.py --target main` exits 0.
+   covered and its result>` line near the top of its description, once a
+   local `scripts/release-readiness.py --target main` shows no FAIL.
 4. **Press the button.** On `main`'s pipeline, play the manual
    `release:promote` job. That press is what authorises the release.
 
@@ -203,10 +205,11 @@ Before step 1, the release record and the change-log rename reach `dev`
    start it and only the owner can approve it: no GitHub credential on the
    shared runner host has Actions write, and the Environment's required
    reviewer is you (#169; setup steps 5 to 7).
-6. Back-merge after each promotion, or the next one reports `BEHIND`. The
-   back-merge after the release fills in the record's `post-release:`
-   block: the step 2 evidence, the `release:promote` job and the
-   countersigning run.
+6. Back-merge after each promotion, or the next one reports `BEHIND`.
+   After the release, complete the GitLab Release that `release:gitlab`
+   created: add the step 2 evidence, the `release:promote` job, the six
+   digests and the link to the countersigning run. `docs/releases/` is not
+   touched again.
 
 Two buttons for a complete release: one on GitLab, one on GitHub. The
 second cannot be folded into the first without giving away what it is
@@ -261,8 +264,9 @@ pipeline waits on it, except the cheap policy and secret-scan jobs
 `lint:flake-check`). It checks what the repository and registries can
 show: the version is valid, new and not burnt; the change log; the review
 issues are closed; the source contains `preview`; the hop; pins are current
-(a version under 14 days old does not count as newer; this fails on the
-`preview` leg and is information only on `main`); apk pins can build;
+(a pin counts as behind once any newer version is 14 days old; a newer
+image version always counts, since Docker Hub's tag date moves on every
+rebuild; this fails on the `preview` leg and is information only on `main`); apk pins can build;
 `cosign.pub`; the release record; on the `main` leg also that the merge
 lands `preview` exactly, `preview`'s images are published and their
 evidence has at least a day left, and the step 2 line. It prints one line
@@ -276,21 +280,25 @@ scripts/release-readiness.py --target main --description-file mr.txt
 ```
 
 Exit 0 passed, 1 something failed, 3 nothing failed but something could
-not be checked (no `glab` login, a registry timeout) — 3 does not clear a
-promotion. In CI anything unchecked is a failure. A green run never
-replaces the owner's approval.
+not be checked. A local run exits 3 as a rule, and that is expected: the
+fixture-digest row needs the CI registry login, which a workstation does
+not have, and a missing `glab` login or a registry timeout does the same.
+A local 3 decides nothing; read it for FAIL lines and leave the rest to CI.
+The gate is CI's `release_readiness` run on the promotion MR, where
+anything unchecked is a failure. A green run never replaces the owner's
+approval.
 
 ### What it cannot check, and who does it
 
 | step | who |
 | --- | --- |
-| Run `scripts/release-readiness.py --target preview` locally; open the `release/vX.Y.Z` MR into `dev`; after it merges, run it again and open `dev` -> `preview` only when it exits 0 | agent |
-| Before `preview` -> `main`: run `--target main`, write `Step 2: ...` in the MR description, open only when it exits 0 | agent |
+| Run `scripts/release-readiness.py --target preview` locally; open the `release/vX.Y.Z` MR into `dev`; after it merges, run it again and open `dev` -> `preview` once it shows no FAIL; CI's `release_readiness` is the gate | agent |
+| Before `preview` -> `main`: run `--target main`, write `Step 2: ...` in the first 2,700 characters of the MR description, open once it shows no FAIL | agent |
 | Approve each promotion MR (a green job never replaces it) | owner |
 | Step 2, the production-like test on `preview` (#168) | owner |
 | Review the change log against the issues merged since the last release | inline reviewer of the `release/vX.Y.Z` MR; the owner's approval of the promotion covers it |
 | Step 4 `release:promote`; step 5 countersign on GitHub (#169) | owner |
-| Step 6 back-merges, and the record's `post-release:` block | agent |
+| Step 6 back-merges, then completing the GitLab Release (step 2 evidence, promote job, six digests, countersign link) | agent |
 | Setup still valid: GHCR token unexpired, cosign key on the host, `birdcage-signing` runner online, GHCR packages name the repository, `BIRDCAGE_READ_TOKEN` unexpired | owner (protected variables and runners are invisible to the job and to agents) |
 | Delete burnt registry tags (#171) | owner |
 

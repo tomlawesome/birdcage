@@ -16,8 +16,9 @@ Usage:
                       origin in CI, else the GitLab remote of this checkout)
   --description-file  the main-leg MR description, for M9 locally (CI reads
                       CI_MERGE_REQUEST_DESCRIPTION)
-  --cooldown-days     a newer version released fewer than N days ago does
-                      not count as newer (default 14, owner answer 49b)
+  --cooldown-days     a pin counts as behind once its oldest newer version
+                      is N days old (default 14, owner answer 49b); a newer
+                      image: version always counts (Docker Hub dates move)
 
 It runs every check, never stopping at the first failure, and prints one
 line per check -- `PASS|FAIL|UNCHECKED|INFO <id> <name>: <message>` --
@@ -89,6 +90,67 @@ MANIFEST_ACCEPT = ", ".join([
     "application/vnd.docker.distribution.manifest.list.v2+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
+
+
+# The most any one HTTP answer may be (#215 review): issue and token answers
+# are a few KiB. A bigger one is a failure and is not read past the limit.
+MAX_BODY = 1024 * 1024
+_CREDENTIAL_HEADERS = ("authorization", "private-token")
+
+
+def read_capped(resp, limit=MAX_BODY):
+    length = resp.headers.get("Content-Length")
+    if length and length.isdigit() and int(length) > limit:
+        raise LookupFailed(f"an answer of {length} bytes is over the {limit}-byte limit")
+    body = resp.read(limit + 1)
+    if len(body) > limit:
+        raise LookupFailed(f"an answer is over the {limit}-byte limit")
+    return body
+
+
+class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but never carry a credential header to another host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (urllib.parse.urlsplit(newurl).netloc.lower()
+                                != urllib.parse.urlsplit(req.full_url).netloc.lower()):
+            for bag in (new.headers, new.unredirected_hdrs):
+                for name in list(bag):
+                    if name.lower() in _CREDENTIAL_HEADERS:
+                        del bag[name]
+        return new
+
+
+_OPENER = urllib.request.build_opener(_SameHostCredentials())
+
+
+def urlopen(req, timeout):
+    """Every HTTP call in this file goes through here."""
+    return _OPENER.open(req, timeout=timeout)
+
+
+# What a child process may inherit (#215 review). Variables named like a
+# credential, and the CI and forge namespaces, are never passed on; a child
+# that needs one is given it by name.
+_CREDENTIAL_NAME = re.compile(r"TOKEN|PASSWORD|PASSWD|SECRET|KEY|AUTH|CREDENTIAL|COOKIE|PRIVATE",
+                              re.I)
+_FORGE_PREFIXES = ("CI_", "GITLAB_", "GITHUB_", "GH_", "GLAB_", "RUNNER_", "DOCKER_", "FF_")
+
+
+def child_env(pass_names=(), **set_vars):
+    env = {}
+    for name, value in os.environ.items():
+        if _CREDENTIAL_NAME.search(name):
+            continue
+        if name.upper().startswith(_FORGE_PREFIXES):
+            continue
+        env[name] = value
+    for name in pass_names:
+        if name in os.environ:
+            env[name] = os.environ[name]
+    env.update(set_vars)
+    return env
 
 
 class LookupFailed(Exception):
@@ -180,7 +242,8 @@ class RealLookups:
         try:
             if version_text is None:
                 return {"exit": 1, "stdout": "", "stderr": "VERSION is missing from the tree"}
-            out = run(["bash", os.path.join(HERE, "release-version.sh"), "--file", path])
+            out = run(["bash", os.path.join(HERE, "release-version.sh"), "--file", path],
+                      env=child_env())
             return {"exit": out.returncode, "stdout": out.stdout, "stderr": out.stderr}
         finally:
             os.unlink(path)
@@ -209,7 +272,7 @@ class RealLookups:
                                      headers={"Accept": MANIFEST_ACCEPT,
                                               "Authorization": f"Bearer {token}"})
         try:
-            with urllib.request.urlopen(req, timeout=DEADLINE.limit()) as resp:
+            with urlopen(req, timeout=DEADLINE.limit()) as resp:
                 return resp.headers.get("Docker-Content-Digest") or None
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -224,7 +287,7 @@ class RealLookups:
             return self._tokens[key]
         challenge = None
         try:
-            urllib.request.urlopen(f"https://{host}/v2/", timeout=DEADLINE.limit())
+            urlopen(urllib.request.Request(f"https://{host}/v2/"), timeout=DEADLINE.limit()).close()
         except urllib.error.HTTPError as e:
             challenge = e.headers.get("WWW-Authenticate")
         except (urllib.error.URLError, OSError) as e:
@@ -241,8 +304,8 @@ class RealLookups:
             req.add_header("Authorization", "Basic " + base64.b64encode(
                 f"{basic[0]}:{basic[1]}".encode()).decode())
         try:
-            with urllib.request.urlopen(req, timeout=DEADLINE.limit()) as resp:
-                data = json.loads(resp.read())
+            with urlopen(req, timeout=DEADLINE.limit()) as resp:
+                data = json.loads(read_capped(resp))
         except urllib.error.HTTPError as e:
             raise LookupFailed(f"{host} refused a pull token (HTTP {e.code})") from None
         except (urllib.error.URLError, OSError, ValueError) as e:
@@ -294,8 +357,8 @@ class RealLookups:
             req = urllib.request.Request(f"{api}/projects/{project}/issues/{int(iid)}",
                                          headers={"PRIVATE-TOKEN": token})
             try:
-                with urllib.request.urlopen(req, timeout=DEADLINE.limit()) as resp:
-                    return json.loads(resp.read()).get("state")
+                with urlopen(req, timeout=DEADLINE.limit()) as resp:
+                    return json.loads(read_capped(resp)).get("state")
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):
                     raise Unauthorized() from None
@@ -315,12 +378,13 @@ class RealLookups:
             base = f"{registry_host(self.gitlab_host)}/{self.project_path}"
         if self._cosign is None:
             out = run(["bash", os.path.join(HERE, "ensure-cosign.sh")],
-                      timeout=COSIGN_INSTALL_TIMEOUT)
+                      timeout=COSIGN_INSTALL_TIMEOUT, env=child_env())
             if out.returncode != 0:
                 raise LookupFailed("scripts/ensure-cosign.sh could not install cosign")
             self._cosign = out.stdout.strip().splitlines()[-1]
-        env = dict(os.environ, BIRDCAGE_IMAGE=f"{base}/{image}", BIRDCAGE_DIGEST=digest,
-                   BIRDCAGE_COMMIT=commit, BIRDCAGE_REF="preview", BIRDCAGE_COSIGN=self._cosign)
+        env = child_env(BIRDCAGE_IMAGE=f"{base}/{image}", BIRDCAGE_DIGEST=digest,
+                        BIRDCAGE_COMMIT=commit, BIRDCAGE_REF="preview",
+                        BIRDCAGE_COSIGN=self._cosign)
         docker_config = None
         if self.ci and os.environ.get("CI_REGISTRY_USER"):
             # cosign reads registry credentials from a Docker config; write a
@@ -367,7 +431,9 @@ class RealLookups:
             limit = max(10, min(STALENESS_DEADLINE, int(DEADLINE.left()) - 60))
             out = run([sys.executable, os.path.join(HERE, "staleness-check.py"),
                        "--root", work, "--json", rows_path, "--timeout", str(CALL_TIMEOUT),
-                       "--deadline", str(limit)], timeout=limit + 30)
+                       "--deadline", str(limit)], timeout=limit + 30,
+                      env=child_env(("CI", "CI_REGISTRY", "CI_REGISTRY_USER",
+                                     "CI_REGISTRY_PASSWORD", "GITHUB_TOKEN")))
             if out.returncode not in (0, 1) or not os.path.isfile(rows_path):
                 raise LookupFailed("staleness-check could not run: "
                                    + (out.stderr.strip().splitlines() or ["no output"])[-1])
@@ -607,7 +673,8 @@ def check_changelog(ctx):
 
 
 def read_record(ctx):
-    """(path, parsed-or-None). Lines after `post-release:` are ignored."""
+    """(path, parsed-or-None). The whole file is read: the record is
+    immutable and ends at its sign-off (#215 design note 63905)."""
     v, _ = version_info(ctx)
     path = f"docs/releases/v{v}.md" if v else None
     text = ctx.tree.show(path) if path else None
@@ -615,8 +682,6 @@ def read_record(ctx):
         return path, None
     rec = {"fields": {}, "steps": [], "signoffs": [], "text": text}
     for line in text.splitlines():
-        if re.match(r"^post-release:", line):
-            break
         m = re.match(r"^(version|guide-commit|guide-blob|review):(.*)$", line)
         if m and m.group(1) not in rec["fields"]:
             rec["fields"][m.group(1)] = m.group(2).strip()
@@ -789,7 +854,8 @@ def check_evidence(ctx):
 
 def check_manual_test(ctx):
     todo = ("Write the step 2 production-like test result in the MR description as "
-            "'Step 2: ...', then re-run the job.")
+            "'Step 2: ...' within its first 2,700 characters (GitLab cuts the description "
+            "it gives the pipeline at 2,700 characters), then re-run the job.")
     if ctx.description is None:
         where = ("CI_MERGE_REQUEST_DESCRIPTION is empty" if ctx.ci else
                  "no --description-file given (locally, pass the MR description with it)")
@@ -917,6 +983,9 @@ def check_pins_current(ctx):
     if rows is None:
         return Result(INFO if ctx.target == "main" else UNCHECKED,
                       f"staleness-check gave no answer: {err}")
+    if not rows:
+        return Result(stale_status, "staleness-check returned no rows at all, so nothing was "
+                      "checked: run scripts/staleness-check.py and fix what it cannot read")
     now = ctx.lookups.now()
     cooldown = datetime.timedelta(days=ctx.cooldown_days)
     fails, unchecked, young = [], [], []
@@ -937,7 +1006,9 @@ def check_pins_current(ctx):
                          f"{r.get('pinned')}: bump it or renew the hold for this pin")
             continue
         if status == "behind":
-            released = r.get("released")
+            # Docker Hub's tag date moves on every rebuild of an official
+            # image, so a newer image version always counts (#215 review).
+            released = None if rid.startswith("image:") else r.get("released")
             if released:
                 try:
                     if now - parse_when(released) < cooldown:
@@ -986,6 +1057,9 @@ def check_apk_buildable(ctx):
         shown = f"{name}{pinned}" if pinned.startswith("~=") else f"{name}={pinned}"
         fails.append(f"Alpine no longer carries {shown} (has {latest or 'none'}): bump the pin "
                      f"in {where} and supply-chain/dependency-inventory.md (as #165)")
+    if n == 0:
+        return Result(FAIL, "staleness-check returned no apk: rows, so no Alpine pin was "
+                      "checked: the Dockerfiles carry apk pins, so the check is not reading them")
     if fails:
         return Result(FAIL, "; ".join(fails) + ". A hold cannot excuse this: the build would fail.")
     if unknown:

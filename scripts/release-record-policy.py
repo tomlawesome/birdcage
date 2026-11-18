@@ -12,6 +12,8 @@ Refuses (exit 1) unless all of these hold:
   - the target branch is `dev`;
   - the source branch is exactly `release/v<VERSION>`, VERSION read from
     <remote>/<target> (a version bump goes through a batch, not here);
+  - `docs/releases/v<VERSION>.md` does not already exist on <remote>/<target>
+    (one release MR per release: a mistake after it merges goes to the owner);
   - every path the branch changes (`git diff --name-only
     <remote>/<target>...HEAD`, so dev moving on does not count) is
     `CHANGELOG.md` or `docs/releases/v<VERSION>.md`.
@@ -70,6 +72,7 @@ def main(argv):
         base = f"{args.remote}/{target}"
         version = git("show", f"{base}:VERSION").strip()
         changed = [p for p in git("diff", "--name-only", f"{base}...HEAD").splitlines() if p]
+        on_target = set(git("ls-tree", "-r", "--name-only", base, "--", "docs/releases").split())
     except (RuntimeError, subprocess.TimeoutExpired) as e:
         print(f"release-record-policy: {e}", file=sys.stderr)
         return 2
@@ -80,6 +83,12 @@ def main(argv):
     if source != want:
         problems.append(f"the branch must be named {want} (VERSION on {target} is {version}); "
                         f"{source} is not. A version bump goes through a batch, not this MR")
+
+    record = f"docs/releases/v{version}.md"
+    if record in on_target:
+        problems.append(f"{record} already exists on {target}: v{version} already has its one "
+                        "release MR. A mistake in it is a question for the owner, not a second "
+                        "release MR")
 
     allowed = {"CHANGELOG.md", f"docs/releases/v{version}.md"}
     others = [p for p in changed if p not in allowed]
