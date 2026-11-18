@@ -4,5 +4,8 @@
 # (local: ~/.config/birdcage/no-real-names.key; CI: NO_REAL_NAMES_KEY_FILE).
 # Add an entry: scripts/no-real-names.py --add, type the word (not echoed),
 # append the printed line below. Never put the word on the command line.
-# The first non-comment line is the format header; an empty list is refused.
+# The first non-comment line is the format header. Then exactly one key-check
+# line, "key-check: <64 hex>" = HMAC-SHA256(key, b"no-real-names key check"):
+# make it with scripts/no-real-names.py --key-check and paste the printed line.
+# A missing or mismatched key-check (wrong key) and an empty list are refused.
 hmac-sha256

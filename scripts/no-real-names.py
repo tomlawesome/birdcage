@@ -13,6 +13,13 @@ else NO_REAL_NAMES_KEY_FILE (CI: a masked file variable), else
 key, an old salted hashes file or a list with no entries is a config error:
 the guard fails closed rather than pass on an empty list.
 
+The hashes file carries one "key-check: <64 hex>" line, HMAC-SHA256(key,
+b"no-real-names key check"). A wrong key (say a CI file variable with an
+extra trailing newline) would match no hash and pass every tree, so a
+missing, malformed, duplicated or mismatched key-check is a config error,
+checked before the no-entries check. Key bytes are used exactly as stored.
+--key-check prints that line for the key in use and nothing else.
+
 --add reads one word from the terminal (no echo) or stdin, never argv, and
 prints only its keyed hash, the line to append to the hashes file.
 
@@ -22,7 +29,7 @@ at every path the blob appears at that is not allowlisted.
 Files over MAX_BYTES are skipped and counted, never read.
 
 usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--key-file FILE]
-                        [--history | --add]
+                        [--history | --add | --key-check]
 Exit 0 clean, 1 matches found, 2 usage or config error.
 """
 import argparse, getpass, hashlib, hmac, os, re, subprocess, sys, threading
@@ -33,6 +40,8 @@ KEY_ENV = "NO_REAL_NAMES_KEY_FILE"
 DEFAULT_KEY = os.path.join("~", ".config", "birdcage", "no-real-names.key")
 MIN_KEY_BYTES = 16
 HEX64 = re.compile(r"[0-9a-f]{64}")
+KEY_CHECK = "key-check:"
+KEY_CHECK_MSG = b"no-real-names key check"
 
 LOCK_NAMES = {"go.sum", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
               "poetry.lock", "Cargo.lock", "uv.lock"}
@@ -46,10 +55,12 @@ def config_error(msg):
 
 
 def load_hashes(path):
-    """The set of keyed hashes in path. The first non-comment line must be the
-    format header; every later one a 64-hex entry. Line contents are never
-    echoed, in case a word was pasted in by mistake."""
-    header, hashes = None, set()
+    """(set of keyed hashes, key-check hex) from path. The first non-comment
+    line must be the format header; exactly one later line the key-check;
+    every other one a 64-hex entry. Line contents are never echoed, in case a
+    word was pasted in by mistake. The key-check and the no-entries rule are
+    enforced by verify_hashes, once the key is loaded."""
+    header, hashes, check = None, set(), None
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
@@ -68,15 +79,40 @@ def load_hashes(path):
                 config_error(f"hashes file {path} does not start with the '{HEADER}' header line")
             header = line
             continue
+        if line.startswith(KEY_CHECK):
+            value = line[len(KEY_CHECK):].strip().lower()
+            if check is not None:
+                config_error(f"hashes file {path} line {n}: more than one key-check line")
+            if not HEX64.fullmatch(value):
+                config_error(f"hashes file {path} line {n}: the key-check value is not 64 hex;"
+                             f" regenerate it with --key-check")
+            check = value
+            continue
         if not HEX64.fullmatch(line.lower()):
             config_error(f"hashes file {path} line {n} is not a 64-hex keyed hash")
         hashes.add(line.lower())
     if header is None:
         config_error(f"hashes file {path} does not start with the '{HEADER}' header line")
+    if check is None:
+        config_error(f"hashes file {path} has no key-check line; without it a wrong key would"
+                     f" pass every tree. Add the line --key-check prints for the right key")
+    return hashes, check
+
+
+def key_check(key):
+    return f"{KEY_CHECK} {digest_bytes(key, KEY_CHECK_MSG)}"
+
+
+def verify_hashes(path, hashes, check, key):
+    """Fail closed on a key that does not match the file's key-check, then on
+    an empty list (in that order)."""
+    if not hmac.compare_digest(digest_bytes(key, KEY_CHECK_MSG), check):
+        config_error(f"key check failed: the key in use does not match the key-check line in"
+                     f" {path}, so no hash could match. Use the key the list was made with"
+                     f" (bytes exactly as stored: a trailing newline counts)")
     if not hashes:
         config_error(f"hashes file {path} has no entries; add them with --add, since an "
                      f"empty list would pass every tree")
-    return hashes
 
 
 def load_key(flag):
@@ -120,8 +156,12 @@ def words(text):
     return seen
 
 
+def digest_bytes(key, data):
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
+
+
 def digest(key, word):
-    return hmac.new(key, word.encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest_bytes(key, word.encode("utf-8"))
 
 
 def read_word():
@@ -285,6 +325,8 @@ def main():
                       help="scan every blob reachable from any ref, not just the tree")
     mode.add_argument("--add", action="store_true",
                       help="read one word from the terminal or stdin and print its keyed hash")
+    mode.add_argument("--key-check", action="store_true",
+                      help="print the key-check line for the key in use")
     a, extra = ap.parse_known_args(argv)
     if extra:
         if a.add:
@@ -295,9 +337,13 @@ def main():
         key = load_key(a.key_file)
         print(digest(key, read_word()))
         return 0
+    if a.key_check:
+        print(key_check(load_key(a.key_file)))
+        return 0
     root = os.path.abspath(a.root)
-    hashes = load_hashes(a.hashes)
+    hashes, check = load_hashes(a.hashes)
     key = load_key(a.key_file)
+    verify_hashes(a.hashes, hashes, check, key)
     allow = load_allow(a.allow)
     skipped = lambda n: f" ({n} file(s) over {MAX_BYTES // (1024 * 1024)} MB skipped)" if n else ""
     if a.history:
