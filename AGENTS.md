@@ -10,9 +10,16 @@ GitLab-first: `ai/birdcage` on the project's GitLab (project 51, default branch
 mirror `tomlawesome/birdcage`, which keeps CodeQL, dependency review and the manual
 countersigning workflow (#90). It has no issues and no pull requests.
 Countersigning runs only on GitHub, because Sigstore's issuer list has no
-self-hosted GitLab; the owner starts it by hand after a release. No GitHub credential on this
-host may have Actions write, so no agent can start it (#169;
-`docs/releasing.md`).
+self-hosted GitLab; the owner starts it by hand after a release and approves
+it in the GitHub Environment `countersign` (owner as required reviewer, `main`
+only). No GitHub credential on this host may have Actions write or Deployments write: the agents'
+`gh` token, `GHCR_TOKEN`, and anything else on the runner host or readable by
+a CI job. The mirror's SSH key may only mirror: what it can push is the
+owner's to check and restrict (deploy key, ruleset on `main`). Check a
+credential with `scripts/check-no-actions-write.sh` after any credential or
+scope change. Every countersign verify pins the exact identity
+`.github/workflows/countersign.yml@refs/heads/main`, the `workflow_dispatch`
+trigger and the GitHub OIDC issuer, never a regexp (#169; `docs/releasing.md`).
 
 ## Security by design
 
