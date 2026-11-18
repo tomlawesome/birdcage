@@ -28,9 +28,11 @@
 #                    scripts/verify-validation-evidence.sh, or "timeout"
 #   staleness        {rows: [{id, pinned, latest, status, note, released?,
 #                    hold?, credential_missing?}]} as staleness-check --json
-#                    would give, or "timeout". `released` is the latest
-#                    version's release date (absent = unknown, counts as
-#                    old); `hold` = {lapsed: "expired"|"held-at-differs",
+#                    would give, or "timeout". `released` is the date of the
+#                    OLDEST version newer than the pin (49b: the pin is behind
+#                    if any newer version is 14+ days old; absent = unknown,
+#                    counts as old; never set for Docker Hub `image:` rows,
+#                    whose dates are not trusted); `hold` = {lapsed: "expired"|"held-at-differs",
 #                    review_by} for a hold that no longer applies.
 #
 # A stub value of "timeout" is a lookup that hit its time limit: FAIL in CI
@@ -922,6 +924,298 @@ expect "M7 every listed fast job waits on release_readiness (optional need)" - \
 expect "M8 no other job starts beside it (needs: [])" - '!^starts_beside:'
 expect "M9 policy:release-record job exists, on release/* MRs, running its script" - \
   '^fence_exists=1$' '^fence_runs_script=1$' '^fence_rule_release=1$'
+
+# ==========================================================================
+# #215 review (note 63831): the Medium and Low fixes. Written from the
+# review's fix list and the spec notes (63439, 63447, 63402, 63427, 63454,
+# 63456), not from the code.
+# ==========================================================================
+
+# --- M9: GitLab cuts the MR description at 2,700 characters --------------
+# (Low) The message must say so, so nobody writes Step 2 below the cut.
+newcase; to_main_leg; stub; printf 'Promote v0.2.0.\n' > "$c/desc.txt"; mainleg
+expect "N1 M9 message says GitLab cuts the MR description at 2,700 characters" 1 \
+  '^FAIL M9 ' '2,?700 char' '(cut|truncat)'
+newcase; to_main_leg; stub; run --target main --remote origin
+expect "N2 M9 without --description-file says the 2,700-character cut too" 1 \
+  '^FAIL M9 ' '2,?700 char'
+
+# --- S1/S2: a gate that saw nothing must not say PASS ---------------------
+newcase; stub '{"staleness":{"rows":[]}}'; prev
+expect "O1 zero staleness rows: S1 and S2 are not PASS" - \
+  '!^PASS S1 ' '!^PASS S2 ' '^(FAIL|UNCHECKED) S1 ' '^(FAIL|UNCHECKED) S2 '
+[ "$code" != 0 ] && { echo "ok   O2b zero rows exit $code, not 0"; pass=$((pass + 1)); } \
+  || { echo "FAIL O2b zero rows exited 0"; fail=$((fail + 1)); }
+
+newcase; stub "$(srows "$(behind_row npm:fixture-young 2026-11-16)")"; prev
+expect "O3 rows but no apk row: S2 is not PASS (nothing was checked)" - \
+  '!^PASS S2 ' '^(FAIL|UNCHECKED) S2 '
+[ "$code" != 0 ] && { echo "ok   O3b no apk rows exit $code, not 0"; pass=$((pass + 1)); } \
+  || { echo "FAIL O3b no apk rows exited 0"; fail=$((fail + 1)); }
+
+newcase; to_main_leg; stub '{"staleness":{"rows":[]}}'; mainleg
+expect "O4 main leg with zero rows: S2 is not PASS and S1 is not PASS" - \
+  '!^PASS S1 ' '!^PASS S2 '
+
+# --- Cooldown: Docker Hub dates are not trusted (decided, 63831) -----------
+# A Docker Hub tag's date changes on every rebuild of an official image, so
+# a newer IMAGE version always counts as newer, however young its date.
+img_young='{"id":"image:alpine:3.20","pinned":"3.20","latest":"3.21","status":"behind","note":"","released":"2026-11-16T08:00:00Z"}'
+newcase; stub "$(srows "$ROWS_OK,$img_young")"; prev
+expect "CD1 a newer image version counts as newer even with a 1-day-old date" 1 \
+  '^FAIL S1 ' '=image:alpine:3.20'
+newcase; stub "$(srows "$ROWS_OK,$img_young")"; prev --cooldown-days 30
+expect "CD2 a wider cooldown does not excuse a newer image version either" 1 '^FAIL S1 '
+newcase; stub "$(srows "$ROWS_OK,$(behind_row npm:fixture-young 2026-11-16)")"; prev
+expect "CD3 control: the same young date on a non-image row stays inside the cooldown" 0 '^PASS S1 '
+newcase; to_main_leg; stub "$(srows "$ROWS_OK,$img_young")"; mainleg
+expect "CD4 main leg: a newer image version is reported (INFO), never FAIL" 0 '^INFO S1 ' '=image:alpine:3.20'
+
+# Cooldown, "any newer version 14+ days old" (49b as decided in 63831): a
+# row's `released` is the date of the OLDEST version newer than the pin
+# (staleness-check produces it; its own tests cover that). The readiness
+# side: that date is what the 14 days are counted from.
+newcase; stub "$(srows "$ROWS_OK,$(behind_row npm:fixture-multi 2026-11-03)")"; prev
+expect "CD5 oldest newer version 14 days and 12 hours old: counts as newer (fails)" 1 '^FAIL S1 ' '=npm:fixture-multi'
+newcase; stub "$(srows "$ROWS_OK,$(behind_row npm:fixture-multi 2026-11-04)")"; prev
+expect "CD6 oldest newer version 13 days old: inside the cooldown (passes)" 0 '^PASS S1 '
+
+# --- Help text: the limits it states are the limits the code uses ----------
+help_text="$(python3 "$script" --help 2>&1 || true)"
+if python3 -I - "$script" "$help_text" <<'PYEOF'
+import importlib.util, re, sys
+spec = importlib.util.spec_from_file_location("rr", sys.argv[1])
+rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)
+text = " ".join(sys.argv[2].split())
+consts = {n: getattr(rr, n) for n in dir(rr)
+          if re.fullmatch(r"[A-Z_]*(TIMEOUT|DEADLINE)", n) and isinstance(getattr(rr, n), (int, float))}
+assert consts, "no time-limit constants found"
+seen = set()
+for num, unit in re.findall(r"(\d+)\s*(seconds?|secs?|s|minutes?|mins?)\b", text):
+    seen.add(int(num) * (60 if unit.startswith("min") else 1))
+for num in re.findall(r"--deadline\s+(\d+)", text):
+    seen.add(int(num))
+for name, value in consts.items():
+    assert int(value) in seen, f"{name}={value}s is in the code but the help text states no such limit (it states {sorted(seen)})"
+allowed = {int(v) for v in consts.values()} | {600}   # the job's own timeout: 10m
+extra = seen - allowed
+assert not extra, f"the help text states limits the code does not have: {sorted(extra)}"
+assert rr.RUN_DEADLINE < 600, "the run deadline must sit inside the job's 10 minutes"
+PYEOF
+then echo "ok   Q1 --help states exactly the time limits the code uses"; pass=$((pass + 1))
+else echo "FAIL Q1 --help time limits differ from the code"; fail=$((fail + 1)); fi
+
+# --- Real lookups against local servers (CI mode, no stub) -----------------
+# Local HTTP servers stand in for the GitLab API: CI_API_V4_URL points at
+# one. Nothing leaves this host; the closed-port proxy is bypassed for
+# 127.0.0.1 and localhost only.
+cat > "$work/srv.py" <<'PYEOF'
+# argv: mode logfile [redirect-port]; prints its port on line 1.
+#   big       200, Content-Length 256 MiB, streamed; logs "SENT n" at the end
+#   redirect  302 to http://localhost:<port><same path>
+#   record    200 {"state":"closed"}; logs every request header
+import http.server, sys, threading, json
+mode, log = sys.argv[1], sys.argv[2]
+rport = sys.argv[3] if len(sys.argv) > 3 else ""
+lock = threading.Lock()
+def note(line):
+    with lock, open(log, "a") as f:
+        f.write(line + "\n")
+class H(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def log_message(self, *a): pass
+    def do_GET(self):
+        for k, v in self.headers.items():
+            note(f"HDR {k.lower()}: {v}")
+        note("REQ " + self.path)
+        if mode == "redirect":
+            self.send_response(302)
+            self.send_header("Location", f"http://localhost:{rport}{self.path}")
+            self.send_header("Content-Length", "0"); self.end_headers(); return
+        if mode == "record":
+            body = json.dumps({"state": "closed", "iid": 206}).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body); return
+        if mode == "big":
+            total, sent, chunk = 256 * 1024 * 1024, 0, b" " * 65536
+            self.send_response(200); self.send_header("Content-Length", str(total)); self.end_headers()
+            try:
+                while sent < total:
+                    self.wfile.write(chunk); sent += len(chunk)
+            except OSError:
+                pass
+            note(f"SENT {sent}")
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+print(srv.server_address[1], flush=True)
+srv.serve_forever()
+PYEOF
+srv_pids=()
+start_srv() { # mode log [redirect-port] -> port in $srv_port
+  local portfile="$work/port.$RANDOM"
+  python3 -I "$work/srv.py" "$@" > "$portfile" &
+  srv_pids+=($!)
+  for _ in $(seq 50); do [ -s "$portfile" ] && break; sleep 0.1; done
+  srv_port="$(head -n1 "$portfile")"
+}
+trap 'kill "${srv_pids[@]}" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+# runreal <api-port> -- CI-mode preview run with the real lookups.
+runreal() {
+  out="$(cd "$wt" && NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+    CI=true BIRDCAGE_READ_TOKEN="$FAKE_TOKEN" CI_API_V4_URL="http://127.0.0.1:$1/api/v4" \
+    CI_PROJECT_ID=7 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=dev CI_MERGE_REQUEST_TARGET_BRANCH_NAME=preview \
+    timeout 120 python3 "$script" --target preview --remote origin 2>&1)" && code=0 || code=$?
+}
+sent_bytes() { grep '^SENT ' "$1" 2>/dev/null | awk '{ if ($2 > m) m = $2 } END { print m + 0 }'; }
+
+# Sanity first: the real CI path reads issue state from a plain 200.
+start_srv record "$work/rec0.log"; rec0="$srv_port"
+newcase; runreal "$rec0"
+expect "R0 sanity: CI reads issue state from CI_API_V4_URL with the token header" - \
+  '^PASS P5 ' '!=not-a-real-token'
+grep -q "private-token: $FAKE_TOKEN" "$work/rec0.log" && { echo "ok   R0b the token goes out as PRIVATE-TOKEN"; pass=$((pass + 1)); } \
+  || { echo "FAIL R0b the API server never saw the PRIVATE-TOKEN header"; fail=$((fail + 1)); }
+
+# Low: size limits on response reads (GitLab issues).
+start_srv big "$work/big.log"; big="$srv_port"
+newcase; runreal "$big"; sleep 1
+expect "R1 an oversize GitLab issue response: P5 fails, not a crash or a hang" 1 '^FAIL P5 ' '!Traceback'
+mb=$(( $(sent_bytes "$work/big.log") / 1048576 ))
+if [ "$mb" -lt 100 ]; then echo "ok   R2 the oversize issue response was cut off after ${mb} MiB"; pass=$((pass + 1))
+else echo "FAIL R2 the whole ${mb} MiB response was read"; fail=$((fail + 1)); fi
+
+# Low: the token is not sent to another host on a redirect.
+start_srv record "$work/rec.log"; rec="$srv_port"
+start_srv redirect "$work/redir.log" "$rec"; redir="$srv_port"
+newcase; runreal "$redir"
+grep -q "private-token: $FAKE_TOKEN" "$work/redir.log" \
+  && { echo "ok   R3 sanity: the first host received the token"; pass=$((pass + 1)); } \
+  || { echo "FAIL R3 sanity: the first host never received the token"; fail=$((fail + 1)); }
+if grep -qF "$FAKE_TOKEN" "$work/rec.log" 2>/dev/null; then
+  echo "FAIL R4 the token was forwarded to another host on a redirect"; sed 's/^/       /' "$work/rec.log"; fail=$((fail + 1))
+else echo "ok   R4 no token on a redirect to another host"; pass=$((pass + 1)); fi
+out="$out"; expect "R5 the token never appears in the output of a redirected run" - "!=$FAKE_TOKEN"
+
+# --- Low: child processes get only the environment they need ---------------
+# A copy of scripts/ whose children (release-version.sh, staleness-check.py)
+# are spies that write their environment to a file.
+spy="$work/spy"; mkdir -p "$spy/out"; cp -r "$here" "$spy/scripts"
+cat > "$spy/scripts/release-version.sh" <<'SH'
+#!/usr/bin/env bash
+env > "$SPY_OUT/version.env"
+echo "0.2.0"
+SH
+cat > "$spy/scripts/staleness-check.py" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+open(os.path.join(os.environ["SPY_OUT"], "staleness.env"), "w").write(
+    "".join(f"{k}={v}\n" for k, v in os.environ.items()))
+path = sys.argv[sys.argv.index("--json") + 1]
+json.dump({"rows": []}, open(path, "w"))
+PY
+newcase
+(cd "$wt" && NO_PROXY=127.0.0.1,localhost SPY_OUT="$spy/out" CI=true \
+  BIRDCAGE_READ_TOKEN="$FAKE_TOKEN" CI_JOB_TOKEN="$FAKE_TOKEN-job" GITLAB_TOKEN="$FAKE_TOKEN-gl" \
+  GH_TOKEN="$FAKE_TOKEN-gh" GITHUB_TOKEN="$FAKE_TOKEN-gh2" CI_REGISTRY_USER=fixture-user \
+  CI_REGISTRY_PASSWORD="$FAKE_TOKEN-reg" CI_API_V4_URL="http://127.0.0.1:1/api/v4" CI_PROJECT_ID=7 \
+  CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=dev CI_MERGE_REQUEST_TARGET_BRANCH_NAME=preview \
+  timeout 120 python3 "$spy/scripts/release-readiness.py" --target preview --remote origin >"$spy/run.out" 2>&1) || true
+envfile_has() { # file var
+  [ -f "$1" ] && grep -q "^$2=" "$1"
+}
+for f in version staleness; do
+  if [ ! -f "$spy/out/$f.env" ]; then echo "FAIL C0 the $f child was never run (test cannot judge it)"; fail=$((fail + 1)); fi
+done
+for f in version staleness; do
+  for v in BIRDCAGE_READ_TOKEN CI_JOB_TOKEN GITLAB_TOKEN GH_TOKEN; do
+    if [ -f "$spy/out/$f.env" ]; then
+      if envfile_has "$spy/out/$f.env" "$v"; then echo "FAIL C1 the $f child was given $v"; fail=$((fail + 1))
+      else echo "ok   C1 the $f child is not given $v"; pass=$((pass + 1)); fi
+    fi
+  done
+done
+for v in GITHUB_TOKEN CI_REGISTRY_PASSWORD CI_REGISTRY_USER; do
+  if [ -f "$spy/out/version.env" ]; then
+    if envfile_has "$spy/out/version.env" "$v"; then echo "FAIL C2 release-version.sh was given $v"; fail=$((fail + 1))
+    else echo "ok   C2 release-version.sh is not given $v"; pass=$((pass + 1)); fi
+  fi
+done
+if [ -f "$spy/out/staleness.env" ]; then
+  if envfile_has "$spy/out/staleness.env" PATH; then echo "ok   C3 the staleness child still has PATH"; pass=$((pass + 1))
+  else echo "FAIL C3 the staleness child lost PATH"; fail=$((fail + 1)); fi
+fi
+
+# The evidence children (ensure-cosign.sh, verify-validation-evidence.sh) run
+# only on the main leg after registry digests, which a local test cannot
+# serve over https; drive the lookups object directly with spy children.
+cat > "$spy/scripts/ensure-cosign.sh" <<'SH'
+#!/usr/bin/env bash
+env > "$SPY_OUT/cosign.env"
+echo "/bin/true"
+SH
+cat > "$spy/scripts/verify-validation-evidence.sh" <<'SH'
+#!/usr/bin/env bash
+env > "$SPY_OUT/evidence.env"
+echo "verified: recorded 2026-11-15T10:00:00Z"
+SH
+if SPY_OUT="$spy/out" CI=true BIRDCAGE_READ_TOKEN="$FAKE_TOKEN" CI_JOB_TOKEN="$FAKE_TOKEN-job" \
+   GITLAB_TOKEN="$FAKE_TOKEN-gl" GH_TOKEN="$FAKE_TOKEN-gh" GITHUB_TOKEN="$FAKE_TOKEN-gh2" \
+   CI_REGISTRY=registry.example.invalid CI_REGISTRY_IMAGE=registry.example.invalid/group/birdcage \
+   CI_REGISTRY_USER=fixture-user CI_REGISTRY_PASSWORD="$FAKE_TOKEN-reg" \
+   python3 -I - "$spy/scripts/release-readiness.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("rr_spy", sys.argv[1])
+rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)
+lk = rr.RealLookups(True, "https://gitlab.example.invalid/group/birdcage.git")
+lk.evidence("birdcage", "sha256:" + "0" * 64, "0" * 40)
+PYEOF
+then
+  for f in cosign evidence; do
+    for v in BIRDCAGE_READ_TOKEN CI_JOB_TOKEN GITLAB_TOKEN GH_TOKEN GITHUB_TOKEN; do
+      if [ ! -f "$spy/out/$f.env" ]; then echo "FAIL C4 the $f child was never run"; fail=$((fail + 1)); break; fi
+      if envfile_has "$spy/out/$f.env" "$v"; then echo "FAIL C4 the $f child was given $v"; fail=$((fail + 1))
+      else echo "ok   C4 the $f child is not given $v"; pass=$((pass + 1)); fi
+    done
+  done
+  if [ -f "$spy/out/evidence.env" ] && envfile_has "$spy/out/evidence.env" CI_REGISTRY_PASSWORD; then
+    echo "FAIL C5 the evidence child was given the registry password (it reads a private Docker config)"; fail=$((fail + 1))
+  else echo "ok   C5 the evidence child is not given the registry password"; pass=$((pass + 1)); fi
+else
+  echo "FAIL C4 could not drive RealLookups.evidence with spy children (interface changed?)"; fail=$((fail + 1))
+fi
+
+# --- Docs: CI's run is the gate; what a local exit 3 means -----------------
+if python3 -I - "$repo_root/docs/releasing.md" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+flat = " ".join(text.split())
+sent = re.split(r"(?<=[.!?])\s+(?=[A-Z`*])", flat)
+# 1. No instruction to open a promotion only when a LOCAL run exits 0.
+bad = [x for x in sent if re.search(r"only when (it|the (local )?(run|script)) exits? 0", x, re.I)]
+assert not bad, "the guide still gates a promotion on a local exit 0: " + bad[0][:200]
+# 2. It says CI's release_readiness run is the gate.
+gate = [x for x in sent if re.search(r"\bgate\b", x, re.I) and re.search(r"\bCI\b|release_readiness", x)]
+assert gate, "the guide never says CI's release_readiness run is the gate"
+# 3. It says what a local exit 3 means: a row always lacks its CI credential.
+three = [x for x in sent if re.search(r"(exit(s|ed)?|exit code|code)\s*3|\b3\b.{0,40}(unchecked|not be checked)", x, re.I)
+         and re.search(r"credential|login|registry", x, re.I)]
+assert three, "the guide does not explain a local exit 3 (the fixture-digest row lacks its CI credential)"
+exp = " ".join(three)
+assert re.search(r"expected|normal|always|usual|every local", exp, re.I), "it must say a local 3 is expected: " + exp[:200]
+assert re.search(r"CI|gate", exp), "it must send the reader back to CI's run: " + exp[:200]
+PYEOF
+then echo "ok   T1 docs/releasing.md: CI's run is the gate, and a local exit 3 is explained"; pass=$((pass + 1))
+else echo "FAIL T1 docs/releasing.md: CI's run is the gate, and a local exit 3 is explained"; fail=$((fail + 1)); fi
+if python3 -I - "$repo_root/docs/releasing.md" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+rows = [l for l in text.splitlines() if "release-readiness.py" in l and l.lstrip().startswith("|")]
+assert rows, "no manual-step table row runs the local script"
+for l in rows:
+    assert not re.search(r"only when it exits 0", l), "table row still gates on local exit 0: " + l[:160]
+PYEOF
+then echo "ok   T2 the manual-step table does not gate a promotion on a local exit 0"; pass=$((pass + 1))
+else echo "FAIL T2 the manual-step table still says to open only when the local run exits 0"; fail=$((fail + 1)); fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
