@@ -47,6 +47,11 @@ for f in sorted(files):
                     out.append(f"{rel}: identity not pinned to countersign.yml@refs/heads/main ({m.group(1)})")
                 if issuer not in line:
                     out.append(f"{rel}: identity pinned but the GitHub OIDC issuer is missing")
+                t = re.search(r"--certificate-github-workflow-trigger[= ]+['\"]?([^'\" ]+)", line)
+                if not t:
+                    out.append(f"{rel}: workflow trigger not pinned (--certificate-github-workflow-trigger workflow_dispatch)")
+                elif t.group(1) != "workflow_dispatch":
+                    out.append(f"{rel}: workflow trigger pinned to {t.group(1)}, want workflow_dispatch")
 if not found_keyless:
     out.append("no keyless `cosign verify --certificate-identity` found anywhere")
 print("\n".join(out))
@@ -85,7 +90,7 @@ import re, sys
 p, ident, issuer = sys.argv[1:4]
 s = open(p).read()
 s = re.sub(r"cosign verify \\\n  --certificate-identity(?:-regexp)? [^\n]*\n  --certificate-oidc-issuer [^\n]*\n",
-           f"cosign verify \\\n  --certificate-identity {ident} \\\n  --certificate-oidc-issuer {issuer} \\\n", s)
+           f"cosign verify \\\n  --certificate-identity {ident} \\\n  --certificate-oidc-issuer {issuer} \\\n  --certificate-github-workflow-trigger workflow_dispatch \\\n", s)
 open(p, "w").write(s)
 PY
   echo "$d"
@@ -99,6 +104,18 @@ expect "another ref's identity is refused" "$d" refused "not pinned"
 d="$(base tagref 'https://github.com/example-owner/birdcage/.github/workflows/countersign.yml@refs/tags/v1')"
 expect "a tag ref's identity is refused" "$d" refused "not pinned"
 
+d="$(base notrigger "$id")"
+sed -i '/--certificate-github-workflow-trigger/d' "$d/docs/releasing.md"
+expect "a docs verify command without the trigger pin is refused" "$d" refused "trigger not pinned"
+d="$(base pushtrigger "$id")"
+sed -i 's/--certificate-github-workflow-trigger workflow_dispatch/--certificate-github-workflow-trigger push/' "$d/docs/releasing.md"
+expect "a trigger pinned to push is refused" "$d" refused "want workflow_dispatch"
+d="$(base scripttrigger "$id")"
+printf '#!/usr/bin/env bash\ncosign verify --certificate-identity %s --certificate-oidc-issuer %s "$1"\n' "$id" "$issuer" > "$d/scripts/rogue-verify.sh"
+expect "a script verify command without the trigger pin is refused" "$d" refused "trigger not pinned"
+d="$(base citrigger "$id")"
+printf 'job:\n  script:\n    - cosign verify --certificate-identity %s --certificate-oidc-issuer %s x\n' "$id" "$issuer" >> "$d/.gitlab-ci.yml"
+expect "a CI verify command without the trigger pin is refused" "$d" refused "trigger not pinned"
 d="$(base regex "$id")"
 printf '\n```sh\ncosign verify --certificate-identity-regexp "^https://github.com/example-owner/birdcage/" --certificate-oidc-issuer %s ghcr.io/x@sha256:0\n```\n' "$issuer" >> "$d/docs/releasing.md"
 expect "a repo-wide regexp in the docs is refused" "$d" refused "certificate-identity-regexp"

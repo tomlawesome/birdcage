@@ -9,6 +9,13 @@
 #   - credential in $GH_TOKEN, repo in $GITHUB_REPOSITORY (owner/name);
 #   - HTTP calls go through `curl`, and the credential is never in argv;
 #   - the ref lookup is a GET whose HTTP status 404 means "ref absent";
+#   - before any ref lookup or dispatch, GET .../actions/workflows/countersign.yml
+#     must answer 200, else exit 2 with nothing dispatched (a wrong repo or a
+#     renamed workflow answers 404 to everything and must not read as a pass);
+#   - GITHUB_API_URL, if set, must start with https:// else exit 2 and no call
+#     at all (the token must never travel in clear text);
+#   - Deployments write is NOT tested here (that is documented, see
+#     releasing-docs.test.sh);
 #   - dispatch 403/404 -> exit 0 "no Actions write"; 422 -> exit 1; any 2xx
 #     -> exit 1 ("a run may have started"); anything else -> exit 2.
 set -euo pipefail
@@ -38,6 +45,7 @@ done
 url="${args[$((${#args[@]} - 1))]}"
 [ -t 0 ] || cat > /dev/null
 case "$url" in
+  */actions/workflows/countersign.yml) kind=workflow; status="${STUB_WORKFLOW:-200}"; echo "WORKFLOW $url" >> "$log" ;;
   *dispatches*) kind=dispatch; status="${STUB_DISPATCH:-403}"; echo "DISPATCH $url" >> "$log" ;;
   *)            kind=lookup;   status="${STUB_LOOKUP:-404}";   echo "LOOKUP $url" >> "$log" ;;
 esac
@@ -56,7 +64,8 @@ chmod +x "$work/bin/curl" "$work/bin/gh"
 run() {
   log="$work/calls.log"; : > "$log"
   got=0
-  out="$(PATH="$work/bin:$PATH" STUB_LOG="$log" STUB_LOOKUP="$1" STUB_DISPATCH="$2" \
+  out="$(env PATH="$work/bin:$PATH" STUB_LOG="$log" STUB_LOOKUP="$1" STUB_DISPATCH="$2" \
+    STUB_WORKFLOW="${STUB_WORKFLOW:-200}" ${API_URL:+"GITHUB_API_URL=$API_URL"} \
     GH_TOKEN="$token" GITHUB_REPOSITORY="example-owner/birdcage" \
     bash "$script" 2>&1)" || got=$?
 }
@@ -106,11 +115,32 @@ done
 run 404 403
 if [ "$(dispatches)" = 1 ] && grep -q '^DISPATCH .*repos/example-owner/birdcage/actions/workflows/countersign.yml/dispatches' "$log"; then ok "one dispatch, to countersign.yml of the named repo"; else bad "dispatch target wrong" "$(cat "$log")"; fi
 if grep -q '^LOOKUP ' "$log" && ! grep -qE '^LOOKUP .*/(main|dev|preview|batch-a|batch-b)([?/]|$)' "$log"; then ok "lookup is of a ref other than a real branch"; else bad "lookup missing or of a real branch" "$(cat "$log")"; fi
-first="$(grep -m1 -oE '^(LOOKUP|DISPATCH)' "$log" || true)"
-[ "$first" = LOOKUP ] && ok "lookup happens before dispatch" || bad "first call was $first, want LOOKUP"
+first="$(grep -oE '^(LOOKUP|DISPATCH)' "$log" | head -1 || true)"
+[ "$first" = LOOKUP ] && ok "lookup happens before dispatch" || bad "first lookup/dispatch call was $first, want LOOKUP"
 look1="$(grep -m1 "^LOOKUP " "$log" || true)"
 run 404 403; look2="$(grep -m1 "^LOOKUP " "$log" || true)"
 [ "$look1" != "$look2" ] && ok "ref name is fresh on every run" || bad "same ref name twice: $look1"
+
+# The workflow must exist (200) before anything else: a wrong repository or a
+# renamed workflow answers 404 to the dispatch too, which must not be a pass.
+for s in 404 403 500 neterr; do
+  STUB_WORKFLOW="$s" run 404 403
+  if [ "$got" = 2 ] && [ "$(dispatches)" = 0 ] && ! grep -qiF "no Actions write" <<<"$out"; then ok "workflow GET $s: exit 2, nothing dispatched, no pass message"; else bad "workflow GET $s: exit $got, dispatch calls $(dispatches)" "$out"; fi
+done
+STUB_WORKFLOW=200 run 404 403
+first="$(grep -m1 -oE '^(WORKFLOW|LOOKUP|DISPATCH)' "$log" || true)"
+dline="$(grep -n '^DISPATCH ' "$log" | head -1 | cut -d: -f1 || true)"; wline="$(grep -n '^WORKFLOW ' "$log" | head -1 | cut -d: -f1 || true)"
+if [ -n "$wline" ] && [ -n "$dline" ] && [ "$wline" -lt "$dline" ]; then ok "workflow existence is checked before the dispatch"; else bad "workflow GET not made before dispatch" "$(cat "$log")"; fi
+if grep -q '^WORKFLOW .*repos/example-owner/birdcage/actions/workflows/countersign.yml$' "$log"; then ok "workflow GET is of countersign.yml in the named repo"; else bad "workflow GET missing or wrong" "$(cat "$log")"; fi
+
+# GITHUB_API_URL must be https://, or the token could go out in clear text.
+for u in http://api.example.test ftp://api.example.test api.example.test "HTTP://api.example.test"; do
+  API_URL="$u" run 404 403
+  if [ "$got" = 2 ] && [ ! -s "$log" ]; then ok "GITHUB_API_URL '$u': exit 2 and no call made"; else bad "GITHUB_API_URL '$u': exit $got, calls: $(wc -l < "$log")" "$out"; fi
+done
+API_URL="https://ghe.example.test/api/v3" run 404 403
+if [ "$got" = 0 ] && grep -q '^DISPATCH https://ghe.example.test/api/v3/' "$log"; then ok "an https:// GITHUB_API_URL is used"; else bad "https GITHUB_API_URL: exit $got" "$(cat "$log")"; fi
+API_URL=""
 
 # The credential: never in argv of any call, never printed, gh never used.
 for s in 403 422 200 500; do
