@@ -386,6 +386,12 @@ only at the point that text is displayed, per surface:
   section for the threat model and CVE search this came from). A dropped
   or refused stream falls back to the dashboard's existing 30s poll,
   which every route above already relies on.
+  The HTTPS dashboard listener's plain-HTTP sniffer (`internal/tlssniff`,
+  issue #212) caps connections waiting to be identified at 256 the same
+  way, and past the cap hands a new connection to the TLS server
+  unsniffed rather than refusing it, so a flood of silent connections
+  costs plain visitors their http-to-https redirect but never closes
+  the dashboard; the server's 5s handshake timeout still bounds each one.
 
 ## CI security scanning
 
