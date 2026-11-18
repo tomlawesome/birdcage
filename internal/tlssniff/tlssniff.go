@@ -6,8 +6,9 @@
 // else is read as one bounded HTTP request, answered with 308 to https on a
 // host the certificate covers (or a bare 400) and closed. Nothing else is
 // ever served over plain HTTP. A host check stops the redirect sending a
-// browser somewhere an attacker chose; the size, time and concurrency limits
-// stop an unidentified client holding resources.
+// browser somewhere an attacker chose; the size and time limits stop an
+// unidentified client holding resources, and the concurrency limit bounds the
+// sniff itself, not the listener.
 package tlssniff
 
 import (
@@ -31,7 +32,8 @@ import (
 var SniffTimeout = 10 * time.Second
 
 // MaxConcurrentSniffs caps connections waiting to be identified; past it a
-// new connection is closed. Read when Listener is called.
+// new connection goes straight to the TLS server unsniffed, so plain HTTP
+// loses its redirect but TLS is never refused. Read when Listener is called.
 var MaxConcurrentSniffs = 256
 
 // maxRequestBytes bounds a plain request's line and headers together.
@@ -44,8 +46,9 @@ const tlsHandshake = 0x16
 // and returns the bare host name to redirect to, or "" to refuse.
 type HostAllower func(requestHost string) string
 
-// Listener wraps inner. Accept returns only connections that started a TLS
-// handshake; plain HTTP is answered and closed inside the package.
+// Listener wraps inner. Accept returns connections that started a TLS
+// handshake, plus any accepted while the sniff cap was full, unsniffed;
+// plain HTTP that was sniffed is answered and closed inside the package.
 func Listener(inner net.Listener, log *slog.Logger, allow HostAllower) net.Listener {
 	port := ""
 	if _, p, err := net.SplitHostPort(inner.Addr().String()); err == nil {
@@ -133,8 +136,17 @@ func (l *listener) acceptLoop() {
 		case l.sem <- struct{}{}:
 			go l.sniff(c)
 		default:
-			l.log.Debug(fmt.Sprintf("tlssniff: %d connections already waiting to be identified, closing %s", cap(l.sem), c.RemoteAddr()))
-			_ = c.Close()
+			// Bulkhead full: pass the connection to the TLS server unsniffed
+			// rather than refusing it. A plain http:// visitor then gets Go's
+			// own 400 for HTTP on an HTTPS port, as before #212, and the
+			// server's handshake timeout bounds a silent connection, so a flood
+			// of them can degrade the redirect but never close the dashboard.
+			l.log.Debug(fmt.Sprintf("tlssniff: %d connections already waiting to be identified, passing %s through unsniffed", cap(l.sem), c.RemoteAddr()))
+			select {
+			case l.conns <- c:
+			case <-l.done:
+				_ = c.Close()
+			}
 		}
 	}
 }

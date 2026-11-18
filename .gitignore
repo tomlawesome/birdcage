@@ -26,3 +26,6 @@ coverage.out
 # Python bytecode from running the guard scripts locally.
 __pycache__/
 *.pyc
+
+# The no-real-names guard key (SEC-5); it lives outside the tree and is never committed.
+no-real-names.key
