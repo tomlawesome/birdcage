@@ -2,7 +2,8 @@
 # Pins the verifier identity of the keyless countersignature (#169, item C).
 # Every keyless `cosign verify` in the docs, scripts and CI config must
 # require the exact workflow identity
-#   https://github.com/<owner>/birdcage/.github/workflows/countersign.yml@refs/heads/main
+#   https://github.com/tomlawesome/birdcage/.github/workflows/countersign.yml@refs/heads/main
+# (the project's own owner and repository, as docs/releasing.md names them)
 # via --certificate-identity, plus the GitHub OIDC issuer. A repo-wide
 # regexp would accept a signature made by any workflow on any ref, which is
 # what a pushed rogue branch would produce. The same scan is then run on
@@ -26,7 +27,7 @@ files = glob.glob(os.path.join(root, "docs/**/*.md"), recursive=True)
 files += [f for f in glob.glob(os.path.join(root, "scripts/*")) if os.path.isfile(f) and not f.endswith(".test.sh")]
 files += [os.path.join(root, ".gitlab-ci.yml")]
 files += glob.glob(os.path.join(root, ".github/workflows/*.y*ml"))
-exact = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/birdcage/\.github/workflows/countersign\.yml@refs/heads/main$")
+exact = re.compile(r"^https://github\.com/tomlawesome/birdcage/\.github/workflows/countersign\.yml@refs/heads/main$")
 found_keyless = False
 out = []
 for f in sorted(files):
