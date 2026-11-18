@@ -888,5 +888,108 @@ r = rows["image:alpine:3.20"]
 assert r["status"] == "accepted" and not (r.get("hold") or {}).get("lapsed"), r
 assert "today" in j'
 
+# ---------------------------------------------------------------------------
+# #215 note 63992: Go module, action and tool rows are dated from the Git
+# host's tag list: the release date of a row is the date of the OLDEST tag
+# newer than the pin (a minor bump included, not only the next patch), read
+# from https://api.github.com/repos/<o>/<r>/tags?per_page=100 and one
+# commit (or release) lookup for that tag -- never the Go proxy.
+# ---------------------------------------------------------------------------
+cat > "$work/dating.py" <<'PYEOF'
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("staleness_check", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+kind, scen = sys.argv[2], sys.argv[3]
+
+# kind: (repo, pin, pin as the manifest writes it)
+K = {"gomod": ("golang/net", "v0.62.0"), "owner": ("tomlawesome/gauntlet", "v0.4.1"),
+     "action": ("actions/checkout", "v4.1.0"), "tool": ("sigstore/cosign", "v2.4.0")}
+repo, pin = K[kind]
+M, m, pt = (int(x) for x in pin.lstrip("v").split("."))
+patch, minor = f"v{M}.{m}.{pt + 1}", f"v{M}.{m + 1}.0"
+newer = {"minor": [minor], "patch": [patch], "multi": [patch, minor], "undated": [patch, minor]}[scen]
+dates = {patch: "2026-10-01T00:00:00Z", minor: "2026-11-16T00:00:00Z"}
+if scen == "undated":
+    del dates[patch]
+want = {"minor": dates.get(minor), "patch": dates.get(patch), "multi": dates.get(patch), "undated": None}[scen]
+tags = [{"name": t} for t in [pin, "nightly", "v0.0", *newer]]
+newest = max(newer, key=lambda v: tuple(int(x) for x in v.lstrip("v").split(".")))
+
+served = {f"https://api.github.com/repos/{repo}/tags?per_page=100": tags}
+for t, d in dates.items():
+    served[f"https://api.github.com/repos/{repo}/commits/{t}"] = {"commit": {"committer": {"date": d}}}
+    served[f"https://api.github.com/repos/{repo}/releases/tags/{t}"] = {"published_at": d}
+served[f"https://api.github.com/repos/{repo}/releases/latest"] = {"tag_name": newest, "published_at": dates.get(newest, "2026-11-16T00:00:00Z")}
+served["https://proxy.golang.org/golang.org/x/net/@latest"] = {"Version": newest}
+
+urls = []
+class F:
+    fixture = None
+    def get(self, url, headers=None):
+        urls.append(url)
+        if url in served:
+            return True, json.dumps(served[url]).encode(), None
+        return False, None, "HTTP 404"
+    def head_digest(self, url, headers=None):
+        return False, None, "HTTP 404"
+
+d = tempfile.mkdtemp()
+if kind in ("gomod", "owner"):
+    mod = "golang.org/x/net" if kind == "gomod" else "github.com/tomlawesome/gauntlet"
+    open(d + "/go.mod", "w").write(f"module t\n\ngo 1.21.0\n\nrequire (\n\t{mod} {pin}\n)\n")
+    rows = sc.check_go_modules(d, F())
+elif kind == "action":
+    os.makedirs(d + "/.github/workflows")
+    open(d + "/.github/workflows/ci.yml", "w").write(
+        "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@" + "a" * 40 + f" # {pin}\n")
+    rows = sc.check_actions(d, F())
+else:
+    os.makedirs(d + "/scripts")
+    open(d + "/scripts/ensure-cosign.sh", "w").write(f'COSIGN_VERSION="{pin}"\n')
+    rows = [r for r in sc.check_tools(d, F()) if r.id == "tool:cosign"]
+assert len(rows) == 1 and rows[0].status == "behind", [vars(r) for r in rows]
+sc.add_release_dates(rows, F())
+got = rows[0].released
+if want is None:
+    assert not got, f"a newer tag with no date must leave the row undated, got {got!r}"
+else:
+    assert got and got.startswith(want[:10]), f"released={got!r}, want the oldest newer tag's date {want}"
+assert not any("proxy.golang.org" in u and "@latest" not in u for u in urls), \
+    "dates must not come from the Go proxy: " + repr([u for u in urls if "proxy.golang.org" in u])
+PYEOF
+for kind in gomod owner action tool; do
+  for scen in minor patch multi undated; do
+    if python3 -I "$work/dating.py" "$check" "$kind" "$scen" 2>"$work/dating.err"; then
+      echo "ok   dating ($kind, $scen): oldest newer tag from the Git host's tag list"; pass=$((pass + 1))
+    else
+      echo "FAIL dating ($kind, $scen): oldest newer tag from the Git host's tag list"
+      tail -n 3 "$work/dating.err" | cut -c1-220 | sed 's/^/       /'; fail=$((fail + 1))
+    fi
+  done
+done
+
+# Same host, https -> http: the scheme is compared too, so no credential
+# survives a downgrade (a port or scheme change is a different origin). The
+# redirect handler is driven directly: the origin cannot be faked with two
+# local servers, since their ports differ.
+if python3 -I - "$check" <<'PYEOF'
+import importlib.util, io, sys, urllib.request
+spec = importlib.util.spec_from_file_location("staleness_check", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+H = sc._SameHostCredentials()
+def follow(old, new):
+    req = urllib.request.Request(old, headers={"Authorization": "Bearer not-a-real-token-5c1a9e",
+                                              "PRIVATE-TOKEN": "not-a-real-token-5c1a9e"})
+    out = H.redirect_request(req, io.BytesIO(b""), 302, "Found", {}, new)
+    names = {k.lower() for k in list(out.headers) + list(out.unredirected_hdrs)}
+    return names
+down = follow("https://example.invalid/a", "http://example.invalid/a")
+assert not ({"authorization", "private-token"} & down), f"credential kept on https -> http: {down}"
+same = follow("https://example.invalid/a", "https://example.invalid/b")
+assert {"authorization", "private-token"} <= same, f"same origin should keep it (sanity): {same}"
+PYEOF
+then echo "ok   staleness-check: no credential on a same-host https -> http redirect"; pass=$((pass + 1))
+else echo "FAIL staleness-check: no credential on a same-host https -> http redirect"; fail=$((fail + 1)); fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

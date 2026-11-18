@@ -1269,5 +1269,52 @@ PYEOF
 then echo "ok   U6 docs/releasing.md step 6: back-merge, then complete the GitLab Release; no record edit"; pass=$((pass + 1))
 else echo "FAIL U6 docs/releasing.md step 6 / post-release mention"; fail=$((fail + 1)); fi
 
+# ==========================================================================
+# #215 note 63992: same-host https -> http redirects carry no credential;
+# how release dates are found is written down in the help and the guide.
+# ==========================================================================
+if python3 -I - "$script" <<'PYEOF'
+import importlib.util, io, sys, urllib.request
+spec = importlib.util.spec_from_file_location("rr", sys.argv[1])
+rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)
+H = rr._SameHostCredentials()
+def follow(old, new):
+    req = urllib.request.Request(old, headers={"PRIVATE-TOKEN": "not-a-real-token-5c1a9e",
+                                              "Authorization": "Bearer not-a-real-token-5c1a9e"})
+    out = H.redirect_request(req, io.BytesIO(b""), 302, "Found", {}, new)
+    return {k.lower() for k in list(out.headers) + list(out.unredirected_hdrs)}
+down = follow("https://example.invalid/a", "http://example.invalid/a")
+assert not ({"authorization", "private-token"} & down), f"credential kept on https -> http: {down}"
+same = follow("https://example.invalid/a", "https://example.invalid/b")
+assert {"authorization", "private-token"} <= same, f"same origin should keep it (sanity): {same}"
+PYEOF
+then echo "ok   V1 release-readiness: no credential on a same-host https -> http redirect"; pass=$((pass + 1))
+else echo "FAIL V1 release-readiness: no credential on a same-host https -> http redirect"; fail=$((fail + 1)); fi
+
+help_flat="$(python3 "$script" --help 2>&1 | tr '\n' ' ' | tr -s ' ')"
+guide_flat="$(tr '\n' ' ' < "$repo_root/docs/releasing.md" | tr -s ' ')"
+for pair in "V2 --help:$help_flat" "V3 docs/releasing.md:$guide_flat"; do
+  label="${pair%%:*}"; text="${pair#*:}"
+  if python3 -I - "$text" <<'PYEOF'
+import re, sys
+t = sys.argv[1]
+assert re.search(r"oldest newer", t, re.I), "must say a pin's date is its oldest newer version's"
+assert re.search(r"Git host|tag list|tags? (API|list)", t, re.I), "must say dates come from the Git host's tags"
+assert re.search(r"(never|not)[^.]{0,60}Go proxy|Go proxy[^.]{0,60}(never|not)", t, re.I), "must say the Go proxy is never used for dates"
+assert re.search(r"Docker Hub", t), "must say Docker Hub dates are not used"
+PYEOF
+  then echo "ok   $label says how release dates are found"; pass=$((pass + 1))
+  else echo "FAIL $label does not say how release dates are found (oldest newer tag, Git host tag list, never the Go proxy, no Docker Hub dates)"; fail=$((fail + 1)); fi
+done
+
+# A minor-bump row for a Go module, tool or action, dated from the oldest
+# newer tag: young passes S1, old counts as behind.
+for rid in gomod:golang.org/x/net tool:cosign "action:actions/checkout#ci.yml"; do
+  newcase; stub "$(srows "$ROWS_OK,$(behind_row "$rid" 2026-11-16)")"; prev
+  expect "V4 $rid: a minor bump released 1 day ago is young, S1 passes" 0 '^PASS S1 '
+  newcase; stub "$(srows "$ROWS_OK,$(behind_row "$rid" 2026-10-01)")"; prev
+  expect "V5 $rid: a minor bump released 47 days ago counts as behind, S1 fails" 1 '^FAIL S1 ' "=$rid"
+done
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
