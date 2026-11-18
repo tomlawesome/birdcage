@@ -36,7 +36,7 @@ func TestLoadStartupConfigFindingsRetentionDays(t *testing.T) {
 }
 
 func TestLoadStartupConfigRefusesBadFindingsRetentionDays(t *testing.T) {
-	for _, v := range []string{"-1", "-90", "abc", "1.5", "90d", "9999999999999999999999"} {
+	for _, v := range []string{"-1", "-5", "-90", "+30", "+0", "abc", "1.5", "90d", "9999999999999999999999"} {
 		t.Run(v, func(t *testing.T) {
 			_, err := loadStartupConfig(startupEnv(t, map[string]string{envFindingsRetentionDays: v}), discardLog(), discardLog(), discardLog(), discardLog())
 			if err == nil {

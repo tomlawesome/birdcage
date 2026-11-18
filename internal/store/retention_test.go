@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -252,6 +253,228 @@ func TestPruneByAgeDoesNotDisturbFixedCap(t *testing.T) {
 		pruneByAge(t, database, "scanner-a", 0)
 		if n := countState(listFindings(t, database, "scanner-a"), FindingFixed); n != 50000 {
 			t.Errorf("fixed rows = %d, want 50000", n)
+		}
+	})
+}
+
+// ---- Review fixes (issue #213 notes 63369 and 63709) ----
+
+func recordFailedSnapshotAt(t *testing.T, database *db.DB, agentID string, at time.Time) {
+	t.Helper()
+	recordScanSnapshot(t, database, ScanSnapshot{
+		CanaryID: agentID, TakenAt: at, ReceivedAt: at,
+		Status: ScanStatusFailed, Reason: "scan could not run",
+	})
+}
+
+func receivedTimes(t *testing.T, database *db.DB, agentID string) []time.Time {
+	t.Helper()
+	var out []time.Time
+	for _, s := range listScanSnapshots(t, database) {
+		if s.CanaryID == agentID {
+			out = append(out, s.ReceivedAt)
+		}
+	}
+	return out
+}
+
+func hasTime(ts []time.Time, want time.Time) bool {
+	for _, x := range ts {
+		if x.Equal(want) {
+			return true
+		}
+	}
+	return false
+}
+
+// An agent that sent only failed scans past the window keeps its newest
+// ok snapshot as well as its newest snapshot, so LastOKScan still reads
+// and the agent's last-ok state does not revert. An older ok snapshot
+// and older failed ones go.
+func TestPruneByAgeKeepsNewestOKSnapshotAndNewestSnapshot(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		retentionAgent(t, database, "scanner-a")
+		okOld := retentionOld
+		okNewer := retentionOld.Add(24 * time.Hour)
+		failMid := retentionOld.Add(48 * time.Hour)
+		failNewest := retentionOld.Add(72 * time.Hour)
+		recordSnapshotAt(t, database, "scanner-a", okOld)
+		recordSnapshotAt(t, database, "scanner-a", okNewer)
+		recordFailedSnapshotAt(t, database, "scanner-a", failMid)
+		recordFailedSnapshotAt(t, database, "scanner-a", failNewest)
+
+		got := pruneByAge(t, database, "scanner-a", 90)
+		if got.Snapshots != 2 {
+			t.Errorf("Snapshots removed = %d, want 2 (older ok and middle failed)", got.Snapshots)
+		}
+		kept := receivedTimes(t, database, "scanner-a")
+		if len(kept) != 2 || !hasTime(kept, okNewer) || !hasTime(kept, failNewest) {
+			t.Errorf("kept snapshots = %v, want the newest ok (%v) and the newest failed (%v)", kept, okNewer, failNewest)
+		}
+		st, err := FindingsStaleness(context.Background(), database, "scanner-a")
+		if err != nil {
+			t.Fatalf("FindingsStaleness: %v", err)
+		}
+		s := st["scanner-a"]
+		if s.LastOKScan == nil || !s.LastOKScan.Equal(okNewer) {
+			t.Errorf("LastOKScan = %v, want %v (the last ok scan must survive)", s.LastOKScan, okNewer)
+		}
+		if !s.Stale {
+			t.Error("Stale = false, want true (newest snapshot is failed)")
+		}
+	})
+}
+
+// When the newest snapshot is itself the newest ok one, it is kept once.
+func TestPruneByAgeNewestIsOKKeepsOnlyIt(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		retentionAgent(t, database, "scanner-a")
+		recordFailedSnapshotAt(t, database, "scanner-a", retentionOld)
+		recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(time.Hour))
+		recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(2*time.Hour))
+		got := pruneByAge(t, database, "scanner-a", 90)
+		if got.Snapshots != 2 {
+			t.Errorf("Snapshots removed = %d, want 2", got.Snapshots)
+		}
+		kept := receivedTimes(t, database, "scanner-a")
+		if len(kept) != 1 || !kept[0].Equal(retentionOld.Add(2*time.Hour)) {
+			t.Errorf("kept = %v, want only the newest", kept)
+		}
+	})
+}
+
+// A row exactly at the cutoff second is kept (also with a fraction); a
+// row one second older is removed. Window 90 days from 2026-06-01 puts
+// the cutoff at 2026-03-03T00:00:00Z.
+func TestPruneByAgeSameSecondCutoffEdge(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		retentionAgent(t, database, "scanner-a")
+		cutoff := mustParse(t, retentionNow).AddDate(0, 0, -90)
+		recordSnapshotAt(t, database, "scanner-a", cutoff.Add(-time.Second))
+		recordSnapshotAt(t, database, "scanner-a", cutoff.Add(-500*time.Millisecond)) // an earlier second than the cutoff's
+		recordSnapshotAt(t, database, "scanner-a", cutoff)
+		recordSnapshotAt(t, database, "scanner-a", cutoff.Add(500*time.Millisecond))
+		recordSnapshotAt(t, database, "scanner-a", retentionRecent) // newest, so nothing is kept only for being newest
+		insertFindingRows(t, database, "scanner-a", "AT", FindingFixed, 1, cutoff)
+		insertFindingRows(t, database, "scanner-a", "OLDER", FindingFixed, 1, cutoff.Add(-time.Second))
+
+		got := pruneByAge(t, database, "scanner-a", 90)
+		if got.Findings != 1 {
+			t.Errorf("Findings removed = %d, want 1 (only the one a second older)", got.Findings)
+		}
+		fs := listFindings(t, database, "scanner-a")
+		if len(fs) != 1 || !strings.HasPrefix(fs[0].VulnerabilityID, "AT") {
+			t.Errorf("findings = %+v, want only the one at the cutoff second", fs)
+		}
+		if got.Snapshots != 2 {
+			t.Errorf("Snapshots removed = %d, want 2 (cutoff-1s and cutoff-0.5s; both are in earlier seconds)", got.Snapshots)
+		}
+		kept := receivedTimes(t, database, "scanner-a")
+		for _, want := range []time.Time{cutoff, cutoff.Add(500 * time.Millisecond), retentionRecent} {
+			if !hasTime(kept, want) {
+				t.Errorf("snapshot at %v was removed, want kept (kept %v)", want, kept)
+			}
+		}
+	})
+}
+
+// A day count over 366,000 keeps everything, without error, and never
+// wraps the cutoff into the future.
+func TestPruneByAgeOverMaxDaysRemovesNothing(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		retentionAgent(t, database, "scanner-a")
+		insertFindingRows(t, database, "scanner-a", "OLDFIX", FindingFixed, 3, retentionOld)
+		recordSnapshotAt(t, database, "scanner-a", retentionOld)
+		recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(time.Hour))
+		for _, days := range []int{366001, 1 << 31, math.MaxInt} {
+			got, err := PruneByAge(context.Background(), database, "scanner-a", days, mustParse(t, retentionNow))
+			if err != nil {
+				t.Fatalf("PruneByAge(%d days): %v", days, err)
+			}
+			if got != (PruneCounts{}) {
+				t.Errorf("PruneByAge(%d days) = %+v, want zero", days, got)
+			}
+		}
+		if n := len(listFindings(t, database, "scanner-a")); n != 3 {
+			t.Errorf("findings = %d, want 3", n)
+		}
+		if n := len(listScanSnapshots(t, database)); n != 2 {
+			t.Errorf("snapshots = %d, want 2", n)
+		}
+		if rows := retentionAuditRows(t, database); len(rows) != 0 {
+			t.Errorf("audit rows = %v, want none", rows)
+		}
+	})
+}
+
+// One snapshot whose received_at cannot be parsed must not make the
+// prune fail: the bad row is skipped, the good old rows still go. Two
+// bad values: one that sorts before the cutoff text, one after it.
+func TestPruneByAgeSkipsUnparseableReceivedAt(t *testing.T) {
+	for _, bad := range []string{"2020-13-45T99:00:00Z", "not-a-time"} {
+		t.Run(bad, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				retentionAgent(t, database, "scanner-a")
+				recordSnapshotAt(t, database, "scanner-a", retentionOld)
+				recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(time.Hour))
+				recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(2*time.Hour))
+				recordSnapshotAt(t, database, "scanner-a", retentionRecent)
+				recordSnapshotAt(t, database, "scanner-a", retentionOld.Add(3*time.Hour))
+				if _, err := database.Exec(`UPDATE scan_snapshots SET received_at = ? WHERE agent_id = ? AND received_at = ?`,
+					bad, "scanner-a", retentionOld.Add(3*time.Hour).UTC().Format(receivedAtLayout)); err != nil {
+					t.Fatalf("corrupt received_at: %v", err)
+				}
+				got, err := PruneByAge(context.Background(), database, "scanner-a", 90, mustParse(t, retentionNow))
+				if err != nil {
+					t.Fatalf("PruneByAge with one unparseable received_at = %v, want nil", err)
+				}
+				if got.Snapshots != 3 {
+					t.Errorf("Snapshots removed = %d, want 3 (the parseable old ones; the bad row skipped)", got.Snapshots)
+				}
+				var n int
+				if err := database.QueryRow(`SELECT COUNT(*) FROM scan_snapshots WHERE agent_id = 'scanner-a'`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 2 {
+					t.Errorf("rows left = %d, want 2 (the recent one and the skipped bad one)", n)
+				}
+			})
+		})
+	}
+}
+
+// Pruning a history larger than any one batch removes all of it. The
+// store exposes no batch size and the read cannot be observed from here,
+// so this pins the outcome over 3,000 old snapshots (more than one
+// batch at any plausible size), not the bound itself.
+func TestPruneByAgeLargeSnapshotHistoryFullyPruned(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		retentionAgent(t, database, "scanner-a")
+		const n = 3000
+		tx, err := database.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		for i := 0; i < n; i++ {
+			at := retentionOld.Add(time.Duration(i) * time.Minute)
+			if err := RecordScanSnapshot(context.Background(), tx, ScanSnapshot{
+				CanaryID: "scanner-a", TakenAt: at, ReceivedAt: at,
+				EngineName: "grype", EngineVersion: "v0.119.0", Status: ScanStatusOK,
+			}); err != nil {
+				t.Fatalf("seed %d: %v", i, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		recordSnapshotAt(t, database, "scanner-a", retentionRecent)
+
+		got := pruneByAge(t, database, "scanner-a", 90)
+		if got.Snapshots != n {
+			t.Errorf("Snapshots removed = %d, want %d", got.Snapshots, n)
+		}
+		if kept := receivedTimes(t, database, "scanner-a"); len(kept) != 1 {
+			t.Errorf("snapshots left = %d, want 1 (the recent one, which is the newest and the newest ok)", len(kept))
 		}
 	})
 }
