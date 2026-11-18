@@ -1217,5 +1217,57 @@ PYEOF
 then echo "ok   T2 the manual-step table does not gate a promotion on a local exit 0"; pass=$((pass + 1))
 else echo "FAIL T2 the manual-step table still says to open only when the local run exits 0"; fail=$((fail + 1)); fi
 
+# ==========================================================================
+# #215 design note 63905: the committed record is immutable and ends at
+# `Signed-off-by:`. Post-release evidence lives on the GitLab Release and
+# the tag, so nothing edits docs/releases/ after the release MR and the
+# exception is not widened. The check no longer knows a `post-release:`
+# block: whatever follows the sign-off is read like any other line.
+# ==========================================================================
+newcase; R_SIGN=$'Signed-off-by: Fixture Bot\n\npost-release:\nSigned-off-by: Other Person' rec
+expect "U1 text after the sign-off is no longer skipped: a second Signed-off-by fails rule 7" 1 \
+  '^FAIL R1 '
+newcase; R_SIGN=$'Signed-off-by: Fixture Bot\n\npost-release:\nstep 7: done: later' rec
+expect "U2 a step line after the sign-off is read: a step the guide lacks fails rule 5" 1 '^FAIL R1 '
+newcase; to_main_leg; R_SIGN=$'Signed-off-by: Fixture Bot\n\npost-release:\nSigned-off-by: Other Person' write_record "$wt"
+commit_record "$wt"; push_fetch dev; git -C "$wt" checkout -q preview; git -C "$wt" merge -q --ff-only dev; push_fetch preview
+stub; mainleg
+expect "U3 main leg: M8 reads the whole record too" 1 '^FAIL M8 '
+
+if grep -q 'post-release' "$script"; then
+  echo "FAIL U4 scripts/release-readiness.py still mentions post-release:"; fail=$((fail + 1))
+else echo "ok   U4 release-readiness.py has no post-release: handling"; pass=$((pass + 1)); fi
+
+# The template: no post-release block, and the file ends at the sign-off.
+if python3 -I - "$repo_root/docs/releases/TEMPLATE.md" <<'PYEOF'
+import sys
+t = open(sys.argv[1]).read()
+assert "post-release" not in t, "TEMPLATE.md still has a post-release: block"
+last = [l for l in t.splitlines() if l.strip()][-1]
+assert last.startswith("Signed-off-by:"), "TEMPLATE.md must end at Signed-off-by:, ends at: " + last
+PYEOF
+then echo "ok   U5 TEMPLATE.md has no post-release: block and ends at Signed-off-by:"; pass=$((pass + 1))
+else echo "FAIL U5 TEMPLATE.md: post-release block / does not end at Signed-off-by:"; fail=$((fail + 1)); fi
+
+# The guide: step 6 is back-merge, then complete the GitLab Release.
+if python3 -I - "$repo_root/docs/releasing.md" <<'PYEOF'
+import re, sys
+t = open(sys.argv[1]).read()
+assert "post-release" not in t, "docs/releasing.md still mentions post-release:"
+sec = t.split("## Cutting a release", 1)[1].split("\n## ", 1)[0]
+m = re.search(r"(?ms)^6\. (.*?)(?=^\S)", sec + "\nEND")
+assert m, "no step 6"
+step = " ".join(m.group(1).split())
+assert re.search(r"back-merge", step, re.I), "step 6 must say to back-merge: " + step
+assert re.search(r"GitLab Release", step), "step 6 must say to complete the GitLab Release: " + step
+assert re.search(r"back-merge.*GitLab Release", step, re.I), "back-merge comes first, then the Release: " + step
+for word, pat in (("step 2 evidence", r"step 2|evidence"), ("promote job", r"promote"),
+                  ("six digests", r"six digests|digests"), ("countersign run link", r"countersign")):
+    assert re.search(pat, step, re.I), f"step 6 does not name the {word}: " + step
+assert not re.search(r"\b(edit|fill|fills|update)\b[^.]*\brecord\b", step, re.I), "step 6 still edits the record: " + step
+PYEOF
+then echo "ok   U6 docs/releasing.md step 6: back-merge, then complete the GitLab Release; no record edit"; pass=$((pass + 1))
+else echo "FAIL U6 docs/releasing.md step 6 / post-release mention"; fail=$((fail + 1)); fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
