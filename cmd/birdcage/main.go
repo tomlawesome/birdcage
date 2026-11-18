@@ -130,6 +130,11 @@ const (
 	// deployment can never quietly outlive the real 7-day rule it is
 	// meant to shorten, not lengthen.
 	envTestClientCertTTL = "BIRDCAGE_TEST_CLIENT_CERT_TTL"
+	// envFindingsRetentionDays is how many days fixed findings and scan
+	// snapshots are kept (issue #213, owner question 39): default
+	// ingest.DefaultFindingsRetentionDays, 0 keeps them for good, and a
+	// negative or non-number value refuses to start.
+	envFindingsRetentionDays = "BIRDCAGE_FINDINGS_RETENTION_DAYS"
 	// maxTestClientCertTTL bounds envTestClientCertTTL: it can only ever
 	// shorten ADR-0012 B2's 7-day certificate life, never extend it.
 	maxTestClientCertTTL = 7 * 24 * time.Hour

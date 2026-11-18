@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -273,6 +274,10 @@ type startupConfig struct {
 	// expiry in minutes.
 	testClientCertTTL time.Duration
 
+	// findingsRetentionDays is envFindingsRetentionDays's parsed value
+	// (issue #213), handed to the ingest handler; 0 keeps for good.
+	findingsRetentionDays int
+
 	// auth is the sign-in layer's settings (issue #8, ADR-0016), read
 	// and checked by loadAuthConfig. Its secrets are held here only
 	// until auth.Open takes them.
@@ -397,6 +402,17 @@ func loadStartupConfig(getenv func(string) string, configLog, httpLog, ingestLog
 		cfg.testClientCertTTL = ttl
 		ingestLog.Warn(fmt.Sprintf("TEST ONLY: %s=%s -- client certificates will expire in %s, not the normal 7 days; never set this in production", envTestClientCertTTL, raw, ttl))
 	}
+
+	cfg.findingsRetentionDays = ingest.DefaultFindingsRetentionDays
+	if raw := getenv(envFindingsRetentionDays); raw != "" {
+		// Digits only: Atoi alone would take "+30" (and "-0").
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 0 || strings.TrimLeft(raw, "0123456789") != "" {
+			return startupConfig{}, &startupError{configLog, fmt.Sprintf("%s=%q must be a whole number of days, 0 or more (0 keeps fixed findings and scan snapshots for good); refusing to start", envFindingsRetentionDays, raw)}
+		}
+		cfg.findingsRetentionDays = days
+	}
+	configLog.Info(fmt.Sprintf("%s=%d", envFindingsRetentionDays, cfg.findingsRetentionDays))
 
 	cfg.dashboardHostEnv = getenv(envDashboardHost)
 
@@ -766,7 +782,7 @@ func buildIngestServers(cfg startupConfig, database *db.DB, birdcageCA *ca.CA, h
 	// both WithClientCertTTL implementations already ignore ttl <= 0,
 	// so passing it unconditionally is safe whether or not the test
 	// knob is in use.
-	ingestOpts := []ingest.Option{ingest.WithClientCertSigner(birdcageCA)}
+	ingestOpts := []ingest.Option{ingest.WithClientCertSigner(birdcageCA), ingest.WithFindingsRetentionDays(cfg.findingsRetentionDays)}
 	enrolOpts := []enrol.Option{}
 	if cfg.testClientCertTTL > 0 {
 		ingestOpts = append(ingestOpts, ingest.WithClientCertTTL(cfg.testClientCertTTL))

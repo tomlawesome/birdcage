@@ -294,6 +294,18 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// DefaultFindingsRetentionDays is how many days fixed findings and scan
+// snapshots are kept when no WithFindingsRetentionDays option is given
+// (issue #213; BIRDCAGE_FINDINGS_RETENTION_DAYS's default).
+const DefaultFindingsRetentionDays = 90
+
+// WithFindingsRetentionDays sets how many days a scan ingest keeps the
+// agent's fixed findings and scan snapshots (store.PruneByAge); 0 keeps
+// them for good. Negative values are refused at start-up, before this.
+func WithFindingsRetentionDays(days int) Option {
+	return func(h *ingestHandler) { h.findingsRetentionDays = days }
+}
+
 // noRunAudit is storeScan's "nothing to audit" result: a timer scan, or
 // a run that passed or failed.
 const noRunAudit store.ScanRunOutcome = -1
@@ -303,12 +315,17 @@ const noRunAudit store.ScanRunOutcome = -1
 // -- ADR-0010 decision 5/the issue's own "a dropped or failed scan ...
 // never resolves anything"), and, when runID is set, settles the run it
 // answers -- all in one transaction (ADR-0012 decision 4). It also
-// records the node's database refresh state from the snapshot. It
-// returns store.ScanRunUnknown (nothing stored; the caller refuses the
-// request) or store.ScanRunStale (stored, settles nothing) for the
+// records the node's database refresh state from the snapshot, and
+// removes the agent's fixed findings and snapshots older than the
+// retention window (store.PruneByAge, issue #213), ok or failed scan.
+// It returns store.ScanRunUnknown (nothing stored; the caller refuses
+// the request) or store.ScanRunStale (stored, settles nothing) for the
 // caller to audit after the transaction is over, and noRunAudit
-// otherwise. Audits are written after commit: SQLite serves one
-// connection, which the open transaction holds.
+// otherwise. Those run audits go through the coalescer, which writes
+// with the database handle, so they wait for commit: SQLite serves one
+// connection, which the open transaction holds. The retention audit
+// row is the exception: PruneByAge writes it on the transaction
+// itself, so it commits, or rolls back, with the removal it records.
 func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, findings []ingestScanFinding, runID string, now time.Time) (store.ScanRunOutcome, error) {
 	ctx := r.Context()
 	tx, err := h.db.Begin(ctx)
@@ -355,6 +372,13 @@ func (h *ingestHandler) storeScan(r *http.Request, snapshot store.ScanSnapshot, 
 		if err := store.ApplyFindingSnapshot(ctx, tx, snapshot.CanaryID, observed, snapshot.ReceivedAt); err != nil {
 			return noRunAudit, fmt.Errorf("apply finding snapshot: %w", err)
 		}
+	}
+	// Issue #213: remove this agent's fixed findings and snapshots older
+	// than the retention window, in this transaction. Run for a failed
+	// scan too, so an agent that only ever fails does not grow its
+	// snapshot history without bound.
+	if _, err := store.PruneByAge(ctx, tx, snapshot.CanaryID, h.findingsRetentionDays, snapshot.ReceivedAt); err != nil {
+		return noRunAudit, fmt.Errorf("prune by age: %w", err)
 	}
 	// Decision 10: a snapshot whose refresh failed marks the node
 	// failing (from birdcage's clock, if not already); an ok snapshot

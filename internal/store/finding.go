@@ -437,6 +437,8 @@ func ListFindings(ctx context.Context, database *db.DB, filter FindingFilter) ([
 // is on record, so it is shown as unconfirmed rather than silently
 // treated as current. LastOKScan is that agent's most recently
 // received ok scan's ReceivedAt, nil if it has never completed one.
+// Retention (PruneByAge, issue #213) always keeps both of those
+// snapshots, so neither fact changes as old snapshots are removed.
 //
 // Deliberately not a time-based threshold ("no scan in N hours") --
 // that is a ranking/exposure call (#110's own ground, ADR-0010 decision

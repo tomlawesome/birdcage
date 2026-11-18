@@ -45,6 +45,11 @@ type ingestHandler struct {
 	certTTL time.Duration
 	dualUse *dualUseTracker
 
+	// findingsRetentionDays is issue #213's age window for fixed
+	// findings and scan snapshots (WithFindingsRetentionDays); 0 keeps
+	// them for good.
+	findingsRetentionDays int
+
 	// afterRotateCertRead, when set, runs inside handleRotate's
 	// transaction between reading the canary's current certificate and
 	// committing -- a test seam for interleaving a renewal there. Nil
@@ -134,7 +139,7 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 // internal/api's own newHandler/NewHandler split.
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits, idx *store.SelfTestIndex, hook SelfTestRotationHook, opts ...Option) http.Handler {
 	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook,
-		certTTL: DefaultClientCertTTL, dualUse: newDualUseTracker()}
+		certTTL: DefaultClientCertTTL, dualUse: newDualUseTracker(), findingsRetentionDays: DefaultFindingsRetentionDays}
 	for _, opt := range opts {
 		opt(h)
 	}
