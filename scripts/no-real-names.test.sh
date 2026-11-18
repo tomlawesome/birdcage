@@ -19,8 +19,12 @@ export NO_REAL_NAMES_KEY_FILE="$key"
 hmac() { # hmac <keyfile> <word>: keyed hash of the lowercase word, as the guard computes it
   python3 -I -c 'import hmac,hashlib,sys; print(hmac.new(open(sys.argv[1],"rb").read(), sys.argv[2].encode(), hashlib.sha256).hexdigest())' "$1" "$2"
 }
+kcmsg="no-real-names key check"
+kc() { # kc <keyfile>: the key-check line for that key, as the spec defines it
+  python3 -I -c 'import hmac,hashlib,sys; print("key-check: "+hmac.new(open(sys.argv[1],"rb").read(), b"no-real-names key check", hashlib.sha256).hexdigest())' "$1"
+}
 h="$(hmac "$key" zanzibar)"
-printf 'hmac-sha256\n%s\n' "$h" > "$work/hashes"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key")" "$h" > "$work/hashes"
 printf '^ALLOWED\\.txt$\n' > "$work/allow"
 repo="$work/repo"; mkdir "$repo"
 git -C "$repo" init -q
@@ -172,16 +176,17 @@ git -C "$repo" rm -qf envhit.txt
 # key dependence: a hash made under a different key does not match
 key2="$work/key2"; head -c 32 /dev/urandom > "$key2"
 h2="$(hmac "$key2" zanzibar)"
-printf 'hmac-sha256\n%s\n' "$h2" > "$work/hashes-key2"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key")" "$h2" > "$work/hashes-key2"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key2")" "$h2" > "$work/hashes-key2b"
 printf 'written by zanzibar\n' > "$repo/keydep.txt"; track
-run 0 "a hash made under another key does not match" --root "$repo" --hashes "$work/hashes-key2"
+run 0 "a word hash made under another key does not match" --root "$repo" --hashes "$work/hashes-key2"
 run 1 "the same file matches under the right key" --root "$repo" --hashes "$work/hashes"
-run 1 "a hash made under key 2 matches when key 2 is supplied" --key-file "$key2" --root "$repo" --hashes "$work/hashes-key2"
+run 1 "a hash made under key 2 matches when key 2 is supplied" --key-file "$key2" --root "$repo" --hashes "$work/hashes-key2b"
 git -C "$repo" rm -qf keydep.txt
 
 # a plain or salted digest of the word, put under the new header, does not match
 plain="$(printf '%s' zanzibar | sha256sum | cut -d' ' -f1)"
-printf 'hmac-sha256\n%s\n' "$plain" > "$work/hashes-plain"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key")" "$plain" > "$work/hashes-plain"
 printf 'written by zanzibar\n' > "$repo/plain.txt"; track
 run 0 "a plain sha256 of the word does not match under the hmac header" --root "$repo" --hashes "$work/hashes-plain"
 git -C "$repo" rm -qf plain.txt
@@ -189,7 +194,7 @@ git -C "$repo" rm -qf plain.txt
 # the key is never echoed: use a printable key so a leak is greppable
 pkey="$work/pkey"; printf '%s' 'zebrafjordkey0123456789abcdefXY' > "$pkey"
 ph="$(hmac "$pkey" zanzibar)"
-printf 'hmac-sha256\n%s\n' "$ph" > "$work/hashes-p"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$pkey")" "$ph" > "$work/hashes-p"
 printf 'written by zanzibar\n' > "$repo/leak.txt"; track
 leaked=0
 leak_check() { # leak_check <label>: $out holds neither the key text nor its hex
@@ -226,6 +231,85 @@ if [ "$got" = 2 ] && ! echo "$add_out" | grep -Eq '[0-9a-f]{64}' && ! echo "$add
    && ! echo "$add_out" | grep -q '^usage:' && echo "$add_out" | grep -qi key; then
   echo "ok   --add with no key exits 2 and prints no hash"; pass=$((pass+1))
 else echo "FAIL --add with no key: exit $got"; echo "$add_out" | sed 's/^/       /'; fail=$((fail+1)); fi
+
+# --- key check: a wrong key must fail closed, never read as a clean tree ---
+# $repo still holds files; add a listed word so a fail-open guard would exit 1
+# or 0, never 2, and "clean" must never appear.
+printf 'written by zanzibar\n' > "$repo/kchit.txt"; track
+kcline="$(kc "$key")"
+mk() { printf 'hmac-sha256\n%s\n' "$@" > "$work/kc-case"; } # mk <lines...>
+kc_fail() { # kc_fail <name> <hashes file>: exit 2, plain message naming the key check, not clean
+  run 2 "$1" --root "$repo" --hashes "$2"
+  no_tb "$1"; not_clean "$1"
+  if echo "$out" | grep -qi 'key.check\|key check'; then echo "ok   $1 message names the key check"; pass=$((pass+1)); else echo "FAIL $1 message does not name the key check"; echo "$out" | sed 's/^/       /'; fail=$((fail+1)); fi
+}
+printf 'hmac-sha256\n%s\n' "$h" > "$work/kc-missing"
+kc_fail "missing key-check line exits 2" "$work/kc-missing"
+printf 'hmac-sha256\nkey-check: abc123\n%s\n' "$h" > "$work/kc-short"
+kc_fail "key-check with too-short hex exits 2" "$work/kc-short"
+printf 'hmac-sha256\nkey-check: %s\n%s\n' "$(printf 'z%.0s' $(seq 64))" "$h" > "$work/kc-nothex"
+kc_fail "key-check with non-hex characters exits 2" "$work/kc-nothex"
+printf 'hmac-sha256\nkey-check:\n%s\n' "$h" > "$work/kc-empty"
+kc_fail "key-check with no value exits 2" "$work/kc-empty"
+printf 'hmac-sha256\n%s\n%s\n%s\n' "$kcline" "$kcline" "$h" > "$work/kc-dup"
+kc_fail "duplicate identical key-check lines exit 2" "$work/kc-dup"
+printf 'hmac-sha256\n%s\n%s\n%s\n' "$kcline" "$(kc "$key2")" "$h" > "$work/kc-dup2"
+kc_fail "two different key-check lines exit 2" "$work/kc-dup2"
+# a key-check made under a different key: mismatch, even over a tree with a listed word
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key2")" "$h" > "$work/kc-wrongkey"
+kc_fail "key-check made under a different key exits 2" "$work/kc-wrongkey"
+run 2 "wrong-key run over a tree with a listed word exits 2 (not 1)" --root "$repo" --hashes "$work/kc-wrongkey"
+if echo "$out" | grep -q 'kchit.txt'; then echo "FAIL wrong-key run reports tree findings"; fail=$((fail+1)); else echo "ok   wrong-key run reports no findings"; pass=$((pass+1)); fi
+run 2 "wrong-key history run exits 2" --root "$hrepo" --hashes "$work/kc-wrongkey" --history
+not_clean "wrong-key history run"
+# a key that differs only by a trailing newline (the CI file-variable case)
+nlkey="$work/nlkey"; { cat "$key"; printf '\n'; } > "$nlkey"
+run 2 "a key differing only by a trailing newline exits 2" --key-file "$nlkey" --root "$repo" --hashes "$work/hashes"
+no_tb "trailing-newline key"; not_clean "trailing-newline key"
+# ... and the other way: hashes written under a newline-terminated key are not matched by the bare key
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$nlkey")" "$h" > "$work/kc-nlfile"
+run 2 "bare key against a key-check made under the newline-terminated key exits 2" --root "$repo" --hashes "$work/kc-nlfile"
+# key bytes used exactly as stored: the newline-terminated key matches its own key-check
+printf 'written by zanzibar\n' > "$repo/kchit.txt"
+printf 'hmac-sha256\n%s\n%s\n' "$(kc "$nlkey")" "$(hmac "$nlkey" zanzibar)" > "$work/kc-nlok"
+run 1 "key bytes are used as stored (no trimming): newline-terminated key works with its own file" --key-file "$nlkey" --root "$repo" --hashes "$work/kc-nlok"
+# the wrong-key message never carries key bytes
+run 2 "wrong printable key exits 2" --key-file "$pkey" --root "$repo" --hashes "$work/hashes"
+leaked=0; leak_check "wrong-key run"; [ "$leaked" = 0 ] && { echo "ok   wrong-key message omits the key"; pass=$((pass+1)); }
+# a correct key-check is accepted, and the word hit still reports
+run 1 "valid key-check plus a listed word still reports it" --root "$repo" --hashes "$work/hashes"
+git -C "$repo" rm -qf kchit.txt
+# header + key-check with no entries still reports no entries (checked after the key check)
+printf 'hmac-sha256\n%s\n' "$kcline" > "$work/kc-noentries"
+run 2 "header plus key-check and no entries exits 2" --root "$cleanrepo" --hashes "$work/kc-noentries"
+if echo "$out" | grep -qi 'no entries'; then echo "ok   header plus key-check and no entries says no entries"; pass=$((pass+1)); else echo "FAIL no-entries message missing"; echo "$out" | sed 's/^/       /'; fail=$((fail+1)); fi
+no_tb "no-entries run"
+# the key check comes first: no entries AND a wrong key reports the key check
+printf 'hmac-sha256\n%s\n' "$(kc "$key2")" > "$work/kc-noentries-wrong"
+run 2 "no entries and a wrong key exits 2" --root "$cleanrepo" --hashes "$work/kc-noentries-wrong"
+if echo "$out" | grep -qi 'key.check\|key check'; then echo "ok   key check is verified before the no-entries check"; pass=$((pass+1)); else echo "FAIL key check not verified before no-entries"; echo "$out" | sed 's/^/       /'; fail=$((fail+1)); fi
+
+# --- --key-check: print exactly the one line for the key in use ---
+kc_out="$(python3 "$guard" --key-file "$key" --key-check 2>&1)" && got=0 || got=$?
+if [ "$got" = 0 ]; then echo "ok   --key-check exits 0"; pass=$((pass+1)); else echo "FAIL --key-check: exit $got, want 0"; echo "$kc_out" | sed 's/^/       /'; fail=$((fail+1)); fi
+if [ "$kc_out" = "$kcline" ]; then echo "ok   --key-check prints exactly the expected line"; pass=$((pass+1)); else echo "FAIL --key-check output differs from the expected line"; echo "$kc_out" | sed 's/^/       /'; fail=$((fail+1)); fi
+if [ "$(printf '%s\n' "$kc_out" | wc -l)" = 1 ]; then echo "ok   --key-check prints one line"; pass=$((pass+1)); else echo "FAIL --key-check prints more than one line"; fail=$((fail+1)); fi
+kc_out="$(python3 "$guard" --key-file "$pkey" --key-check 2>&1)" && got=0 || got=$?
+if [ "$kc_out" = "$(kc "$pkey")" ] && ! echo "$kc_out" | grep -q 'zebrafjordkey' \
+   && ! echo "$kc_out" | grep -qi "$(printf '%s' 'zebrafjordkey0123456789abcdefXY' | od -An -tx1 | tr -d ' \n')"; then
+  echo "ok   --key-check prints the key-check and no key bytes"; pass=$((pass+1))
+else echo "FAIL --key-check with a printable key"; fail=$((fail+1)); fi
+kc_out="$(env NO_REAL_NAMES_KEY_FILE="$nlkey" python3 "$guard" --key-check 2>&1)" || true
+if [ "$kc_out" = "$(kc "$nlkey")" ] && [ "$kc_out" != "$kcline" ]; then echo "ok   --key-check uses the key bytes as stored (newline counts)"; pass=$((pass+1)); else echo "FAIL --key-check trims or alters the key"; fail=$((fail+1)); fi
+kc_out="$(env -u NO_REAL_NAMES_KEY_FILE HOME="$work/emptyhome" python3 "$guard" --key-check 2>&1)" && got=0 || got=$?
+if [ "$got" = 2 ] && ! echo "$kc_out" | grep -q 'key-check: [0-9a-f]\{64\}'; then echo "ok   --key-check with no key exits 2"; pass=$((pass+1)); else echo "FAIL --key-check with no key: exit $got"; fail=$((fail+1)); fi
+for combo in "--add" "--history"; do
+  got=0
+  kc_out="$(printf 'zanzibar\n' | python3 "$guard" --key-file "$key" --key-check $combo --root "$repo" --hashes "$work/hashes" 2>&1)" || got=$?
+  if [ "$got" = 2 ]; then echo "ok   --key-check with $combo exits 2"; pass=$((pass+1)); else echo "FAIL --key-check with $combo: exit $got, want 2"; fail=$((fail+1)); fi
+  if echo "$kc_out" | grep -Eq '^key-check: [0-9a-f]{64}$|^[0-9a-f]{64}$'; then echo "FAIL --key-check with $combo printed a hash line"; fail=$((fail+1)); else echo "ok   --key-check with $combo prints no hash line"; pass=$((pass+1)); fi
+  if echo "$kc_out" | grep -q Traceback; then echo "FAIL --key-check with $combo prints a traceback"; fail=$((fail+1)); else echo "ok   --key-check with $combo prints no traceback"; pass=$((pass+1)); fi
+done
 
 echo "fixtures: $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
