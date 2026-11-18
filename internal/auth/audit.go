@@ -8,6 +8,7 @@ import (
 
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/store"
 )
 
 // auditTimeout bounds each audit write, so a stuck database cannot hold a
@@ -30,23 +31,51 @@ type auditor struct {
 func (a auditor) Record(actor, action, target, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
 	defer cancel()
-	_, err := audit.Append(ctx, a.db, audit.Entry{
+	now := time.Now().UTC()
+	entry := audit.Entry{
 		Action:      nonBlank(action),
 		Target:      nonBlank(target),
 		Reason:      nonBlank(detail),
 		TriggeredBy: nonBlank(actor),
-		CreatedAt:   time.Now().UTC(),
-	})
+		CreatedAt:   now,
+	}
+	var err error
+	if action == "user.register" {
+		err = a.recordRegistration(ctx, entry)
+	} else {
+		_, err = audit.Append(ctx, a.db, entry)
+	}
 	if err != nil {
 		a.log.Error("auth: audit write failed", "action", action, "err", err)
 	}
-	// The first admin exists: a `birdcage auth reset` acknowledgement is
-	// spent, so the restore guard arms again (issue #164).
-	if action == "user.register" {
-		if err := SpendAccountsReset(ctx, a.db); err != nil {
-			a.log.Error(err.Error())
-		}
+}
+
+// recordRegistration writes the user.register row together with the
+// restore guard's one-way accounts_initialised marker, and spends any
+// `birdcage auth reset` acknowledgement, in one transaction (issue #164,
+// note 63923). Gauntlet calls Record after its own account save, outside
+// that transaction, so a crash between the two can leave an account with
+// no marker; start-up writes the marker whenever it sees an account, which
+// closes that gap. A gauntlet hook inside its account transaction would be
+// the ideal place for this; it does not exist yet.
+func (a auditor) recordRegistration(ctx context.Context, entry audit.Entry) error {
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		return err
 	}
+	if _, err := audit.Append(ctx, tx, entry); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := store.MarkAccountsInitialised(ctx, tx, entry.CreatedAt); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := store.SpendAccountsReset(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // nonBlank returns s, or "-" when s is empty after trimming.

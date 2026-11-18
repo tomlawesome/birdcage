@@ -101,8 +101,7 @@ func runCAResetCommand(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "The CA is lost. This removes every client certificate it signed; %d enrolled agent(s) will need to enrol again.\nAgents, findings and event history are kept.\nType reset to continue: ", agents)
-	line, _ := bufio.NewReader(stdin).ReadString('\n')
-	if strings.TrimRight(line, "\r\n") != "reset" {
+	if !readConfirmation(stdin) {
 		_, _ = fmt.Fprintln(stderr, "\nnot confirmed; nothing changed")
 		return errCAResetDeclined
 	}
@@ -148,4 +147,17 @@ func runCAResetCommand(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	_, _ = fmt.Fprintf(stdout, "removed %d client certificate(s); the next start creates a new CA, then enrol each agent again\n", removed)
 	return nil
+}
+
+// maxConfirmationBytes bounds what a reset command reads for its one
+// confirmation word, so a stuck pipe or a pasted file is refused rather
+// than read to the end.
+const maxConfirmationBytes = 4 << 10
+
+// readConfirmation reads one line of at most maxConfirmationBytes from
+// stdin and reports whether it is exactly `reset`. A longer answer, or
+// none, is not a confirmation.
+func readConfirmation(stdin io.Reader) bool {
+	line, _ := bufio.NewReaderSize(io.LimitReader(stdin, maxConfirmationBytes), 64).ReadString('\n')
+	return strings.TrimRight(line, "\r\n") == "reset"
 }

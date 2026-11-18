@@ -86,10 +86,8 @@ To check the built binary actually serves the dashboard end to end:
 seed a fresh SQLite database with the round-6 night story
 (`go run ./cmd/seed-story ./seed.db`), build the binary with a real
 frontend embedded as above, then run `BIRDCAGE_BIN=../birdcage npm run
-smoke` from `frontend/` -- it confirms `birdcage auth reset` (the seeded
-data has agents but no account, which start-up otherwise refuses as a
-botched restore), starts that binary against the seeded database on a
-free port, signs in through the door's screens (first run with the
+smoke` from `frontend/` -- it starts that binary against the seeded
+database on a free port, signs in through the door's screens (first run with the
 logged setup code, an authenticator app, the recovery codes) and checks
 a real browser sees the sweep sentence and four tiles.
 

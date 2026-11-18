@@ -76,7 +76,7 @@ the whole account.
 
 ## TestSessionCookieSecureAttributeFollowsConfig (internal/auth) (host)
 
-- 2026-11-18 · 12e029c plus the uncommitted #164 change · local
+- 2026-11-18 · d49652a · local
   `go test ./... -race` against a throwaway Postgres on a shared host (load
   average about 56) · SecureCookie_false: "POST .../api/auth/totp/confirm:
   context deadline exceeded"; the package took 607 s. Passed alone straight

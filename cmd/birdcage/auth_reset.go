@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/tomlawesome/gauntlet/persist"
@@ -42,7 +40,7 @@ func runAuth(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 // database that is in use. It refuses when an account exists or the
 // database is new (nothing to reset); asks the operator to type `reset`;
 // then, in one transaction, records the acknowledgement the guard looks
-// for and one audit row. It deletes nothing: agents, findings and history
+// for (a settings row) and one audit row. It deletes nothing: agents, findings and history
 // are kept. It prints no setup code; the next server start logs one. The
 // acknowledgement is spent once an account exists, so it is not a standing
 // off switch.
@@ -76,20 +74,19 @@ func runAuthResetCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 	if accounts > 0 {
 		return fmt.Errorf("nothing to reset: %d sign-in account(s) exist; auth reset is only for accounts lost with no backup", accounts)
 	}
-	history, err := store.ReadDatabaseHistory(ctx, database)
+	history, err := store.ReadAccountHistory(ctx, database)
 	if err != nil {
 		return err
 	}
 	if !history.InUse() {
-		return errors.New("nothing to reset: the database is new, so start-up issues a setup code by itself")
+		return errors.New("nothing to reset: no account has existed on this database, so start-up issues a setup code by itself")
 	}
 
-	_, _ = fmt.Fprintf(stdout, "No sign-in account exists, but this database holds %d agent(s), %d finding(s) and %d audit row(s).\n"+
+	_, _ = fmt.Fprintf(stdout, "No sign-in account exists, but this database has had one before (%s).\n"+
 		"If this follows a restore, stop: put the right database back (docs/configuration.md, Backup and restore).\n"+
 		"Continuing lets the next start issue a setup code, and whoever uses it becomes a new admin. Agents, findings and history are kept.\n"+
-		"Type reset to continue: ", history.Agents, history.Findings, history.AuditRows)
-	line, _ := bufio.NewReader(stdin).ReadString('\n')
-	if strings.TrimRight(line, "\r\n") != "reset" {
+		"Type reset to continue: ", describeAccountHistory(history))
+	if !readConfirmation(stdin) {
 		_, _ = fmt.Fprintln(stderr, "\nnot confirmed; nothing changed")
 		return errAuthResetDeclined
 	}
@@ -102,13 +99,13 @@ func runAuthResetCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 	committed := false
 	defer rollbackCanaryTx(tx, &committed)
 
-	if err := auth.RecordAccountsReset(ctx, tx, now); err != nil {
+	if err := store.RecordAccountsReset(ctx, tx, now); err != nil {
 		return err
 	}
 	if _, err := audit.Append(ctx, tx, audit.Entry{
 		Action:      "auth.reset",
 		Target:      "accounts",
-		Reason:      fmt.Sprintf("accounts lost on a database in use (%d agent(s), %d finding(s), %d audit row(s)); operator confirmed a new first admin", history.Agents, history.Findings, history.AuditRows),
+		Reason:      fmt.Sprintf("accounts lost after one had existed (%s); operator confirmed a new first admin", describeAccountHistory(history)),
 		TriggeredBy: "cli",
 		CreatedAt:   now,
 	}); err != nil {
