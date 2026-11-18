@@ -146,6 +146,41 @@ chmod 0600 /var/lib/birdcage/ca/ca-key.pem
 chmod 0644 /var/lib/birdcage/ca/ca.pem
 ```
 
+### Sign-in accounts after a restore
+
+The accounts live in the database's `auth_documents` table, sealed under
+the key file, so restore the whole database and the key file it was
+sealed under.
+
+**An unexpected first run is a warning sign.** If birdcage asks for a
+setup code on an install that already had accounts, the database is the
+wrong file, its path (`BIRDCAGE_DB_PATH` or `DATABASE_URL`) is wrong, or
+the restore missed the `auth_documents` table. Stop, put the right
+database back, and do not create a new admin: whoever types a setup code
+becomes an admin over all the data.
+
+Birdcage checks this itself. When the first admin registers, it writes an
+`accounts_initialised` marker to the `settings` table (not to
+`auth_documents`, so a restore that loses the accounts keeps it), beside
+the `user.register` audit row. When a start finds no account but either of
+those, an account has existed before: birdcage refuses to start, says
+which it found, and logs no setup code. Put the right database back and
+start again. Agents, findings, failed sign-ins and other history do not
+count, so a fresh install that enrols agents or sees sign-in attempts
+before its first admin still starts and logs a setup code. The check is
+against mistakes, not against someone who can write to the database.
+
+Only if the accounts are lost for good and you mean to create a new first
+admin over the existing data, run `birdcage auth reset` (with the same
+`BIRDCAGE_AUTH_KEY_FILE` and database settings as the server). It refuses
+while any account exists, and when no account has existed ("nothing to
+reset"). It says what it found and waits for you to type `reset`; anything
+else changes nothing. Then it records the reset in the audit log and lets
+the next start log a setup code. It deletes nothing: agents, findings and
+history are kept. It prints no setup code itself. The reset is used up
+once an account exists, so if the accounts go missing again later,
+birdcage refuses again. There is no setting that turns the check off.
+
 ## Keeping old findings: `BIRDCAGE_FINDINGS_RETENTION_DAYS`
 
 A scanner agent posts its current vulnerability findings with every scan.
@@ -291,9 +326,23 @@ separate and never use it: canaries keep their own credentials.
 Accounts, API tokens and the sign-in history are kept in your birdcage
 database (the `auth_documents` table), on SQLite or Postgres alike, and
 sealed with a key that is **not** in the database. The first time birdcage
-starts with no accounts it writes a one-time setup code to its log (look
-for `with setup code`); creating the first admin needs that code, and the
-first account is always an admin. Accounts that use a password must also
+starts with no accounts it writes a one-time setup code to its log
+(`docker logs`, or the journal under systemd), on the line containing
+`with setup code`; creating the first admin needs that code, and the
+first account is always an admin. The code is printed whatever
+`BIRDCAGE_LOG_LEVEL` is set to, and goes nowhere else: no file, no web
+page, no audit row. Each start of a fresh install logs a new code, and
+the code from an earlier start stops working. Five wrong codes within a
+minute from one address are answered with `429` for a while. Until the
+first admin exists, SSO and every dashboard route answer `503`.
+
+**An unexpected first run is a warning sign.** If birdcage asks for a
+setup code on an install that already had accounts, see
+[Sign-in accounts after a restore](#sign-in-accounts-after-a-restore):
+put the right database back, and do not create a new admin. Birdcage
+refuses to start in that case when it can tell an account existed.
+
+Accounts that use a password must also
 add a second factor (an authenticator app or a passkey) before they can
 reach anything. A restart signs everyone out.
 
@@ -306,7 +355,8 @@ disabled. Another admin can lift it with
 `POST /api/auth/users/{id}/unlock` (the dashboard has no screen for it
 yet). If no admin can,
 restart birdcage: when it opens with the only admin disabled it logs
-`lift the disable with unlock code <code>`, naming the account. Send that
+`lift the disable with unlock code <code>`, naming the account, whatever
+`BIRDCAGE_LOG_LEVEL` is set to. Send that
 code with the admin's username as JSON to `POST /api/auth/unlock`
 (`{"username": "...", "unlockCode": "..."}`; the dashboard has no screen
 for it). The admin then signs in with their usual password and second
@@ -445,8 +495,10 @@ To start again without the old key, stop birdcage, back up the database,
 and delete the three rows of the `auth_documents` table (`accounts`,
 `tokens` and `signins`). That permanently removes every account, API token
 and the sign-in history. The next start is a first run and logs a new setup
-code (see [Sign-in](#sign-in)). Restoring the original key file instead
-keeps everything.
+code (see [Sign-in](#sign-in)), once you have run `birdcage auth reset`:
+an account existed, so without it birdcage refuses to start (see
+[Sign-in accounts after a restore](#sign-in-accounts-after-a-restore)).
+Restoring the original key file instead keeps everything.
 
 ### Admin passkeys
 
@@ -531,6 +583,10 @@ writable, as for the database itself.
 `birdcage agent`, `settings`, `findings`, `approval` and the other
 one-shot commands open the database and nothing else. They do not read the
 key file, open the sign-in stores, or write a setup code.
+
+`birdcage auth reset` is the exception: it reads `BIRDCAGE_AUTH_KEY_FILE`
+to count the accounts, but changes none and writes no setup code (see
+[Sign-in accounts after a restore](#sign-in-accounts-after-a-restore)).
 
 ## Running as a different user
 
@@ -1190,6 +1246,11 @@ environment variable, case-insensitively:
 | `info` | Normal operation (the default -- unset or an unrecognized value both fall back to this). |
 | `warn` | Only failures and degraded conditions. |
 | `error` | Only failures that stop a subsystem. |
+
+Whatever the level, birdcage always prints the one-time setup code
+(`with setup code`), unlock code (`with unlock code`) and escape code
+(`with escape code`) lines: its log is the only place they appear, so a
+raised threshold must not hide them.
 
 birdcage (`BIRDCAGE_LOG_LEVEL`) prints a startup banner and a boot
 inventory (what was configured, what was skipped and why) ahead of its

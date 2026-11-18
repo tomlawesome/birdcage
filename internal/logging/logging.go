@@ -176,8 +176,26 @@ type handler struct {
 	mu    *sync.Mutex
 }
 
-func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level.Level()
+func (h *handler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.level.Level() || always(ctx)
+}
+
+// alwaysKey marks a context whose log lines skip the level threshold.
+type alwaysKey struct{}
+
+// Always returns ctx marked so that a line logged with it
+// (logger.Log(logging.Always(ctx), level, msg)) is written whatever
+// SetLevel says. It exists for the one-time setup, unlock and escape
+// codes (issue #164): birdcage's log is the only channel they reach, so a
+// BIRDCAGE_LOG_LEVEL of error must not hide them. Nothing else should use
+// it. A handler other than this package's ignores the mark.
+func Always(ctx context.Context) context.Context {
+	return context.WithValue(ctx, alwaysKey{}, true)
+}
+
+func always(ctx context.Context) bool {
+	on, _ := ctx.Value(alwaysKey{}).(bool)
+	return on
 }
 
 func (h *handler) Handle(_ context.Context, r slog.Record) error {
