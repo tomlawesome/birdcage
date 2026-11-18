@@ -1,7 +1,8 @@
-# Salted SHA-256 of lowercase words that must not appear in tracked files (#192).
-# Hashes only, never the words. Add a line to extend.
-salt: 480a5be48f6fd165467a876bcfa8b085
-814e6478a4e39ed12b93157c5c9fae9817e37cf184c5227ed919d3d1b6104484
-9621dc4442cde36095f74c49afc34fb522ef8507e494c2fe71e8962904208096
-f7e2537d1d257aab5f4ff9d8332e3bccf3f4d10d277d9492f12d3db58a3637ae
-4a4fa05aaa82793ee6962645d083630bf0c4e10f67e6f4a1bc9d69804f57a04b
+# Keyed hashes (HMAC-SHA256, RFC 2104) of lowercase words that must not appear
+# in tracked files (#192, SEC-5). Hashes only, never the words; the words are
+# unrecoverable from this file without the key, which is never committed
+# (local: ~/.config/birdcage/no-real-names.key; CI: NO_REAL_NAMES_KEY_FILE).
+# Add an entry: scripts/no-real-names.py --add, type the word (not echoed),
+# append the printed line below. Never put the word on the command line.
+# The first non-comment line is the format header; an empty list is refused.
+hmac-sha256
