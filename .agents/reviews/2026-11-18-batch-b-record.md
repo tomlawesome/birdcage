@@ -7,4 +7,6 @@
 - Before promotion: #234. After release: #235 and #233. Docs: #232.
 - Catch-up from dev: !152.
 
-Audited-through: 1e06362097b2212d1acc5372124335df6561427d
+- Coverage follow-up: the A-R3 fix left a shutdown branch untested, so `test:go` failed its coverage minimum on the dev merge. Tests only, eba0dee, reviewed by a non-author agent (one Low test gap, on #235).
+
+Audited-through: eba0dee8927471f1932a244c11a10fdb4ba9d978
