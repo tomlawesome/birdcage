@@ -620,3 +620,16 @@ describe('set a new password', () => {
     await screen.findByRole('alert')
   })
 })
+
+// Issue #164 item 7: SSO is refused while no account exists, so the
+// first-run screen offers no SSO link even when the session says SSO is
+// configured. (The sign-in screen still shows it.)
+describe('first run with SSO configured', () => {
+  it('shows no SSO link', () => {
+    stubServer({})
+    render(Door, { session: session({ setupRequired: true, ssoAvailable: true }), onenter: () => {} })
+    expect(screen.getByRole('heading', { name: 'Create the admin account' })).toBeTruthy()
+    expect(screen.queryByText('Sign in with SSO')).toBeNull()
+    expect(screen.queryByRole('link', { name: /sso/i })).toBeNull()
+  })
+})
