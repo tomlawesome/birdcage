@@ -540,6 +540,7 @@ test:release-scripts:
         scripts/mirror-image.test.sh \
         scripts/release-version.test.sh \
         scripts/release-candidate.test.sh \
+        scripts/release-note.test.sh \
         scripts/image-tag-policy.test.sh \
         scripts/policy-version.test.sh \
         scripts/ci-ensure-image.test.sh \
@@ -3068,9 +3069,19 @@ release:promote:
       {
         echo "RELEASE_TAG=$(scripts/release-version.sh --tag)"
         echo "RELEASE_COMMIT=$commit"
+        # The repositories promoted, for release:gitlab's note (#230).
+        echo "RELEASE_BIRDCAGE_REPO=$BIRDCAGE_RELEASE_REPO"
+        echo "RELEASE_MOCKINGBIRD_REPO=$MOCKINGBIRD_RELEASE_REPO"
+        echo "RELEASE_NIGHTJAR_REPO=$NIGHTJAR_RELEASE_REPO"
+        echo "RELEASE_SMB_LURE_REPO=$SMB_LURE_RELEASE_REPO"
+        echo "RELEASE_HOLDER_REPO=$HOLDER_RELEASE_REPO"
+        echo "RELEASE_OPENCANARY_REPO=$OPENCANARY_RELEASE_REPO"
       } > promotion.env
       cat promotion.env
   artifacts:
+    # The file as well as the report: release:gitlab reads the file.
+    paths:
+      - promotion.env
     reports:
       dotenv: promotion.env
     expire_in: 90 days
@@ -3133,25 +3144,18 @@ release:gitlab:
     # Same reason as release:mirror-release (#171): without this an empty
     # tag reaches release-cli, because echo succeeds either way.
     - 'test -n "${RELEASE_TAG:-}" && test -n "${RELEASE_COMMIT:-}" || { echo "no RELEASE_TAG/RELEASE_COMMIT: release:promote did not finish"; exit 1; }'
+    # The note names each image from what release:promote reported, and
+    # fails here -- before any release is made -- if one is empty (#230).
+    - sh scripts/release-note.sh promotion.env > release-note.md
+    - cat release-note.md
     - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
     tag_message: birdcage $RELEASE_TAG
     ref: $CI_COMMIT_SHA
     name: $RELEASE_TAG
-    description: |
-      Images published by digest, promoted from the build `preview` tested:
-
-      - `$BIRDCAGE_RELEASE_REPO:$RELEASE_TAG`
-      - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
-      - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
-      - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
-      - `$HOLDER_RELEASE_REPO:$RELEASE_TAG`
-      - `$OPENCANARY_RELEASE_REPO:$RELEASE_TAG`
-
-      Verify before you run either of them -- docs/releasing.md has the
-      commands. Both carry a key-based validation attestation; the keyless
-      countersignature is added by hand on GitHub after the cut.
+    # Written by the script section from release:promote's report (#230).
+    description: ./release-note.md
 
 sync:mirror-to-github:
   stage: sync
