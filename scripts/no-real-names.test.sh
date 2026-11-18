@@ -21,7 +21,7 @@ hmac() { # hmac <keyfile> <word>: keyed hash of the lowercase word, as the guard
 }
 kcmsg="no-real-names key check"
 kc() { # kc <keyfile>: the key-check line for that key, as the spec defines it
-  python3 -I -c 'import hmac,hashlib,sys; print("key-check: "+hmac.new(open(sys.argv[1],"rb").read(), b"no-real-names key check", hashlib.sha256).hexdigest())' "$1"
+  python3 -I -c 'import hmac,hashlib,sys; print("fingerprint: "+hmac.new(open(sys.argv[1],"rb").read(), b"no-real-names key check", hashlib.sha256).hexdigest())' "$1"
 }
 h="$(hmac "$key" zanzibar)"
 printf 'hmac-sha256\n%s\n%s\n' "$(kc "$key")" "$h" > "$work/hashes"
@@ -245,11 +245,11 @@ kc_fail() { # kc_fail <name> <hashes file>: exit 2, plain message naming the key
 }
 printf 'hmac-sha256\n%s\n' "$h" > "$work/kc-missing"
 kc_fail "missing key-check line exits 2" "$work/kc-missing"
-printf 'hmac-sha256\nkey-check: abc123\n%s\n' "$h" > "$work/kc-short"
+printf 'hmac-sha256\nfingerprint: abc123\n%s\n' "$h" > "$work/kc-short"
 kc_fail "key-check with too-short hex exits 2" "$work/kc-short"
-printf 'hmac-sha256\nkey-check: %s\n%s\n' "$(printf 'z%.0s' $(seq 64))" "$h" > "$work/kc-nothex"
+printf 'hmac-sha256\nfingerprint: %s\n%s\n' "$(printf 'z%.0s' $(seq 64))" "$h" > "$work/kc-nothex"
 kc_fail "key-check with non-hex characters exits 2" "$work/kc-nothex"
-printf 'hmac-sha256\nkey-check:\n%s\n' "$h" > "$work/kc-empty"
+printf 'hmac-sha256\nfingerprint:\n%s\n' "$h" > "$work/kc-empty"
 kc_fail "key-check with no value exits 2" "$work/kc-empty"
 printf 'hmac-sha256\n%s\n%s\n%s\n' "$kcline" "$kcline" "$h" > "$work/kc-dup"
 kc_fail "duplicate identical key-check lines exit 2" "$work/kc-dup"
@@ -302,12 +302,12 @@ else echo "FAIL --key-check with a printable key"; fail=$((fail+1)); fi
 kc_out="$(env NO_REAL_NAMES_KEY_FILE="$nlkey" python3 "$guard" --key-check 2>&1)" || true
 if [ "$kc_out" = "$(kc "$nlkey")" ] && [ "$kc_out" != "$kcline" ]; then echo "ok   --key-check uses the key bytes as stored (newline counts)"; pass=$((pass+1)); else echo "FAIL --key-check trims or alters the key"; fail=$((fail+1)); fi
 kc_out="$(env -u NO_REAL_NAMES_KEY_FILE HOME="$work/emptyhome" python3 "$guard" --key-check 2>&1)" && got=0 || got=$?
-if [ "$got" = 2 ] && ! echo "$kc_out" | grep -q 'key-check: [0-9a-f]\{64\}'; then echo "ok   --key-check with no key exits 2"; pass=$((pass+1)); else echo "FAIL --key-check with no key: exit $got"; fail=$((fail+1)); fi
+if [ "$got" = 2 ] && ! echo "$kc_out" | grep -q 'fingerprint: [0-9a-f]\{64\}'; then echo "ok   --key-check with no key exits 2"; pass=$((pass+1)); else echo "FAIL --key-check with no key: exit $got"; fail=$((fail+1)); fi
 for combo in "--add" "--history"; do
   got=0
   kc_out="$(printf 'zanzibar\n' | python3 "$guard" --key-file "$key" --key-check $combo --root "$repo" --hashes "$work/hashes" 2>&1)" || got=$?
   if [ "$got" = 2 ]; then echo "ok   --key-check with $combo exits 2"; pass=$((pass+1)); else echo "FAIL --key-check with $combo: exit $got, want 2"; fail=$((fail+1)); fi
-  if echo "$kc_out" | grep -Eq '^key-check: [0-9a-f]{64}$|^[0-9a-f]{64}$'; then echo "FAIL --key-check with $combo printed a hash line"; fail=$((fail+1)); else echo "ok   --key-check with $combo prints no hash line"; pass=$((pass+1)); fi
+  if echo "$kc_out" | grep -Eq '^fingerprint: [0-9a-f]{64}$|^[0-9a-f]{64}$'; then echo "FAIL --key-check with $combo printed a hash line"; fail=$((fail+1)); else echo "ok   --key-check with $combo prints no hash line"; pass=$((pass+1)); fi
   if echo "$kc_out" | grep -q Traceback; then echo "FAIL --key-check with $combo prints a traceback"; fail=$((fail+1)); else echo "ok   --key-check with $combo prints no traceback"; pass=$((pass+1)); fi
 done
 

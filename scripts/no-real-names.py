@@ -13,7 +13,7 @@ else NO_REAL_NAMES_KEY_FILE (CI: a masked file variable), else
 key, an old salted hashes file or a list with no entries is a config error:
 the guard fails closed rather than pass on an empty list.
 
-The hashes file carries one "key-check: <64 hex>" line, HMAC-SHA256(key,
+The hashes file carries one "fingerprint: <64 hex>" line, HMAC-SHA256(key,
 b"no-real-names key check"). A wrong key (say a CI file variable with an
 extra trailing newline) would match no hash and pass every tree, so a
 missing, malformed, duplicated or mismatched key-check is a config error,
@@ -40,7 +40,7 @@ KEY_ENV = "NO_REAL_NAMES_KEY_FILE"
 DEFAULT_KEY = os.path.join("~", ".config", "birdcage", "no-real-names.key")
 MIN_KEY_BYTES = 16
 HEX64 = re.compile(r"[0-9a-f]{64}")
-KEY_CHECK = "key-check:"
+KEY_CHECK = "fingerprint:"
 KEY_CHECK_MSG = b"no-real-names key check"
 
 LOCK_NAMES = {"go.sum", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
