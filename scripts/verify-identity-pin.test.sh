@@ -78,7 +78,7 @@ expect() {
   echo "FAIL $1: $(echo "$got" | head -3 | tr '\n' '|')"; fail=$((fail + 1))
 }
 
-id='https://github.com/example-owner/birdcage/.github/workflows/countersign.yml@refs/heads/main'
+id='https://github.com/tomlawesome/birdcage/.github/workflows/countersign.yml@refs/heads/main'
 
 expect "the real tree pins the exact workflow identity" "$repo" ok
 
@@ -97,12 +97,20 @@ PY
 }
 d="$(base good "$id")"
 expect "scratch base with the exact identity passes" "$d" ok
-d="$(base otherwf 'https://github.com/example-owner/birdcage/.github/workflows/rogue.yml@refs/heads/main')"
+d="$(base otherwf 'https://github.com/tomlawesome/birdcage/.github/workflows/rogue.yml@refs/heads/main')"
 expect "another workflow's identity is refused" "$d" refused "not pinned"
-d="$(base otherref 'https://github.com/example-owner/birdcage/.github/workflows/countersign.yml@refs/heads/feature')"
+d="$(base otherref 'https://github.com/tomlawesome/birdcage/.github/workflows/countersign.yml@refs/heads/feature')"
 expect "another ref's identity is refused" "$d" refused "not pinned"
-d="$(base tagref 'https://github.com/example-owner/birdcage/.github/workflows/countersign.yml@refs/tags/v1')"
+d="$(base tagref 'https://github.com/tomlawesome/birdcage/.github/workflows/countersign.yml@refs/tags/v1')"
 expect "a tag ref's identity is refused" "$d" refused "not pinned"
+
+d="$(base otherowner 'https://github.com/someone-else/birdcage/.github/workflows/countersign.yml@refs/heads/main')"
+expect "another owner's identity is refused" "$d" refused "not pinned"
+d="$(base otherrepo 'https://github.com/tomlawesome/other-repo/.github/workflows/countersign.yml@refs/heads/main')"
+expect "another repository's identity is refused" "$d" refused "not pinned"
+d="$(base ownerscript "$id")"
+printf '#!/usr/bin/env bash\ncosign verify --certificate-identity %s --certificate-oidc-issuer %s --certificate-github-workflow-trigger workflow_dispatch "$1"\n' 'https://github.com/someone-else/birdcage/.github/workflows/countersign.yml@refs/heads/main' "$issuer" > "$d/scripts/rogue-verify.sh"
+expect "a script naming another owner's workflow is refused" "$d" refused "not pinned"
 
 d="$(base notrigger "$id")"
 sed -i '/--certificate-github-workflow-trigger/d' "$d/docs/releasing.md"
@@ -117,7 +125,7 @@ d="$(base citrigger "$id")"
 printf 'job:\n  script:\n    - cosign verify --certificate-identity %s --certificate-oidc-issuer %s x\n' "$id" "$issuer" >> "$d/.gitlab-ci.yml"
 expect "a CI verify command without the trigger pin is refused" "$d" refused "trigger not pinned"
 d="$(base regex "$id")"
-printf '\n```sh\ncosign verify --certificate-identity-regexp "^https://github.com/example-owner/birdcage/" --certificate-oidc-issuer %s ghcr.io/x@sha256:0\n```\n' "$issuer" >> "$d/docs/releasing.md"
+printf '\n```sh\ncosign verify --certificate-identity-regexp "^https://github.com/tomlawesome/birdcage/" --certificate-oidc-issuer %s ghcr.io/x@sha256:0\n```\n' "$issuer" >> "$d/docs/releasing.md"
 expect "a repo-wide regexp in the docs is refused" "$d" refused "certificate-identity-regexp"
 d="$(base regex2 "$id")"
 printf '#!/usr/bin/env bash\ncosign verify --certificate-identity-regexp "countersign.yml" --certificate-oidc-issuer %s "$1"\n' "$issuer" > "$d/scripts/rogue-verify.sh"
