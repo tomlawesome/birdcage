@@ -222,6 +222,20 @@ func runSubcommand(args []string, stdout io.Writer) (handled bool, exitCode int)
 		return true, 0
 	}
 
+	// `birdcage auth reset` (cmd/birdcage/auth_reset.go) is #164's
+	// deliberate way past checkStartupAuthContinuity when the accounts are
+	// lost for good on a database in use. Exits immediately like the others.
+	if len(args) > 1 && args[1] == "auth" {
+		authLog := logging.New("auth")
+		if err := runAuth(args[2:], os.Stdin, stdout, os.Stderr); err != nil {
+			if !errors.Is(err, errAuthResetDeclined) {
+				authLog.Error(err.Error())
+			}
+			return true, 1
+		}
+		return true, 0
+	}
+
 	// `birdcage crowdsec add <ip> --reason "<why>"` (cmd/birdcage/
 	// crowdsec.go) is ADR-0014's one operator door onto a CrowdSec ban:
 	// CLI-only for the same reason `agent settings` is, and add-only by

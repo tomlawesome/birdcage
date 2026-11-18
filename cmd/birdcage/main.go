@@ -316,6 +316,13 @@ func main() {
 		logStartupError(err)
 		refuse()
 	}
+	// Issue #164: no account on a database already in use is a botched
+	// restore until `birdcage auth reset` says otherwise. Before
+	// ReleaseCodes, so a refused start prints no setup code.
+	if err := checkStartupAuthContinuity(ctx, cfg, database, authLog); err != nil {
+		logStartupError(err)
+		refuse()
+	}
 	if cfg.caNeeded {
 		configLog.Info(fmt.Sprintf("%s=%s", envCADir, cfg.caDir))
 	}

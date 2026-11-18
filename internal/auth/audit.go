@@ -40,6 +40,13 @@ func (a auditor) Record(actor, action, target, detail string) {
 	if err != nil {
 		a.log.Error("auth: audit write failed", "action", action, "err", err)
 	}
+	// The first admin exists: a `birdcage auth reset` acknowledgement is
+	// spent, so the restore guard arms again (issue #164).
+	if action == "user.register" {
+		if err := SpendAccountsReset(ctx, a.db); err != nil {
+			a.log.Error(err.Error())
+		}
+	}
 }
 
 // nonBlank returns s, or "-" when s is empty after trimming.

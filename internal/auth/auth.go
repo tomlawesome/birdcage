@@ -32,6 +32,7 @@ import (
 	"github.com/tomlawesome/birdcage/internal/api"
 	"github.com/tomlawesome/birdcage/internal/authstore"
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/logging"
 )
 
 // sessionIdle is how long a session may sit unused before it ends
@@ -313,6 +314,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 			return ClientIPWith(r, ProxyTrust{Peers: cfg.TrustedProxies, Hops: cfg.TrustedHops, Unix: cfg.TrustUnixSocket}, cfg.ClientIPHeader)
 		},
 		AdminPasskey: rule,
+		OnEscapeCode: escapeCode(log),
 		Audit:        auditor{db: database, log: log},
 		// PasskeySignIn stays off, and UnusualSignIns at gauntlet's default
 		// (flag): ADR-0016 decisions 7 and 9.
@@ -363,18 +365,38 @@ type heldCodes struct {
 
 func (h *heldCodes) setup(code string) {
 	h.announce(func() {
-		h.log.Warn(fmt.Sprintf("no account exists yet -- create the first admin with setup code %s (valid until an account exists or this process restarts)", code))
+		announceCode(h.log, fmt.Sprintf("no account exists yet -- create the first admin with setup code %s (valid until an account exists or this process restarts)", code))
 	})
 }
 
 func (h *heldCodes) unlock(username, code string) {
 	h.announce(func() {
-		h.log.Warn(fmt.Sprintf("sign-in for the admin account %q is disabled after %d failed attempts in a row, and no other admin can unlock it -- "+
+		announceCode(h.log, fmt.Sprintf("sign-in for the admin account %q is disabled after %d failed attempts in a row, and no other admin can unlock it -- "+
 			"lift the disable with unlock code %s (valid until the account is unlocked or this process restarts; "+
 			"the admin then signs in with their existing password and second factor). "+
 			"Without it the disable lifts itself %s after it began",
 			username, gauntlet.MaxConsecutiveLoginFailures, code, gauntlet.LoginDisableDuration))
 	})
+}
+
+// announceCode writes a one-time code's line at Warn, whatever
+// BIRDCAGE_LOG_LEVEL says (issue #164): the log is the only channel a code
+// reaches, so a raised threshold would leave the operator no way in. Every
+// other line keeps following the threshold.
+func announceCode(log *slog.Logger, msg string) {
+	log.Log(logging.Always(context.Background()), slog.LevelWarn, msg)
+}
+
+// escapeCode writes gauntlet's escape code (gate.Config.OnEscapeCode) in
+// the words of gauntlet's own default line, through announceCode, so it
+// too survives a raised log level.
+func escapeCode(log *slog.Logger) gate.EscapeCodeFunc {
+	return func(username, address, code string) {
+		announceCode(log, fmt.Sprintf("sign-in for the admin account %q from %s was stopped by the unusual-sign-in policy (refused, or held for a code or passkey), and no other admin can act -- "+
+			"let that attempt through with escape code %s (valid %d minutes, in the browser that was refused; "+
+			"it then signs in with the password and second factor it already proved)",
+			username, address, code, int(gate.EscapeCodeLifetime/time.Minute)))
+	}
 }
 
 func (h *heldCodes) announce(write func()) {

@@ -73,3 +73,11 @@ the whole account.
   two trusted-proxy tests failed at db.Migrate with "database or disk is
   full (13)"; the runner also warned of a disconnected postgres service
   container. Retried as job 51896, which passed.
+
+## TestSessionCookieSecureAttributeFollowsConfig (internal/auth) (host)
+
+- 2026-11-18 · 12e029c plus the uncommitted #164 change · local
+  `go test ./... -race` against a throwaway Postgres on a shared host (load
+  average about 56) · SecureCookie_false: "POST .../api/auth/totp/confirm:
+  context deadline exceeded"; the package took 607 s. Passed alone straight
+  after (16 s) and in the full Postgres rerun on the same code.

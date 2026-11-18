@@ -89,8 +89,8 @@ function waitForServer(url, timeoutMs = 15000) {
 /** Runs a one-shot CLI step (settings/canary-enrol/seed-story) and throws
  * with both streams on a non-zero exit, rather than a bare "status !== 0"
  * the caller has to go dig a log file out for. */
-function runCLI(label, cmd, args, env) {
-  const res = spawnSync(cmd, args, { cwd: repoRoot, env, encoding: 'utf8' })
+function runCLI(label, cmd, args, env, input) {
+  const res = spawnSync(cmd, args, { cwd: repoRoot, env, encoding: 'utf8', input })
   if (res.status !== 0) {
     throw new Error(`${label} failed (exit ${res.status}):\n${res.stdout ?? ''}\n${res.stderr ?? ''}`)
   }
@@ -180,6 +180,13 @@ async function main() {
 
   // 32 fresh random bytes, mode 0400, removed with workDir on the way out.
   const authKeyFile = writeAuthKeyFile(workDir)
+
+  // The seeded story holds agents but no account, which start-up refuses
+  // as a botched restore (#164) until an operator confirms `birdcage auth
+  // reset` -- the documented way to create a first admin over existing data.
+  step('confirming a first admin over the seeded data (birdcage auth reset)')
+  runCLI('auth reset', BIRDCAGE_BIN, ['auth', 'reset'], { ...sharedEnv, BIRDCAGE_AUTH_KEY_FILE: authKeyFile }, 'reset\n')
+  ok('auth reset confirmed')
 
   console.log(`\nstarting ${BIRDCAGE_BIN} on 127.0.0.1:${httpPort}...`)
   const birdcage = spawn(BIRDCAGE_BIN, [], {
