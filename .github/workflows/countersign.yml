@@ -103,6 +103,9 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing later pushes to the repository (zizmor artipacked).
+          persist-credentials: false
 
       - name: Validate the inputs
         env:
@@ -136,10 +139,15 @@ jobs:
         # The built-in token, not a new secret: the only write this workflow
         # needs is to our own package, and GITHUB_TOKEN already carries it
         # under `packages: write` above.
+        # Passed through env, not interpolated into the script text, so the
+        # shell never sees workflow expressions (zizmor template-injection).
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
-          echo "${{ github.token }}" | docker login ghcr.io \
-            --username "${{ github.actor }}" --password-stdin
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io \
+            --username "$REGISTRY_USER" --password-stdin
 
       - name: Verify the evidence, then countersign, one image at a time
         env:

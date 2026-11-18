@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # first-admin.sh -- the sign-in every dashboard journey shares (#8,
 # ADR-0016): create the first admin with the setup code birdcage logged,
 # enrol an authenticator app, sign in with password and code, and mint

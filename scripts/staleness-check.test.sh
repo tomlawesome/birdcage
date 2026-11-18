@@ -968,6 +968,39 @@ for kind in gomod owner action tool; do
   done
 done
 
+# The code scanners' pins (#199) are read by name from their ensure scripts:
+# a current one is "current", an older one "behind", and a script without the
+# variable is skipped. A pin nobody reads would never go stale loudly.
+for t in actionlint:ACTIONLINT_VERSION:rhysd/actionlint zizmor:ZIZMOR_VERSION:zizmorcore/zizmor \
+         ruff:RUFF_VERSION:astral-sh/ruff shellcheck:SHELLCHECK_VERSION:koalaman/shellcheck; do
+  IFS=: read -r tname tvar trepo <<<"$t"
+  if python3 -I - "$check" "$tname" "$tvar" "$trepo" <<'PYEOF'
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+name, var, repo = sys.argv[2:5]
+class F:
+    def get(self, url, headers=None):
+        if url == f"https://api.github.com/repos/{repo}/releases/latest":
+            return True, json.dumps({"tag_name": "9.9.9"}).encode(), None
+        return False, None, "HTTP 404"
+    def head_digest(self, url, headers=None):
+        return False, None, "HTTP 404"
+def rows_for(text):
+    d = tempfile.mkdtemp(); os.makedirs(d + "/scripts")
+    if text is not None:
+        open(d + f"/scripts/ensure-{name}.sh", "w").write(text)
+    return [r for r in sc.check_tools(d, F()) if r.id == f"tool:{name}"]
+old = rows_for(f'{var}="1.0.0"\n')
+assert len(old) == 1 and old[0].status == "behind" and old[0].pinned == "1.0.0", [vars(r) for r in old]
+cur = rows_for(f'{var}="9.9.9"\n')
+assert len(cur) == 1 and cur[0].status == "current", [vars(r) for r in cur]
+assert rows_for(None) == [], "no ensure script, no row"
+PYEOF
+  then echo "ok   staleness reads $tvar from scripts/ensure-$tname.sh"; pass=$((pass + 1))
+  else echo "FAIL staleness reads $tvar from scripts/ensure-$tname.sh"; fail=$((fail + 1)); fi
+done
+
 # Same host, https -> http: the scheme is compared too, so no credential
 # survives a downgrade (a port or scheme change is a different origin). The
 # redirect handler is driven directly: the origin cannot be faked with two

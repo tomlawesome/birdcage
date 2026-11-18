@@ -1,0 +1,25 @@
+# Finding-count ceilings for the code scanners (#199), the ratchet of
+# supply-chain/coverage-floors.yml turned round. Read by scripts/scan-ceiling.py
+# from scripts/static-scan.sh (jobs lint:static-scan and lint:go).
+#
+#   - each ceiling is the number of findings that existed when the scanner was
+#     switched on, measured with the pinned tool over the tree. A count above
+#     it is a new finding and fails.
+#   - a ceiling only goes DOWN. scripts/scan-ceiling.py compare refuses a raised
+#     one against the target branch (or the previous commit). Never raise one
+#     to make a change pass: fix the finding, or suppress it with a reason.
+#   - a count more than 5 below its ceiling fails too (a stale ratchet, the
+#     same slack as RATCHET_SLACK in scripts/coverage-floor.py): lower the
+#     ceiling to lock the gain in.
+#   - zero is the aim. Where every ceiling reads 0 the mechanism is dropped and
+#     any finding is red.
+#   - gosec-medium is for visibility only and is never checked; medium and low
+#     gosec findings are printed, not blocking.
+#   - comment style: the count, the date measured, the issue.
+ceilings:
+  gosec-high: 67       # 67 measured 2026-11-18 (#199), golangci-lint 2.14.0 locally (CI pins 2.15.0)
+  gosec-medium: 91     # 91 measured 2026-11-18 (#199), visibility only, not checked (5 low not counted)
+  actionlint: 0        # 0 measured 2026-11-18 (#199)
+  zizmor-high: 0       # 0 measured 2026-11-18 (#199), two findings fixed in the workflows
+  ruff-S: 23           # 23 measured 2026-11-18 (#199)
+  shellcheck: 27       # 27 measured 2026-11-18 (#199), errors and warnings

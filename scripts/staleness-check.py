@@ -1444,6 +1444,18 @@ def check_tools(root, fetcher):
         latest, err = github_latest_release(fetcher, "gitleaks/gitleaks")
         rows.append(_tool_row("tool:gitleaks", gitleaks_pin, latest, err, "gitleaks/gitleaks"))
 
+    # Code scanners (#199 slice 1): each ensure script holds its own pin.
+    for name, var, repo in (
+        ("actionlint", "ACTIONLINT_VERSION", "rhysd/actionlint"),
+        ("zizmor", "ZIZMOR_VERSION", "zizmorcore/zizmor"),
+        ("ruff", "RUFF_VERSION", "astral-sh/ruff"),
+        ("shellcheck", "SHELLCHECK_VERSION", "koalaman/shellcheck"),
+    ):
+        pin = read_version_var(os.path.join(root, "scripts", f"ensure-{name}.sh"), var)
+        if pin:
+            latest, err = github_latest_release(fetcher, repo)
+            rows.append(_tool_row(f"tool:{name}", pin, latest, err, repo))
+
     nightjar_dockerfile = os.path.join(root, "build", "nightjar", "Dockerfile")
     if os.path.isfile(nightjar_dockerfile):
         with open(nightjar_dockerfile) as f:

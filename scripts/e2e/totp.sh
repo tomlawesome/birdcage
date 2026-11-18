@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # totp.sh -- an RFC 6238 authenticator-app code (HMAC-SHA1, 30-second
 # steps, six digits: what gauntlet's TOTP enrolment hands out), in plain
 # POSIX sh, for the sign-in journeys (#8). Sourced, never run.
