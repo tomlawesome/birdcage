@@ -195,10 +195,16 @@ write_record() {
 commit_record() {
   local wt="$1" author="${2:-Fixture Bot}" trailer="${3:-Fixture Bot}"
   git -C "$wt" add docs/releases
+  # The commit must touch the record, or "the last commit touching the file"
+  # (rule 8) would still be the earlier one: add a trailing blank line.
+  if git -C "$wt" diff --cached --quiet -- docs/releases; then
+    for f in "$wt"/docs/releases/*.md; do echo >> "$f"; done
+    git -C "$wt" add docs/releases
+  fi
   if [ "$trailer" = "-" ]; then
-    git -C "$wt" -c user.name="$author" commit -q --allow-empty -m "docs: release record v0.2.0"
+    git -C "$wt" -c user.name="$author" commit -q -m "docs: release record v0.2.0"
   else
-    git -C "$wt" -c user.name="$author" commit -q --allow-empty -m "docs: release record v0.2.0" \
+    git -C "$wt" -c user.name="$author" commit -q -m "docs: release record v0.2.0" \
       --trailer "Signed-off-by: $trailer"
   fi
 }
@@ -511,7 +517,7 @@ newcase; stub '{"issues":{"206":"closed","213":"opened"}}'; prev
 expect "E1 P5 fails when a named review issue is open" 1 \
   '^FAIL P5 ' '=Review issue #213 is open' '=close it with evidence'
 
-newcase; stub '{"issues":{"206":"closed"}}'; prev
+newcase; stub '{"issues":{"213":null}}'; prev
 expect "E2 P5 fails when a named issue is not found" 1 '^FAIL P5 ' '=#213'
 
 newcase; R_REVIEW="" write_record "$wt"; commit_record "$wt"; push_fetch dev; stub; prev
@@ -854,7 +860,7 @@ expect "L20 S2 passes when every apk pin is current" 0 '^PASS S2 '
 # Group M: the CI wiring in .gitlab-ci.yml
 # ==========================================================================
 ci_report="$(python3 -I - "$repo_root/.gitlab-ci.yml" <<'PY' 2>&1 || true
-import sys, yaml
+import re, sys, yaml
 class L(yaml.SafeLoader):
     pass
 L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
@@ -901,7 +907,7 @@ if isinstance(rr, dict):
     s = "\n".join(str(x) for x in (rr.get("script") or []))
     say("fence_runs_script", int("scripts/release-record-policy.py" in s))
     r = " ".join(str((x or {}).get("if", "")) for x in (rr.get("rules") or []) if isinstance(x, dict))
-    say("fence_rule_release", int("release/" in r and "merge_request_event" in r))
+    say("fence_rule_release", int(re.search(r"=~\s*/\^release\\?/", r) is not None and "merge_request_event" in r))
 PY
 )"
 out="$ci_report"; code=0
