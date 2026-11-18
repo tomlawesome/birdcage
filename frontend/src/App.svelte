@@ -279,9 +279,22 @@
   // required fallback: it stays exactly as it was before that issue,
   // so a stream that never connects, drops, or is disabled leaves the
   // dashboard behaving exactly as it does today.
+  // Issue #190 (owner answer 55b): background checks of a hidden tab keep
+  // the session's idle timer awake, so the poll and the stream below pause
+  // while the tab is hidden (Page Visibility API). Showing the tab re-runs
+  // the poll effect, whose immediate load() is the one refresh.
+  const isTabVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  let tabVisible = $state(isTabVisible())
+  onMount(() => {
+    const onVisibility = () => (tabVisible = isTabVisible())
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  })
+
   $effect(() => {
     // Nothing is fetched while the door is (or may be) showing.
     if (phase !== 'in') return
+    if (!tabVisible) return
     const range = activeRange
     // Read here so the effect re-subscribes on navigation: moving to a
     // canary page must fetch that page now, not on the next 30 s tick.
@@ -391,6 +404,7 @@
   // it did before this effect existed.
   $effect(() => {
     if (phase !== 'in') return
+    if (!tabVisible) return
     if (typeof EventSource === 'undefined') return
     // A fixture scene has no server behind it: the fetches above already
     // answer from the fixture, and the stream must stay closed too.
