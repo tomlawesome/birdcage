@@ -20,7 +20,7 @@ const FORTNIGHT = 14 * DAY
 const NINETY_DAYS = 90 * DAY
 
 // gen.py: SEGS = [(0, 900, 300), (900, 3600, 180), (3600, 86400, 200), (86400, 1209600, 200)]
-export const BASE_SEGS: Seg[] = [
+const BASE_SEGS: Seg[] = [
   { from: 0, to: 15 * MIN, width: 300 },
   { from: 15 * MIN, to: HOUR, width: 180 },
   { from: HOUR, to: DAY, width: 200 },
@@ -46,7 +46,7 @@ export function segmentsForRange(range: Range): Seg[] {
   }
 }
 
-export function scaleFor(segs: Seg[], x0: number, x1: number): number {
+function scaleFor(segs: Seg[], x0: number, x1: number): number {
   const total = segs.reduce((sum, seg) => sum + seg.width, 0)
   return (x1 - x0) / total
 }

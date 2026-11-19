@@ -1,0 +1,10 @@
+{
+  "name": "birdcage-ci-knip",
+  "private": true,
+  "version": "0.0.0",
+  "description": "knip for frontend/, installed apart from it (#200)",
+  "license": "LicenseRef-Birdcage-Noncommercial-1.0",
+  "dependencies": {
+    "knip": "6.45.1"
+  }
+}

@@ -41,7 +41,7 @@ function utcDateKey(d: Date): number {
 }
 
 /** Line 2's time: "21:55" today, "yesterday 03:18" yesterday, else the date. */
-export function formatEventTime(at: Date, now: Date): string {
+function formatEventTime(at: Date, now: Date): string {
   const dayDiff = (utcDateKey(now) - utcDateKey(at)) / 86400000
   if (dayDiff === 0) return formatClock(at)
   if (dayDiff === 1) return `yesterday ${formatClock(at)}`

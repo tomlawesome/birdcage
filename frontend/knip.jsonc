@@ -1,0 +1,15 @@
+{
+  // knip over frontend/ (#200). Run from ci/knip's own install, see lint:knip.
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Entry points knip cannot infer: package.json scripts are followed, so
+  // the compare scripts, smoke and e2e helpers are listed for clarity.
+  "entry": [
+    "scripts/*.mjs",
+    "scripts/*.ts",
+    "e2e/*.mjs",
+    "src/**/*.test.ts"
+  ],
+  "project": ["src/**/*.{ts,svelte}", "scripts/**", "e2e/**"],
+  // reason: e2e/smoke.mjs starts the Go binary it tests; it is not an npm package.
+  "ignoreBinaries": ["go"]
+}

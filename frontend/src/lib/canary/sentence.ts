@@ -16,7 +16,6 @@ import { stageLabel } from '../sentence/stage'
 import {
   canaryOf,
   lastCompletedRun,
-  periodsHere,
   selfTestCards,
   silences,
   traceOf,
@@ -35,7 +34,7 @@ export function dateLower(iso: string): string {
 }
 
 /** "Wed 12 Aug" -- prose capitalisation, as the hero's sub uses it. */
-export function dateProper(iso: string): string {
+function dateProper(iso: string): string {
   const lower = dateLower(iso)
   return lower.replace(/(^|\s)([a-z])/g, (_, lead: string, letter: string) => `${lead}${letter.toUpperCase()}`)
 }

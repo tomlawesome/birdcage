@@ -3,16 +3,16 @@
 // them the way gen.py's trace() does, runs the placement loop, and adds
 // the band lines, beat marks, the silent-canary drop, the axis and the
 // brink line. Band.svelte only turns this into SVG elements.
-import type { Lane, Range, TraceCanary, TraceHit, TraceResponse, VisitorKind } from '../types'
+import type { Lane, TraceCanary, TraceHit, TraceResponse, VisitorKind } from '../types'
 import { axisCaptions, axisTicks, dayTicks, nowLabel, type AxisTick, type Caption, type DayTick } from './axis'
 import { beatAgos } from './beats'
 import { formatClockWithSeconds, formatDuration, buildLine2, joinTried, isHighSignalRise } from './format'
 import { cx, segmentsForRange, type Seg } from './segments'
-import { placeRises, type Box, type PlacedBump, type PlacedLabel, type Rise } from './placement'
+import { placeRises, type PlacedBump, type PlacedLabel, type Rise } from './placement'
 
-export const LANE_ORDER: Lane[] = ['lan', 'srv', 'iot', 'guest']
-export const PITCH = 12
-export const BAND_TOP = 290
+const LANE_ORDER: Lane[] = ['lan', 'srv', 'iot', 'guest']
+const PITCH = 12
+const BAND_TOP = 290
 
 const LANE_VAR: Record<Lane, string> = {
   lan: 'var(--lan)',
@@ -28,7 +28,7 @@ const KIND_VAR: Record<VisitorKind, string> = {
   touch: 'var(--touch)',
 }
 
-export interface BandLine {
+interface BandLine {
   canaryId: string
   lane: Lane
   y: number
@@ -37,7 +37,7 @@ export interface BandLine {
   xTo: number
 }
 
-export interface SilentDrop {
+interface SilentDrop {
   canaryId: string
   y: number
   yd: number
@@ -47,12 +47,12 @@ export interface SilentDrop {
   sentence: string
 }
 
-export interface BeatMark {
+interface BeatMark {
   x: number
   y: number
 }
 
-export interface BandLabel {
+interface BandLabel {
   x: number
   y: number
   text: string
@@ -229,4 +229,4 @@ export function kindColor(kind: VisitorKind): string {
   return KIND_VAR[kind]
 }
 
-export type { Box, PlacedBump, PlacedLabel, Range }
+export type { PlacedBump }
