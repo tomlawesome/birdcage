@@ -119,12 +119,13 @@ else
   check "lint:go runs scripts/static-scan.sh gosec" 1 "no such script line"
 fi
 
-# 4. dupl (#200), report-only first: lint:go runs the dupl scan with
-#    --report-only, and its main golangci-lint line disables dupl (as gosec).
-if grep -qx 'go-scan-line=scripts/static-scan.sh dupl --report-only' <<< "$scan"; then
-  check "lint:go runs scripts/static-scan.sh dupl --report-only" 0 ""
+# 4. dupl (#200) blocks: lint:go runs the dupl scan without --report-only
+#    (pipeline 4781 measured 0 at a ceiling of 0), and its main
+#    golangci-lint line disables dupl (as gosec).
+if grep -qx 'go-scan-line=scripts/static-scan.sh dupl' <<< "$scan"; then
+  check "lint:go runs scripts/static-scan.sh dupl, blocking" 0 ""
 else
-  check "lint:go runs scripts/static-scan.sh dupl --report-only" 1 "no such script line"
+  check "lint:go runs scripts/static-scan.sh dupl, blocking" 1 "$(grep 'static-scan.sh dupl' <<< "$scan" || echo 'no such script line')"
 fi
 if grep '^go-lint-line=' <<< "$scan" | grep -v -- '--enable-only' | grep -q -- '--disable[ =][a-z,]*dupl'; then
   check "lint:go main golangci-lint line disables dupl" 0 ""
