@@ -45,10 +45,6 @@ accepted:
     held-at: "3.16.0"
     reason: "opencanary==0.9.10 pins simplejson==3.16.0 exactly; moves only with a new OpenCanary release"
     review-by: "2026-12-27"
-  - pin: "pypi:urllib3"
-    held-at: "2.7.0"
-    reason: "opencanary==0.9.10 pins urllib3==2.7.0 exactly; moves only with a new OpenCanary release"
-    review-by: "2026-12-27"
   - pin: "pypi:zope-interface"
     held-at: "7.2"
     reason: "opencanary==0.9.10 pins zope-interface==7.2 exactly; moves only with a new OpenCanary release"
@@ -68,11 +64,8 @@ accepted:
     review-by: "2026-12-27"
   # Same cause as the OpenCanary pins above, found later: both are exact
   # `==` pins in opencanary 0.9.10's Requires-Dist (#204 comment,
-  # 2026-11-14; dependency-inventory rows 172 and 183).
-  - pin: "pypi:pyasn1"
-    held-at: "0.6.4"
-    reason: "opencanary==0.9.10 pins pyasn1==0.6.4 exactly (inventory row 172); 0.6.5 is a patch, so the cost is a missed patch in the canary image; moves only with a new OpenCanary release"
-    review-by: "2026-12-27"
+  # 2026-11-14; dependency-inventory row 183). pyasn1 and urllib3 were
+  # overridden past their pins in #236 (build/opencanary/overrides.txt).
   - pin: "pypi:twisted"
     held-at: "26.4.0"
     reason: "opencanary==0.9.10 pins twisted==26.4.0 exactly (inventory row 183); staying misses 26.10's fixes in the canary image; moves only with a new OpenCanary release"

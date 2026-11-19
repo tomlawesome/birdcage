@@ -283,6 +283,6 @@ python-bundled-assets:
   # 2026-10-04: a known finding for Shrike to handle (#178).
   - twisted@26.4.0 twisted/python/_pydoctortemplates/ MIT
   # Twisted's own API-docs templates; no third-party notice.
-  - urllib3@2.7.0 urllib3/contrib/emscripten/ MIT
+  - urllib3@2.8.0 urllib3/contrib/emscripten/ MIT
   # urllib3's own browser fetch worker; no third-party notice.
 

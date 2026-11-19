@@ -1,0 +1,8 @@
+# opencanary 0.9.10 pins pyasn1==0.6.4 exactly; 0.6.4 has CVE-2026-119194,
+# CVE-2026-119195, CVE-2026-119196, CVE-2026-119197 (#236). Drop this line
+# when opencanary releases a version that pins a newer pyasn1.
+pyasn1==0.6.5
+# opencanary 0.9.10 pins urllib3==2.7.0 exactly; 2.7.0 has CVE-2026-97687,
+# CVE-2026-97689 (#236). Drop this line when opencanary releases a version
+# that pins a newer urllib3.
+urllib3==2.8.0
