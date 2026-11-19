@@ -9,6 +9,12 @@
 # what a pushed rogue branch would produce. The same scan is then run on
 # scratch trees to prove a signature identity from another workflow, another
 # ref, or a loose regexp is refused.
+#
+# One allowlist entry, keyed by file: scripts/ensure-trivy.sh verifies the
+# third-party Trivy release (#199, owner decision 66a) and may use exactly the
+# Trivy release workflow identity at tag v0.76.2 with the GitHub issuer (no
+# workflow-trigger pin: that release is built on a tag push). The Trivy
+# identity is refused in every other file, and a regexp is refused everywhere.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -17,12 +23,13 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 pass=0; fail=0
 issuer='https://token.actions.githubusercontent.com'
+trivy_id='https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.2'
 
 # check <root>: prints one line per violation; exit 0 always.
 check() {
-  python3 -I - "$1" "$issuer" <<'PY'
+  python3 -I - "$1" "$issuer" "$trivy_id" <<'PY'
 import glob, os, re, sys
-root, issuer = sys.argv[1], sys.argv[2]
+root, issuer, trivy_id = sys.argv[1], sys.argv[2], sys.argv[3]
 files = glob.glob(os.path.join(root, "docs/**/*.md"), recursive=True)
 files += [f for f in glob.glob(os.path.join(root, "scripts/*")) if os.path.isfile(f) and not f.endswith(".test.sh")]
 files += [os.path.join(root, ".gitlab-ci.yml")]
@@ -42,7 +49,12 @@ for f in sorted(files):
                 m = re.search(r"--certificate-identity-regexp[= ]+['\"]?([^'\" ]+)", line)
                 out.append(f"{rel}: certificate-identity-regexp is not allowed ({m.group(1) if m else '?'})")
             m = re.search(r"--certificate-identity[= ]+['\"]?([^'\" ]+)", line)
-            if m and "-regexp" not in line[m.start():m.start()+30]:
+            if m and "-regexp" not in line[m.start():m.start()+30] and rel == "scripts/ensure-trivy.sh":
+                if m.group(1) != trivy_id:
+                    out.append(f"{rel}: identity not pinned to the Trivy release workflow at v0.76.2 ({m.group(1)})")
+                if issuer not in line:
+                    out.append(f"{rel}: identity pinned but the GitHub OIDC issuer is missing")
+            elif m and "-regexp" not in line[m.start():m.start()+30]:
                 found_keyless = True
                 if not exact.match(m.group(1)):
                     out.append(f"{rel}: identity not pinned to countersign.yml@refs/heads/main ({m.group(1)})")
@@ -143,6 +155,24 @@ p = sys.argv[1]; s = open(p).read()
 open(p, "w").write(re.sub(r"cosign verify \\\n(  [^\n]*\n)+", "", s))
 PY
 expect "docs with no keyless verify command at all are refused" "$d" refused "no keyless"
+
+arg1="\$1"  # a literal $1 inside the scratch scripts
+# The allowlisted third-party verification: only scripts/ensure-trivy.sh, only
+# the exact Trivy identity.
+trivy_script() { # <root> <identity-flag> <identity>
+  printf '#!/usr/bin/env bash\ncosign verify-blob \\\n  %s %s \\\n  --certificate-oidc-issuer %s "%s"\n' "$2" "$3" "$issuer" "$arg1" > "$1/scripts/ensure-trivy.sh"
+}
+d="$(base trivyok "$id")"; trivy_script "$d" --certificate-identity "$trivy_id"
+expect "ensure-trivy.sh with the exact Trivy identity is accepted" "$d" ok
+d="$(base trivyregex "$id")"; trivy_script "$d" --certificate-identity-regexp "$trivy_id"
+expect "ensure-trivy.sh with a regexp is refused" "$d" refused "certificate-identity-regexp"
+d="$(base trivyref "$id")"; trivy_script "$d" --certificate-identity "${trivy_id%@*}@refs/heads/main"
+expect "ensure-trivy.sh with a different ref is refused" "$d" refused "not pinned to the Trivy"
+d="$(base trivyelsewhere "$id")"
+printf '#!/usr/bin/env bash\ncosign verify-blob --certificate-identity %s --certificate-oidc-issuer %s --certificate-github-workflow-trigger workflow_dispatch "%s"\n' "$trivy_id" "$issuer" "$arg1" > "$d/scripts/other-verify.sh"
+expect "the Trivy identity in another script is refused" "$d" refused "not pinned"
+d="$(base trivynoissuer "$id")"; printf '#!/usr/bin/env bash\ncosign verify-blob --certificate-identity %s --certificate-oidc-issuer https://example.invalid "%s"\n' "$trivy_id" "$arg1" > "$d/scripts/ensure-trivy.sh"
+expect "ensure-trivy.sh without the GitHub issuer is refused" "$d" refused "issuer"
 
 echo "verify-identity-pin: $pass passed, $fail failed"
 [ "$fail" = 0 ]
