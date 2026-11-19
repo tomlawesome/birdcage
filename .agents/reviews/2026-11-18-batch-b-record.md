@@ -11,4 +11,6 @@
 
 - Coverage floor: internal/tlssniff raised from 94 to 98 to match the new tests, 91a8894, reviewed inline by the author (one line).
 
-Audited-through: 91a889443d4359af7dd9a28dff5610dee259a448
+- Test-image pin: openssl 3.5.9-r0 to r1 in the e2e mail image after Alpine dropped r0, e2c69cb, reviewed inline by the author (one line).
+
+Audited-through: e2c69cb47371975c93c10b4789244950cab45b09
