@@ -1394,7 +1394,7 @@ def apk_pin_matches(op, pinned, found):
 
 
 # ---------------------------------------------------------------------------
-# Checksum-pinned tools: cosign, gitleaks, grype
+# Checksum-pinned tools: cosign, gitleaks, grype, trivy
 # ---------------------------------------------------------------------------
 
 def github_latest_release(fetcher, owner_repo):
@@ -1450,6 +1450,7 @@ def check_tools(root, fetcher):
         ("zizmor", "ZIZMOR_VERSION", "zizmorcore/zizmor"),
         ("ruff", "RUFF_VERSION", "astral-sh/ruff"),
         ("shellcheck", "SHELLCHECK_VERSION", "koalaman/shellcheck"),
+        ("trivy", "TRIVY_VERSION", "aquasecurity/trivy"),
     ):
         pin = read_version_var(os.path.join(root, "scripts", f"ensure-{name}.sh"), var)
         if pin:
