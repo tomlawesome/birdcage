@@ -9,4 +9,6 @@
 
 - Coverage follow-up: the A-R3 fix left a shutdown branch untested, so `test:go` failed its coverage minimum on the dev merge. Tests only, eba0dee, reviewed by a non-author agent (one Low test gap, on #235).
 
-Audited-through: eba0dee8927471f1932a244c11a10fdb4ba9d978
+- Coverage floor: internal/tlssniff raised from 94 to 98 to match the new tests, 91a8894, reviewed inline by the author (one line).
+
+Audited-through: 91a889443d4359af7dd9a28dff5610dee259a448
