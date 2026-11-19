@@ -18,6 +18,7 @@ ci="$repo_root/.gitlab-ci.yml"
 policy="$repo_root/supply-chain/policy-files.txt"
 pass=0; fail=0
 
+tf() { if "$@"; then echo 0; else echo 1; fi; }  # tf <test...>: prints 0 or 1 for check
 check() { # name, ok(0/1), detail
   if [ "$2" -eq 0 ]; then pass=$((pass + 1)); echo "ok   $1"
   else fail=$((fail + 1)); echo "FAIL $1: $3"; fi
@@ -132,6 +133,169 @@ if grep '^go-lint-line=' <<< "$scan" | grep -v -- '--enable-only' | grep -q -- '
 else
   check "lint:go main golangci-lint line disables dupl" 1 "$(grep '^go-lint-line=' <<< "$scan")"
 fi
+
+# 5. Trivy (#199 items 1-3, owner decision 66a): report-first jobs, installed
+#    only through scripts/ensure-trivy.sh. Written from the specification
+#    before the jobs exist.
+trivy="$(python3 -I - "$ci" <<'PY'
+import re, sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+raw = open(sys.argv[1]).read()
+
+def text(v):
+    if v is None: return ""
+    if isinstance(v, str): return v
+    if isinstance(v, list): return "\n".join(text(x) for x in v)
+    if isinstance(v, dict): return "\n".join(text(x) for x in v.values())
+    return str(v)
+
+def line(k, v): print(f"{k}\t{v}")
+
+line("aquasec_image", "1" if re.search(r"aquasec(security)?/trivy", raw) else "0")
+line("trivy_action", "1" if "trivy-action" in raw else "0")
+names = []
+for name, job in doc.items():
+    if not isinstance(job, dict) or name.startswith("."):
+        continue
+    scripts = text(job.get("before_script")) + "\n" + text(job.get("script"))
+    if not re.search(r"\btrivy\b", scripts):
+        continue
+    names.append(name)
+    j = "j:" + name
+    line(j + ":scripts", scripts.replace("\n", ";"))
+    line(j + ":allow_failure", str(job.get("allow_failure", "")))
+    line(j + ":cache", "1" if job.get("cache") else "0")
+    needs = job.get("needs") or []
+    nn = [n.get("job") if isinstance(n, dict) else n for n in needs]
+    line(j + ":needs", ",".join(str(n) for n in nn))
+    art = job.get("artifacts") or {}
+    line(j + ":artifact_paths", text(art.get("paths")).replace("\n", ","))
+line("jobs", ",".join(names))
+PY
+)" || { echo "FAIL could not read trivy jobs from $ci"; exit 1; }
+tget() { printf '%s\n' "$trivy" | awk -F'\t' -v k="$1" '$1==k{sub(/^[^\t]*\t/,""); print; exit}'; }
+
+# Jobs by what they run. Several jobs may do the same kind of scan.
+cfg_jobs=""; fs_jobs=""; img_jobs=""
+for j in $(tr ',' ' ' <<< "$(tget jobs)"); do
+  s="$(tget "j:$j:scripts")"
+  grep -qE 'trivy +config\b' <<< "$s" && cfg_jobs="$cfg_jobs $j"
+  grep -qE 'trivy +fs\b' <<< "$s" && fs_jobs="$fs_jobs $j"
+  grep -qE 'trivy +image\b' <<< "$s" && img_jobs="$img_jobs $j"
+done
+all_jobs="$(tr ',' ' ' <<< "$(tget jobs)")"
+
+[ -n "$cfg_jobs" ] && r=0 || r=1
+check "a job runs trivy config (Dockerfile misconfiguration)" "$r" "no job runs 'trivy config'"
+r=1
+for j in $cfg_jobs; do grep -qE 'trivy +config\b.*(Dockerfile|build|\. *(;|$))' <<< "$(tget "j:$j:scripts")" && r=0; done
+check "trivy config is pointed at the repo's Dockerfiles (build/ or the repo)" "$r" "trivy config names no Dockerfile path"
+
+[ -n "$fs_jobs" ] && r=0 || r=1
+check "a job runs trivy fs (npm lockfile and Go modules)" "$r" "no job runs 'trivy fs'"
+r=1
+for j in $fs_jobs; do grep -qE -- '--scanners[ =]vuln,license' <<< "$(tget "j:$j:scripts")" && r=0; done
+check "trivy fs runs with --scanners vuln,license" "$r" "no trivy fs line names --scanners vuln,license"
+
+[ -n "$img_jobs" ] && r=0 || r=1
+check "a job runs trivy image (the images build:images builds)" "$r" "no job runs 'trivy image'"
+r=1
+for j in $img_jobs; do
+  grep -qw 'build:images' <<< "$(tr ',' ' ' <<< "$(tget "j:$j:needs")")" && r=0
+done
+check "the trivy image job needs build:images" "$r" "needs: $(for j in $img_jobs; do tget "j:$j:needs"; done)"
+r=1
+for j in $img_jobs; do
+  s="$(tget "j:$j:scripts")"; all=0
+  for img in birdcage mockingbird nightjar smb-lure holder opencanary; do
+    grep -qE "(^|[^A-Za-z0-9_-])$img([^A-Za-z0-9_-]|$)" <<< "$s" || all=1
+  done
+  [ "$all" = 0 ] && r=0
+done
+check "the trivy image job covers birdcage mockingbird nightjar smb-lure holder opencanary" "$r" "not all six image names appear in a trivy image job"
+
+check "no job pulls an aquasec/trivy image" "$(tf [ "$(tget aquasec_image)" = 0 ])" "aquasec/trivy named in $ci"
+check "no job uses trivy-action" "$(tf [ "$(tget trivy_action)" = 0 ])" "trivy-action named in $ci"
+
+# Every Trivy job: installs only via ensure-trivy.sh, report-first, severity
+# named, JSON report kept, database cached.
+[ -n "$all_jobs" ] && r=0 || r=1
+check "at least one Trivy job exists" "$r" "no job runs trivy"
+for j in $all_jobs; do
+  s="$(tget "j:$j:scripts")"
+  check "$j installs trivy via scripts/ensure-trivy.sh" \
+    "$(grep -q 'scripts/ensure-trivy.sh' <<< "$s"; echo $?)" "scripts/ensure-trivy.sh not in the job"
+  check "$j is allow_failure: true (report first)" \
+    "$(tf [ "$(tget "j:$j:allow_failure")" = True ])" "allow_failure is '$(tget "j:$j:allow_failure")'"
+  check "$j keeps a JSON report as an artifact" \
+    "$([ -n "$(tget "j:$j:artifact_paths")" ] && grep -qE -- '(--format|-f)[ =]json' <<< "$s"; echo $?)" \
+    "artifact paths '$(tget "j:$j:artifact_paths")' / no --format json"
+  check "$j names --severity HIGH,CRITICAL" \
+    "$(grep -qE -- '--severity[ =]"?HIGH,CRITICAL' <<< "$s"; echo $?)" "no --severity HIGH,CRITICAL"
+  check "$j caches the vulnerability database through cache:" \
+    "$(tf [ "$(tget "j:$j:cache")" = 1 ])" "no cache: entry"
+done
+
+# The database is cached, never committed.
+tracked="$(git -C "$repo_root" ls-files | grep -E '(^|/)(trivy-db|db\.tar\.gz)|\.db$' || true)"
+check "no Trivy database path is tracked in git (trivy-db, db.tar.gz, *.db)" \
+  "$(tf [ -z "$tracked" ])" "tracked: $tracked"
+
+# .trivyignore: every entry has a reason comment and an expiry. Passes when
+# the file is absent.
+ignore="$repo_root/.trivyignore"
+if [ ! -f "$ignore" ]; then
+  check ".trivyignore entries carry a reason and an expiry (file absent)" 0 ""
+else
+  bad="$(python3 -I - "$ignore" <<'PY'
+import re, sys
+prev_comment = False
+for n, raw in enumerate(open(sys.argv[1]), 1):
+    t = raw.strip()
+    if not t:
+        prev_comment = False
+        continue
+    if t.startswith("#"):
+        prev_comment = True
+        continue
+    reason = prev_comment or "#" in t
+    if not reason:
+        print(f"line {n}: no reason comment")
+    if not re.search(r"exp:\d{4}-\d{2}-\d{2}", t):
+        print(f"line {n}: no exp:YYYY-MM-DD expiry")
+    prev_comment = False
+PY
+)"
+  check ".trivyignore entries carry a reason and an expiry" "$(tf [ -z "$bad" ])" "$bad"
+fi
+
+# 6. Inventory and staleness (#199 item 3): Trivy has a row like gitleaks, and
+#    scripts/staleness-check.py reads the pin the way it reads the other ensure
+#    scripts' (read_version_var on scripts/ensure-<tool>.sh, variable
+#    <TOOL>_VERSION, a tool:<name> row from check_tools).
+inv="$repo_root/supply-chain/dependency-inventory.md"
+check "dependency-inventory.md has a Trivy row naming scripts/ensure-trivy.sh" \
+  "$(grep -E "^\\| *[0-9]+ *\\| *\`trivy\`" "$inv" | grep -q 'scripts/ensure-trivy.sh'; echo $?)" "no table row for \`trivy\` naming scripts/ensure-trivy.sh"
+pin="$(python3 -I - "$here/staleness-check.py" "$repo_root" <<'PY' 2>&1 || true
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1])
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+root = sys.argv[2]
+class F:
+    def get(self, url, headers=None):
+        return True, json.dumps({"tag_name": "v9.9.9"}).encode(), None
+    def head_digest(self, url, headers=None):
+        return False, None, "HTTP 404"
+v = sc.read_version_var(os.path.join(root, "scripts", "ensure-trivy.sh"), "TRIVY_VERSION")
+rows = [r for r in sc.check_tools(root, F()) if r.id == "tool:trivy"]
+print("pin=%s rows=%d status=%s" % (v, len(rows), rows[0].status if rows else "-"))
+PY
+)"
+check "staleness-check.py reads TRIVY_VERSION from scripts/ensure-trivy.sh (0.76.2) into a tool:trivy row" \
+  "$(grep -qE '^pin=v?0\.76\.2 rows=1 status=behind$' <<< "$pin"; echo $?)" "$pin"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
