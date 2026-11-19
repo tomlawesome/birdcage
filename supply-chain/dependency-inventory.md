@@ -170,7 +170,21 @@ review's brief:
 | 20 | `golang.org/x/text` | v0.44.0 | v0.44.0 (current, 2026-11-17) | BSD-3-Clause | transitive | Go team (Google) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 | 21 | `modernc.org/libc` | v1.80.1 | v1.80.1 (current, 2026-11-14) | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 | 22 | `modernc.org/mathutil` | v1.7.1 | v1.7.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
-| 23 | `modernc.org/memory` | v1.11.0 | v1.12.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 23 | `modernc.org/memory` | v1.12.1 | v1.12.1 | BSD-3-Clause | transitive | cznic / modernc.org | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 232 | `github.com/tomlawesome/gauntlet` | v0.4.3 | v0.4.3 (go.mod version; not checked offline) | Apache-2.0 (LICENSE file in the module cache) | direct | tomlawesome (the owner) | owner's own module | Shipped -- linked into the birdcage and/or mockingbird Go binary | Approved -- #8 (ledger, ADR-0016 decision 1) |
+| 233 | `github.com/coreos/go-oidc/v3` | v3.21.0 | v3.21.0 (go.mod version; not checked offline) | Apache-2.0 (LICENSE file in the module cache) | transitive | coreos | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 234 | `github.com/fxamacker/cbor/v2` | v2.9.4 | v2.9.4 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | fxamacker (Faye Amacker) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 235 | `github.com/go-jose/go-jose/v4` | v4.1.4 | v4.1.4 (go.mod version; not checked offline) | Apache-2.0 (LICENSE file in the module cache) | transitive | go-jose | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 236 | `github.com/go-viper/mapstructure/v2` | v2.5.0 | v2.5.0 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | go-viper | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 237 | `github.com/go-webauthn/webauthn` | v0.18.2 | v0.18.2 (go.mod version; not checked offline) | BSD-3-Clause (LICENSE file in the module cache) | transitive | go-webauthn | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 238 | `github.com/go-webauthn/x` | v0.3.1 | v0.3.1 (go.mod version; not checked offline) | BSD-3-Clause (LICENSE file in the module cache) | transitive | go-webauthn | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 239 | `github.com/golang-jwt/jwt/v5` | v5.3.1 | v5.3.1 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | golang-jwt maintainers | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 240 | `github.com/google/go-tpm` | v0.9.8 | v0.9.8 (go.mod version; not checked offline) | Apache-2.0 (LICENSE file in the module cache) | transitive | Google | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 241 | `github.com/oschwald/maxminddb-golang/v2` | v2.6.0 | v2.6.0 (go.mod version; not checked offline) | ISC (LICENSE file in the module cache) | transitive | oschwald (Gregory Oschwald) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 242 | `github.com/philhofer/fwd` | v1.2.0 | v1.2.0 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | philhofer (Philip Hofer) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 243 | `github.com/tinylib/msgp` | v1.6.4 | v1.6.4 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | tinylib (Philip Hofer) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 244 | `github.com/x448/float16` | v0.8.4 | v0.8.4 (go.mod version; not checked offline) | MIT (LICENSE file in the module cache) | transitive | x448 (Montgomery Edwards448) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
+| 245 | `golang.org/x/oauth2` | v0.37.0 | v0.37.0 (go.mod version; not checked offline) | BSD-3-Clause (LICENSE file in the module cache) | transitive | Go team (Google) | small utility (popularity tracks its direct parent) | Shipped -- linked into the birdcage and/or mockingbird Go binary | n/a -- transitive |
 
 ### B. Frontend, `frontend/package.json` + `package-lock.json` -- all dev-only, never shipped, except `qrcode-generator` (row 231), which ships in the bundle (see the ledger above)
 
@@ -466,19 +480,19 @@ birdcage nor shipped in any image -- the same footing as `golangci-lint`
 
 ## Summary, by approval status
 
-230 rows, numbered 1-231 (there is no row 222): section A 23, B 128, C 36, D 8,
+244 rows, numbered 1-245 (there is no row 222; rows 232-245 are the go.mod modules added to section A later): section A 37, B 128, C 36, D 8,
 E 6, F 8, G 4, H 10, I 2, J 2, K 3. Section D includes holder's and nightjar's
 golang build stages (rows 227-228) and, for #8, git in birdcage's Go build
 stage (row 230); section B includes `qrcode-generator` (row 231).
 
 | Status | Rows |
 |---|---|
-| Approved, with issue number | 12 (`golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8, row 230; `qrcode-generator` #8, row 231; `python3` in the release jobs #158, row 229) |
+| Approved, with issue number | 13 (`github.com/tomlawesome/gauntlet` #8, row 232; `golang.org/x/net`+`x/sys` #65; `go-imap/v2`+`go-msgauth` #54; `@vitest/coverage-v8` #74; `grype` #108; `samba-server` #87; `golang.org/x/vuln` #51; `gitleaks` #28; `git` in birdcage's build stage #8, row 230; `qrcode-generator` #8, row 231; `python3` in the release jobs #158, row 229) |
 | Predates the rule -- flagged on #73, owner decision pending | 2 (`github.com/jackc/pgx/v5`, `modernc.org/sqlite`) |
 | Predates the rule -- not individually recorded | 51 (every other **direct** dependency, including `debian:trixie-slim`, row 221, and holder's/nightjar's golang build stages, rows 227-228) |
 | Newly added, not yet approved -- see "What needs the owner's attention" | 1 (`Responder`, row 220) |
 | Runtime feed, not a dependency | 1 (Grype's vulnerability database, row 219) |
-| n/a -- transitive | 163 |
+| n/a -- transitive | 176 |
 
 `grype` (Anchore, Apache-2.0) now appears in section I, above: #108 commit 4
 landed `build/nightjar/Dockerfile`, the manifest this row was waiting on.
