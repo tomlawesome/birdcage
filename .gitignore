@@ -31,3 +31,4 @@ __pycache__/
 /static-scan-reports/
 # The no-real-names guard key (SEC-5); it lives outside the tree and is never committed.
 no-real-names.key
+/.trivy-cache/
