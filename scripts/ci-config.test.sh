@@ -395,7 +395,7 @@ PY
 check "staleness-check.py reads TRIVY_VERSION from scripts/ensure-trivy.sh (0.76.2) into a tool:trivy row" \
   "$(grep -qE '^pin=v?0\.76\.2 rows=1 status=behind$' <<< "$pin"; echo $?)" "$pin"
 
-# 7. Registry credentials reach $CI_REGISTRY only (#199). Trivy v0.76.2 adds
+# 8. Registry credentials reach $CI_REGISTRY only (#199). Trivy v0.76.2 adds
 #    TRIVY_USERNAME/TRIVY_PASSWORD (--username/--password) as basic auth on
 #    every registry it contacts, including the vulnerability-DB registries
 #    (pkg/remote/remote.go authOptions, used by pkg/db Download), so those
