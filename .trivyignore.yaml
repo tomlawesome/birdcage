@@ -1,0 +1,39 @@
+# Trivy ignore list (Trivy v0.76.2 YAML format). Every entry needs a
+# statement (the reason) and an expired_at date; misconfigurations also name
+# the files they cover (checked by scripts/ci-config.test.sh).
+# misconfigurations paths are relative to the scanned dir (lint:trivy-config
+# scans build/), so e2e-dns/Dockerfile is build/e2e-dns/Dockerfile.
+
+vulnerabilities:
+  - id: CVE-2026-115775
+    paths: [build/opencanary/requirements.txt]
+    statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
+    expired_at: 2026-12-19
+  - id: CVE-2026-115776
+    paths: [build/opencanary/requirements.txt]
+    statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
+    expired_at: 2026-12-19
+  - id: CVE-2026-115778
+    paths: [build/opencanary/requirements.txt]
+    statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
+    expired_at: 2026-12-19
+  - id: GHSA-vpp8-g58w-m8mp
+    paths: [build/opencanary/requirements.txt]
+    statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
+    expired_at: 2026-12-19
+
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - e2e-dns/Dockerfile
+      - e2e-mail/Dockerfile
+      - e2e-samba/Dockerfile
+      - e2e-smbclient/Dockerfile
+      - e2e-snmp/Dockerfile
+    statement: "test-only fixture image, never shipped (#199)"
+    expired_at: 2027-05-19
+  - id: DS-0002
+    paths:
+      - smb-lure/Dockerfile
+    statement: "smbd has no unprivileged mode; root is contained by a read-only root filesystem, four capabilities and no-new-privileges, as build/smb-lure/Dockerfile documents (#199)"
+    expired_at: 2027-05-19
