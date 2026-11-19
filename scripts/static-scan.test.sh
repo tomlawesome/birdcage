@@ -98,7 +98,6 @@ fi
 mode=dupl
 ceiling="$dupl_ceiling"
 over=$((ceiling + 13))
-under=$((ceiling - 6))
 
 expect nonzero "dupl, report-only, self-test does not fail (exit 0): fails"    clean   "$ceiling" 0 --report-only
 expect nonzero "dupl, report-only, self-test lacks dupl: fails"                wrongid "$ceiling" 0 --report-only
@@ -106,7 +105,11 @@ expect zero    "dupl, report-only, good self-test, count over ceiling: passes" c
 expect zero    "dupl, report-only, good self-test, count at ceiling: passes"   caught  "$ceiling" 0 --report-only
 expect nonzero "dupl, report-only, real run writes no report: fails"           caught  "$ceiling" 1 --report-only
 expect nonzero "dupl, gate mode, count over ceiling: fails"                    caught  "$over"    0
-expect nonzero "dupl, gate mode, count far under ceiling: fails"               caught  "$under"   0
+# Far under: the real ceiling may be 0, so use a fake ceilings file with go-dupl: 10 and 4 issues.
+cp "$copy/supply-chain/scan-ceilings.yml" "$work/ceilings.real"
+sed -i 's/^  go-dupl:.*/  go-dupl: 10/' "$copy/supply-chain/scan-ceilings.yml"
+expect nonzero "dupl, gate mode, count far under a ceiling of 10: fails"       caught  4          0
+cp "$work/ceilings.real" "$copy/supply-chain/scan-ceilings.yml"
 expect nonzero "dupl, gate mode, self-test does not fail: fails"               clean   "$ceiling" 0
 expect zero    "dupl, gate mode, good self-test, count at ceiling: passes"     caught  "$ceiling" 0
 
