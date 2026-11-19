@@ -1,0 +1,47 @@
+{
+  // knip over frontend/ (#200). Run from ci/knip's own install, see lint:knip.
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Entry points knip cannot infer: package.json scripts are followed, so
+  // the compare scripts, smoke and e2e helpers are listed for clarity.
+  "entry": [
+    "scripts/*.mjs",
+    "scripts/*.ts",
+    "e2e/*.mjs",
+    "src/**/*.test.ts"
+  ],
+  "project": ["src/**/*.{ts,svelte}", "scripts/**", "e2e/**"],
+  // reason: e2e/smoke.mjs starts the Go binary it tests; it is not an npm package.
+  "ignoreBinaries": ["go"],
+  // Backlog from the first run (#200): unused exports and types. Report-only
+  // for now; each file is ignored for the kinds listed, with its reason.
+  "ignoreIssues": {
+    // reason: message constants kept as the door's copy deck; exported but not yet imported
+    "src/door/messages.ts": ["exports"],
+    // reason: layout constant exported beside its siblings
+    "src/lib/band/bump.ts": ["exports"],
+    // reason: formatter exported for reuse, not yet used outside the module
+    "src/lib/band/format.ts": ["exports"],
+    // reason: band model vocabulary (constants, shapes) exported as the module's public surface
+    "src/lib/band/model.ts": ["exports", "types"],
+    // reason: segment helpers exported for the model, used only inside the module today
+    "src/lib/band/segments.ts": ["exports"],
+    // reason: single-band shapes exported as the public surface
+    "src/lib/band/single.ts": ["types"],
+    // reason: sentence helper exported, used only inside the module today
+    "src/lib/canary/sentence.ts": ["exports"],
+    // reason: canary model shapes exported as the public surface
+    "src/lib/canary/model.ts": ["types"],
+    // reason: thread shape exported as the public surface
+    "src/lib/canary/thread.ts": ["types"],
+    // reason: event-row helpers and shapes exported as the public surface
+    "src/lib/sentence/eventRow.ts": ["exports", "types"],
+    // reason: test helper shape exported for tests to name
+    "src/door/testkit.ts": ["types"],
+    // reason: status type exported for callers to name
+    "src/lib/auth.ts": ["types"],
+    // reason: phase type exported for callers to name
+    "src/lib/loader.ts": ["types"],
+    // reason: API shape declarations: the whole file is the wire vocabulary, kept complete
+    "src/lib/types.ts": ["types"]
+  }
+}

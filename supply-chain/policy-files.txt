@@ -54,3 +54,5 @@ scripts/static-scan.sh
 supply-chain/scan-ceilings.yml
 .golangci.yml
 ruff.toml
+ci/knip/package.json
+frontend/knip.jsonc
