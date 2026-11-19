@@ -837,8 +837,10 @@ The floor and ceiling defaults above are **provisional guesses**, not
 measured values. They will be replaced with real numbers taken from a
 packet capture (issue #121). Meanwhile you can change them yourself
 with the two variables above. Neither may be
-below `1s`: a lower value is refused, because a canary that fast would
-broadcast continuously.
+below `1s`, because a canary that fast would broadcast continuously. If
+you set one lower, the canary logs a warning and uses the default
+instead. If a lower value is pushed as a setting later (see below), the
+canary logs a warning and keeps the value it already has.
 
 ### Changing these later
 
