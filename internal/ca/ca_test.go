@@ -330,7 +330,7 @@ func TestSignClientKeepsNothingButThePublicKey(t *testing.T) {
 		},
 		DNSNames:       []string{"birdcage.example"},
 		EmailAddresses: []string{"root@example.invalid"},
-		IPAddresses:    []net.IP{net.ParseIP("10.0.0.1")},
+		IPAddresses:    []net.IP{net.ParseIP("192.0.2.1")},
 		URIs:           []*url.URL{{Scheme: "spiffe", Host: "x", Path: "/admin"}},
 		ExtraExtensions: []pkix.Extension{
 			{Id: asn1.ObjectIdentifier{2, 5, 29, 19}, Critical: true, Value: bc},

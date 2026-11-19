@@ -8,19 +8,17 @@ import (
 	"github.com/tomlawesome/birdcage/internal/db"
 )
 
-// TestAnyCanariesEnrolled runs issue #149's startup signal on every
-// engine: an empty agents table reads as a fresh install, one row as
-// state that depends on the CA. Postgres returns EXISTS as a boolean,
-// not SQLite's 0/1, so the query must read on both.
-func TestAnyCanariesEnrolled(t *testing.T) {
+// TestAnyClientCertsIssued is #213's PS2-S1: the CA-continuity signal is a
+// client_certs row (CA-signed state), not an agents row.
+func TestAnyClientCertsIssued(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
-		got, err := AnyCanariesEnrolled(ctx, database)
+		got, err := AnyClientCertsIssued(ctx, database)
 		if err != nil {
 			t.Fatalf("empty table: %v", err)
 		}
 		if got {
-			t.Fatalf("empty table: got enrolled, want none")
+			t.Fatalf("empty table: got issued, want none")
 		}
 
 		enrolledAt := time.Now().UTC().Format(receivedAtLayout)
@@ -30,12 +28,22 @@ func TestAnyCanariesEnrolled(t *testing.T) {
 			"enrolled-canary", "c", "lan", "22", 60, enrolledAt); err != nil {
 			t.Fatalf("insert canary: %v", err)
 		}
-		got, err = AnyCanariesEnrolled(ctx, database)
+		got, err = AnyClientCertsIssued(ctx, database)
 		if err != nil {
-			t.Fatalf("one canary: %v", err)
+			t.Fatalf("agent row only: %v", err)
+		}
+		if got {
+			t.Fatalf("agent row only: got issued, want none")
+		}
+
+		now := time.Now().UTC()
+		insertCertRow(t, database, "enrolled-canary", "fp-any-issued", now, now.Add(time.Hour), nil)
+		got, err = AnyClientCertsIssued(ctx, database)
+		if err != nil {
+			t.Fatalf("one cert: %v", err)
 		}
 		if !got {
-			t.Fatalf("one canary: got none, want enrolled")
+			t.Fatalf("one cert: got none, want issued")
 		}
 	})
 }

@@ -20,11 +20,11 @@ describe('rule 1 -- a sweep with still_arriving (night fixture)', () => {
     expect(plainText(s.hero)).toBe('One address is walking the cage.')
   })
 
-  it('sub matches NIGHT_SUB from gen.py', () => {
+  it('sub matches NIGHT_SUB from gen.py, minus the mikroview pointer (#229)', () => {
     const s = computeSentence(night.canaries.canaries, night.visitors.visitors, '14d', night.trace.now)
     expect(plainText(s.sub)).toBe(
       '203.0.113.42 has reached all four canaries in nine minutes — ssh, then mysql, default passwords — ' +
-        'and is still arriving. Three more visitors in the fortnight. Nothing here blocks: lookback in mikroview ▸ to act.',
+        'and is still arriving. Three more visitors in the fortnight. Nothing here blocks.',
     )
   })
 
@@ -83,6 +83,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     },
     {
@@ -95,6 +96,7 @@ describe('rule 3 -- visitors in range, none tonight (hand-built)', () => {
       services: ['ftp'],
       tried: ['anonymous / (empty)'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     },
   ]
@@ -356,16 +358,16 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
   // the two agent build versions seen; the ADR's own sentence is used
   // verbatim when addresses are present.
   it('credential conflict: names the two addresses the ADR asks for', () => {
-    const bad = canary('canary-iot', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } })
+    const bad = canary('canary-iot', 'credential_conflict', { credential_conflict: { addresses: ['198.51.100.1', '198.51.100.2'] } })
     const s = computeSentence(fleet(bad), [], '14d', now, lastHit)
     expect(s.rule).toBe(2)
     expect(plainText(s.hero)).toBe("Quiet for 23 days — but canary-iot's credential is live in two places at once.")
     expect(plainText(s.sub)).toBe(
-      'credential in use from two addresses: 10.0.0.1 and 10.0.0.2. A copy of its key may be in use elsewhere, ' +
+      'credential in use from two addresses: 198.51.100.1 and 198.51.100.2. A copy of its key may be in use elsewhere, ' +
         'or the node itself moved address. Revoke the node and re-enrol it. The other three are fine.',
     )
-    expect(s.sub.find((seg) => seg.text === '10.0.0.1')?.bold).toBe(true)
-    expect(s.sub.find((seg) => seg.text === '10.0.0.2')?.bold).toBe(true)
+    expect(s.sub.find((seg) => seg.text === '198.51.100.1')?.bold).toBe(true)
+    expect(s.sub.find((seg) => seg.text === '198.51.100.2')?.bold).toBe(true)
     expect(s.sub.find((seg) => seg.text === 'Revoke the node and re-enrol it.')?.bold).toBe(true)
   })
 
@@ -386,7 +388,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
     const s = computeSentence(
       [
         canary('canary-iot', 'silent', { silent_for_s: 372 }),
-        canary('canary-srv', 'credential_conflict', { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } }),
+        canary('canary-srv', 'credential_conflict', { credential_conflict: { addresses: ['198.51.100.1', '198.51.100.2'] } }),
       ],
       [],
       '14d',
@@ -539,6 +541,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: true,
     }
     const s = computeSentence(fleet(bad), [sweep], '14d', now, lastHit)
@@ -557,6 +560,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       services: ['ssh'],
       tried: ['root / root'],
       clients: [],
+      latest_client: '',
       still_arriving: false,
     }
     const s = computeSentence(fleet(bad), [touch], '14d', now, lastHit)
@@ -700,7 +704,7 @@ describe('rule 2 -- issue #45 health states (hand-built)', () => {
       [
         'credential_conflict',
         'credential_conflict',
-        { credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } },
+        { credential_conflict: { addresses: ['198.51.100.1', '198.51.100.2'] } },
       ],
       ['not_delivering', 'not_delivering', { not_delivering: true }],
       [

@@ -14,11 +14,11 @@ var wall = time.Date(2026, 9, 23, 22, 0, 0, 0, time.UTC)
 // smbclient fetched one file on 2026-09-23 -- the sequence issue #123 is
 // about. Copied verbatim from /audit/smb.log.
 var capturedVisit = []string{
-	`[2026/09/23 22:01:53.984095,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-	`[2026/09/23 22:01:53.984907,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
-	`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-	`[2026/09/23 22:01:53.987460,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
-	`[2026/09/23 22:01:53.999607,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+	`[2026/09/23 22:01:53.984095,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+	`[2026/09/23 22:01:53.984907,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
+	`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+	`[2026/09/23 22:01:53.987460,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
+	`[2026/09/23 22:01:53.999607,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 }
 
 // offerAll feeds every line through a fresh Collapser and returns the
@@ -62,19 +62,19 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "a directory listed and nothing opened is one alert naming the directory",
 			lines: []string{
-				`[2026/09/23 22:01:53.984095,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-				`[2026/09/23 22:01:53.984907,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
+				`[2026/09/23 22:01:53.984095,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.984907,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
 			},
 			want: []string{"/srv/shares/public/IT"},
 		},
 		{
 			name: "two files opened in one second stay two alerts",
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-				`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
-				`[2026/09/23 22:01:53.300000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[2026/09/23 22:01:53.400000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR`,
-				`[2026/09/23 22:01:53.500000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/HR/salaries-2025.xlsx`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.200000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
+				`[2026/09/23 22:01:53.300000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 22:01:53.400000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/HR`,
+				`[2026/09/23 22:01:53.500000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/HR/salaries-2025.xlsx`,
 			},
 			want: []string{
 				"/srv/shares/public/IT/vpn-setup.pdf",
@@ -84,8 +84,8 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "the same file two seconds later is a second visit",
 			lines: []string{
-				`[2026/09/23 22:01:53.000000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[2026/09/23 22:01:55.000000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 22:01:53.000000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 22:01:55.000000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 			},
 			want: []string{
 				"/srv/shares/public/IT/vpn-setup.pdf",
@@ -95,7 +95,7 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "the same second from two addresses is two visits",
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
 				`[2026/09/23 22:01:53.200000,  1]   root|198.51.100.7|public|close|ok|/srv/shares/public`,
 			},
 			want: []string{"/srv/shares/public", "/srv/shares/public"},
@@ -103,8 +103,8 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "the same second on two shares is two visits",
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 22:01:53.200000,  1]   root|203.0.113.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
 			},
 			want: []string{
 				"/srv/shares/public/IT/vpn-setup.pdf",
@@ -114,8 +114,8 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "the same second under two user names is two visits",
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-				`[2026/09/23 22:01:53.200000,  1]   admin|172.21.0.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.200000,  1]   admin|203.0.113.3|public|close|ok|/srv/shares/public`,
 			},
 			want: []string{"/srv/shares/public", "/srv/shares/public"},
 		},
@@ -123,17 +123,17 @@ func TestCollapse(t *testing.T) {
 			name: "a prefix is only a prefix at a path boundary",
 			// A share directory called `pub` must not swallow `public`.
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/pub`,
-				`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/pub`,
+				`[2026/09/23 22:01:53.200000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
 			},
 			want: []string{"/srv/shares/pub", "/srv/shares/public"},
 		},
 		{
 			name: "an unexpected operation is never collapsed",
 			lines: []string{
-				`[2026/09/23 22:01:53.100000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
-				`[2026/09/23 22:01:53.200000,  1]   root|172.21.0.3|public|unlinkat|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[2026/09/23 22:01:53.300000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
+				`[2026/09/23 22:01:53.100000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
+				`[2026/09/23 22:01:53.200000,  1]   root|203.0.113.3|public|unlinkat|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 22:01:53.300000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
 			},
 			want: []string{"unexpected operation", "/srv/shares/public/IT"},
 		},
@@ -148,16 +148,16 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "a line the parse refuses is never collapsed",
 			lines: []string{
-				`[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|openat|ok|r|/srv/shares/public/x`,
-				`[2026/09/23 22:02:29.216100,  1]   root|172.21.0.3|public|openat|ok|r|/srv/shares/public/x`,
+				`[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|openat|ok|r|/srv/shares/public/x`,
+				`[2026/09/23 22:02:29.216100,  1]   root|203.0.113.3|public|openat|ok|r|/srv/shares/public/x`,
 			},
 			want: []string{"unparseable audit line", "unparseable audit line"},
 		},
 		{
 			name: "an access with no readable timestamp cannot be windowed, so it is emitted",
 			lines: []string{
-				`[not a date,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[not a date,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[not a date,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[not a date,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 			},
 			want: []string{
 				"/srv/shares/public/IT/vpn-setup.pdf",
@@ -167,8 +167,8 @@ func TestCollapse(t *testing.T) {
 		{
 			name: "a clock that jumps backwards ends the visit rather than reordering it",
 			lines: []string{
-				`[2026/09/23 22:01:53.500000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
-				`[2026/09/23 21:00:00.000000,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT`,
+				`[2026/09/23 22:01:53.500000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+				`[2026/09/23 21:00:00.000000,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT`,
 			},
 			want: []string{"/srv/shares/public/IT/vpn-setup.pdf", "/srv/shares/public/IT"},
 		},
@@ -195,7 +195,7 @@ func TestCollapse(t *testing.T) {
 // birdcage would store the same visit twice.
 func TestCollapseIsTheSameOnASecondReading(t *testing.T) {
 	lines := append(append([]string{}, capturedVisit...),
-		`[2026/09/23 22:01:56.000000,  1]   root|172.21.0.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
+		`[2026/09/23 22:01:56.000000,  1]   root|203.0.113.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
 		`[2026/09/23 22:01:56.100000,  1]   admin|198.51.100.7|scans|close|ok|/srv/shares/scans/x.pdf`,
 	)
 
@@ -264,7 +264,7 @@ func TestCollapseBoundsWhatItHolds(t *testing.T) {
 			// Sibling paths, so none is a prefix of another and every
 			// one of them is a real alert.
 			line := `[2026/09/23 22:01:53.10000` + string(rune('0'+i)) +
-				`,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/f` + string(rune('0'+i))
+				`,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/f` + string(rune('0'+i))
 			ev, ok := Parse([]byte(line))
 			if !ok {
 				t.Fatalf("Parse returned no event for %q", line)

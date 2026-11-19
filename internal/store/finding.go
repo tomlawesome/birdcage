@@ -25,6 +25,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -112,6 +114,11 @@ const findingColumns = `id, agent_id, target, vulnerability_id, severity, instal
 // complete ok scan snapshot (ADR-0010 decision 5). It loads every
 // existing row for agentID, then for each observed finding:
 //
+//   - duplicates in one snapshot (same target and vulnerability id) are
+//     merged first: installed and fixing versions become the sorted,
+//     distinct non-empty values joined with ", ", and severity the most
+//     severe (critical > high > medium > low > negligible > unknown >
+//     unrecognised; ties take the alphabetically first).
 //   - unseen before: inserted as FindingOpen, first_seen == last_seen ==
 //     observedAt.
 //   - seen before, currently open or accepted: last_seen and the
@@ -136,6 +143,12 @@ const findingColumns = `id, agent_id, target, vulnerability_id, severity, instal
 // package resolves the finding without the agent telling the server
 // anything except its new snapshot."
 //
+// Last, in the same transaction, fixed rows beyond maxFixedPerAgent for
+// agentID are removed, oldest (lowest id) first (issue #213; the
+// prune-on-write shape RecordHeartbeat uses). Open and accepted rows are
+// never removed. A finding that returns after its fixed row was removed
+// is inserted afresh, with a new first_seen.
+//
 // observedAt is the snapshot's own ReceivedAt (birdcage's clock, never
 // the agent's TakenAt) -- see migration 0028's comment.
 func ApplyFindingSnapshot(ctx context.Context, conn findingConn, agentID string, observed []ObservedFinding, observedAt time.Time) error {
@@ -155,11 +168,13 @@ func ApplyFindingSnapshot(ctx context.Context, conn findingConn, agentID string,
 		byKey[findingKey{f.Target, f.VulnerabilityID}] = f
 	}
 
-	seen := make(map[findingKey]bool, len(observed))
-	for _, o := range observed {
-		if o.Target == "" || o.VulnerabilityID == "" {
-			return fmt.Errorf("store: ApplyFindingSnapshot: observed finding has empty target or vulnerability id: %+v", o)
-		}
+	merged, err := mergeObservedFindings(observed)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[findingKey]bool, len(merged))
+	for _, o := range merged {
 		key := findingKey{o.Target, o.VulnerabilityID}
 		seen[key] = true
 
@@ -189,7 +204,85 @@ func ApplyFindingSnapshot(ctx context.Context, conn findingConn, agentID string,
 			return fmt.Errorf("mark finding %d fixed: %w", f.ID, err)
 		}
 	}
+	return pruneFixedFindings(ctx, conn, agentID)
+}
+
+// maxFixedPerAgent caps how many fixed rows one agent keeps (issue #213,
+// CWE-770): five times ingest's per-scan finding cap. Live rows are
+// bounded by that cap already, since each snapshot replaces the last;
+// fixed rows otherwise grow with every scan that clears something, and
+// the ingest rate limit alone does not bound that.
+const maxFixedPerAgent = 50000
+
+// pruneFixedFindings removes agentID's fixed rows beyond
+// maxFixedPerAgent, lowest id (oldest) first. Ids rather than last_seen
+// order them: last_seen is trimmed text that SQL cannot order by time
+// (ListFindings' own comment), and ids are allocated in insert order.
+func pruneFixedFindings(ctx context.Context, conn findingConn, agentID string) error {
+	var cutoff int64
+	err := conn.QueryRowContext(ctx, `
+		SELECT id FROM findings WHERE agent_id = ? AND state = ?
+		ORDER BY id DESC LIMIT 1 OFFSET ?`,
+		agentID, string(FindingFixed), maxFixedPerAgent-1).Scan(&cutoff)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // fewer than maxFixedPerAgent fixed rows: nothing to remove
+	}
+	if err != nil {
+		return fmt.Errorf("find fixed-finding cutoff for %s: %w", agentID, err)
+	}
+	if _, err := conn.ExecContext(ctx, `DELETE FROM findings WHERE agent_id = ? AND state = ? AND id < ?`,
+		agentID, string(FindingFixed), cutoff); err != nil {
+		return fmt.Errorf("prune fixed findings for %s: %w", agentID, err)
+	}
 	return nil
+}
+
+var severityRank = map[string]int{"critical": 6, "high": 5, "medium": 4, "low": 3, "negligible": 2, "unknown": 1}
+
+// mergeObservedFindings validates every input finding and collapses those
+// sharing a findingKey into one, in order of first appearance.
+func mergeObservedFindings(observed []ObservedFinding) ([]ObservedFinding, error) {
+	type acc struct {
+		o              ObservedFinding
+		installed, fix map[string]bool
+	}
+	var order []findingKey
+	byKey := make(map[findingKey]*acc, len(observed))
+	for _, o := range observed {
+		if o.Target == "" || o.VulnerabilityID == "" {
+			return nil, fmt.Errorf("store: ApplyFindingSnapshot: observed finding has empty target or vulnerability id: %+v", o)
+		}
+		key := findingKey{o.Target, o.VulnerabilityID}
+		a, ok := byKey[key]
+		if !ok {
+			a = &acc{o: o, installed: map[string]bool{}, fix: map[string]bool{}}
+			byKey[key] = a
+			order = append(order, key)
+		} else if r, cur := severityRank[o.Severity], severityRank[a.o.Severity]; r > cur || (r == cur && o.Severity < a.o.Severity) {
+			a.o.Severity = o.Severity
+		}
+		if o.InstalledVersion != "" {
+			a.installed[o.InstalledVersion] = true
+		}
+		if o.FixingVersion != "" {
+			a.fix[o.FixingVersion] = true
+		}
+	}
+	join := func(m map[string]bool) string {
+		vs := make([]string, 0, len(m))
+		for v := range m {
+			vs = append(vs, v)
+		}
+		sort.Strings(vs)
+		return strings.Join(vs, ", ")
+	}
+	out := make([]ObservedFinding, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		a.o.InstalledVersion, a.o.FixingVersion = join(a.installed), join(a.fix)
+		out = append(out, a.o)
+	}
+	return out, nil
 }
 
 // findingKey is one finding's identity within an agent -- the issue's
@@ -278,10 +371,13 @@ func AcceptFinding(ctx context.Context, conn db.Conn, agentID, target, vulnerabi
 }
 
 // FindingFilter narrows ListFindings. An empty AgentID means every
-// agent, matching ListScanSnapshots' own "no filter" shape until the
-// read side grows more than this.
+// agent, matching ListScanSnapshots' own "no filter" shape. Empty States
+// means every state. Limit cuts the newest-last-seen-first result to at
+// most that many rows; 0 means all (issue #213).
 type FindingFilter struct {
 	AgentID string
+	States  []FindingState
+	Limit   int
 }
 
 // ListFindings returns findings matching filter, newest-last-seen
@@ -289,19 +385,48 @@ type FindingFilter struct {
 // /api/scans) and `birdcage findings list`.
 func ListFindings(ctx context.Context, database *db.DB, filter FindingFilter) ([]Finding, error) {
 	query := `SELECT ` + findingColumns + ` FROM findings`
-	var args []any
+	var (
+		where []string
+		args  []any
+	)
 	if filter.AgentID != "" {
-		query += ` WHERE agent_id = ?`
+		where = append(where, `agent_id = ?`)
 		args = append(args, filter.AgentID)
 	}
-	query += ` ORDER BY last_seen DESC, id DESC`
+	if len(filter.States) > 0 {
+		marks := make([]string, len(filter.States))
+		for i, st := range filter.States {
+			marks[i] = "?"
+			args = append(args, string(st))
+		}
+		where = append(where, `state IN (`+strings.Join(marks, ", ")+`)`)
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	// No SQL ordering on last_seen: it is RFC3339Nano text with trailing
+	// zeros trimmed, so text order is not time order (see timeCompare in
+	// store.go). The matching rows are loaded and ordered in Go on the
+	// parsed value, as FindingsStaleness does, and Limit is applied after
+	// that sort, so no SQL LIMIT. A stable id DESC order from SQL breaks
+	// ties. The load is bounded per agent: ingest's per-scan cap for live
+	// rows, maxFixedPerAgent for fixed ones.
+	query += ` ORDER BY id DESC`
 
 	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query findings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanFindingRows(rows)
+	out, err := scanFindingRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 // AgentScanStatus is the staleness fact one agent's findings carry --
@@ -312,6 +437,8 @@ func ListFindings(ctx context.Context, database *db.DB, filter FindingFilter) ([
 // is on record, so it is shown as unconfirmed rather than silently
 // treated as current. LastOKScan is that agent's most recently
 // received ok scan's ReceivedAt, nil if it has never completed one.
+// Retention (PruneByAge, issue #213) always keeps both of those
+// snapshots, so neither fact changes as old snapshots are removed.
 //
 // Deliberately not a time-based threshold ("no scan in N hours") --
 // that is a ranking/exposure call (#110's own ground, ADR-0010 decision

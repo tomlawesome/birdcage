@@ -309,6 +309,7 @@ func TestFailedAuditWriteIsLoggedAndTheRequestCarriesOn(t *testing.T) {
 		t.Fatalf("auth.Open: %v", err)
 	}
 	t.Cleanup(svc.Close)
+	svc.ReleaseCodes()
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api.NewHandler(database, nil, "test"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

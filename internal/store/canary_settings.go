@@ -62,7 +62,7 @@ const (
 	// CanarySettingPaceFloor and CanarySettingPaceCeiling are the
 	// longest/shortest gap between poisoner bursts, a Go duration string
 	// such as "2h", validated the same way MOCKINGBIRD_POISONER_FLOOR/
-	// _CEILING are: it must parse and be positive.
+	// _CEILING are: it must parse and be at least poisoner.MinCeilingGap (1s).
 	CanarySettingPaceFloor   CanarySettingKey = "pace_floor"
 	CanarySettingPaceCeiling CanarySettingKey = "pace_ceiling"
 
@@ -135,8 +135,8 @@ var canarySettingDefs = map[CanarySettingKey]canarySettingDef{
 			return nil
 		},
 	},
-	CanarySettingPaceFloor:   {kinds: honeypotOnly, validate: validatePositiveDuration},
-	CanarySettingPaceCeiling: {kinds: honeypotOnly, validate: validatePositiveDuration},
+	CanarySettingPaceFloor:   {kinds: honeypotOnly, validate: validatePaceDuration},
+	CanarySettingPaceCeiling: {kinds: honeypotOnly, validate: validatePaceDuration},
 	CanarySettingWorkingHours: {
 		kinds: honeypotOnly,
 		validate: func(value string) error {
@@ -146,10 +146,12 @@ var canarySettingDefs = map[CanarySettingKey]canarySettingDef{
 	},
 }
 
-// validatePositiveDuration accepts a Go duration string such as "2h",
-// the same shape cmd/mockingbird's own poisonerDuration requires of
-// MOCKINGBIRD_POISONER_FLOOR/_CEILING.
-func validatePositiveDuration(value string) error {
+// validatePaceDuration accepts a Go duration string such as "2h" of at
+// least poisoner.MinCeilingGap, the same rule cmd/mockingbird's own
+// poisonerDuration applies to MOCKINGBIRD_POISONER_FLOOR/_CEILING and
+// its Apply applies to a pushed pace_floor/pace_ceiling. Below that
+// minimum the canary would broadcast continuously.
+func validatePaceDuration(value string) error {
 	if value == "" {
 		return nil
 	}
@@ -159,6 +161,9 @@ func validatePositiveDuration(value string) error {
 	}
 	if d <= 0 {
 		return fmt.Errorf("must be a positive duration, got %q", value)
+	}
+	if d < poisoner.MinCeilingGap {
+		return fmt.Errorf("must be at least %s, got %q", poisoner.MinCeilingGap, value)
 	}
 	return nil
 }

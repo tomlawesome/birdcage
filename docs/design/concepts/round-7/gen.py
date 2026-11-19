@@ -288,7 +288,7 @@ def chrome(status):
     tb = '<span>the cage</span><span class="crumb">› <b>canary-iot</b></span><span>visitors</span><span>audit log</span>'
     dk = ''.join(f'<span{" class=on" if i == 0 else ""}>{d}</span>' for i, d in enumerate(DECK))
     return (f'  <div class="wordmark">BIRD<em>CAGE</em></div>\n  <div class="tabs">{tb}</div>\n'
-            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">tom (admin)</span></div>\n'
+            f'  <div class="status"><div class="ranges">{rng}</div>{STATUS[status]}<span class="who">avery (admin)</span></div>\n'
             f'  <div class="deck">{dk}</div>\n')
 
 
@@ -354,27 +354,27 @@ HIST = {
               ('tue 1 sep 21:58', 'silent · 11 min', 'eleven heartbeats missed, back at 22:09 on its own', 'fault'),
               ('thu 13 aug', 'quiet', 'the last thing that touched the cage was on canary-guest, not here', 'ok'),
               ('wed 12 aug 09:45', 'registered', 'first self-test passed 3 min 50 s after enrolment; pending until then', 'ok'),
-              ('wed 12 aug 09:41', 'enrolled', 'by tom, on iot, mockingbird 0.4.1 — pending its first self-test', 'pend')],
+              ('wed 12 aug 09:41', 'enrolled', 'by avery, on iot, mockingbird 0.4.1 — pending its first self-test', 'pend')],
     'failed': [('today 04:00', 'self-test failed · 18 h', 'telnet :23 did not answer; ssh, smb and portscan did. <span class="live">still failing</span> — no run since', 'live'),
                ('thu 3 sep 07:12', 'silent · 1 min', 'one heartbeat missed, back at 07:13 on its own', 'fault'),
                ('tue 1 sep 21:58', 'silent · 11 min', 'eleven heartbeats missed, back at 22:09 on its own', 'fault'),
                ('wed 12 aug 09:45', 'registered', 'first self-test passed 3 min 50 s after enrolment', 'ok'),
-               ('wed 12 aug 09:41', 'enrolled', 'by tom, on iot, mockingbird 0.4.1', 'pend')],
+               ('wed 12 aug 09:41', 'enrolled', 'by avery, on iot, mockingbird 0.4.1', 'pend')],
     'silent': [('today 21:58', 'silent · 6 min 12 s', 'six heartbeats missed so far. <span class="live">still silent</span>', 'live'),
                ('today 04:00', 'self-test passed', 'four of four services answered', 'ok'),
                ('thu 3 sep 07:12', 'silent · 1 min', 'one heartbeat missed, back at 07:13 on its own', 'fault'),
                ('tue 1 sep 21:58', 'silent · 11 min', 'eleven heartbeats missed, back at 22:09 on its own', 'fault'),
                ('wed 12 aug 09:45', 'registered', 'first self-test passed 3 min 50 s after enrolment', 'ok'),
-               ('wed 12 aug 09:41', 'enrolled', 'by tom, on iot, mockingbird 0.4.1', 'pend')],
+               ('wed 12 aug 09:41', 'enrolled', 'by avery, on iot, mockingbird 0.4.1', 'pend')],
     'night': [('today 22:01', 'swept', '<span class="ip">203.0.113.42</span> tried root / toor on ssh — part of a walk across all four canaries', 'fault'),
               ('today 04:00', 'self-test passed', 'four of four services answered', 'ok'),
               ('six nights', 'repeat visitor', '<span class="ip">198.51.100.7</span> knocks on :445 every ~20 min, 221 times; community-blocked since Tuesday', 'fault'),
               ('thu 3 sep 07:12', 'silent · 1 min', 'one heartbeat missed, back on its own', 'fault'),
               ('tue 1 sep 21:58', 'silent · 11 min', 'eleven heartbeats missed, back on its own', 'fault'),
-              ('wed 12 aug 09:41', 'enrolled', 'by tom, on iot, mockingbird 0.4.1 — registered 3 min 50 s later', 'ok')],
+              ('wed 12 aug 09:41', 'enrolled', 'by avery, on iot, mockingbird 0.4.1 — registered 3 min 50 s later', 'ok')],
 }
-FACTS = [('kind', 'honeypot'), ('lane', '<span class="c">iot</span> · 10.0.30.0/24'), ('address', '10.0.30.9'), ('listening', ports['iot']),
-         ('lure only', 'portscan · ntp off'), ('heartbeat', 'every minute'), ('self-test', 'daily · 04:00'), ('enrolled', 'wed 12 aug 09:41 · by tom'),
+FACTS = [('kind', 'honeypot'), ('lane', '<span class="c">iot</span> · 198.51.100.0/24'), ('address', '198.51.100.9'), ('listening', ports['iot']),
+         ('lure only', 'portscan · ntp off'), ('heartbeat', 'every minute'), ('self-test', 'daily · 04:00'), ('enrolled', 'wed 12 aug 09:41 · by avery'),
          ('agent', 'mockingbird 0.4.1 · current'), ]
 
 LOWER = 420     # where the page's lower half starts

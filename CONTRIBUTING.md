@@ -21,6 +21,14 @@ reached only via PR promotion, not direct pushes or direct feature PRs.
   and scope belong in the repo (issues/docs), not left implicit in a PR
   description or a commit message.
 
+## Change log
+
+A change a user would notice adds one plain-English line under
+`## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in the same merge request,
+under Added, Changed, Deprecated, Removed, Fixed or Security. Internal work
+(tests, CI, refactors) gets no line. The release MR renames the section
+([docs/releasing.md](docs/releasing.md)).
+
 ## Testing expectations
 
 - New behavior needs a test that would fail without it -- prefer testing

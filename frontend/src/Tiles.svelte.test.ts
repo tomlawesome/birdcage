@@ -34,3 +34,13 @@ describe('Tiles.svelte: outline class per status', () => {
     expect(tile?.classList.contains('degraded')).toBe(true)
   })
 })
+
+describe('Tiles.svelte: write actions wait for their routes (#228)', () => {
+  it('a silent tile offers "open" but no "mark as maintenance"', () => {
+    const { container } = render(Tiles, { canaries: [canary({ status: 'silent' })], trace, range: '24h' })
+    const pills = [...container.querySelectorAll('.tile .acts .pill')].map((p) => p.textContent ?? '')
+    expect(pills).toHaveLength(1)
+    expect(pills[0]).toContain('open canary-iot')
+    expect(container.textContent).not.toContain('mark as maintenance')
+  })
+})

@@ -50,7 +50,7 @@ const FIXTURE_SESSION: SessionState = {
   mustEnrolSecondFactor: false,
   mustEnrolPasskey: false,
   hasTOTP: true,
-  username: 'tom',
+  username: 'avery',
   role: 'admin',
 }
 

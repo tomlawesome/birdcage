@@ -18,13 +18,13 @@ func TestPaceCounterTakesTheMedianNotTheBusiest(t *testing.T) {
 	c := newPaceCounter(base)
 	// Four quiet hosts and one shouting one. The mean would be 208; the
 	// maximum 1000; the median 4.
-	for _, host := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"} {
+	for _, host := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"} {
 		for i := 0; i < 4; i++ {
 			c.Observe(host, base)
 		}
 	}
 	for i := 0; i < 1000; i++ {
-		c.Observe("10.0.0.9", base)
+		c.Observe("198.51.100.9", base)
 	}
 
 	queries, hosts := c.Median(base)
@@ -40,7 +40,7 @@ func TestPaceCounterTakesTheMedianNotTheBusiest(t *testing.T) {
 // answer is always a rate some real host actually had.
 func TestPaceCounterTakesTheLowerMiddleValue(t *testing.T) {
 	c := newPaceCounter(base)
-	for i, host := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"} {
+	for i, host := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"} {
 		for n := 0; n <= i; n++ {
 			c.Observe(host, base)
 		}
@@ -58,8 +58,8 @@ func TestPaceCounterTakesTheLowerMiddleValue(t *testing.T) {
 // day-old numbers.
 func TestPaceCounterRollsTheWindow(t *testing.T) {
 	c := newPaceCounter(base)
-	c.Observe("10.0.0.1", base)
-	c.Observe("10.0.0.2", base)
+	c.Observe("198.51.100.1", base)
+	c.Observe("198.51.100.2", base)
 
 	// Most of a day later, both are still counted.
 	nearly := base.Add(paceWindow - paceBucketWidth)
@@ -74,7 +74,7 @@ func TestPaceCounterRollsTheWindow(t *testing.T) {
 	}
 
 	// And it still counts afterwards, rather than having wedged.
-	c.Observe("10.0.0.3", past)
+	c.Observe("198.51.100.3", past)
 	if _, hosts := c.Median(past); hosts != 1 {
 		t.Errorf("hosts after a fresh observation = %d, want 1", hosts)
 	}
@@ -120,8 +120,8 @@ func TestPaceCounterCapsTrackedHosts(t *testing.T) {
 // thrown away over something the canary cannot verify.
 func TestPaceCounterIgnoresAClockGoingBackwards(t *testing.T) {
 	c := newPaceCounter(base)
-	c.Observe("10.0.0.1", base)
-	c.Observe("10.0.0.1", base.Add(-time.Hour))
+	c.Observe("198.51.100.1", base)
+	c.Observe("198.51.100.1", base.Add(-time.Hour))
 	if queries, hosts := c.Median(base); queries != 2 || hosts != 1 {
 		t.Errorf("Median = (%d, %d), want (2, 1)", queries, hosts)
 	}
@@ -211,6 +211,21 @@ func TestPaceSettingsNormalise(t *testing.T) {
 	tooFast := PaceSettings{FloorGap: time.Hour, CeilingGap: 30 * time.Millisecond, Hours: AllHours()}.normalise()
 	if tooFast.CeilingGap != MinCeilingGap {
 		t.Errorf("ceiling %v normalised to %v, want MinCeilingGap %v", 30*time.Millisecond, tooFast.CeilingGap, MinCeilingGap)
+	}
+}
+
+// TestPaceSettingsNormaliseHoldsFloorToMinCeilingGap is #213's PF3-F1:
+// whatever normalise is given, neither gap leaves it under MinCeilingGap.
+func TestPaceSettingsNormaliseHoldsFloorToMinCeilingGap(t *testing.T) {
+	for _, in := range []PaceSettings{
+		{FloorGap: 10 * time.Millisecond, Hours: AllHours()},
+		{FloorGap: 10 * time.Millisecond, CeilingGap: 5 * time.Millisecond, Hours: AllHours()},
+		{FloorGap: time.Hour, CeilingGap: 10 * time.Millisecond, Hours: AllHours()},
+	} {
+		got := in.normalise()
+		if got.FloorGap < MinCeilingGap || got.CeilingGap < MinCeilingGap {
+			t.Errorf("normalise(%+v) = floor %v ceiling %v, want both at least %v", in, got.FloorGap, got.CeilingGap, MinCeilingGap)
+		}
 	}
 }
 

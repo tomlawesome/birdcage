@@ -5,10 +5,17 @@
   import { onMount } from 'svelte'
   import { sendJSON } from '../lib/api'
   import Alert from './Alert.svelte'
-  import { CONFIRM_PASSWORD, detailOf, ENTER_PASSWORD, FAILED, MISMATCH, statusOf, TOO_MANY, type Message } from './messages'
+  import { CONFIRM_PASSWORD, detailOf, ENTER_PASSWORD, FAILED, MISMATCH, SIGN_IN_AS_SOMEONE_ELSE, statusOf, TOO_MANY, type Message } from './messages'
 
   /** Busy until the promise onchanged returns settles. */
-  let { onchanged }: { onchanged: (password: string) => void | Promise<void> } = $props()
+  let {
+    onchanged,
+    onsignin,
+  }: {
+    onchanged: (password: string) => void | Promise<void>
+    /** Signed out: the full sign-in. */
+    onsignin: () => void
+  } = $props()
 
   let password = $state('')
   let confirm = $state('')
@@ -17,6 +24,19 @@
   let firstEl: HTMLInputElement | undefined = $state()
 
   onMount(() => firstEl?.focus({ preventScroll: true }))
+
+  async function someoneElse() {
+    if (busy) return
+    busy = true
+    try {
+      await sendJSON('POST', '/api/auth/logout')
+    } catch {
+      // Signed out or not, the full sign-in is what comes next.
+    } finally {
+      busy = false
+    }
+    onsignin()
+  }
 
   async function submit(e: Event) {
     e.preventDefault()
@@ -62,4 +82,5 @@
   >
   <Alert {msg} />
   <button class="submit" disabled={busy}>{busy ? 'Please wait…' : 'Set password'}</button>
+  <button type="button" class="link" disabled={busy} onclick={someoneElse}>{SIGN_IN_AS_SOMEONE_ELSE}</button>
 </form>

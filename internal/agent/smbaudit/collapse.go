@@ -10,11 +10,11 @@ import (
 // /srv/shares/public/IT/vpn-setup.pdf, captured from the image on
 // 2026-09-23, wrote five:
 //
-//	root|172.21.0.3|public|close|ok|/srv/shares/public
-//	root|172.21.0.3|public|close|ok|/srv/shares/public/IT
-//	root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
-//	root|172.21.0.3|public|close|ok|/srv/shares/public/IT
-//	root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
+//	root|203.0.113.3|public|close|ok|/srv/shares/public
+//	root|203.0.113.3|public|close|ok|/srv/shares/public/IT
+//	root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
+//	root|203.0.113.3|public|close|ok|/srv/shares/public/IT
+//	root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf
 //
 // Five alerts for one thing somebody did is five times the noise and no
 // extra information: the first two are the directories SMB had to walk to

@@ -35,10 +35,23 @@ describe('the four blocks', () => {
     expect(container.querySelectorAll('.facts span')).toHaveLength(20)
   })
 
-  it('shows only the actions the state earns', () => {
-    const { container } = mount('silent')
-    const pills = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent)
-    expect(pills).toEqual(['lookback in mikroview ▸', 'mark as maintenance'])
+  it('does not render the write pills until their routes exist (#228)', () => {
+    for (const scene of ['quiet', 'failed', 'silent', 'night'] as const) {
+      const { container, unmount } = mount(scene)
+      const pills = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent ?? '')
+      expect(pills.filter((t) => /run the self-test now|mark as maintenance/.test(t))).toEqual([])
+      unmount()
+    }
+  })
+
+  it('renders no lookback or raw-lines pill and no empty actions container (#229)', () => {
+    for (const scene of ['quiet', 'failed', 'silent', 'night'] as const) {
+      const { container, unmount } = mount(scene)
+      const pills = [...container.querySelectorAll('.acts .pill')].map((p) => p.textContent ?? '')
+      expect(pills.filter((t) => /mikroview|raw lines/.test(t))).toEqual([])
+      expect(container.querySelector('.acts')).toBeNull()
+      unmount()
+    }
   })
 })
 

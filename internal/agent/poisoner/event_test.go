@@ -18,12 +18,12 @@ var stamp = time.Date(2026, 9, 23, 14, 5, 6, 123456000, time.UTC)
 // changes every id, and they are what internal/ingest parses.
 func TestEncodeEventBytes(t *testing.T) {
 	got, err := encode(Answer{
-		Source:     "10.0.0.66",
+		Source:     "198.51.100.66",
 		SourcePort: 5355,
 		Protocol:   ProtocolLLMNR,
 		Name:       "fs-lon-02",
 		MAC:        "aa:bb:cc:dd:ee:ff",
-		Local:      "10.0.0.5",
+		Local:      "198.51.100.5",
 		LocalPort:  49876,
 	}, "fs-lon-05", stamp)
 	if err != nil {
@@ -32,10 +32,10 @@ func TestEncodeEventBytes(t *testing.T) {
 
 	// Keys in sorted order, the way OpenCanary's json.dumps(sort_keys=True)
 	// emits them -- the whole reason wireEvent declares its fields sorted.
-	want := `{"dst_host":"10.0.0.5","dst_port":49876,` +
+	want := `{"dst_host":"198.51.100.5","dst_port":49876,` +
 		`"local_time":"2026-09-23 14:05:06.123456",` +
 		`"logdata":{"MAC":"aa:bb:cc:dd:ee:ff","NAME":"fs-lon-02","PROTOCOL":"llmnr"},` +
-		`"logtype":30001,"node_id":"fs-lon-05","src_host":"10.0.0.66","src_port":5355,` +
+		`"logtype":30001,"node_id":"fs-lon-05","src_host":"198.51.100.66","src_port":5355,` +
 		`"utc_time":"2026-09-23 14:05:06.123456"}`
 	if string(got) != want {
 		t.Errorf("bytes differ\n got %s\nwant %s", got, want)
@@ -46,12 +46,12 @@ func TestEncodeEventBytes(t *testing.T) {
 // list: the answering IP, the protocol, the name it claimed, and the MAC.
 func TestEncodeEventCarriesEveryFactTheAlertNeeds(t *testing.T) {
 	raw, err := encode(Answer{
-		Source:     "192.168.7.13",
+		Source:     "203.0.113.13",
 		SourcePort: 137,
 		Protocol:   ProtocolNBNS,
 		Name:       "wpad",
 		MAC:        "00:11:22:33:44:55",
-		Local:      "192.168.7.4",
+		Local:      "203.0.113.4",
 		LocalPort:  137,
 	}, "canary", stamp)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestEncodeEventCarriesEveryFactTheAlertNeeds(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("the emitted event does not parse: %v", err)
 	}
-	if out.SrcHost != "192.168.7.13" {
+	if out.SrcHost != "203.0.113.13" {
 		t.Errorf("src_host = %q, want the answering address", out.SrcHost)
 	}
 	if out.LogData.PROTOCOL != string(ProtocolNBNS) {

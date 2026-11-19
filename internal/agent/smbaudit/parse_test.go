@@ -30,11 +30,11 @@ func TestParse(t *testing.T) {
 	}{
 		{
 			name:      "captured: a file fetched over SMB2",
-			line:      `[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+			line:      `[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 			wantOK:    true,
 			wantKind:  KindAccess,
 			wantUser:  "root",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "public",
 			wantOp:    "close",
 			wantRes:   "ok",
@@ -42,11 +42,11 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name:      "captured: a directory listed is a close on the directory",
-			line:      `[2026/09/23 22:01:53.984095,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public`,
+			line:      `[2026/09/23 22:01:53.984095,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public`,
 			wantOK:    true,
 			wantKind:  KindAccess,
 			wantUser:  "root",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "public",
 			wantOp:    "close",
 			wantRes:   "ok",
@@ -55,11 +55,11 @@ func TestParse(t *testing.T) {
 		{
 			name: "captured: Samba replaced the separator in a client-chosen user name",
 			// The client asked for the user name `a|b`; Samba wrote a_b.
-			line:      `[2026/09/23 22:01:54.114139,  1]   a_b|172.21.0.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
+			line:      `[2026/09/23 22:01:54.114139,  1]   a_b|203.0.113.3|backup|close|ok|/srv/shares/backup/router-config.txt`,
 			wantOK:    true,
 			wantKind:  KindAccess,
 			wantUser:  "a_b",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "backup",
 			wantOp:    "close",
 			wantRes:   "ok",
@@ -70,7 +70,7 @@ func TestParse(t *testing.T) {
 			// Issue #78's note, finding 2: the extra "r" sits where a
 			// result belongs. A fixed-index parse would report "r" as the
 			// filename.
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|openat|ok|r|/srv/shares/public/IT/vpn-setup.pdf`,
 			wantOK:    true,
 			wantKind:  KindUnparseable,
 			wantMsgIn: `"r" where the result belongs`,
@@ -127,11 +127,11 @@ func TestParse(t *testing.T) {
 			// and nothing here relies on that: counted from the right,
 			// the extra field lands in the user name, which is the one
 			// place a wrong value costs nothing.
-			line:      `[2026/09/23 22:01:53.987124,  1]   a|b|172.21.0.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+			line:      `[2026/09/23 22:01:53.987124,  1]   a|b|203.0.113.3|public|close|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 			wantOK:    true,
 			wantKind:  KindAccess,
 			wantUser:  "a|b",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "public",
 			wantOp:    "close",
 			wantRes:   "ok",
@@ -143,18 +143,18 @@ func TestParse(t *testing.T) {
 			// lands where a result belongs, so the line is refused --
 			// which is what stops the new path being reported as the
 			// whole story.
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|renameat|ok|/srv/shares/public/a|/srv/shares/public/b`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|renameat|ok|/srv/shares/public/a|/srv/shares/public/b`,
 			wantOK:    true,
 			wantKind:  KindUnparseable,
 			wantMsgIn: "where the result belongs",
 		},
 		{
 			name:      "a well-formed line outside the expected operation set",
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|unlinkat|ok|/srv/shares/public/IT/vpn-setup.pdf`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|unlinkat|ok|/srv/shares/public/IT/vpn-setup.pdf`,
 			wantOK:    true,
 			wantKind:  KindUnexpectedOperation,
 			wantUser:  "root",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "public",
 			wantOp:    "unlinkat",
 			wantRes:   "ok",
@@ -162,11 +162,11 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name:      "a failed operation is well-formed and keeps its result",
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|scans|close|fail|/srv/shares/scans/x.pdf`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|scans|close|fail|/srv/shares/scans/x.pdf`,
 			wantOK:    true,
 			wantKind:  KindAccess,
 			wantUser:  "root",
-			wantIP:    "172.21.0.3",
+			wantIP:    "203.0.113.3",
 			wantShare: "scans",
 			wantOp:    "close",
 			wantRes:   "fail",
@@ -174,21 +174,21 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name:      "a truncated audit line is reported, not skipped",
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public`,
 			wantOK:    true,
 			wantKind:  KindUnparseable,
 			wantMsgIn: "3 fields, expected at least 6",
 		},
 		{
 			name:      "a non-name where the operation belongs is refused",
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|CLOSE!|ok|/srv/shares/public/x`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|CLOSE!|ok|/srv/shares/public/x`,
 			wantOK:    true,
 			wantKind:  KindUnparseable,
 			wantMsgIn: "where the operation belongs",
 		},
 		{
 			name:      "an empty operation is refused",
-			line:      `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public||ok|/srv/shares/public/x`,
+			line:      `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public||ok|/srv/shares/public/x`,
 			wantOK:    true,
 			wantKind:  KindUnparseable,
 			wantMsgIn: "where the operation belongs",
@@ -205,12 +205,12 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name:   "an unterminated debug header is not an event",
-			line:   `[2026/09/23 22:02:29.216096,  1   root|172.21.0.3|public|close|ok|/x`,
+			line:   `[2026/09/23 22:02:29.216096,  1   root|203.0.113.3|public|close|ok|/x`,
 			wantOK: false,
 		},
 		{
 			name:   "a line that does not start with the header is not an event",
-			line:   `root|172.21.0.3|public|close|ok|/srv/shares/public/x`,
+			line:   `root|203.0.113.3|public|close|ok|/srv/shares/public/x`,
 			wantOK: false,
 		},
 	}
@@ -261,7 +261,7 @@ func TestParse(t *testing.T) {
 // the one wrong answer that would look like a working alert.
 func TestParseNeverReportsTheFlagAsAPath(t *testing.T) {
 	for _, flag := range []string{"r", "w"} {
-		line := `[2026/09/23 22:02:29.216096,  1]   root|172.21.0.3|public|openat|ok|` + flag + `|/srv/shares/public/IT/vpn-setup.pdf`
+		line := `[2026/09/23 22:02:29.216096,  1]   root|203.0.113.3|public|openat|ok|` + flag + `|/srv/shares/public/IT/vpn-setup.pdf`
 		got, ok := Parse([]byte(line))
 		if !ok {
 			t.Fatalf("flag %q: Parse returned no event at all; the line must be reported", flag)
@@ -280,7 +280,7 @@ func TestParseNeverReportsTheFlagAsAPath(t *testing.T) {
 
 func TestParseBoundsEveryField(t *testing.T) {
 	long := strings.Repeat("a", MaxPathLen*2)
-	line := `[2026/09/23 22:02:29.216096,  1]   ` + long + `|172.21.0.3|` + long + `|close|ok|/srv/` + long
+	line := `[2026/09/23 22:02:29.216096,  1]   ` + long + `|203.0.113.3|` + long + `|close|ok|/srv/` + long
 	got, ok := Parse([]byte(line))
 	if !ok || got.Kind != KindAccess {
 		t.Fatalf("Parse ok=%v kind=%q, want an access event", ok, got.Kind.Wording())
@@ -313,7 +313,7 @@ func TestParseBoundsAPanicMessage(t *testing.T) {
 // TestParseDoesNotModifyItsInput: the caller hands over the tailer's own
 // read buffer, so every string in the Event has to be a copy.
 func TestParseDoesNotModifyItsInput(t *testing.T) {
-	line := []byte(`[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`)
+	line := []byte(`[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`)
 	before := string(line)
 	ev, ok := Parse(line)
 	if !ok {
@@ -358,7 +358,7 @@ func TestParseReadsTheLineTimestamp(t *testing.T) {
 	}{
 		{
 			name: "captured audit line",
-			line: `[2026/09/23 22:01:53.987124,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`,
+			line: `[2026/09/23 22:01:53.987124,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`,
 			want: "2026-09-23 22:01:53.987124",
 		},
 		{
@@ -368,12 +368,12 @@ func TestParseReadsTheLineTimestamp(t *testing.T) {
 		},
 		{
 			name: "a header whose timestamp is not a timestamp carries none",
-			line: `[not a date,  1]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`,
+			line: `[not a date,  1]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`,
 			want: "",
 		},
 		{
 			name: "a header with no debug level still yields its timestamp",
-			line: `[2026/09/23 22:01:53.987124]   root|172.21.0.3|public|close|ok|/srv/shares/public/x`,
+			line: `[2026/09/23 22:01:53.987124]   root|203.0.113.3|public|close|ok|/srv/shares/public/x`,
 			want: "2026-09-23 22:01:53.987124",
 		},
 	}

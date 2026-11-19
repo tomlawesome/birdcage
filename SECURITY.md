@@ -32,7 +32,7 @@ the top-level status, ranked against — not below — an active attack.
 [ADR-0003](docs/adr/0003-mikroview-sidecar.md)): local accounts and
 self-hosted-only OIDC, following
 [mikroview](https://github.com/tomlawesome/mikroview)'s model. Until
-[#8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8) lands, nothing gates
+#8 lands, nothing gates
 the dashboard, so the network-exposure guidance below is the only control.
 This section is rewritten route-by-route when #8 lands.
 
@@ -339,7 +339,7 @@ only at the point that text is displayed, per surface:
   See [docs/configuration.md](docs/configuration.md#dashboard-tls).
 
   Everything under `/api/` needs a signed-in session or a read API token
-  ([issue #8](https://gitlab.tomlawson.io/ai/birdcage/-/issues/8),
+  (issue #8,
   ADR-0016); only the frontend files, which hold the sign-in screen, load
   without one. The gate is the shared auth module gauntlet, and its own
   routes (`/api/auth/*`, `/api/tokens`) sit beside the ones below. A read
@@ -367,7 +367,10 @@ only at the point that text is displayed, per surface:
   given an account or a token: it returns every agent's standing findings store (issue
   #109) -- the CVEs present on each scanned host, their state (open,
   operator-accepted, fixed) and the version that fixes them -- which is
-  a map of the fleet's weak points to anyone who can fetch it. `/api/scans`
+  a map of the fleet's weak points to anyone who can fetch it. By default
+  it lists open and accepted findings only (`?state=fixed` or `?state=all`
+  for the rest), at most 1,000 of them (`?limit=` up to 5,000), with
+  `truncated` set when the list was cut (issue #213). `/api/scans`
   is the lesser version of the same exposure: receipts and counts, not
   finding bodies, for every scan birdcage has recorded.
   `internal/api/api.go`'s `dashboardRouteSpecs` is the list this table
@@ -383,6 +386,12 @@ only at the point that text is displayed, per surface:
   section for the threat model and CVE search this came from). A dropped
   or refused stream falls back to the dashboard's existing 30s poll,
   which every route above already relies on.
+  The HTTPS dashboard listener's plain-HTTP sniffer (`internal/tlssniff`,
+  issue #212) caps connections waiting to be identified at 256 the same
+  way, and past the cap hands a new connection to the TLS server
+  unsniffed rather than refusing it, so a flood of silent connections
+  costs plain visitors their http-to-https redirect but never closes
+  the dashboard; the server's 5s handshake timeout still bounds each one.
 
 ## CI security scanning
 

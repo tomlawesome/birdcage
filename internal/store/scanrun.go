@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -670,7 +671,10 @@ func latestOKSnapshotReceivedAt(ctx context.Context, database *db.DB, canaryID s
 		}
 		t, err := time.Parse(receivedAtLayout, raw)
 		if err != nil {
-			return nil, fmt.Errorf("parse received_at %q: %w", raw, err)
+			// Skipped, as ListScanSnapshots does (issue #213).
+			slog.Warn("store: skipped a scan snapshot whose received_at does not parse",
+				"agent", canaryID, "received_at", raw, "err", err)
+			continue
 		}
 		if latest == nil || t.After(*latest) {
 			latest = &t

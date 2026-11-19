@@ -6,6 +6,7 @@
 // canary, so "the other three are fine" has no place here and "it" does.
 import type { Canary, TraceHit, Visitor, VisitorKind } from '../types'
 import type { Segment } from '../sentence/types'
+import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
 import { agoWords, durationCoarse, durationExact } from '../sentence/duration'
 import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } from '../sentence/time'
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
@@ -703,7 +704,7 @@ function visitedSentence(input: CanaryPageInput, visitor: Visitor, hit: TraceHit
   // #143: what this one hit said it was, straight from hit.client -- no
   // clause at all when there is nothing to report.
   if (hit.client) {
-    sub.push({ text: ' Said it was ' }, { text: hit.client, cls: 'client', title: hit.client }, { text: '.' })
+    sub.push({ text: 'Said it was ' }, { text: hit.client, cls: 'client', title: hit.client }, { text: '. ' })
   }
 
   if (repeat) {
@@ -719,9 +720,13 @@ function visitedSentence(input: CanaryPageInput, visitor: Visitor, hit: TraceHit
         `${nights > 1 ? ` for ${numberToWords(nights)} nights` : ''}. `,
     })
   }
-  sub.push({ text: 'Nothing here blocks: ' })
-  sub.push({ text: 'lookback in mikroview ▸', bold: true })
-  sub.push({ text: ' to act.' })
+  if (MIKROVIEW_LINKS_LIVE) {
+    sub.push({ text: 'Nothing here blocks: ' })
+    sub.push({ text: 'lookback in mikroview ▸', bold: true })
+    sub.push({ text: ' to act.' })
+  } else {
+    sub.push({ text: 'Nothing here blocks.' })
+  }
 
   const stillKnocking = repeat !== undefined || visitor.still_arriving
   return {
@@ -837,16 +842,16 @@ export function canaryActions(input: CanaryPageInput): CanaryAction[] {
   const out: CanaryAction[] = []
 
   if (scene.kind === 'visited') {
-    out.push({ label: 'lookback in mikroview ▸', quiet: false })
-    if (hits.length > 0) out.push({ label: 'raw lines ▸', quiet: false })
+    if (MIKROVIEW_LINKS_LIVE) out.push({ label: 'lookback in mikroview ▸', quiet: false })
+    if (MIKROVIEW_LINKS_LIVE && hits.length > 0) out.push({ label: 'raw lines ▸', quiet: false })
     // Reachable, but not what this page is about right now.
-    if (canary.status !== 'silent') out.push({ label: 'run the self-test now', quiet: true })
+    if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now', quiet: true })
     return out
   }
 
-  if (canary.status !== 'silent') out.push({ label: 'run the self-test now ▸', quiet: false })
-  if (canary.status !== 'ok' || hits.length > 0) out.push({ label: 'lookback in mikroview ▸', quiet: false })
-  out.push({ label: 'mark as maintenance', quiet: true })
+  if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now ▸', quiet: false })
+  if (MIKROVIEW_LINKS_LIVE && (canary.status !== 'ok' || hits.length > 0)) out.push({ label: 'lookback in mikroview ▸', quiet: false })
+  if (WRITE_ROUTES_LIVE) out.push({ label: 'mark as maintenance', quiet: true })
   return out
 }
 

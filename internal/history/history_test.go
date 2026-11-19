@@ -509,7 +509,7 @@ func TestTickRecordsCredentialStates(t *testing.T) {
 		r := New(database, "")
 
 		signal(t, database, "ingest.cert_conflict", "certconflict", t0)
-		if err := store.RecordCredentialDualUse(context.Background(), database, "dual", store.DualUseAddresses, "10.0.0.1", "10.0.0.2", t0); err != nil {
+		if err := store.RecordCredentialDualUse(context.Background(), database, "dual", store.DualUseAddresses, "198.51.100.1", "198.51.100.2", t0); err != nil {
 			t.Fatalf("RecordCredentialDualUse: %v", err)
 		}
 		tick(t, r, t0.Add(time.Second))

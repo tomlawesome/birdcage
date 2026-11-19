@@ -66,16 +66,20 @@ type VisitorPoisoner struct {
 // GET /api/visitors' per-entry shape. Field names and JSON shape match
 // frontend/src/lib/types.ts's Visitor exactly.
 type Visitor struct {
-	SourceIP      string              `json:"source_ip"`
-	Kind          VisitorKind         `json:"kind"`
-	FirstAt       time.Time           `json:"first_at"`
-	LastAt        time.Time           `json:"last_at"`
-	Hits          int64               `json:"hits"`
-	Canaries      []VisitorCanaryHits `json:"canaries"`
-	Services      []string            `json:"services"`
-	Tried         []string            `json:"tried"`
-	Clients       []string            `json:"clients"`
-	StillArriving bool                `json:"still_arriving"`
+	SourceIP string              `json:"source_ip"`
+	Kind     VisitorKind         `json:"kind"`
+	FirstAt  time.Time           `json:"first_at"`
+	LastAt   time.Time           `json:"last_at"`
+	Hits     int64               `json:"hits"`
+	Canaries []VisitorCanaryHits `json:"canaries"`
+	Services []string            `json:"services"`
+	Tried    []string            `json:"tried"`
+	Clients  []string            `json:"clients"`
+	// LatestClient is the clientFor result of the newest hit with a
+	// non-empty client; "" if none. Clients is capped at the first four,
+	// so its last entry is not the newest (#213).
+	LatestClient  string `json:"latest_client"`
+	StillArriving bool   `json:"still_arriving"`
 
 	// Poisoner is present only for a visitor with a poisoner hit (#86
 	// slice D) -- absent, not zeroed, for every other visitor, so the
@@ -578,6 +582,17 @@ func clientSummaries(hits []Alert) []string {
 	return out
 }
 
+// latestClient returns the clientFor result of the newest hit that has a
+// non-empty client (hits are newest first), or "" if none does.
+func latestClient(hits []Alert) string {
+	for _, a := range hits {
+		if c := clientFor(a.Service, a.Raw); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
 // buildVisitor turns one source_ip's hits (newest first, as
 // alertsInRange/ListVisitors group them) into its Visitor summary.
 func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges []*net.IPNet) Visitor {
@@ -619,6 +634,7 @@ func buildVisitor(sourceIP string, hits []Alert, now time.Time, internalRanges [
 		Services:      services,
 		Tried:         triedSummaries(hits),
 		Clients:       clientSummaries(hits),
+		LatestClient:  latestClient(hits),
 		StillArriving: !newest.Before(now.Add(-stillArrivingWindow)),
 		Poisoner:      poisonerFor(hits),
 	}

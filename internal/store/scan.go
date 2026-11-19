@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
@@ -132,7 +133,7 @@ func RecordScanSnapshot(ctx context.Context, database db.Conn, s ScanSnapshot) e
 // ListScanSnapshots returns every recorded scan receipt, newest first --
 // the minimal read-back GET /api/scans serves for slice 1. Filtering and
 // paging are left to #109, once there is a findings table worth either
-// over.
+// over. A row whose received_at does not parse is left out and logged.
 func ListScanSnapshots(ctx context.Context, database *db.DB) ([]ScanSnapshot, error) {
 	rows, err := database.QueryContext(ctx, `SELECT `+scanSnapshotColumns+` FROM scan_snapshots ORDER BY id DESC`)
 	if err != nil {
@@ -159,8 +160,14 @@ func ListScanSnapshots(ctx context.Context, database *db.DB) ([]ScanSnapshot, er
 		if s.TakenAt, err = time.Parse(receivedAtLayout, takenAt); err != nil {
 			return nil, fmt.Errorf("parse scan snapshot taken_at %q: %w", takenAt, err)
 		}
+		// An unreadable received_at skips the row (logged) rather than
+		// failing the whole list: one bad row must not take /api/scans or
+		// FindingsStaleness down for every agent (issue #213). Retention
+		// leaves such a row in place for the same reason.
 		if s.ReceivedAt, err = time.Parse(receivedAtLayout, receivedAt); err != nil {
-			return nil, fmt.Errorf("parse scan snapshot received_at %q: %w", receivedAt, err)
+			slog.Warn("store: skipped a scan snapshot whose received_at does not parse",
+				"agent", s.CanaryID, "snapshot_id", s.ID, "received_at", receivedAt, "err", err)
+			continue
 		}
 		if s.DBBuiltAt, err = parseNullableTime(dbBuiltAt, "db_built_at"); err != nil {
 			return nil, err

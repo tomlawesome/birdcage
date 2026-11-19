@@ -129,15 +129,16 @@ runs_field() { # runs_field <canary_id> <jq-filter-over-the-runs-array>
 # /api/findings?agent_id= (issue #109) -- the standing findings store's
 # own read-back, filtered to one agent and evaluated as an array (unlike
 # scan_check/canary_check's own "first match" shape: a finding set is
-# the whole array a leg cares about, not one row).
+# the whole array a leg cares about, not one row). state=all: the API
+# hides fixed findings by default (issue #213) and leg 5 checks them.
 findings_check() { # findings_check <agent_id> <jq-boolean-expr-over-the-findings-array>
   local agent_id="$1" expr="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id&state=all' \
     | jq -e '.findings | $expr'" >/dev/null 2>&1
 }
 findings_field() { # findings_field <agent_id> <jq-filter-over-the-findings-array>
   local agent_id="$1" filt="$2"
-  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id' \
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/findings?agent_id=$agent_id&state=all' \
     | jq -r '.findings | $filt'"
 }
 

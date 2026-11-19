@@ -112,11 +112,11 @@ describe('computeTileStatus: issue #45 states', () => {
 
   it('credential_conflict: names the two addresses when sent', () => {
     const result = computeTileStatus(
-      { ...base, status: 'credential_conflict', credential_conflict: { addresses: ['10.0.0.1', '10.0.0.2'] } },
+      { ...base, status: 'credential_conflict', credential_conflict: { addresses: ['198.51.100.1', '198.51.100.2'] } },
       '2026-01-01T00:02:05Z',
     )
     expect(plainText(result.lines[0])).toBe(
-      '⚠ credential conflict · in use from two addresses: 10.0.0.1 and 10.0.0.2 — revoke the node',
+      '⚠ credential conflict · in use from two addresses: 198.51.100.1 and 198.51.100.2 — revoke the node',
     )
   })
 

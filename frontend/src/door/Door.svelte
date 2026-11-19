@@ -124,9 +124,9 @@
         {:else if screen === 'firstrun'}
           <FirstRun oncreated={(pw) => (keep(pw), proceed())} onconflict={proceed} />
         {:else if screen === 'choose'}
-          <SecondStep session={current} password={held} onpassword={keep} ondone={proceed} />
+          <SecondStep session={current} password={held} onpassword={keep} ondone={proceed} onsignin={() => go('signin')} />
         {:else if screen === 'newpassword'}
-          <NewPassword onchanged={(pw) => (keep(pw), proceed())} />
+          <NewPassword onchanged={(pw) => (keep(pw), proceed())} onsignin={() => go('signin')} />
         {:else if screen === 'expired'}
           <Expired session={current} onresumed={proceed} onsignin={() => go('signin')} />
         {/if}

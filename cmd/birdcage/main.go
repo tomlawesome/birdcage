@@ -130,6 +130,11 @@ const (
 	// deployment can never quietly outlive the real 7-day rule it is
 	// meant to shorten, not lengthen.
 	envTestClientCertTTL = "BIRDCAGE_TEST_CLIENT_CERT_TTL"
+	// envFindingsRetentionDays is how many days fixed findings and scan
+	// snapshots are kept (issue #213, owner question 39): default
+	// ingest.DefaultFindingsRetentionDays, 0 keeps them for good, and a
+	// negative or non-number value refuses to start.
+	envFindingsRetentionDays = "BIRDCAGE_FINDINGS_RETENTION_DAYS"
 	// maxTestClientCertTTL bounds envTestClientCertTTL: it can only ever
 	// shorten ADR-0012 B2's 7-day certificate life, never extend it.
 	maxTestClientCertTTL = 7 * 24 * time.Hour
@@ -284,7 +289,8 @@ func main() {
 	// Issue #8: sign-in for the dashboard (ADR-0016). Opening it after the
 	// database means a key that cannot open the stored accounts, or any
 	// other refusal, stops start-up here; the one-time setup code is
-	// logged here when there is no account yet. Only the server-start
+	// held here when there is no account yet and logged by ReleaseCodes
+	// once the later refusing steps have passed. Only the server-start
 	// path opens it: the CLI subcommands above open the database alone,
 	// announce no code, and never touch the sign-in stores. The deferred
 	// Close runs before the database's, so the sign-in history is saved
@@ -296,13 +302,26 @@ func main() {
 		os.Exit(1)
 	}
 	defer authService.Close()
+	// os.Exit skips defers, so each refusal below goes through refuse, which
+	// closes the auth handle first and saves the sign-in history.
+	refuse := func() {
+		authService.Close()
+		os.Exit(1)
+	}
 
 	// checkStartupCAContinuity needs the database open (issue #149), so
 	// the CA block below runs here rather than in its more obvious spot
 	// right after checkStartupFiles.
 	if err := checkStartupCAContinuity(ctx, cfg, database, caLog); err != nil {
 		logStartupError(err)
-		os.Exit(1)
+		refuse()
+	}
+	// Issue #164: no account on a database already in use is a botched
+	// restore until `birdcage auth reset` says otherwise. Before
+	// ReleaseCodes, so a refused start prints no setup code.
+	if err := checkStartupAuthContinuity(ctx, cfg, database, authLog); err != nil {
+		logStartupError(err)
+		refuse()
 	}
 	if cfg.caNeeded {
 		configLog.Info(fmt.Sprintf("%s=%s", envCADir, cfg.caDir))
@@ -310,7 +329,7 @@ func main() {
 	birdcageCA, err := loadStartupCA(cfg, caLog)
 	if err != nil {
 		caLog.Error(err.Error())
-		os.Exit(1)
+		refuse()
 	}
 
 	// Issue #56's canary state recorder starts once the schema is in
@@ -370,7 +389,7 @@ func main() {
 	dashboardServer, unixPath, err := buildDashboardServer(cfg, birdcageCA, apiHandler, configLog, httpLog)
 	if err != nil {
 		httpLog.Error(err.Error())
-		os.Exit(1)
+		refuse()
 	}
 
 	// Issue #8: everything under /api/ needs a session or a read API
@@ -383,13 +402,16 @@ func main() {
 	ingestServer, enrolServer, err := buildIngestServers(cfg, database, birdcageCA, hub, selfTestIndex, selfTestScheduler, configLog, ingestLog, enrolLog)
 	if err != nil {
 		ingestLog.Error(err.Error())
-		os.Exit(1)
+		refuse()
 	}
+
+	// Every start-up step that can refuse has passed: only now may the
+	// setup and unlock codes reach the log.
+	authService.ReleaseCodes()
 
 	mainLog := logging.New("birdcage")
 	if err := serveAll(ctx, stop, dashboardServer, cfg.httpSelection.Mode, unixPath, ingestServer, enrolServer, httpLog, ingestLog, enrolLog, mainLog); err != nil {
-		authService.Close() // os.Exit skips the defer; save the sign-in history first
-		os.Exit(1)
+		refuse()
 	}
 }
 

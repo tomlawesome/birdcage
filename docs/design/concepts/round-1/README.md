@@ -21,15 +21,15 @@ direction file; scenes are `section.scene` blocks with ids.
 
 ## Data story (fixed across rounds)
 
-Four canaries: canary-lan 10.0.10.250, canary-srv 10.0.20.250, canary-iot
-10.0.30.250, canary-guest 10.0.40.250 (lane colours lan/srv/iot/guest).
+Four canaries: canary-lan 192.0.2.250, canary-srv 192.0.2.251, canary-iot
+198.51.100.250, canary-guest 192.0.2.252 (lane colours lan/srv/iot/guest).
 Tonight 2026-09-12: 203.0.113.42 sweeps all four 21:55–22:04 (ssh, then
 mysql on srv; 7 hits; not in CrowdSec). 198.51.100.7 has hit canary-iot smb
-every ~20 min for 6 days (221 hits; community-blocked). 10.0.40.23, a guest
+every ~20 min for 6 days (221 hits; community-blocked). 192.0.2.23, a guest
 device, fetched `/` then `/admin` on canary-lan http at 19:11 (never
 auto-blocked: inside, #33). 192.0.2.88 tried anonymous ftp on canary-srv
 yesterday 03:18, once. Totals: 232 hits today, 4 visitors. Logged in as
-`tom (admin)`.
+`avery (admin)`.
 
 ## Palette
 

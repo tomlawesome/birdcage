@@ -101,6 +101,7 @@
           "root / 123456"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": true
       },
       {
@@ -122,10 +123,11 @@
           "smb"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       },
       {
-        "source_ip": "10.0.40.23",
+        "source_ip": "192.0.2.23",
         "kind": "inside",
         "first_at": "2026-09-12T19:11:04Z",
         "last_at": "2026-09-12T19:11:22Z",
@@ -144,6 +146,7 @@
           "/admin"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       },
       {
@@ -165,6 +168,7 @@
           "anonymous / (empty)"
         ],
         "clients": [],
+        "latest_client": "",
         "still_arriving": false
       }
     ],
@@ -215,7 +219,7 @@
           },
           {
             "at": "2026-09-12T19:11:22Z",
-            "visitor": "10.0.40.23",
+            "visitor": "192.0.2.23",
             "kind": "inside",
             "service": "http",
             "tried": "/admin",
@@ -223,7 +227,7 @@
           },
           {
             "at": "2026-09-12T19:11:04Z",
-            "visitor": "10.0.40.23",
+            "visitor": "192.0.2.23",
             "kind": "inside",
             "service": "http",
             "tried": "/",
@@ -2214,7 +2218,7 @@
         "kind": "honeypot",
         "lane": "iot",
         "ports": "telnet 23 · ssh 22 · smb 445",
-        "address": "10.0.30.9",
+        "address": "198.51.100.9",
         "heartbeat_interval_s": 60,
         "self_test_enabled": true,
         "self_test_schedule": "04:00",

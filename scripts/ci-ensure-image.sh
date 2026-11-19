@@ -1,28 +1,22 @@
 #!/usr/bin/env bash
-# ci-ensure-image.sh -- make sure the local image tag build:images built for
-# this pipeline is actually still there before a consumer job uses it.
+# ci-ensure-image.sh -- make sure the image build:images built for this
+# pipeline is in this job's own Docker daemon under its local tag, pulling it
+# by digest from the project's registry if it is not.
 #
-# Issue #112: this host runs pipelines concurrently on one shared Docker
-# daemon. build:images' own prune (self-healing on its own -- see that
-# job's header) deletes every build tag except its own pipeline's, which
-# also means it deletes a tag a DIFFERENT, still-running pipeline is
-# using. Two pipelines can each prune the other's image within minutes of
-# each other, and whichever job loses the race fails for a reason that has
-# nothing to do with the code under test.
-#
-# The fix has two parts. build:images' prune only removes a tag old
-# enough that no pipeline still running could have built it (see that
-# job's own comment in .gitlab-ci.yml), so it can no longer delete a tag
-# a live pipeline is mid-use of. Belt and braces: build:images also pushes
-# each image to this project's own container registry and records its
-# repo@digest in release.env. This script is what every consumer calls
-# before EACH use of a shared build tag -- not just once per job -- so a
-# pruned local tag (a late prune from before the age guard existed, or a
-# window the age guard's margin does not cover) costs one recovery pull
-# instead of a failed job. test:image:*, every e2e:* journey that
-# consumes build:images' output, release:push, and any script within
-# those jobs that uses the same tag a second time (e.g.
-# scripts/e2e/smb-stack.sh's run_smb_canary) all call it.
+# Issue #112 began with one Docker daemon shared by every pipeline on the
+# runner host: a prune in one pipeline deleted the tag another, still-running
+# pipeline was using. That is gone: every job now has its own empty daemon
+# (.dind_service in .gitlab-ci.yml) that dies with the job, so no job can
+# prune another's tags -- and no job ever finds build:images' local tag
+# already there. The script's real job is the pull. build:images pushes each
+# image to this project's own container registry and records its repo@digest
+# in release.env; a consumer job calls this script with the local tag and that
+# digest, and the bytes build:images tested are pulled and retagged. Every
+# consumer calls it before EACH use of the tag, not just once per job, so a
+# second use inside one job (e.g. scripts/e2e/smb-stack.sh's run_smb_canary)
+# finds the tag from the first. test:image:*, every e2e:* journey that
+# consumes build:images' output, release:push, and any script within those
+# jobs that uses the same tag again all call it.
 #
 # Usage:
 #   scripts/ci-ensure-image.sh <local-tag> <repo@digest>

@@ -149,9 +149,9 @@ const SECRET = 'JBSWY3DPEHPK3PXP'
 const URI = 'otpauth://totp/birdcage:ana?secret=' + SECRET
 // deliberately not in sorted order
 const CODES = ['q7m2-x9kd', 'b4n8-t2wz', 'z1c5-h6rj', 'a9p3-v7ls', 'm2d6-f8yg', 'k5t1-w3nb', 'x8h4-c2qe', 'f3v9-r5ju', 'c6s7-p1ma', 'd2g8-y4zk']
-const owed = (over: Record<string, unknown> = {}) => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { status: 'ready', signIn: false }, ...over })
+const owed = (over: Record<string, unknown> = {}) => session({ authenticated: true, mustEnrolSecondFactor: true, passkeys: { count: 0, status: 'ready' }, ...over })
 const enrolReply = () => jsonReply({ uri: URI, secret: SECRET })
-const codesReply = () => jsonReply({ recoveryCodes: CODES, codes: CODES })
+const codesReply = () => jsonReply({ recoveryCodes: CODES })
 
 describe('second step: choose', () => {
   it('shows heading, subtitle, both keys and the thread line', () => {
@@ -174,8 +174,8 @@ describe('second step: choose', () => {
 
   it('passkey key is disabled, with the https note instead of its description, unless passkeys are ready', () => {
     stubServer({})
-    render(Door, { session: owed({ passkeys: { status: 'needs-https', signIn: false } }), onenter: () => {} })
-    expect(screen.getByText('Passkeys need an https web address.')).toBeTruthy()
+    render(Door, { session: owed({ passkeys: { count: 0, status: 'insecure' } }), onenter: () => {} })
+    expect(screen.getByText('The public address is http. Passkeys need https.')).toBeTruthy()
     expect(screen.queryByText('Fingerprint, face or device PIN.')).toBeNull()
     const key = screen.getByText('Passkey').closest('button')
     expect(key?.hasAttribute('disabled')).toBe(true)
@@ -260,7 +260,7 @@ describe('second step: prove it with the authenticator app', () => {
 
   it('omits the passkey link when passkeys are not offered', async () => {
     stubServer({ 'POST /api/auth/totp/enrol': enrolReply() })
-    render(Door, { session: owed({ passkeys: { status: 'needs-https', signIn: false } }), onenter: () => {} })
+    render(Door, { session: owed({ passkeys: { count: 0, status: 'insecure' } }), onenter: () => {} })
     await fireEvent.click(screen.getByText('Authenticator app'))
     await type(ph('password'), 'pw-fake-1')
     await fireEvent.click(btn('Continue'))
@@ -618,5 +618,18 @@ describe('set a new password', () => {
     expect(server.to('POST', '/api/auth/password')).toHaveLength(1)
     gate.resolve(problem('invalid-request', 400, 'x'))
     await screen.findByRole('alert')
+  })
+})
+
+// Issue #164 item 7: SSO is refused while no account exists, so the
+// first-run screen offers no SSO link even when the session says SSO is
+// configured. (The sign-in screen still shows it.)
+describe('first run with SSO configured', () => {
+  it('shows no SSO link', () => {
+    stubServer({})
+    render(Door, { session: session({ setupRequired: true, ssoAvailable: true }), onenter: () => {} })
+    expect(screen.getByRole('heading', { name: 'Create the admin account' })).toBeTruthy()
+    expect(screen.queryByText('Sign in with SSO')).toBeNull()
+    expect(screen.queryByRole('link', { name: /sso/i })).toBeNull()
   })
 })

@@ -12,6 +12,8 @@ import { canariesPhrase, minutesPhrase, rangeLong, servicesNarrative, triedNarra
 import { portForService } from './ports'
 import { wordOrNumber } from './words'
 import type { Segment } from './types'
+import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
+import { canaryHref } from '../route'
 
 export interface EventTime {
   primary: string
@@ -27,6 +29,9 @@ export interface EventKind {
 export interface EventAction {
   label: string
   quiet?: boolean
+  /** Where the pill goes, when it goes anywhere (#229): rendered as a
+   * link; without one the pill is a plain label. */
+  href?: string
 }
 
 export interface EventRow {
@@ -81,7 +86,7 @@ function timeColumn(v: Visitor, now: string): EventTime {
 function defaultActions(v: Visitor): EventAction[] {
   switch (v.kind) {
     case 'sweep':
-      return [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }]
+      return MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }, { label: 'raw lines ▸' }] : []
     case 'repeat':
       return [{ label: 'already blocked', quiet: true }]
     case 'inside':
@@ -112,13 +117,13 @@ function poisonerSentence(v: Visitor): Segment[] {
   ]
 }
 
-// appendClientClause adds "Said it was <client>." using the newest entry in
-// v.clients (#143), to every non-poisoner whoSentence branch -- a poisoner
+// appendClientClause adds "Said it was <client>." using v.latest_client, the
+// newest client (#143, #213), to every non-poisoner whoSentence branch -- a poisoner
 // did not send an http/ssh hit, so poisonerSentence never calls this. No
 // clause at all when there is no client to report, rather than an empty
 // sentence fragment.
 function appendClientClause(segments: Segment[], v: Visitor): Segment[] {
-  const client = v.clients[v.clients.length - 1]
+  const client = v.latest_client
   if (client) {
     segments.push({ text: ' Said it was ' }, { text: client, cls: 'client', title: client }, { text: '.' })
   }
@@ -215,9 +220,9 @@ export function computeDroppedOutRow(canary: Canary): EventRow {
       },
     ],
     actions: [
-      { label: `open ${canary.name} ▸` },
-      { label: 'lookback in mikroview ▸' },
-      { label: 'mark as maintenance', quiet: true },
+      { label: `open ${canary.name} ▸`, href: canaryHref(canary.id) },
+      ...(MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }] : []),
+      ...(WRITE_ROUTES_LIVE ? [{ label: 'mark as maintenance', quiet: true }] : []),
     ],
   }
 }

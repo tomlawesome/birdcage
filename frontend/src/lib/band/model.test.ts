@@ -135,7 +135,7 @@ describe('only high-signal rises keep a label (issue #59)', () => {
 // the fix, stacked their labels straight past the top of the chart and
 // into the header/hero above it (root/toor's box measured top=118,
 // admin/admin's top=70, against a hero sentence sitting at 94-125px and
-// a "tom (admin)" pill at roughly 20-40px). Reproduced at both the
+// a "avery (admin)" pill at roughly 20-40px). Reproduced at both the
 // issue's own 1400px viewport and the pixel-comparison suite's 1600px.
 describe('coincident labels collapse instead of leaving the chart (issue #58)', () => {
   it.each([1400, 1600])('every label box stays at or below CHART_TOP, at width %d', (width) => {

@@ -42,7 +42,7 @@
 #
 # Inputs (environment):
 #   BIRDCAGE_IMAGE          Image repository without tag or digest, e.g.
-#                           registry.tomlawson.io/ai/birdcage/birdcage.
+#                           ${CI_REGISTRY_IMAGE}/birdcage.
 #   BIRDCAGE_DIGEST         The digest about to be given a name,
 #                           "sha256:<64 hex>".
 #   BIRDCAGE_COMMIT         The commit the publisher is acting for (40 hex).
@@ -55,6 +55,12 @@
 #   COSIGN_PUBLIC_KEY       Optional; path to the committed public key,
 #                           default cosign.pub at the repository root.
 #   BIRDCAGE_MAX_EVIDENCE_AGE_DAYS  Optional; default 7.
+#   LEGACY_PREDICATE_TYPES_FILE  Optional; default
+#                           scripts/legacy-predicate-types.sha256. Earlier
+#                           predicate types still accepted for evidence
+#                           already published, listed as the sha256 of each
+#                           type string (one hex per line, # comments). A
+#                           listed type is never written to output.
 #   BIRDCAGE_COSIGN         Optional; the cosign command to run, overridable
 #                           only so tests can stub it. Real use resolves the
 #                           pinned binary via scripts/ensure-cosign.sh.
@@ -73,7 +79,9 @@ repo_root="$(cd "$here/.." && pwd)"
 
 # Must match scripts/attest-tested-image.sh; scripts/verify-validation-evidence.test.sh
 # asserts the two agree.
-readonly PREDICATE_TYPE="https://tomlawson.io/attestations/birdcage-validation/v1"
+readonly PREDICATE_TYPE="https://github.com/tomlawesome/birdcage/attestations/birdcage-validation/v1"
+
+legacy_types_file() { printf '%s' "${LEGACY_PREDICATE_TYPES_FILE:-${here}/legacy-predicate-types.sha256}"; }
 
 # Cleaned up on any exit, including a refuse()-triggered one; declared here
 # (not `local` inside a function) so the trap can always find it.
@@ -96,13 +104,68 @@ refuse() { # $1 ground, $2 exit code, $3 message
 #
 # --insecure-ignore-tlog because these attestations are minted without a
 # transparency log: key-based trust, no Rekor to consult.
+#
+# Legacy types (LEGACY_PREDICATE_TYPES_FILE) are known only by hash, so they
+# are found by downloading the attestations unverified, hashing each
+# predicate type, and verifying, by --type, only those that are listed. The
+# download is a discovery step only: nothing it returns is trusted, and
+# legacy type strings are never echoed.
 fetch_verified_attestations() {
-  local subject="$1" outfile="$2"
-  "$cosign_cmd" verify-attestation \
+  local subject="$1" outfile="$2" found=1 t
+  if "$cosign_cmd" verify-attestation \
     --key "$public_key" \
     --type "$PREDICATE_TYPE" \
     --insecure-ignore-tlog=true \
-    "$subject" > "$outfile" 2>"${outfile}.err"
+    "$subject" > "$outfile" 2>"${outfile}.err"; then
+    found=0
+  fi
+  local hashes
+  hashes="$(sed 's/#.*//' "$(legacy_types_file)" 2>/dev/null | tr -d ' \t' | grep -x '[0-9a-f]\{64\}' || true)"
+  [ -n "$hashes" ] || return "$found"
+  # The unverified download is bounded in time and size: at most
+  # ATTESTATION_DOWNLOAD_TIMEOUT seconds, and anything over
+  # ATTESTATION_DOWNLOAD_MAX_BYTES is refused rather than parsed. A refused
+  # download ends legacy discovery only; the current type's result stands.
+  local dl="${outfile}.download" max="${ATTESTATION_DOWNLOAD_MAX_BYTES:-10485760}"
+  local limit="${ATTESTATION_DOWNLOAD_TIMEOUT:-300}"
+  # 0 would mean no limit to timeout(1); only a positive whole number counts.
+  case "$limit" in ''|*[!0-9]*) limit=300 ;; esac
+  [ "$((10#$limit))" -ge 1 ] || limit=300
+  timeout "$limit" \
+    "$cosign_cmd" download attestation "$subject" 2>/dev/null \
+    | head -c "$((max + 1))" > "$dl" || true
+  if [ "$(wc -c < "$dl")" -gt "$max" ]; then
+    rm -f "$dl"
+    echo "attestation download for $subject is too large (over $((max / 1048576)) MB); legacy types not checked" >&2
+    return "$found"
+  fi
+  local listed
+  listed="$(python3 -c '
+import base64, hashlib, json, sys
+wanted = set(sys.argv[1].split())
+seen = set()
+for line in sys.stdin:
+    try:
+        t = json.loads(base64.b64decode(json.loads(line)["payload"]))["predicateType"]
+    except Exception:
+        continue
+    if isinstance(t, str) and "\n" not in t and t not in seen \
+            and hashlib.sha256(t.encode()).hexdigest() in wanted:
+        seen.add(t)
+        print(t)
+' "$hashes" < "$dl" || true)"
+  rm -f "$dl"
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    if "$cosign_cmd" verify-attestation \
+      --key "$public_key" \
+      --type "$t" \
+      --insecure-ignore-tlog=true \
+      "$subject" >> "$outfile" 2>/dev/null; then
+      found=0
+    fi
+  done <<< "$listed"
+  return "$found"
 }
 
 # judge_evidence <verified-file> <expected-digest> <expected-commit>
@@ -117,16 +180,38 @@ judge_evidence() {
   local verified_file="$1" expected_digest="$2" expected_commit="$3" \
     expected_ref="$4" expected_policy_version="$5" max_age_days="$6"
   python3 - "$verified_file" "$expected_digest" "$expected_commit" \
-    "$expected_ref" "$expected_policy_version" "$max_age_days" "$PREDICATE_TYPE" <<'PY'
+    "$expected_ref" "$expected_policy_version" "$max_age_days" "$PREDICATE_TYPE" \
+    "$(legacy_types_file)" <<'PY'
 import base64
 import datetime
+import hashlib
 import json
+import re
 import sys
 
 (verified_file, expected_digest, expected_commit, expected_ref,
- expected_policy_version, max_age_days_s, predicate_type) = sys.argv[1:8]
+ expected_policy_version, max_age_days_s, predicate_type,
+ legacy_file) = sys.argv[1:9]
 max_age_days = float(max_age_days_s)
 expected_ref = expected_ref or None
+
+# Earlier types, by sha256 of the exact string. A missing or unreadable list
+# accepts nothing extra: the safe direction for this gate.
+legacy_hashes = set()
+try:
+    with open(legacy_file, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            entry = raw.split("#", 1)[0].strip()
+            if re.fullmatch(r"[0-9a-f]{64}", entry):
+                legacy_hashes.add(entry)
+except OSError:
+    pass
+
+
+def accepted_type(t):
+    if t == predicate_type:
+        return True
+    return isinstance(t, str) and hashlib.sha256(t.encode("utf-8")).hexdigest() in legacy_hashes
 
 
 def refuse(ground, code, message):
@@ -150,7 +235,7 @@ for line in lines:
     except Exception:
         refuse("missing", 11,
                "a verified attestation payload is not decodable in-toto JSON; unusable as evidence")
-    if statement.get("predicateType") != predicate_type:
+    if not accepted_type(statement.get("predicateType")):
         continue
     statements.append(statement)
 
@@ -166,7 +251,6 @@ field_patterns = {
     "policyVersion": r"^[0-9a-f]{64}$",
     "recordedAt": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
 }
-import re
 
 items = []
 for statement in statements:

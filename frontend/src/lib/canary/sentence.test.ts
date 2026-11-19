@@ -60,7 +60,8 @@ describe('the four round-7 scenes', () => {
     expect(sub).toContain('203.0.113.42 tried root / toor on telnet at 22:01')
     expect(sub).toContain('the same address that walked all four canaries tonight')
     expect(sub).toContain('198.51.100.7 has knocked on :445 every twenty minutes for six nights')
-    expect(sub).toContain('Nothing here blocks: lookback in mikroview ▸ to act.')
+    expect(sub).toContain('Nothing here blocks')
+    expect(sub).not.toContain('mikroview')
   })
 
   it('visited sentence says what the hit called itself', () => {
@@ -76,6 +77,16 @@ describe('the four round-7 scenes', () => {
     const clientSeg = subSegments.find((s) => s.cls === 'client')
     expect(clientSeg?.text).toBe('curl/8.5.0')
     expect(clientSeg?.title).toBe('curl/8.5.0')
+  })
+
+  it('the client clause is followed by a space before the next sentence (#213)', () => {
+    const input = sceneInput('night')
+    const scene = canaryScene(input)
+    if (scene.kind !== 'visited') throw new Error('expected a visited scene')
+    scene.hit.client = 'curl/8.5.0'
+    const text = plainText(canarySentence(input).sub)
+    expect(text).toContain('Said it was curl/8.5.0. Underneath it,')
+    expect(text).not.toContain('curl/8.5.0.Underneath')
   })
 
   it('a single silence is a bad minute, not a pattern', () => {
@@ -102,10 +113,10 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
+    input.page.canary.credential_conflict = { addresses: ['198.51.100.1', '198.51.100.2'] }
     const { hero, sub } = { hero: plainText(canarySentence(input).hero), sub: plainText(canarySentence(input).sub) }
     expect(hero).toBe("canary-iot's credential is live in two places at once.")
-    expect(sub).toContain('credential in use from two addresses: 10.0.0.1 and 10.0.0.2.')
+    expect(sub).toContain('credential in use from two addresses: 198.51.100.1 and 198.51.100.2.')
     expect(sub).toContain('Revoke the node (birdcage agent revoke <agent-id>) and re-enrol it.')
   })
 
@@ -161,7 +172,7 @@ describe('credential_conflict and renewal_stalled (ADR-0012 Part B)', () => {
     const input = sceneInput('night')
     for (const v of input.visitors) v.still_arriving = false
     input.page.canary.status = 'credential_conflict'
-    input.page.canary.credential_conflict = { addresses: ['10.0.0.1', '10.0.0.2'] }
+    input.page.canary.credential_conflict = { addresses: ['198.51.100.1', '198.51.100.2'] }
     expect(plainText(canaryCrumb(input))).toContain('credential conflict')
     expect(plainText(canaryFooter(input))).toContain('credential conflict')
   })
@@ -274,31 +285,38 @@ describe('canaryFooter', () => {
 })
 
 describe('canaryActions: only the ones the state earns', () => {
-  it('quiet offers the self-test and maintenance, and nothing to look back at', () => {
-    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([
-      'run the self-test now ▸',
-      'mark as maintenance',
-    ])
+  it('quiet offers nothing: no lookback target, and the write pills wait for their routes (#228)', () => {
+    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
   })
 
-  it('a failed self-test earns the lookback too', () => {
-    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([
-      'run the self-test now ▸',
-      'lookback in mikroview ▸',
-      'mark as maintenance',
-    ])
+  it('a failed self-test earns nothing until a target exists (#229)', () => {
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([])
   })
 
-  it('a silent canary is not offered a probe it cannot answer', () => {
-    const labels = canaryActions(sceneInput('silent')).map((a) => a.label)
-    expect(labels).not.toContain('run the self-test now ▸')
-    expect(labels).toEqual(['lookback in mikroview ▸', 'mark as maintenance'])
+  it('a silent canary is offered nothing (#229)', () => {
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual([])
   })
 
-  it('a live visit leads with the lookback and the raw lines', () => {
+  it('a live visit offers neither lookback nor raw lines (#229)', () => {
     const actions = canaryActions(sceneInput('night'))
-    expect(actions.map((a) => a.label)).toEqual(['lookback in mikroview ▸', 'raw lines ▸', 'run the self-test now'])
-    expect(actions[2].quiet).toBe(true)
+    expect(actions.map((a) => a.label)).toEqual([])
+  })
+})
+
+describe('canaryActions: write pills are hidden until their routes exist (#228)', () => {
+  const scenes = ['quiet', 'failed', 'silent', 'night', 'pending', 'agentOutOfDate', 'upgradeInProgress'] as const
+
+  it.each(scenes)('%s offers neither the self-test nor maintenance pill', (scene) => {
+    const labels = canaryActions(sceneInput(scene)).map((a) => a.label)
+    expect(labels.filter((l) => /run the self-test now/.test(l))).toEqual([])
+    expect(labels.filter((l) => /mark as maintenance/.test(l))).toEqual([])
+  })
+
+  it('keeps no inert read-only pills (#229)', () => {
+    expect(canaryActions(sceneInput('quiet')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('failed')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('silent')).map((a) => a.label)).toEqual([])
+    expect(canaryActions(sceneInput('night')).map((a) => a.label)).toEqual([])
   })
 })
 

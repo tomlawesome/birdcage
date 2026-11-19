@@ -53,7 +53,7 @@ allow-licenses:
 # Replaces the unread allow-dependencies-licenses: [] key, a leftover of
 # the retired GitHub dependency-review licence check that nothing parsed.
 allow-go-module-licenses:
-  - github.com/tomlawesome/gauntlet@v0.4.2 Apache-2.0
+  - github.com/tomlawesome/gauntlet@v0.4.3 Apache-2.0
   # gauntlet itself.
   - github.com/coreos/go-oidc/v3/oidc@v3.21.0 Apache-2.0
   # gauntlet/oidc.
@@ -76,10 +76,11 @@ allow-go-module-licenses:
 # matched by a literal `^allow-licenses:` in licence-check.sh's awk, and
 # this key must never collide with it.
 #
-# The frontend has no runtime `dependencies` -- all direct entries are
-# devDependencies -- but Svelte compiles its runtime helpers into the
-# built bundle regardless, so this list covers the whole installed tree,
-# not just what a `dependencies`-only reading would call shipped.
+# The frontend has one runtime dependency (qrcode-generator, #8); the
+# other direct entries are devDependencies, but Svelte compiles its
+# runtime helpers into the built bundle regardless, so this list covers
+# the whole installed tree, not just what a `dependencies`-only reading
+# would call shipped.
 #
 # Same house rule as the Go list above: only the licences actually in
 # use, not a general list of acceptable ones. A dependency arriving under
