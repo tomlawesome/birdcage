@@ -85,7 +85,7 @@ of it by this issue.
 
 | check | why it is here |
 | --- | --- |
-| `lint:go` | Go source changes on nearly every branch. Also runs gosec (#199; a high count above its ceiling fails the job) and dupl (#200; duplicated blocks of 150 tokens or more, test files excluded; report-only for now: the count is printed and kept, only a broken self-test or failed run fails the job). |
+| `lint:go` | Go source changes on nearly every branch. Also runs gosec (#199; a high count above its ceiling fails the job) and dupl (#200; duplicated blocks of 150 tokens or more, test files excluded; blocks: a count above the go-dupl ceiling (0) in supply-chain/scan-ceilings.yml fails the job). |
 | `lint:licences` | A dependency can arrive on any branch; a licence found late is found after it shipped. |
 | `lint:ci` | Guards this arrangement. Cheapest job in the pipeline. |
 | `lint:agent-deps` | ADR-0008 decision 4 -- no server package may reach the agent image. Broken by an ordinary import. |
