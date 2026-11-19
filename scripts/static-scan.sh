@@ -106,10 +106,13 @@ run_gosec() {
     "low $(ceiling count --report "$reports/gosec.json" --format golangci-json --severity low)"
   # Blocks at high. Medium and low are printed above, and gosec-medium in the
   # ceilings file is there for visibility only: never checked.
+  # Report-only forgives the ceiling check alone: a broken self-test or a
+  # failed run above has already set status and must still fail the job.
+  local before="$status"
   gate gosec-high "$reports/gosec.json" golangci-json high
-  if [ "$report_only" = 1 ] && [ "$status" -ne 0 ]; then
-    echo "static-scan: report-only: not failing the job (#199 step 1)" >&2
-    status=0
+  if [ "$report_only" = 1 ] && [ "$status" -ne "$before" ]; then
+    echo "static-scan: report-only: not failing the job on the ceiling (#199 step 1)" >&2
+    status="$before"
   fi
 }
 
