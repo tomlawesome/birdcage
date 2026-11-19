@@ -376,10 +376,10 @@ lint:go:
     # artifact. Blocks (#199): a high count above its ceiling in
     # supply-chain/scan-ceilings.yml fails the job.
     - scripts/static-scan.sh gosec
-    # dupl (#200), same shape, report-only for now: the count is printed and
-    # kept, but a count off its go-dupl ceiling does not fail the job yet. A
-    # broken self-test or a failed run does.
-    - scripts/static-scan.sh dupl --report-only
+    # dupl (#200), same shape. Blocks: a count above the go-dupl ceiling (0)
+    # in supply-chain/scan-ceilings.yml fails the job, as does a broken
+    # self-test or a failed run.
+    - scripts/static-scan.sh dupl
   artifacts:
     paths: [static-scan-reports/]
     expire_in: 30 days
