@@ -1,22 +1,47 @@
 #!/usr/bin/env python3
 """CI guard: no real personal names or emails in tracked files (#192).
 
-Tokenises every tracked text file (and every tracked path), hashes each
-lowercase word with a salt and fails if any hash is in the committed list.
-Only hashes are committed, never the words. Output gives counts and paths,
-never the matched word.
+Tokenises every tracked text file (and every tracked path), computes a keyed
+hash (HMAC-SHA256, RFC 2104) of each lowercase word and fails if any hash is
+in the committed list. Only keyed hashes are committed, never the words; the
+words are unrecoverable from the list without the key, which is never
+committed. Output gives counts and paths, never the matched word or the key.
+
+The key is the raw bytes of a file (32 random bytes), named by --key-file,
+else NO_REAL_NAMES_KEY_FILE (CI: a masked file variable), else
+~/.config/birdcage/no-real-names.key. It is never read from argv. A missing
+key, an old salted hashes file or a list with no entries is a config error:
+the guard fails closed rather than pass on an empty list.
+
+The hashes file carries one "fingerprint: <64 hex>" line, HMAC-SHA256(key,
+b"no-real-names key check"). A wrong key (say a CI file variable with an
+extra trailing newline) would match no hash and pass every tree, so a
+missing, malformed, duplicated or mismatched key-check is a config error,
+checked before the no-entries check. Key bytes are used exactly as stored.
+--key-check prints that line for the key in use and nothing else.
+
+--add reads one word from the terminal (no echo) or stdin, never argv, and
+prints only its keyed hash, the line to append to the hashes file.
 
 --history scans every blob reachable from any ref (all branches and tags,
 not only the checked-out tree) and reports path and commit for each hit,
 at every path the blob appears at that is not allowlisted.
 Files over MAX_BYTES are skipped and counted, never read.
 
-usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--history]
+usage: no-real-names.py [--root DIR] [--hashes FILE] [--allow FILE] [--key-file FILE]
+                        [--history | --add | --key-check]
 Exit 0 clean, 1 matches found, 2 usage or config error.
 """
-import argparse, hashlib, os, re, subprocess, sys, threading
+import argparse, getpass, hashlib, hmac, os, re, subprocess, sys, threading
 
 MAX_BYTES = 5 * 1024 * 1024
+HEADER = "hmac-sha256"
+KEY_ENV = "NO_REAL_NAMES_KEY_FILE"
+DEFAULT_KEY = os.path.join("~", ".config", "birdcage", "no-real-names.key")
+MIN_KEY_BYTES = 16
+HEX64 = re.compile(r"[0-9a-f]{64}")
+KEY_CHECK = "fingerprint:"
+KEY_CHECK_MSG = b"no-real-names key check"
 
 LOCK_NAMES = {"go.sum", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
               "poetry.lock", "Cargo.lock", "uv.lock"}
@@ -30,23 +55,86 @@ def config_error(msg):
 
 
 def load_hashes(path):
-    salt, hashes = None, set()
+    """(set of keyed hashes, key-check hex) from path. The first non-comment
+    line must be the format header; exactly one later line the key-check;
+    every other one a 64-hex entry. Line contents are never echoed, in case a
+    word was pasted in by mistake. The key-check and the no-entries rule are
+    enforced by verify_hashes, once the key is loaded."""
+    header, hashes, check = None, set(), None
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
-    except OSError as exc:
-        config_error(f"cannot read hashes file {path}: {exc.strerror}")
-    for raw in lines:
+    except (OSError, UnicodeDecodeError) as exc:
+        config_error(f"cannot read hashes file {path}: {getattr(exc, 'strerror', None) or exc}")
+    for n, raw in enumerate(lines, 1):
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         if line.startswith("salt:"):
-            salt = line[5:].strip()
-        else:
-            hashes.add(line.lower())
-    if salt is None:
-        config_error(f"hashes file {path} has no salt: line")
-    return salt, hashes
+            config_error(f"hashes file {path} is in the old salted format (line {n}); it is "
+                         f"no longer accepted: regenerate each entry with --add under the key "
+                         f"and start the file with a '{HEADER}' line")
+        if header is None:
+            if line != HEADER:
+                config_error(f"hashes file {path} does not start with the '{HEADER}' header line")
+            header = line
+            continue
+        if line.startswith(KEY_CHECK):
+            value = line[len(KEY_CHECK):].strip().lower()
+            if check is not None:
+                config_error(f"hashes file {path} line {n}: more than one key-check line")
+            if not HEX64.fullmatch(value):
+                config_error(f"hashes file {path} line {n}: the key-check value is not 64 hex;"
+                             f" regenerate it with --key-check")
+            check = value
+            continue
+        if not HEX64.fullmatch(line.lower()):
+            config_error(f"hashes file {path} line {n} is not a 64-hex keyed hash")
+        hashes.add(line.lower())
+    if header is None:
+        config_error(f"hashes file {path} does not start with the '{HEADER}' header line")
+    if check is None:
+        config_error(f"hashes file {path} has no key-check line; without it a wrong key would"
+                     f" pass every tree. Add the line --key-check prints for the right key")
+    return hashes, check
+
+
+def key_check(key):
+    return f"{KEY_CHECK} {digest_bytes(key, KEY_CHECK_MSG)}"
+
+
+def verify_hashes(path, hashes, check, key):
+    """Fail closed on a key that does not match the file's key-check, then on
+    an empty list (in that order)."""
+    if not hmac.compare_digest(digest_bytes(key, KEY_CHECK_MSG), check):
+        config_error(f"key check failed: the key in use does not match the key-check line in"
+                     f" {path}, so no hash could match. Use the key the list was made with"
+                     f" (bytes exactly as stored: a trailing newline counts)")
+    if not hashes:
+        config_error(f"hashes file {path} has no entries; add them with --add, since an "
+                     f"empty list would pass every tree")
+
+
+def load_key(flag):
+    """The key bytes from --key-file, else $NO_REAL_NAMES_KEY_FILE, else the
+    default path. The key is never printed; a missing or short key fails closed."""
+    if flag:
+        path, source = flag, "--key-file"
+    elif os.environ.get(KEY_ENV):
+        path, source = os.environ[KEY_ENV], KEY_ENV
+    else:
+        path, source = os.path.expanduser(DEFAULT_KEY), "default key path"
+    try:
+        with open(path, "rb") as fh:
+            key = fh.read(4096)
+    except OSError as exc:
+        config_error(f"no key: cannot read key file {path} ({source}): {exc.strerror}. "
+                     f"Set {KEY_ENV} or --key-file to the key file (CI: the masked file "
+                     f"variable), or create {DEFAULT_KEY}; the list cannot be checked without it")
+    if len(key) < MIN_KEY_BYTES:
+        config_error(f"key file {path} ({source}) is shorter than {MIN_KEY_BYTES} bytes; "
+                     f"the key must be 32 random bytes")
+    return key
 
 
 def load_allow(path):
@@ -68,14 +156,44 @@ def words(text):
     return seen
 
 
-def digest(salt, word):
-    return hashlib.sha256((salt + word).encode("utf-8")).hexdigest()
+def digest_bytes(key, data):
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
 
 
-def text_hit(salt, hashes, data):
+def digest(key, word):
+    return digest_bytes(key, word.encode("utf-8"))
+
+
+def read_word():
+    """One word from the terminal without echo, or the first line of stdin."""
+    try:
+        if sys.stdin.isatty():
+            word = getpass.getpass("word (not echoed): ")
+        else:
+            word = sys.stdin.readline()
+    except (EOFError, KeyboardInterrupt):
+        config_error("--add: no word read")
+    word = word.strip().lower()
+    if not word:
+        config_error("--add: no word read from the terminal or stdin")
+    if not WORD.fullmatch(word):
+        config_error("--add: the word must be one run of letters and digits, optionally dotted"
+                     " (as the tokeniser splits text)")
+    return word
+
+
+def reject_argv_word(argv):
+    """--add never takes its word from argv (shell history, process lists):
+    refuse without echoing whatever was given."""
+    if any(arg.startswith("--add=") for arg in argv):
+        config_error("--add takes no value: the word is read from the terminal or stdin,"
+                     " never from the command line")
+
+
+def text_hit(key, hashes, data):
     if b"\0" in data[:8192]:
         return False
-    return any(digest(salt, w) in hashes for w in words(data.decode("utf-8", "replace")))
+    return any(digest(key, w) in hashes for w in words(data.decode("utf-8", "replace")))
 
 
 def path_skipped(rel, allow):
@@ -90,13 +208,13 @@ def git(root, *args):
     return r.stdout
 
 
-def scan_tree(root, salt, hashes, allow):
+def scan_tree(root, key, hashes, allow):
     files = git(root, "ls-files", "-z").decode("utf-8", "replace").split("\0")
     bad, big = [], 0
     for rel in filter(None, files):
         if path_skipped(rel, allow):
             continue
-        hit = any(digest(salt, w) in hashes for w in words(rel))
+        hit = any(digest(key, w) in hashes for w in words(rel))
         full = os.path.join(root, rel)
         if (not hit and os.path.basename(rel) not in LOCK_NAMES
                 and os.path.isfile(full) and not os.path.islink(full)):
@@ -104,7 +222,7 @@ def scan_tree(root, salt, hashes, allow):
                 big += 1
                 continue
             with open(full, "rb") as fh:
-                hit = text_hit(salt, hashes, fh.read(MAX_BYTES + 1))
+                hit = text_hit(key, hashes, fh.read(MAX_BYTES + 1))
         if hit:
             bad.append(rel)
     return bad, big
@@ -169,7 +287,7 @@ def read_blobs(root, shas):
     p.wait()
 
 
-def scan_history(root, salt, hashes, allow):
+def scan_history(root, key, hashes, allow):
     """Each blob's content is read once; every path it appears at that is not
     allowlisted is checked, so content first committed at an allowlisted path
     and later copied elsewhere is still reported, at the later path."""
@@ -179,7 +297,7 @@ def scan_history(root, salt, hashes, allow):
         for path, commit in paths.items():
             if path_skipped(path, allow):
                 continue
-            if any(digest(salt, w) in hashes for w in words(path)):
+            if any(digest(key, w) in hashes for w in words(path)):
                 bad.append((path, commit))
             elif os.path.basename(path) not in LOCK_NAMES:
                 content_paths.append((path, commit))
@@ -188,26 +306,48 @@ def scan_history(root, salt, hashes, allow):
     for sha, data in read_blobs(root, list(todo)):
         if data is None:
             big += 1
-        elif text_hit(salt, hashes, data):
+        elif text_hit(key, hashes, data):
             bad.extend(todo[sha])
     return bad, big
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    argv = sys.argv[1:]
+    reject_argv_word(argv)
+    ap = argparse.ArgumentParser(allow_abbrev=False)
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--root", default=os.path.join(here, ".."))
     ap.add_argument("--hashes", default=os.path.join(here, "no-real-names.hashes"))
     ap.add_argument("--allow", default=os.path.join(here, "no-real-names.allow"))
-    ap.add_argument("--history", action="store_true",
-                    help="scan every blob reachable from any ref, not just the tree")
-    a = ap.parse_args()
+    ap.add_argument("--key-file", help=f"HMAC key file (default: ${KEY_ENV}, else {DEFAULT_KEY})")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--history", action="store_true",
+                      help="scan every blob reachable from any ref, not just the tree")
+    mode.add_argument("--add", action="store_true",
+                      help="read one word from the terminal or stdin and print its keyed hash")
+    mode.add_argument("--key-check", action="store_true",
+                      help="print the key-check line for the key in use")
+    a, extra = ap.parse_known_args(argv)
+    if extra:
+        if a.add:
+            config_error("--add takes no value: the word is read from the terminal or stdin,"
+                         " never from the command line")
+        ap.error("unrecognized arguments")
+    if a.add:
+        key = load_key(a.key_file)
+        print(digest(key, read_word()))
+        return 0
+    if a.key_check:
+        print(key_check(load_key(a.key_file)))
+        return 0
     root = os.path.abspath(a.root)
-    salt, hashes = load_hashes(a.hashes)
+    hashes, check = load_hashes(a.hashes)
+    key = load_key(a.key_file)
+    verify_hashes(a.hashes, hashes, check, key)
     allow = load_allow(a.allow)
     skipped = lambda n: f" ({n} file(s) over {MAX_BYTES // (1024 * 1024)} MB skipped)" if n else ""
     if a.history:
-        bad, big = scan_history(root, salt, hashes, allow)
+        bad, big = scan_history(root, key, hashes, allow)
         if bad:
             print(f"no-real-names: {len(bad)} blob(s) in history contain a hashed word"
                   f"{skipped(big)}:")
@@ -217,7 +357,7 @@ def main():
             return 1
         print(f"no-real-names: history clean{skipped(big)}")
         return 0
-    bad, big = scan_tree(root, salt, hashes, allow)
+    bad, big = scan_tree(root, key, hashes, allow)
     if bad:
         print(f"no-real-names: {len(bad)} tracked file(s) contain a hashed word{skipped(big)}:")
         for rel in bad:

@@ -302,20 +302,12 @@ func TestOversizedHeadersGetNoRedirect(t *testing.T) {
 	}
 }
 
-func TestConcurrencyCapClosesExcessConnections(t *testing.T) {
+func TestConcurrencyCapHeldConnectionsStayUntilTimeoutAndFreedSlotRedirects(t *testing.T) {
 	setLimits(t, 5*time.Second, 2)
 	addr, _, _ := serveRaw(t, allowOnly(allowedHost))
 
 	held := []net.Conn{dial(t, addr), dial(t, addr)}
 	time.Sleep(150 * time.Millisecond) // let both be taken into the sniff
-
-	extra := dial(t, addr)
-	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := extra.Read(make([]byte, 1)); err == nil {
-		t.Fatal("excess connection got data, want it closed")
-	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		t.Fatal("excess connection still open past the cap, want it closed")
-	}
 
 	// The held ones are still waiting, not closed.
 	for i, h := range held {
@@ -333,6 +325,97 @@ func TestConcurrencyCapClosesExcessConnections(t *testing.T) {
 	resp := roundTripPlain(t, addr, "GET / HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n")
 	if resp.StatusCode != http.StatusPermanentRedirect {
 		t.Errorf("after a slot freed, status = %d, want 308", resp.StatusCode)
+	}
+}
+
+// serveTLSBehindSniff runs a real TLS http.Server (200 handler) on a
+// sniffing listener and returns its address and a client that trusts it.
+func serveTLSBehindSniff(t *testing.T, readHeaderTimeout time.Duration) (string, *http.Client) {
+	t.Helper()
+	cert := selfSigned(t)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{
+		ReadHeaderTimeout: readHeaderTimeout,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "hello over tls")
+		}),
+	}
+	tl := tls.NewListener(Listener(inner, discardLog(), allowOnly(allowedHost)), &tls.Config{Certificates: []tls.Certificate{cert}})
+	go func() { _ = srv.Serve(tl) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	pool := x509.NewCertPool()
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+	pool.AddCert(leaf)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}, DisableKeepAlives: true}
+	t.Cleanup(tr.CloseIdleConnections)
+	return inner.Addr().String(), &http.Client{Timeout: 5 * time.Second, Transport: tr}
+}
+
+func TestFullSniffCapStillServesTLS(t *testing.T) {
+	setLimits(t, 5*time.Second, 2)
+	addr, client := serveTLSBehindSniff(t, time.Second)
+
+	_ = []net.Conn{dial(t, addr), dial(t, addr)} // both slots held by silent clients
+	time.Sleep(150 * time.Millisecond)
+
+	resp, err := client.Get("https://" + addr + "/")
+	if err != nil {
+		t.Fatalf("TLS request with the sniff cap full: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestFullSniffCapPlainVisitorGetsServersOwn400NotRedirect(t *testing.T) {
+	setLimits(t, 5*time.Second, 2)
+	addr, _ := serveTLSBehindSniff(t, time.Second)
+
+	_ = []net.Conn{dial(t, addr), dial(t, addr)}
+	time.Sleep(150 * time.Millisecond)
+
+	c := dial(t, addr)
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: "+allowedHost+"\r\n\r\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatalf("read response: %v (connection closed or silent, want the TLS server's 400)", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 from the TLS server", resp.StatusCode)
+	}
+	if l := resp.Header.Get("Location"); l != "" {
+		t.Errorf("Location = %q, want none (no redirect while the cap is full)", l)
+	}
+}
+
+func TestUnsniffedIdleConnectionIsClosedByServerHandshakeTimeout(t *testing.T) {
+	setLimits(t, 5*time.Second, 2)
+	addr, _ := serveTLSBehindSniff(t, 500*time.Millisecond)
+
+	_ = []net.Conn{dial(t, addr), dial(t, addr)}
+	time.Sleep(150 * time.Millisecond)
+
+	c := dial(t, addr)
+	start := time.Now()
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err := c.Read(make([]byte, 1))
+	var ne net.Error
+	if err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+		t.Fatalf("read = %v, want the connection closed by the server's handshake timeout", err)
+	}
+	// Closed at once means refused by the sniff cap; the server's 500ms
+	// handshake deadline is what should bound it.
+	if d := time.Since(start); d < 300*time.Millisecond {
+		t.Errorf("closed after %s, want about the server's 500ms handshake timeout (closed at once means refused, not served)", d)
 	}
 }
 

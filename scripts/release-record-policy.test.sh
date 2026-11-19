@@ -39,6 +39,8 @@ printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Thing.\n' > "$b/wt/CHAN
 printf 'version: v0.1.0\n' > "$b/wt/docs/releases/v0.1.0.md"
 printf 'template\n' > "$b/wt/docs/releases/TEMPLATE.md"
 echo "readme" > "$b/wt/README.md"
+mkdir -p "$b/wt/src"
+printf 'line one\nline two\nline three\nline four\nline five\nline six\nline seven\nline eight\n' > "$b/wt/src/tool.go"
 git -C "$b/wt" add . && git -C "$b/wt" commit -q -m base
 git -C "$b/wt" branch dev && git -C "$b/wt" push -q origin main dev 2>/dev/null
 git -C "$b/wt" fetch -q origin
@@ -84,6 +86,23 @@ case_run "TEMPLATE.md changed: refused" 1 \
   release/v0.2.0 dev docs/releases/v0.2.0.md docs/releases/TEMPLATE.md
 case_run "a file nested under docs/releases/: refused" 1 \
   release/v0.2.0 dev docs/releases/v0.2.0.md/extra.md
+
+# A rename onto the record hides the source file's deletion from a plain
+# `git diff --name-only` (rename detection lists only the new name). The
+# source file's removal is a change outside CHANGELOG.md and the record, so
+# the branch must be refused.
+n=$((n + 1)); c="$work/c$n"; cp -a "$b" "$c"
+git -C "$c/wt" remote set-url origin "$c/origin.git"
+git -C "$c/wt" checkout -q -b release/v0.2.0 origin/dev
+git -C "$c/wt" mv src/tool.go docs/releases/v0.2.0.md
+echo "small edit" >> "$c/wt/docs/releases/v0.2.0.md"
+git -C "$c/wt" add -A && git -C "$c/wt" commit -q -m "rename onto the record"
+rn="$(git -C "$c/wt" diff -M --name-status origin/dev...HEAD | cut -c1)"
+code=0; out="$(cd "$c/wt" && CI_MERGE_REQUEST_SOURCE_BRANCH_NAME=release/v0.2.0 \
+  CI_MERGE_REQUEST_TARGET_BRANCH_NAME=dev timeout 60 python3 "$script" 2>&1)" || code=$?
+if [ "$rn" != R ]; then echo "FAIL rename fixture is not detected as a rename ($rn)"; fail=$((fail + 1))
+elif [ "$code" = 1 ]; then echo "ok   a file renamed onto the record (hidden deletion): refused"; pass=$((pass + 1))
+else echo "FAIL a file renamed onto the record (hidden deletion): exit $code (want 1)"; printf '%s\n' "$out" | sed 's/^/       /'; fail=$((fail + 1)); fi
 
 # Origin's own dev moved on: the diff is against the merge base, so dev's
 # new commit is not counted as the branch's change.

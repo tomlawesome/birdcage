@@ -29,3 +29,5 @@ __pycache__/
 
 # Scanner reports written by scripts/static-scan.sh (kept as CI artifacts, #199).
 /static-scan-reports/
+# The no-real-names guard key (SEC-5); it lives outside the tree and is never committed.
+no-real-names.key
