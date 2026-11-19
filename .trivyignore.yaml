@@ -1,24 +1,22 @@
 # Trivy ignore list (Trivy v0.76.2 YAML format). Every entry needs a
 # statement (the reason) and an expired_at date; misconfigurations also name
-# the files they cover (checked by scripts/ci-config.test.sh).
+# the files they cover (checked by scripts/ci-config.test.sh). The twisted
+# IDs name no path: they are twisted-only, and must also match inside the
+# opencanary image that scan:trivy-images reads.
 # misconfigurations paths are relative to the scanned dir (lint:trivy-config
 # scans build/), so e2e-dns/Dockerfile is build/e2e-dns/Dockerfile.
 
 vulnerabilities:
   - id: CVE-2026-115775
-    paths: [build/opencanary/requirements.txt]
     statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
     expired_at: 2026-12-19
   - id: CVE-2026-115776
-    paths: [build/opencanary/requirements.txt]
     statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
     expired_at: 2026-12-19
   - id: CVE-2026-115778
-    paths: [build/opencanary/requirements.txt]
     statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
     expired_at: 2026-12-19
   - id: GHSA-vpp8-g58w-m8mp
-    paths: [build/opencanary/requirements.txt]
     statement: "twisted 26.4.0: fixed only in 26.10.0rc1; we do not pin release candidates. Bump when 26.10.0 ships (#236)."
     expired_at: 2026-12-19
 
