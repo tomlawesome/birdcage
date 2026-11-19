@@ -50,6 +50,7 @@ scripts/release-candidate.sh
 # Code scanning (#199, slice 1): the scanner configs and the ceiling ratchet
 # decide whether a change may merge, so editing them moves the digest.
 scripts/scan-ceiling.py
+scripts/static-scan.sh
 supply-chain/scan-ceilings.yml
 .golangci.yml
 ruff.toml
