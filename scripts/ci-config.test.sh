@@ -342,33 +342,68 @@ tracked="$(git -C "$repo_root" ls-files | grep -E '(^|/)(trivy-db|db\.tar\.gz)|\
 check "no Trivy database path is tracked in git (trivy-db, db.tar.gz, *.db)" \
   "$(tf [ -z "$tracked" ])" "tracked: $tracked"
 
-# .trivyignore: every entry has a reason comment and an expiry. Passes when
-# the file is absent.
-ignore="$repo_root/.trivyignore"
-if [ ! -f "$ignore" ]; then
-  check ".trivyignore entries carry a reason and an expiry (file absent)" 0 ""
-else
-  bad="$(python3 -I - "$ignore" <<'PY'
-import re, sys
-prev_comment = False
-for n, raw in enumerate(open(sys.argv[1]), 1):
-    t = raw.strip()
-    if not t:
-        prev_comment = False
+# Trivy's ignore list is .trivyignore.yaml only (#199 triage): the YAML form
+# can scope an entry to paths, which the plain .trivyignore cannot, so a
+# misconfiguration accepted for one Dockerfile does not hide it in another.
+# Every entry has a statement (the reason) and an expired_at date; every
+# misconfiguration entry names the files it covers; every trivy command
+# passes it with --ignorefile.
+check "there is no plain .trivyignore (the YAML file is the only ignore list)" \
+  "$(tf [ ! -e "$repo_root/.trivyignore" ])" "found $repo_root/.trivyignore"
+ignres="$(python3 -I - "$repo_root" "$ci" <<'PY'
+import datetime, os, re, sys, yaml
+root, ci = sys.argv[1], sys.argv[2]
+path = os.path.join(root, ".trivyignore.yaml")
+if not os.path.isfile(path):
+    print("missing")
+doc = (yaml.safe_load(open(path)) or {}) if os.path.isfile(path) else {}
+for sec in ("vulnerabilities", "misconfigurations", "secrets", "licenses"):
+    for i, e in enumerate(doc.get(sec) or []):
+        tag = "%s[%d] %s" % (sec, i, e.get("id"))
+        if not str(e.get("statement") or "").strip():
+            print("bad=%s: no statement" % tag)
+        exp = e.get("expired_at")
+        if not isinstance(exp, (datetime.date, datetime.datetime)) and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(exp or "")):
+            print("bad=%s: no expired_at date" % tag)
+        if sec == "misconfigurations":
+            paths = e.get("paths") or []
+            if not paths:
+                print("bad=%s: no paths" % tag)
+            for q in paths:
+                if not os.path.isfile(os.path.join(root, "build", q)) and not os.path.isfile(os.path.join(root, q)):
+                    print("bad=%s: path %s does not exist" % (tag, q))
+                print("mis=%s %s" % (e.get("id"), os.path.normpath(q)))
+        if sec == "vulnerabilities":
+            print("vuln=%s" % e.get("id"))
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)
+cfg = yaml.load(open(ci), Loader=L)
+for name, job in cfg.items():
+    if not isinstance(job, dict):
         continue
-    if t.startswith("#"):
-        prev_comment = True
-        continue
-    reason = prev_comment or "#" in t
-    if not reason:
-        print(f"line {n}: no reason comment")
-    if not re.search(r"exp:\d{4}-\d{2}-\d{2}", t):
-        print(f"line {n}: no exp:YYYY-MM-DD expiry")
-    prev_comment = False
+    for l in job.get("script") or []:
+        if not isinstance(l, str):
+            continue
+        for line in l.splitlines():
+            if re.search(r"\btrivy\s+(config|fs|image)\b", line) and "--ignorefile .trivyignore.yaml" not in line:
+                print("noignore=%s" % name)
 PY
-)"
-  check ".trivyignore entries carry a reason and an expiry" "$(tf [ -z "$bad" ])" "$bad"
-fi
+)" || { echo "FAIL could not read .trivyignore.yaml"; exit 1; }
+check ".trivyignore.yaml exists" "$(grep -qx missing <<< "$ignres" && echo 1 || echo 0)" "missing"
+check ".trivyignore.yaml entries carry a statement, an expiry, and (misconfigurations) existing paths" \
+  "$(tf [ -z "$(grep '^bad=' <<< "$ignres" || true)" ])" "$({ grep '^bad=' <<< "$ignres" || true; } | tr '\n' ' ')"
+check "every trivy command passes --ignorefile .trivyignore.yaml" \
+  "$(tf [ -z "$(grep '^noignore=' <<< "$ignres" || true)" ])" "$({ grep '^noignore=' <<< "$ignres" || true; } | sort -u | tr '\n' ' ')"
+for id in CVE-2026-115775 CVE-2026-115776 CVE-2026-115778 GHSA-vpp8-g58w-m8mp; do
+  check "twisted $id stays ignored until 26.10.0 (#236)" "$(grep -qx "vuln=$id" <<< "$ignres"; echo $?)" "not in vulnerabilities"
+done
+# DS-0002 (image user is root) is accepted for exactly these six files: the
+# five test-only e2e images and smb-lure, whose Dockerfile documents why smbd
+# must start as root and how root is contained. Never the birdcage image.
+want="$(printf 'mis=DS-0002 %s/Dockerfile\n' e2e-dns e2e-mail e2e-samba e2e-smbclient e2e-snmp smb-lure | sort)"
+got="$({ grep '^mis=DS-0002 ' <<< "$ignres" || true; } | sed 's#^mis=DS-0002 build/#mis=DS-0002 #' | sort)"
+check "DS-0002 is ignored for exactly the five e2e images and smb-lure" "$(tf [ "$want" = "$got" ])" "got: $(tr '\n' ' ' <<< "$got")"
 
 # 7. Inventory and staleness (#199 item 3): Trivy has a row like gitleaks, and
 #    scripts/staleness-check.py reads the pin the way it reads the other ensure
