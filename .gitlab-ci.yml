@@ -487,7 +487,9 @@ lint:scripts:
     # where curl happens to exist.
     # git: scripts/release-candidate.test.sh builds merge shapes in a
     # scratch repository.
-    - apk add --no-cache bash curl git >/dev/null
+    # xz: scripts/ensure-shellcheck.test.sh packs and unpacks .tar.xz
+    # fixtures, as the real shellcheck release is .tar.xz (#199).
+    - apk add --no-cache bash curl git xz >/dev/null
     - pip install --quiet pyyaml
   script:
     - |
