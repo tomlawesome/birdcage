@@ -368,7 +368,18 @@ lint:go:
     # Built from source with the image's Go: the prebuilt binary is built
     # with an older Go and refuses go.mod's `go 1.27.4` directive.
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
-    - golangci-lint run ./...
+    # .golangci.yml lists the linters; gosec (#199) is run separately below.
+    - golangci-lint run --disable gosec ./...
+    # gosec, inside the same golangci-lint: its self-test on the planted module
+    # under scripts/scan-fixtures/gosec, then the real run, report kept as an
+    # artifact. Report-only for now (#199 step 1): the high count goes to the
+    # log and is checked against the ceiling in supply-chain/scan-ceilings.yml,
+    # but a count above it does not fail the job yet.
+    - scripts/static-scan.sh gosec --report-only
+  artifacts:
+    paths: [static-scan-reports/]
+    expire_in: 30 days
+    when: always
 
 # Ported from licence.yml; the script is host independent by design.
 lint:licences:
@@ -476,7 +487,9 @@ lint:scripts:
     # where curl happens to exist.
     # git: scripts/release-candidate.test.sh builds merge shapes in a
     # scratch repository.
-    - apk add --no-cache bash curl git >/dev/null
+    # xz: scripts/ensure-shellcheck.test.sh packs and unpacks .tar.xz
+    # fixtures, as the real shellcheck release is .tar.xz (#199).
+    - apk add --no-cache bash curl git xz >/dev/null
     - pip install --quiet pyyaml
   script:
     - |
@@ -628,6 +641,44 @@ lint:gitleaks:
   script:
     - scripts/gitleaks-scan.test.sh
     - scripts/gitleaks-scan.sh .
+
+# Code scanning, slice 1 of #199: actionlint and zizmor over the workflow
+# files, ruff (security rules only, ruff.toml) over the tracked Python, and
+# shellcheck over the tracked shell scripts. gosec is in lint:go. Each tool is
+# installed from a SHA-256 pinned release by scripts/ensure-<tool>.sh and first
+# run on a planted defect under scripts/scan-fixtures/ (it must fail), then on
+# the tree; scripts/static-scan.sh is the one place the command lines live, and
+# it compares each finding count with supply-chain/scan-ceilings.yml
+# (scripts/scan-ceiling.py: a ceiling only goes down). The job holds no secret:
+# zizmor runs offline with no token. Reports are kept for 30 days.
+# allow_failure while the report-first step runs (#199 step 1); removed once a
+# pipeline on dev is green.
+# $GOLANG_IMAGE (Debian) has glibc for zizmor; xz for the shellcheck archive is
+# installed from the image's Debian repositories in before_script.
+# Not .fast_gate: it takes more than 40 seconds, so it does not run on the push
+# that lands on dev.
+lint:static-scan:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image: $GOLANG_IMAGE
+  <<: [*static_gate, *git_safe]
+  allow_failure: true
+  timeout: 2m
+  before_script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    # $GOLANG_IMAGE has no xz, which the shellcheck .tar.xz needs: the
+    # OS package from the image's own Debian repositories, nothing else.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends xz-utils
+    - scripts/ensure-actionlint.sh /usr/local/bin
+    - scripts/ensure-zizmor.sh /usr/local/bin
+    - scripts/ensure-ruff.sh /usr/local/bin
+    - scripts/ensure-shellcheck.sh /usr/local/bin
+  script:
+    - scripts/static-scan.sh
+  artifacts:
+    paths: [static-scan-reports/]
+    expire_in: 30 days
+    when: always
 
 # #139: nothing else in this file ever checks a pin against its own
 # upstream -- every version above is trusted to still be current for as

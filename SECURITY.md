@@ -413,6 +413,16 @@ image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
   protection on known provider tokens (see issue #28 for why those two
   do not already cover this).
 
+- **`lint:static-scan`** (issue #199) scans the repository's own code
+  with four released binaries, each checksum-pinned by
+  `scripts/ensure-<tool>.sh`: `actionlint` and `zizmor` (offline, no
+  token) over the GitHub workflow files, `ruff` (security rules only) over
+  the Python and `shellcheck` over the shell scripts. gosec runs inside
+  `lint:go`, as part of golangci-lint. Each tool first has to fail on a
+  planted defect under `scripts/scan-fixtures/`. Existing findings are
+  frozen in `supply-chain/scan-ceilings.yml`, a ceiling that only goes
+  down; a suppression always carries a reason.
+
 ## Recommended deployment hardening
 
 - Install birdcage's CA certificate (`BIRDCAGE_CA_DIR/ca.pem`) in your

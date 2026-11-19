@@ -1,0 +1,24 @@
+# ruff as a security scanner (#199), not a style gate: only the flake8-bandit
+# `S` rules plus RUF100, so a `# noqa` that no longer suppresses anything is
+# found. Formatting and style rules are a different decision.
+#
+# Run by scripts/static-scan.sh over `git ls-files '*.py'`. Counted against
+# the `ruff-S` ceiling in supply-chain/scan-ceilings.yml.
+#
+# Python of the CI image ($PYTHON_ALPINE_IMAGE in .gitlab-ci.yml).
+target-version = "py314"
+
+# The planted defects for the scanner self-tests live here and must never
+# count against the real scan.
+extend-exclude = ["scripts/scan-fixtures"]
+
+[lint]
+select = ["S", "RUF100"]
+# BLE001 and E402 are rules of linters this repository does not run. Telling
+# ruff they exist stops RUF100 calling the existing `# noqa: BLE001` and
+# `# noqa: E402` comments unused; they are kept for editors that run them.
+external = ["BLE001", "E402"]
+# Every suppression of an S rule is `# noqa: Sxxx  # reason` on its line.
+# Per-file ignores need a comment above each entry giving the reason; none
+# are needed today (no test is a Python file: the tests are shell scripts).
+[lint.per-file-ignores]

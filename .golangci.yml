@@ -1,0 +1,54 @@
+# golangci-lint configuration (shared with #200). `lint:go` runs it with the
+# version pinned in .gitlab-ci.yml.
+#
+# The linters are listed by name, with `default: none`, so an upgrade of
+# golangci-lint cannot change the set silently. The first five are the v2
+# defaults, copied from `golangci-lint linters` of the pinned version, so
+# writing this file changed nothing except the two additions after them:
+# gosec (#199, code scanning) and nolintlint.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - nolintlint
+  settings:
+    gosec:
+      # Report everything. Blocking is decided by scripts/static-scan.sh and
+      # scripts/scan-ceiling.py (severity high blocks), not here. No rule id
+      # is excluded in this file: a suppression is a per-line
+      # `//nolint:gosec // reason`.
+      severity: low
+      confidence: low
+    nolintlint:
+      # A bare or reasonless //nolint is itself a finding.
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+  exclusions:
+    rules:
+      # The only exclusion, and only for test files: G101 (hard-coded
+      # credentials) fires on fake passwords and tokens that tests need, and
+      # G404 (weak random) on seeded generators in fixtures. Neither means
+      # anything in a test. In non-test code both stay on.
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G101|G404"
+
+# scripts/scan-fixtures/gosec is a separate module (its own go.mod) with a
+# planted defect, so `./...` of this module never reaches it; the self-test in
+# scripts/static-scan.sh runs this same file inside that module and requires a
+# gosec finding. Nothing is excluded here.
+
+issues:
+  # The defaults cut the report at 50 issues per linter and 3 of a kind, which
+  # would make the gosec count below depend on the cut, not on the tree.
+  max-issues-per-linter: 0
+  max-same-issues: 0
