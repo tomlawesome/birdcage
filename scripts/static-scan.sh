@@ -7,6 +7,8 @@
 #                                     (job lint:static-scan)
 #   static-scan.sh gosec [--report-only]
 #                                     gosec through golangci-lint (job lint:go)
+#   static-scan.sh dupl [--report-only]
+#                                     dupl through golangci-lint (job lint:go, #200)
 #
 # Each tool first runs against its planted defect under scripts/scan-fixtures/
 # and must fail with the expected rule id: a scan that cannot fail proves
@@ -116,6 +118,31 @@ run_gosec() {
   fi
 }
 
+# --- dupl, inside golangci-lint (job lint:go, #200) -------------------------
+# The same shape as gosec: self-test on the planted module, the real run with
+# its report kept, then the count against the go-dupl ceiling. dupl findings
+# carry no severity, so every finding in the report counts.
+run_dupl() {
+  local report_only="$1" rc=0
+  command -v golangci-lint >/dev/null || { echo "static-scan: golangci-lint not found" >&2; return 127; }
+  mkdir -p "$reports"
+  selftest dupl "dupl" \
+    bash -c 'cd "$1/dupl" && golangci-lint run --config "$2/.golangci.yml" --enable-only dupl ./...' \
+    _ "$root/$fixtures" "$root"
+  golangci-lint run --enable-only dupl --output.json.path="$reports/dupl.json" ./... || rc=$?
+  if [ "$rc" -gt 1 ] || [ ! -s "$reports/dupl.json" ]; then
+    fail "dupl run failed (exit $rc, no report)"
+    return
+  fi
+  echo "static-scan: dupl findings: $(ceiling count --report "$reports/dupl.json" --format golangci-json)"
+  local before="$status"
+  gate go-dupl "$reports/dupl.json" golangci-json
+  if [ "$report_only" = 1 ] && [ "$status" -ne "$before" ]; then
+    echo "static-scan: report-only: not failing the job on the ceiling (first run of a new scanner)" >&2
+    status="$before"
+  fi
+}
+
 # --- the four static binaries (job lint:static-scan) --------------------------
 run_all() {
   local files
@@ -184,6 +211,7 @@ mode="${1:-all}"
 case "$mode" in
   all) run_all ;;
   gosec) run_gosec "$([ "${2:-}" = "--report-only" ] && echo 1 || echo 0)" ;;
-  *) echo "usage: static-scan.sh [all | gosec [--report-only]]" >&2; exit 2 ;;
+  dupl) run_dupl "$([ "${2:-}" = "--report-only" ] && echo 1 || echo 0)" ;;
+  *) echo "usage: static-scan.sh [all | gosec | dupl [--report-only]]" >&2; exit 2 ;;
 esac
 exit "$status"

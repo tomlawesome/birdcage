@@ -98,6 +98,8 @@ for line in doc["lint:go"].get("script") or []:
         for l in line.splitlines():
             if "static-scan.sh" in l:
                 print("go-scan-line=" + l.strip())
+            if "golangci-lint run" in l:
+                print("go-lint-line=" + l.strip())
 PY
 )" || { echo "FAIL could not read lint jobs from $ci"; exit 1; }
 
@@ -106,15 +108,28 @@ if grep -qx 'allow_failure=\(False\|false\)' <<< "$scan"; then
 else
   check "lint:static-scan is not allow_failure" 1 "$(grep '^allow_failure=' <<< "$scan")"
 fi
-if grep -q '^go-scan-line=.*--report-only' <<< "$scan"; then
-  check "lint:go does not pass --report-only to static-scan.sh" 1 "$(grep -- '--report-only' <<< "$scan")"
+if grep -q '^go-scan-line=.*gosec.*--report-only' <<< "$scan"; then
+  check "lint:go does not pass --report-only to the gosec scan" 1 "$(grep -- '--report-only' <<< "$scan")"
 else
-  check "lint:go does not pass --report-only to static-scan.sh" 0 ""
+  check "lint:go does not pass --report-only to the gosec scan" 0 ""
 fi
 if grep -qx 'go-scan-line=scripts/static-scan.sh gosec' <<< "$scan"; then
   check "lint:go runs scripts/static-scan.sh gosec" 0 ""
 else
   check "lint:go runs scripts/static-scan.sh gosec" 1 "no such script line"
+fi
+
+# 4. dupl (#200), report-only first: lint:go runs the dupl scan with
+#    --report-only, and its main golangci-lint line disables dupl (as gosec).
+if grep -qx 'go-scan-line=scripts/static-scan.sh dupl --report-only' <<< "$scan"; then
+  check "lint:go runs scripts/static-scan.sh dupl --report-only" 0 ""
+else
+  check "lint:go runs scripts/static-scan.sh dupl --report-only" 1 "no such script line"
+fi
+if grep '^go-lint-line=' <<< "$scan" | grep -v -- '--enable-only' | grep -q -- '--disable[ =][a-z,]*dupl'; then
+  check "lint:go main golangci-lint line disables dupl" 0 ""
+else
+  check "lint:go main golangci-lint line disables dupl" 1 "$(grep '^go-lint-line=' <<< "$scan")"
 fi
 
 echo "$pass passed, $fail failed"
