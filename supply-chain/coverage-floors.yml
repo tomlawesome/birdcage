@@ -465,5 +465,5 @@ floors:
   internal/stream: 100
   internal/term: 100
   internal/tlsconfig: 82
-  internal/tlssniff: 94      # 94.8% measured 2026-11-17 on golang:1.27.4, matching test:go (#212 added the package).
+  internal/tlssniff: 98      # 100% measured 2026-11-19 on golang:1.27.4 after eba0dee (#231); 2 below to allow for the timing-dependent backoff branch.
   web: 77
