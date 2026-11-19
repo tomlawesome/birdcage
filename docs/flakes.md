@@ -81,3 +81,11 @@ the whole account.
   average about 56) · SecureCookie_false: "POST .../api/auth/totp/confirm:
   context deadline exceeded"; the package took 607 s. Passed alone straight
   after (16 s) and in the full Postgres rerun on the same code.
+
+## portscan step 3, the rate cap holds (e2e:portscan)
+
+- 2026-11-18 · bafbcfe · pipeline 4681 (!154) / e2e:portscan, job 56419 ·
+  "alert count climbed to 2": the second alert came from another address on
+  the e2e network (5 ports), not the sweeper, and the helper counts alerts
+  per canary rather than per source. The product's per-source cooldown held.
+  Retried as job 56773, which passed.
