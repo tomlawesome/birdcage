@@ -21,7 +21,7 @@ import {
  * 'ok' a filled green dot, 'fault' a filled ink one, 'live' a hollow
  * ink ring for something still true, 'pend' the hollow dim ring for a
  * state that is neither (issue #47's pending). */
-export type ThreadDot = 'ok' | 'fault' | 'live' | 'pend'
+type ThreadDot = 'ok' | 'fault' | 'live' | 'pend'
 
 export interface ThreadRow {
   key: string

@@ -33,7 +33,7 @@ const LANE_VAR: Record<string, string> = {
   guest: 'var(--guest)',
 }
 
-export interface SilenceMark {
+interface SilenceMark {
   x: number
   labelX: number
   labelY: number
@@ -44,12 +44,12 @@ export interface SilenceMark {
   text: string
 }
 
-export interface SelfTestTick {
+interface SelfTestTick {
   x: number
   failed: boolean
 }
 
-export interface FailedRunLabel {
+interface FailedRunLabel {
   x: number
   /** The stem runs from just under the filled tick up to here. */
   stemTop: number
