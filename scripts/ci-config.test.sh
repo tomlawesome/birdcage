@@ -395,5 +395,55 @@ PY
 check "staleness-check.py reads TRIVY_VERSION from scripts/ensure-trivy.sh (0.76.2) into a tool:trivy row" \
   "$(grep -qE '^pin=v?0\.76\.2 rows=1 status=behind$' <<< "$pin"; echo $?)" "$pin"
 
+# 8. Registry credentials reach $CI_REGISTRY only (#199). Trivy v0.76.2 adds
+#    TRIVY_USERNAME/TRIVY_PASSWORD (--username/--password) as basic auth on
+#    every registry it contacts, including the vulnerability-DB registries
+#    (pkg/remote/remote.go authOptions, used by pkg/db Download), so those
+#    would carry the job token off this host. scan:trivy-images instead gets
+#    a DOCKER_CONFIG whose auths name $CI_REGISTRY only, and no Trivy job
+#    sets credentials in variables, before_script or flags.
+creds="$(python3 -I - "$ci" <<'PY'
+import re, sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+def lines(job, key):
+    out = []
+    for l in job.get(key) or []:
+        if isinstance(l, str):
+            out += l.splitlines()
+    return out
+for name, job in doc.items():
+    if not isinstance(job, dict):
+        continue
+    text = "\n".join(lines(job, "script") + lines(job, "before_script"))
+    if "trivy" not in text and name != "scan:trivy-images":
+        continue
+    for k in (job.get("variables") or {}):
+        if re.match(r"TRIVY_(USERNAME|PASSWORD|REGISTRY_TOKEN)$", k):
+            print("cred-var=%s:%s" % (name, k))
+    for l in lines(job, "before_script"):
+        if re.search(r"CI_REGISTRY_PASSWORD|CI_JOB_TOKEN|TRIVY_PASSWORD", l):
+            print("cred-before=%s" % name)
+    for l in lines(job, "script"):
+        if re.search(r"\btrivy\b.*(--username|--password|--registry-token)", l):
+            print("cred-flag=%s" % name)
+        if re.search(r"\bTRIVY_(USERNAME|PASSWORD|REGISTRY_TOKEN)=", l):
+            print("cred-inline=%s" % name)
+    if name == "scan:trivy-images":
+        s = "\n".join(lines(job, "script"))
+        print("docker-config=%s" % bool(re.search(r"DOCKER_CONFIG=", s)))
+        print("auths-ci-registry=%s" % bool(re.search(r"auths.*\$\{?CI_REGISTRY\}?", s, re.S)))
+PY
+)" || { echo "FAIL could not read Trivy jobs from $ci"; exit 1; }
+if grep -q '^cred-' <<< "$creds"; then
+  check "no Trivy job passes registry credentials by variable, before_script or flag" 1 "$(grep '^cred-' <<< "$creds" | tr '\n' ' ')"
+else
+  check "no Trivy job passes registry credentials by variable, before_script or flag" 0 ""
+fi
+check "scan:trivy-images sets DOCKER_CONFIG in its script" "$(grep -qx 'docker-config=True' <<< "$creds"; echo $?)" "$creds"
+check "scan:trivy-images's docker config auths name \$CI_REGISTRY" "$(grep -qx 'auths-ci-registry=True' <<< "$creds"; echo $?)" "$creds"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

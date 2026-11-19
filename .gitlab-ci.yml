@@ -759,6 +759,13 @@ lint:trivy-fs:
 # build:images logs in, never a personal token. No Docker daemon: trivy reads
 # the registry directly. Same gate as build:images, so it never waits on a job
 # that is skipped.
+# The credentials are scoped to $CI_REGISTRY through a private DOCKER_CONFIG
+# (auths for that host only; Trivy's keychain reads it), not TRIVY_USERNAME /
+# TRIVY_PASSWORD: those (--username/--password) are sent as basic auth to every
+# registry Trivy contacts, including its vulnerability-DB registries
+# (pkg/remote/remote.go authOptions), so the job token would leave this host.
+# The directory is mode 700, outside the cache and artifact paths, never
+# echoed, and removed by a trap on exit. base64 is coreutils in $GOLANG_IMAGE.
 scan:trivy-images:
   stage: test
   needs:
@@ -767,12 +774,19 @@ scan:trivy-images:
   <<: [*gate, *trivy_job]
   variables:
     TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivy-cache
-    TRIVY_USERNAME: $CI_REGISTRY_USER
-    TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
   script:
     - mkdir -p trivy-reports
     - |
       set -eu
+      DOCKER_CONFIG="$(mktemp -d)"
+      export DOCKER_CONFIG
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+      chmod 700 "$DOCKER_CONFIG"
+      (
+        umask 077
+        auth="$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')"
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$auth" > "$DOCKER_CONFIG/config.json"
+      )
       for name in birdcage mockingbird nightjar smb-lure holder opencanary; do
         upper="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
         ref_var="${upper}_BUILD_DIGEST"
