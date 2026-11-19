@@ -87,7 +87,7 @@ export function silences(input: CanaryPageInput): Silence[] {
  * and 'failed' are the run's own verdict; 'untested' is a service the
  * canary lists a port for that the run carried no target for at all --
  * ADR-0004 rule 3's third card, and not a fault. */
-export type SelfTestOutcome = 'passed' | 'failed' | 'untested'
+type SelfTestOutcome = 'passed' | 'failed' | 'untested'
 
 export interface SelfTestCard {
   service: string

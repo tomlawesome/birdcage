@@ -46,7 +46,7 @@ export function proveReply() {
   return jsonReply({ prove: 'passkey', passkeyOrigin: 'http://localhost' })
 }
 
-export interface Call {
+interface Call {
   method: string
   path: string
   headers: Record<string, string>

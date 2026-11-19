@@ -134,7 +134,105 @@ else
   check "lint:go main golangci-lint line disables dupl" 1 "$(grep '^go-lint-line=' <<< "$scan")"
 fi
 
-# 5. Trivy (#199 items 1-3, owner decision 66a): report-first jobs, installed
+# 5. knip runs sandboxed (#200, owner 57a): own package, locked install, no
+#    secrets, no cache push, nothing downstream depends on it.
+knip="$(python3 -I - "$ci" "$repo_root" <<'PY'
+import json, os, re, sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+root = sys.argv[2]
+job = doc.get("lint:knip")
+print("exists=%s" % (isinstance(job, dict)))
+job = job if isinstance(job, dict) else {}
+lines = []
+for line in job.get("script") or []:
+    if isinstance(line, str):
+        lines += [l.strip() for l in line.splitlines()]
+for l in lines:
+    if re.search(r"\bnpm\s+ci\b", l):
+        print("npm-ci=" + l)
+    if re.search(r"\bnpm\s+audit\s+signatures\b", l):
+        print("audit-sig=" + l)
+cache = job.get("cache")
+for c in (cache if isinstance(cache, list) else [cache] if cache else []):
+    if isinstance(c, dict) and c.get("policy", "pull-push") != "pull":
+        print("cache-push=%s" % c.get("policy", "pull-push"))
+for name, other in doc.items():
+    if name == "lint:knip" or not isinstance(other, dict):
+        continue
+    needs = other.get("needs") or []
+    for n in needs if isinstance(needs, list) else [needs]:
+        n = n.get("job") if isinstance(n, dict) else n
+        if n == "lint:knip":
+            print("needed-by=" + name)
+for k, v in (job.get("variables") or {}).items():
+    print("var=%s" % k)
+    if re.search(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|CERT", k, re.I) \
+            or isinstance(v, dict):
+        print("secret-var=%s" % k)
+
+def load(path):
+    try:
+        return json.load(open(os.path.join(root, path)))
+    except (OSError, ValueError):
+        return None
+kp = load("ci/knip/package.json")
+if kp is None:
+    print("knip-pkg=missing")
+else:
+    v = {**(kp.get("dependencies") or {}), **(kp.get("devDependencies") or {})}.get("knip")
+    print("knip-version=%s" % v)
+fp = load("frontend/package.json") or {}
+for sec in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+    if "knip" in (fp.get(sec) or {}):
+        print("knip-in-frontend=" + sec)
+PY
+)" || { echo "FAIL could not read lint:knip from $ci"; exit 1; }
+
+if grep -qx 'exists=True' <<< "$knip"; then
+  check "lint:knip exists" 0 ""
+else
+  check "lint:knip exists" 1 "no such job"
+fi
+if grep -q '^npm-ci=' <<< "$knip" && ! grep '^npm-ci=' <<< "$knip" | grep -qv -- '--ignore-scripts'; then
+  check "every npm ci in lint:knip has --ignore-scripts" 0 ""
+else
+  check "every npm ci in lint:knip has --ignore-scripts" 1 "$(grep '^npm-ci=' <<< "$knip" | grep -v -- '--ignore-scripts' || echo 'no npm ci line')"
+fi
+if grep -q '^audit-sig=' <<< "$knip"; then
+  check "lint:knip runs npm audit signatures" 0 ""
+else
+  check "lint:knip runs npm audit signatures" 1 "no such script line"
+fi
+if grep -q '^cache-push=' <<< "$knip"; then
+  check "lint:knip has no cache with a push policy" 1 "$(grep '^cache-push=' <<< "$knip")"
+else
+  check "lint:knip has no cache with a push policy" 0 ""
+fi
+if grep -q '^needed-by=' <<< "$knip"; then
+  check "no job needs lint:knip" 1 "$(grep '^needed-by=' <<< "$knip" | tr '\n' ' ')"
+else
+  check "no job needs lint:knip" 0 ""
+fi
+if grep -qx 'exists=True' <<< "$knip" && ! grep -q '^secret-var=' <<< "$knip"; then
+  check "lint:knip defines no secret variables" 0 ""
+else
+  check "lint:knip defines no secret variables" 1 "$(grep '^secret-var=' <<< "$knip" | tr '\n' ' ')job missing or has secret-like variables"
+fi
+if grep -qE '^knip-version=[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' <<< "$knip"; then
+  check "ci/knip/package.json pins knip exactly" 0 ""
+else
+  check "ci/knip/package.json pins knip exactly" 1 "$(grep '^knip-' <<< "$knip" | head -1)"
+fi
+if grep -q '^knip-in-frontend=' <<< "$knip"; then
+  check "knip is not in frontend/package.json" 1 "$(grep '^knip-in-frontend=' <<< "$knip")"
+else
+  check "knip is not in frontend/package.json" 0 ""
+fi
+
+# 6. Trivy (#199 items 1-3, owner decision 66a): report-first jobs, installed
 #    only through scripts/ensure-trivy.sh. Written from the specification
 #    before the jobs exist.
 trivy="$(python3 -I - "$ci" <<'PY'
@@ -272,7 +370,7 @@ PY
   check ".trivyignore entries carry a reason and an expiry" "$(tf [ -z "$bad" ])" "$bad"
 fi
 
-# 6. Inventory and staleness (#199 item 3): Trivy has a row like gitleaks, and
+# 7. Inventory and staleness (#199 item 3): Trivy has a row like gitleaks, and
 #    scripts/staleness-check.py reads the pin the way it reads the other ensure
 #    scripts' (read_version_var on scripts/ensure-<tool>.sh, variable
 #    <TOOL>_VERSION, a tool:<name> row from check_tools).

@@ -3,7 +3,7 @@
 import { ApiError } from '../lib/api'
 
 export const TOO_MANY = 'Too many attempts. Try again later.'
-export const SSO_STILL_WORKS = 'SSO sign-in still works.'
+const SSO_STILL_WORKS = 'SSO sign-in still works.'
 export const FAILED = 'Sign-in failed. Try again.'
 export const ENTER_ACCOUNT = 'Enter your account name.'
 export const ENTER_PASSWORD = 'Enter your password.'
@@ -26,14 +26,14 @@ export const SETUP_TIMED_OUT = 'Set-up timed out: the entry you scanned no longe
 /** Choose screen, an account that needs a passkey where none can be made. */
 export const PASSKEY_ONLY_STUCK = 'This account needs a passkey, and none can be made at this address.'
 export const SIGN_IN_AS_SOMEONE_ELSE = 'Sign in as someone else'
-export const PASSKEY_READY = 'Fingerprint, face or device PIN.'
+const PASSKEY_READY = 'Fingerprint, face or device PIN.'
 /** The passkey key's line when passkeys are not ready, by passkeys.status. */
-export const PASSKEY_UNAVAILABLE: Record<string, string> = {
+const PASSKEY_UNAVAILABLE: Record<string, string> = {
   unset: 'No public address is set. Passkeys need one.',
   ip: 'The public address is an IP. Passkeys need a domain name.',
   insecure: 'The public address is http. Passkeys need https.',
 }
-export const PASSKEY_UNAVAILABLE_OTHER = 'Passkeys need an https web address.'
+const PASSKEY_UNAVAILABLE_OTHER = 'Passkeys need an https web address.'
 export const passkeyLine = (status: string | undefined) =>
   status === 'ready' ? PASSKEY_READY : (status !== undefined && Object.hasOwn(PASSKEY_UNAVAILABLE, status) ? PASSKEY_UNAVAILABLE[status] : PASSKEY_UNAVAILABLE_OTHER)
 

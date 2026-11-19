@@ -4,7 +4,7 @@
 // module); docs/design/sign-in-screens.md is the specification.
 import { getJSON, inFixtureMode } from './api'
 
-export type PasskeyStatus = 'ready' | 'unset' | 'ip' | 'insecure'
+type PasskeyStatus = 'ready' | 'unset' | 'ip' | 'insecure'
 
 export interface SessionState {
   setupRequired: boolean
