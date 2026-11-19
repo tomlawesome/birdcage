@@ -84,5 +84,38 @@ for f in scripts/quarantine.txt scripts/ci/quarantine-pattern.sh \
   [ -e "$repo_root/$f" ] || check "$f exists" 1 "listed file missing from tree"
 done
 
+# 3. The static scanners block (#199): lint:static-scan is not allow_failure,
+#    and lint:go runs the gosec scan without --report-only.
+scan="$(python3 -I - "$ci" <<'PY'
+import sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+print("allow_failure=%s" % doc["lint:static-scan"].get("allow_failure", False))
+for line in doc["lint:go"].get("script") or []:
+    if isinstance(line, str):
+        for l in line.splitlines():
+            if "static-scan.sh" in l:
+                print("go-scan-line=" + l.strip())
+PY
+)" || { echo "FAIL could not read lint jobs from $ci"; exit 1; }
+
+if grep -qx 'allow_failure=\(False\|false\)' <<< "$scan"; then
+  check "lint:static-scan is not allow_failure" 0 ""
+else
+  check "lint:static-scan is not allow_failure" 1 "$(grep '^allow_failure=' <<< "$scan")"
+fi
+if grep -q '^go-scan-line=.*--report-only' <<< "$scan"; then
+  check "lint:go does not pass --report-only to static-scan.sh" 1 "$(grep -- '--report-only' <<< "$scan")"
+else
+  check "lint:go does not pass --report-only to static-scan.sh" 0 ""
+fi
+if grep -qx 'go-scan-line=scripts/static-scan.sh gosec' <<< "$scan"; then
+  check "lint:go runs scripts/static-scan.sh gosec" 0 ""
+else
+  check "lint:go runs scripts/static-scan.sh gosec" 1 "no such script line"
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
