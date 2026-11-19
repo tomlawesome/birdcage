@@ -23,3 +23,4 @@ ceilings:
   zizmor-high: 0       # 0 measured 2026-11-18 (#199), two findings fixed in the workflows
   ruff-S: 23           # 23 measured 2026-11-18 (#199)
   shellcheck: 27       # 27 measured 2026-11-18 (#199), errors and warnings
+  go-dupl: 0           # 0 measured 2026-11-19 (#200), golangci-lint 2.14.0 locally (CI pins 2.15.0), threshold 150, test files excluded

@@ -368,13 +368,18 @@ lint:go:
     # Built from source with the image's Go: the prebuilt binary is built
     # with an older Go and refuses go.mod's `go 1.27.4` directive.
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
-    # .golangci.yml lists the linters; gosec (#199) is run separately below.
-    - golangci-lint run --disable gosec ./...
+    # .golangci.yml lists the linters; gosec (#199) and dupl (#200) are run
+    # separately below.
+    - golangci-lint run --disable gosec,dupl ./...
     # gosec, inside the same golangci-lint: its self-test on the planted module
     # under scripts/scan-fixtures/gosec, then the real run, report kept as an
     # artifact. Blocks (#199): a high count above its ceiling in
     # supply-chain/scan-ceilings.yml fails the job.
     - scripts/static-scan.sh gosec
+    # dupl (#200), same shape, report-only for now: the count is printed and
+    # kept, but a count off its go-dupl ceiling does not fail the job yet. A
+    # broken self-test or a failed run does.
+    - scripts/static-scan.sh dupl --report-only
   artifacts:
     paths: [static-scan-reports/]
     expire_in: 30 days

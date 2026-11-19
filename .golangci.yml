@@ -17,6 +17,7 @@ linters:
     - staticcheck
     - unused
     - gosec
+    - dupl
     - nolintlint
   settings:
     gosec:
@@ -26,6 +27,10 @@ linters:
       # `//nolint:gosec // reason`.
       severity: low
       confidence: low
+    dupl:
+      # The tool default, 150 tokens. Blocking is decided by
+      # scripts/static-scan.sh and scripts/scan-ceiling.py (#200), not here.
+      threshold: 150
     nolintlint:
       # A bare or reasonless //nolint is itself a finding.
       require-explanation: true
@@ -41,14 +46,19 @@ linters:
         linters:
           - gosec
         text: "G101|G404"
+      # Test files are not scanned for duplication (#200): table-driven and
+      # arrange-act-assert tests repeat by design.
+      - path: _test\.go$
+        linters:
+          - dupl
 
-# scripts/scan-fixtures/gosec is a separate module (its own go.mod) with a
+# scripts/scan-fixtures/gosec and .../dupl are separate modules (own go.mod) with a
 # planted defect, so `./...` of this module never reaches it; the self-test in
 # scripts/static-scan.sh runs this same file inside that module and requires a
-# gosec finding. Nothing is excluded here.
+# gosec or dupl finding. Nothing is excluded here.
 
 issues:
   # The defaults cut the report at 50 issues per linter and 3 of a kind, which
-  # would make the gosec count below depend on the cut, not on the tree.
+  # would make the gosec and dupl counts below depend on the cut, not on the tree.
   max-issues-per-linter: 0
   max-same-issues: 0
