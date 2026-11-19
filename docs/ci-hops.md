@@ -85,7 +85,7 @@ of it by this issue.
 
 | check | why it is here |
 | --- | --- |
-| `lint:go` | Go source changes on nearly every branch. Also runs gosec (#199, report-only for now). |
+| `lint:go` | Go source changes on nearly every branch. Also runs gosec (#199; a high count above its ceiling fails the job). |
 | `lint:licences` | A dependency can arrive on any branch; a licence found late is found after it shipped. |
 | `lint:ci` | Guards this arrangement. Cheapest job in the pipeline. |
 | `lint:agent-deps` | ADR-0008 decision 4 -- no server package may reach the agent image. Broken by an ordinary import. |
@@ -93,7 +93,7 @@ of it by this issue.
 | `lint:flake-check` | #196: the flake log must have an issue and a quarantine entry for any flake with three sightings, and no malformed sighting. A text check on one file, so it costs seconds. |
 | `lint:govulncheck` | #51: a known-vulnerable dependency or stdlib CVE can land on any branch and stay until someone reads an advisory by hand; catching it at the same hop as every other lint job is what makes that not happen. |
 | `lint:gitleaks` | #28: a secret can arrive in a commit any way other than this host's own pre-commit gate (a different machine, a direct push with the hook bypassed on a workstation without it). Full-history, every merge request and `dev`, same reasoning as the other lint jobs -- a gap found late is found after it shipped. |
-| `lint:static-scan` | #199: code scanning. actionlint and zizmor over the workflow files, ruff (security rules) over the tracked Python, shellcheck over the tracked shell scripts; gosec runs inside `lint:go`. Each tool runs first on a planted defect and must fail, then on the tree; a finding count above its ceiling in `supply-chain/scan-ceilings.yml` fails (`allow_failure` while the report-first step runs). Merge requests, `dev`, `preview` and `main`, like the other static checks. Not a fast check: it does not run on the push that lands on `dev`. Reports are kept as artifacts for 30 days. |
+| `lint:static-scan` | #199: code scanning. actionlint and zizmor over the workflow files, ruff (security rules) over the tracked Python, shellcheck over the tracked shell scripts; gosec runs inside `lint:go`. Each tool runs first on a planted defect and must fail, then on the tree; a finding count above its ceiling in `supply-chain/scan-ceilings.yml` fails, as does a reasonless suppression. Merge requests, `dev`, `preview` and `main`, like the other static checks. Not a fast check: it does not run on the push that lands on `dev`. Reports are kept as artifacts for 30 days. |
 | `test:frontend` | Unit tests and the pixel gates (band, below the band, canary page, sign-in door). Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
 | `test:go:quarantine` | #196: the tests in `scripts/quarantine.txt`, kept out of `test:go` after a third flake sighting. Does not block (`allow_failure`); not an e2e job. |

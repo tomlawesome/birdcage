@@ -372,10 +372,9 @@ lint:go:
     - golangci-lint run --disable gosec ./...
     # gosec, inside the same golangci-lint: its self-test on the planted module
     # under scripts/scan-fixtures/gosec, then the real run, report kept as an
-    # artifact. Report-only for now (#199 step 1): the high count goes to the
-    # log and is checked against the ceiling in supply-chain/scan-ceilings.yml,
-    # but a count above it does not fail the job yet.
-    - scripts/static-scan.sh gosec --report-only
+    # artifact. Blocks (#199): a high count above its ceiling in
+    # supply-chain/scan-ceilings.yml fails the job.
+    - scripts/static-scan.sh gosec
   artifacts:
     paths: [static-scan-reports/]
     expire_in: 30 days
@@ -651,8 +650,8 @@ lint:gitleaks:
 # it compares each finding count with supply-chain/scan-ceilings.yml
 # (scripts/scan-ceiling.py: a ceiling only goes down). The job holds no secret:
 # zizmor runs offline with no token. Reports are kept for 30 days.
-# allow_failure while the report-first step runs (#199 step 1); removed once a
-# pipeline on dev is green.
+# Blocking (#199): a count above a ceiling, a broken self-test or a reasonless
+# suppression fails the pipeline.
 # $GOLANG_IMAGE (Debian) has glibc for zizmor; xz for the shellcheck archive is
 # installed from the image's Debian repositories in before_script.
 # Not .fast_gate: it takes more than 40 seconds, so it does not run on the push
@@ -662,7 +661,6 @@ lint:static-scan:
   needs: [{job: release_readiness, optional: true}]
   image: $GOLANG_IMAGE
   <<: [*static_gate, *git_safe]
-  allow_failure: true
   timeout: 2m
   before_script:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
