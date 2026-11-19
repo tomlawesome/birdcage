@@ -14,7 +14,7 @@ Refuses (exit 1) unless all of these hold:
     <remote>/<target> (a version bump goes through a batch, not here);
   - `docs/releases/v<VERSION>.md` does not already exist on <remote>/<target>
     (one release MR per release: a mistake after it merges goes to the owner);
-  - every path the branch changes (`git diff --name-only
+  - every path the branch changes (`git diff --name-only --no-renames
     <remote>/<target>...HEAD`, so dev moving on does not count) is
     `CHANGELOG.md` or `docs/releases/v<VERSION>.md`.
 
@@ -71,7 +71,10 @@ def main(argv):
     try:
         base = f"{args.remote}/{target}"
         version = git("show", f"{base}:VERSION").strip()
-        changed = [p for p in git("diff", "--name-only", f"{base}...HEAD").splitlines() if p]
+        # No rename detection: a rename prints only its new name, which would
+        # hide the deletion of the source path from the check below.
+        changed = [p for p in git("diff", "--name-only", "--no-renames",
+                                  f"{base}...HEAD").splitlines() if p]
         on_target = set(git("ls-tree", "-r", "--name-only", base, "--", "docs/releases").split())
     except (RuntimeError, subprocess.TimeoutExpired) as e:
         print(f"release-record-policy: {e}", file=sys.stderr)
