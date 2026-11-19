@@ -741,7 +741,7 @@ lint:trivy-config:
   <<: [*static_gate, *trivy_job]
   script:
     - mkdir -p trivy-reports
-    - trivy config --severity HIGH,CRITICAL --format json --output trivy-reports/config.json build/
+    - trivy config --ignorefile .trivyignore.yaml --severity HIGH,CRITICAL --format json --output trivy-reports/config.json build/
 
 # Item 3: vulnerable and licence-restricted dependencies in the lockfiles
 # (npm, Go modules) of the repository itself.
@@ -751,7 +751,7 @@ lint:trivy-fs:
   <<: [*static_gate, *trivy_job]
   script:
     - mkdir -p trivy-reports
-    - trivy fs --scanners vuln,license --severity HIGH,CRITICAL --format json --output trivy-reports/fs.json .
+    - trivy fs --ignorefile .trivyignore.yaml --scanners vuln,license --severity HIGH,CRITICAL --format json --output trivy-reports/fs.json .
 
 # Item 2: the six images build:images pushed to this project's registry. Needs
 # build:images for the pushed repo@digest names in its release.env dotenv
@@ -791,7 +791,7 @@ scan:trivy-images:
         upper="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
         ref_var="${upper}_BUILD_DIGEST"
         ref="${!ref_var:?${ref_var} missing from build:images' release.env}"
-        trivy image --image-src remote --severity HIGH,CRITICAL --format json --output "trivy-reports/${name}.json" "$ref"
+        trivy image --ignorefile .trivyignore.yaml --image-src remote --severity HIGH,CRITICAL --format json --output "trivy-reports/${name}.json" "$ref"
       done
 
 # #139: nothing else in this file ever checks a pin against its own
