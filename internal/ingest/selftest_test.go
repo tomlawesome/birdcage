@@ -247,8 +247,9 @@ func TestHandleBatchClaimWrongSourceRefusedStoredRealAndAudited(t *testing.T) {
 }
 
 // TestHandleBatchClaimOnMarkedGradeTargetRefused: a self_test_marker
-// naming a marked-grade target (ssh) is refused rather than silently
+// naming a marked-grade target (ftp) is refused rather than silently
 // accepted -- a marked service proves itself with raw, never a claim.
+// Only ssh may be claimed this way (#239).
 func TestHandleBatchClaimOnMarkedGradeTargetRefused(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		raw := mintToken(t, database, "canary-a")
@@ -257,10 +258,19 @@ func TestHandleBatchClaimOnMarkedGradeTargetRefused(t *testing.T) {
 		if err := store.SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "192.0.2.10"); err != nil {
 			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
 		}
-		marker := mintSelfTestCommandForCanary(t, database, idx, "canary-a", now, 10*time.Minute) // ssh, marked grade
+		ftpCmd, err := store.MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
+			[]store.SelfTestTarget{{Service: "ftp", DestPort: 21}}, now, now.Add(10*time.Minute)) // marked grade
+		if err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
+		ftpParams, err := selftest.DecodeParams([]byte(ftpCmd.Params))
+		if err != nil {
+			t.Fatalf("decode minted params: %v", err)
+		}
+		marker := ftpParams.Targets[0].Marker
 		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, idx, nil)
 
-		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"192.0.2.10","dest_port":22,"service":"ssh","raw":"hit","self_test_marker":%q}]}`,
+		body := fmt.Sprintf(`{"events":[{"event_id":%q,"source_ip":"192.0.2.10","dest_port":21,"service":"ftp","raw":"hit","self_test_marker":%q}]}`,
 			validEventID1, marker)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, batchRequest(raw, body))

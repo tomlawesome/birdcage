@@ -119,6 +119,9 @@ type Outcome struct {
 	Status   Status
 	Err      error
 	Fact     *AttributionFact
+	// SourcePort is the local TCP port of the ssh probe's connection, 0
+	// when none was opened or for any other service (#239).
+	SourcePort int
 }
 
 // Sweep probes every target in params with DefaultConfig. See
@@ -205,7 +208,13 @@ func probeOne(ctx context.Context, probeTimeout time.Duration, address string, t
 		return o
 	}
 
-	if err := carrier(probeCtx, address, t.DestPort, t.Marker); err != nil {
+	var err error
+	if t.Service == "ssh" {
+		err = probeSSHFrom(probeCtx, address, t.DestPort, t.Marker, &o.SourcePort)
+	} else {
+		err = carrier(probeCtx, address, t.DestPort, t.Marker)
+	}
+	if err != nil {
 		o.Status = StatusFailed
 		o.Err = err
 		return o

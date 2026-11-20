@@ -183,7 +183,9 @@ exit (#69's own mechanism, superseded). Instead the agent dials
 OpenCanary's own configured ports once per heartbeat and reports what it
 finds; a dead OpenCanary shows up on the canary's tile within one
 heartbeat interval as `opencanary_down`, and clears on the next heartbeat
-that finds it answering again.
+that finds it answering again. It is not raised while the canary is still
+pending (before its first self-test passes), when OpenCanary is normally
+still starting.
 
 `build/opencanary/README.md` has the per-flag hardening evidence, the
 same way `build/smb-lure/README.md` has it for the lure below.
