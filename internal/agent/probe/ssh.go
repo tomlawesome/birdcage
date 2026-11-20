@@ -28,9 +28,22 @@ import (
 // reset) never sent it, so those are treated as StatusFailed too, not
 // just a timeout.
 func probeSSH(ctx context.Context, address string, port int, marker string) error {
+	return probeSSHFrom(ctx, address, port, marker, nil)
+}
+
+// probeSSHFrom is probeSSH that also stores the connection's local TCP
+// port in *srcPort (when non-nil) as soon as it is open, even if the
+// handshake then fails: every event of the connection carries that port,
+// which is how the agent claims them (#239).
+func probeSSHFrom(ctx context.Context, address string, port int, marker string, srcPort *int) error {
 	conn, err := dialTCP(ctx, address, port)
 	if err != nil {
 		return err
+	}
+	if srcPort != nil {
+		if la, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+			*srcPort = la.Port
+		}
 	}
 	// Deferred cleanup after this probe's single write; a failed close
 	// here can't change whether the probe itself succeeded.

@@ -222,9 +222,13 @@ func MatchSelfTest(ctx context.Context, database *db.DB, idx *SelfTestIndex, ale
 //     the same SelfTestIndex state a raw substring match already checks
 //     (idx.lookupMarker shares match's own expiry pruning).
 //  2. grade: the target that marker was minted for must be
-//     attributed-grade (ntp, portscan) -- a marked-grade service proves
+//     attributed-grade (ntp, portscan), or ssh (#239: only its last event
+//     carries the marker, so the agent claims the connection's other
+//     events by source port) -- any other marked-grade service proves
 //     itself with raw, never a claim; a self_test_marker attached to one
-//     of those is refused here, not silently ignored.
+//     of those is refused here, not silently ignored. A claim marks an
+//     event synthetic and nothing else: it never records the target as
+//     matched for ssh; only the raw marker does (MatchSelfTest).
 //  3. service: the target's own service must equal the arriving event's
 //     service.
 //  4. source: the event's source_ip must equal the canary's own last
@@ -254,14 +258,16 @@ func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex
 	// first corroborated claim binds the marker to its event id, so a
 	// second event carrying it -- a replay, or an intruder's hit an
 	// agent wrongly claimed alongside its own -- is refused and stored
-	// real. The same event id presented again (a batch retried after
-	// birdcage's ack was lost, which the dedup index otherwise makes
-	// free) is not a second claim.
-	if info.ClaimedBy != "" && info.ClaimedBy != alert.EventID {
-		return false, "marker already claimed by another event", nil
+	// real. ssh (#239) is the one multi-event target: one connection
+	// makes several events, so it may bind up to selfTestClaimCap. The
+	// same event id presented again (a batch retried after birdcage's
+	// ack was lost, which the dedup index otherwise makes free) is not
+	// another claim.
+	if !claimable(info.Service) {
+		return false, "target is not claimable", nil
 	}
-	if gradeForService(info.Service) != GradeAttributed {
-		return false, "target is not attributed-grade", nil
+	if !info.canClaim(alert.EventID) {
+		return false, "marker already claimed by another event", nil
 	}
 	if info.Service != alert.Service {
 		return false, "service does not match the claimed target", nil
@@ -275,8 +281,10 @@ func MatchSelfTestClaim(ctx context.Context, database *db.DB, idx *SelfTestIndex
 		return false, "source address does not match the canary's last-seen address", nil
 	}
 
-	if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
-		return false, "", fmt.Errorf("record selftest claim match: %w", err)
+	if gradeForService(info.Service) == GradeAttributed {
+		if err := recordSelfTestMatch(ctx, database, markerHash(marker), now.UTC()); err != nil {
+			return false, "", fmt.Errorf("record selftest claim match: %w", err)
+		}
 	}
 	// Check 5 again, atomically this time. The read above and this
 	// claim are separate lock acquisitions with a database round trip
@@ -549,10 +557,12 @@ func (idx *SelfTestIndex) tryClaim(canaryID, marker, eventID string) bool {
 	if !ok {
 		return true
 	}
-	if info.ClaimedBy != "" && info.ClaimedBy != eventID {
+	if !info.canClaim(eventID) {
 		return false
 	}
-	info.ClaimedBy = eventID
+	if !info.hasClaimed(eventID) {
+		info.ClaimedBy = append(append([]string(nil), info.ClaimedBy...), eventID)
+	}
 	idx.byCanary[canaryID][marker] = info
 	return true
 }
@@ -566,9 +576,40 @@ func (idx *SelfTestIndex) tryClaim(canaryID, marker, eventID string) bool {
 type selfTestMarkerInfo struct {
 	ExpiresAt time.Time
 	Service   string
-	// ClaimedBy is the event id of the first corroborated claim on this
-	// marker, empty until then -- see MatchSelfTestClaim's check 5.
-	ClaimedBy string
+	// ClaimedBy holds the event ids of the corroborated claims on this
+	// marker, empty until the first -- see MatchSelfTestClaim's check 5.
+	ClaimedBy []string
+}
+
+// selfTestClaimCap is the most events one ssh marker may claim (#239):
+// an ssh connection makes three (4000, 4001, 4002), the cap leaves one
+// spare. Attributed targets stay at exactly one.
+const selfTestClaimCap = 4
+
+// claimable reports whether service's target may be claimed at all.
+func claimable(service string) bool {
+	return service == "ssh" || gradeForService(service) == GradeAttributed
+}
+
+func (m selfTestMarkerInfo) claimCap() int {
+	if m.Service == "ssh" {
+		return selfTestClaimCap
+	}
+	return 1
+}
+
+func (m selfTestMarkerInfo) hasClaimed(eventID string) bool {
+	for _, id := range m.ClaimedBy {
+		if id == eventID {
+			return true
+		}
+	}
+	return false
+}
+
+// canClaim reports whether eventID holds, or may still take, a claim.
+func (m selfTestMarkerInfo) canClaim(eventID string) bool {
+	return m.hasClaimed(eventID) || len(m.ClaimedBy) < m.claimCap()
 }
 
 // SelfTestIndex is the bounded, in-memory index of markers birdcage has

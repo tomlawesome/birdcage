@@ -93,3 +93,8 @@ var agentHandled = map[string]bool{
 // AgentHandled reports whether service is probed by cmd/mockingbird
 // itself rather than by this package -- see agentHandled.
 func AgentHandled(service string) bool { return agentHandled[service] }
+
+// ConnectionClaimed reports whether service's probe reports the source
+// port of its own connection, so the agent can claim every event of
+// that connection, not just the one carrying the marker (#239).
+func ConnectionClaimed(service string) bool { return service == "ssh" }
