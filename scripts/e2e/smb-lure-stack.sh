@@ -43,7 +43,10 @@ LURE_IMAGE_BUILT=0
 HOLDER_IMAGE="${E2E_HOLDER_IMAGE:-${E2E_PREFIX}-holder-image}"
 HOLDER_IMAGE_BUILT=0
 
-CLIENT_IMAGE="${E2E_PREFIX}-smbclient-image"
+# E2E_SMB_CLIENT_IMAGE: a ready-made client (live-check.sh, on a host with no
+# route to an Alpine mirror, supplies one built from local layers). Unset, it is
+# built from build/e2e-smbclient as always.
+CLIENT_IMAGE="${E2E_SMB_CLIENT_IMAGE:-${E2E_PREFIX}-smbclient-image}"
 LURE="${E2E_PREFIX}-lure"
 # Scoped like every sibling stack's own holder (poisoner-stack.sh's
 # "poisoner-holder", smb-stack.sh's "smb-holder"): the unscoped name here
