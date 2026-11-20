@@ -259,4 +259,70 @@ want=$((before + 1))
 [ "$after" = "$want" ] || fail "$after alerts name $SMB_LURE_BAIT_TWO after OpenCanary's restart, want $want -- the canary's own reporting was disturbed by a container it does not own" "$SMB_LURE_CANARY" "$SMB_LURE_OPENCANARY" "$E2E_BIRDCAGE"
 ok "the canary and the lure kept reporting through OpenCanary's own restart ($before -> $after)"
 
+# --- #243: the SMB lure and SNMP are listed and self-tested ---------------
+
+# canary_page prints /api/canary for the lure canary: its facts (the
+# "listening" row) and its self-test runs.
+canary_page() {
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canary?id=$SMB_LURE_CANARY_ID&range=14d'"
+}
+
+page_lists() {
+  canary_page | jq -e --arg s "$1" '.facts.ports | contains($s)'
+}
+
+page_lacks() {
+  canary_page | jq -e --arg s "$1" '.facts.ports | contains($s) | not'
+}
+
+# run_self_test schedules one self-test for the next minute (the same
+# settings the surface journey uses) and puts the schedule settings back.
+run_self_test() {
+  local when
+  "$E2E_STACK" birdcage settings set selftest_enabled true >/dev/null || fail "could not enable self-tests"
+  "$E2E_STACK" birdcage settings set selftest_use_rotation_schedule false >/dev/null || fail "could not choose the own schedule"
+  when="$(date -u -d '+2 minutes' +%H:%M)"
+  "$E2E_STACK" birdcage settings set selftest_schedule "$when" >/dev/null || fail "could not set the self-test schedule"
+}
+
+# newest_run_failed_naming prints success when the newest self-test run
+# issued after SELFTEST_FROM has failed and names the service.
+SELFTEST_FROM=""
+newest_run_failed_naming() {
+  canary_page | jq -e --arg s "$1" --arg f "$SELFTEST_FROM" \
+    '[.self_test_runs[] | select(.issued_at > $f)] | any(.passed == false and ((.failed_services // []) | index($s) != null))'
+}
+
+newest_run_passed() {
+  canary_page | jq -e --arg f "$SELFTEST_FROM" \
+    '[.self_test_runs[] | select(.issued_at > $f)] | any(.passed == true)'
+}
+
+step "the canary's page lists the SMB lure and SNMP as listening (#243)"
+poll 150 page_lists "smb 445" || fail "the page's listening row never showed smb 445: $(canary_page)" "$SMB_LURE_CANARY"
+poll 150 page_lists "snmp 161" || fail "the page's listening row never showed snmp 161: $(canary_page)" "$SMB_LURE_CANARY"
+ok "the listening row names smb 445 and snmp 161"
+
+step "the lure stops, and smb 445 leaves the listening row (#243)"
+docker stop --time 10 "$SMB_LURE" >/dev/null || fail "could not stop the lure" "$SMB_LURE"
+poll 150 page_lacks "smb 445" || fail "smb 445 stayed in the listening row with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY"
+ok "smb 445 left the listening row"
+
+step "a self-test with the lure down fails, naming smb (#243)"
+SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_self_test
+poll 300 newest_run_failed_naming smb \
+  || fail "no self-test run failed naming smb after the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+ok "the failed run names smb (self_test_failed)"
+
+step "the lure starts again, and the next self-test passes (#243)"
+docker start "$SMB_LURE" >/dev/null || fail "could not start the lure" "$SMB_LURE"
+"$SMB_LURE_STACK" restart-lure || fail "the lure did not answer after starting" "$SMB_LURE"
+poll 150 page_lists "smb 445" || fail "smb 445 never came back to the listening row: $(canary_page)" "$SMB_LURE_CANARY"
+SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_self_test
+poll 300 newest_run_passed \
+  || fail "the self-test did not pass with the lure back: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+ok "the next self-test run passed, smb included"
+
 finish

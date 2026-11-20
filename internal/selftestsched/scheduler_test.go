@@ -361,6 +361,69 @@ func TestMintForCanaryAlwaysAddsPortscanAlongsideKnownPorts(t *testing.T) {
 	})
 }
 
+// TestMintForCanaryAddsSMBAndSNMPOnceReported (#243): the full honeypot
+// profile is ten ports plus portscan and poisoner, 12 targets; a canary
+// whose agent has reported the SMB lure and SNMP adds smb and snmp, 14. A
+// flag reported false still adds its target, so a lure that dies fails its
+// self-test instead of silently dropping out of it.
+func TestMintForCanaryAddsSMBAndSNMPOnceReported(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		smb, snmp *bool
+		want      int
+		wantSMB   bool
+		wantSNMP  bool
+	}{
+		{"neither reported", nil, nil, 12, false, false},
+		{"both up", &yes, &yes, 14, true, true},
+		{"both reported down", &no, &no, 14, true, true},
+		{"only smb reported", &yes, nil, 13, true, false},
+		{"only snmp reported", nil, &yes, 13, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+				mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+				mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+				profile, ok := agentkind.Lookup(agentkind.Honeypot)
+				if !ok {
+					t.Fatal("no honeypot profile")
+				}
+				insertHoneypotCanary(t, database, "canary-a", profile.Ports, "192.0.2.10")
+				if tc.smb != nil || tc.snmp != nil {
+					if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, "canary-a", time.Now().UTC(), store.AgentHeartbeat{
+						QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: tc.smb, SNMPUp: tc.snmp,
+					}); err != nil {
+						t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+					}
+				}
+
+				now := time.Date(2026, 1, 1, 4, 12, 0, 0, time.UTC)
+				s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+				s.Tick(context.Background())
+
+				services := mintedTargetServices(t, database, "canary-a")
+				if len(services) != tc.want {
+					t.Fatalf("minted %d targets %v, want %d", len(services), services, tc.want)
+				}
+				has := func(svc string) bool {
+					for _, x := range services {
+						if x == svc {
+							return true
+						}
+					}
+					return false
+				}
+				if has("smb") != tc.wantSMB || has("snmp") != tc.wantSNMP {
+					t.Errorf("smb=%v snmp=%v in %v, want smb=%v snmp=%v", has("smb"), has("snmp"), services, tc.wantSMB, tc.wantSNMP)
+				}
+			})
+		})
+	}
+}
+
 // TestRunTicksOnItsOwnScheduleUntilContextCanceled exercises Run's
 // ticker goroutine itself (not just Tick called directly), the same way
 // cmd/nightjar's own heartbeat-loop test proves the real loop, not just

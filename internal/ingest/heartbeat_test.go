@@ -197,6 +197,58 @@ func TestHandleHeartbeatStoresOpenCanaryUp(t *testing.T) {
 	})
 }
 
+// TestHandleHeartbeatStoresSMBLureAndSNMPUp (#243): the two optional
+// listener flags land in agents.agent_smb_lure_up and agent_snmp_up, and an
+// old-shape heartbeat that omits them leaves NULL, never a fabricated false.
+func TestHandleHeartbeatStoresSMBLureAndSNMPUp(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrollCanary(t, database, "canary-a")
+		raw := mintToken(t, database, "canary-a")
+		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+
+		post := func(extra string) {
+			t.Helper()
+			body := `{"queue_depth":7,"log_read_ok":true,"last_event_id":"` + validEventID1 + `","agent_version":"1.2.3"` + extra + `}`
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, ingestRequest(http.MethodPost, "/ingest/heartbeat", raw, body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+			}
+		}
+		read := func() (smb, snmp *int64) {
+			t.Helper()
+			row := database.QueryRow(`SELECT agent_smb_lure_up, agent_snmp_up FROM agents WHERE id = ?`, "canary-a")
+			if err := row.Scan(&smb, &snmp); err != nil {
+				t.Fatalf("scan agent_smb_lure_up, agent_snmp_up: %v", err)
+			}
+			return smb, snmp
+		}
+
+		post("")
+		if smb, snmp := read(); smb != nil || snmp != nil {
+			t.Errorf("old-shape heartbeat stored (%v, %v), want NULL, NULL", smb, snmp)
+		}
+
+		post(`,"smb_lure_up":true,"snmp_up":false`)
+		smb, snmp := read()
+		if smb == nil || *smb != 1 {
+			t.Errorf("agent_smb_lure_up = %v, want 1", smb)
+		}
+		if snmp == nil || *snmp != 0 {
+			t.Errorf("agent_snmp_up = %v, want 0 (explicitly reported down)", snmp)
+		}
+
+		canaries, err := store.ListCanaries(context.Background(), database, time.Now().UTC(), 24*time.Hour, "")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanaryByID(t, canaries, "canary-a")
+		if c.AgentSMBLureUp == nil || !*c.AgentSMBLureUp || c.AgentSNMPUp == nil || *c.AgentSNMPUp {
+			t.Errorf("Canary.AgentSMBLureUp, AgentSNMPUp = %v, %v, want true, false", c.AgentSMBLureUp, c.AgentSNMPUp)
+		}
+	})
+}
+
 // TestHandleHeartbeatOldShapeAcceptedWithoutFabricatingZeroes is #48's
 // central compatibility rule: an agent built before this change (or
 // mid-rollout) sends only the original four fields. That body is a

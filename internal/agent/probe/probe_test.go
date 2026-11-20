@@ -54,7 +54,7 @@ func TestSweepWithConfig_ClassifiesEachTargetIndependently(t *testing.T) {
 		Address: "127.0.0.1",
 		Targets: []selftest.Target{
 			{Service: "ftp", DestPort: livePort, Marker: "m-ok"},
-			{Service: "smb", DestPort: 1, Marker: "m-notprobeable"},
+			{Service: "llmnr", DestPort: 1, Marker: "m-notprobeable"},
 			{Service: "made-up-service", DestPort: 1, Marker: "m-nocarrier"},
 			// Port 1 has nothing listening in this sandbox; dialing it
 			// should be refused quickly rather than hang out to the
@@ -236,5 +236,21 @@ func TestProbeOneReportsAnAgentHandledTargetWithoutTouchingTheNetwork(t *testing
 	// probe timeout before returning.
 	if took := time.Since(start); took >= cfg.ProbeTimeout {
 		t.Errorf("the sweep took %v, which is long enough to have dialled something", took)
+	}
+}
+
+// TestProbeOneReportsSMBAsAgentHandled (#243): an smb target is the
+// agent's to run (a reachability check), so the sweep reports it as
+// agent-handled and dials nothing itself.
+func TestProbeOneReportsSMBAsAgentHandled(t *testing.T) {
+	params := selftest.Params{
+		RunID:   "run-smb",
+		Address: "203.0.113.1",
+		Targets: []selftest.Target{{Service: "smb", DestPort: 445, Marker: "m-smb"}},
+	}
+	cfg := Config{ProbeTimeout: time.Second, SweepTimeout: 5 * time.Second, Concurrency: 1}
+	outcomes := SweepWithConfig(context.Background(), params, cfg)
+	if len(outcomes) != 1 || outcomes[0].Status != StatusAgentHandled {
+		t.Fatalf("outcomes = %+v, want one StatusAgentHandled", outcomes)
 	}
 }

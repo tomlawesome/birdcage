@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -343,5 +344,66 @@ func TestNextScheduleTime(t *testing.T) {
 	}
 	if _, ok := nextScheduleTime("sometime", now); ok {
 		t.Error("nextScheduleTime(sometime) ok = true, want false")
+	}
+}
+
+// TestHandleCanaryListensRowNamesSMBAndSNMPOnlyWhenReported (#243): the
+// page's listening row gains "snmp 161" and "smb 445" from the agent's own
+// flags, only when true, in the existing "service port" form.
+func TestHandleCanaryListensRowNamesSMBAndSNMPOnlyWhenReported(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		smb, snmp *bool
+		wantSNMP  bool
+		wantSMB   bool
+	}{
+		{"nothing reported", nil, nil, false, false},
+		{"both down", &no, &no, false, false},
+		{"both up", &yes, &yes, true, true},
+		{"only snmp up", &no, &yes, true, false},
+		{"only smb up", &yes, nil, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			database := openTempDB(t)
+			ctx := context.Background()
+			enrolledAt := time.Date(2026, 9, 1, 9, 41, 0, 0, time.UTC)
+			insertCanary(t, database, store.Canary{
+				ID: "canary-a", Name: "canary-a", Lane: "lan",
+				Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+			})
+			now := enrolledAt.Add(time.Minute)
+			if err := store.RecordCanaryAgentHeartbeat(ctx, database, "canary-a", now, store.AgentHeartbeat{
+				QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: tc.smb, SNMPUp: tc.snmp,
+			}); err != nil {
+				t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+			}
+
+			h := newHandler(database, fixedNow(now), nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/canary?id=canary-a&range=14d", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			var resp canaryPageResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			ports := resp.Facts.Ports
+			if !strings.HasPrefix(ports, "ssh 22") {
+				t.Errorf("facts.ports = %q, want it to keep \"ssh 22\" first", ports)
+			}
+			if got := strings.Contains(ports, "snmp 161"); got != tc.wantSNMP {
+				t.Errorf("facts.ports = %q: contains \"snmp 161\" = %v, want %v", ports, got, tc.wantSNMP)
+			}
+			if got := strings.Contains(ports, "smb 445"); got != tc.wantSMB {
+				t.Errorf("facts.ports = %q: contains \"smb 445\" = %v, want %v", ports, got, tc.wantSMB)
+			}
+			if !tc.wantSNMP && !tc.wantSMB && ports != "ssh 22" {
+				t.Errorf("facts.ports = %q, want exactly \"ssh 22\" when neither flag is true", ports)
+			}
+		})
 	}
 }
