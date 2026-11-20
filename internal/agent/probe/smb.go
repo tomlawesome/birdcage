@@ -27,8 +27,10 @@ var smb2Negotiate = func() []byte {
 	body[36] = 0x02
 	body[37] = 0x02
 	msg := append(hdr, body...)
-	n := len(msg)
-	return append([]byte{0x00, byte(n >> 16), byte(n >> 8), byte(n)}, msg...)
+	// The NetBIOS session header's 3-byte length: 64-byte header plus
+	// 38-byte body, a constant, so no runtime narrowing is needed.
+	const msgLen = 64 + 36 + 2
+	return append([]byte{0x00, 0x00, 0x00, msgLen}, msg...)
 }()
 
 // ReachSMB dials address:port, sends one SMB2 NEGOTIATE and requires a
