@@ -78,6 +78,9 @@ variables:
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
   ALPINE_IMAGE: alpine:3.24
+  # Semgrep CE (#199, owner decision 70a): tag and multi-arch index digest, bumped
+  # together on purpose. Straight from Docker Hub; CI-only, never shipped.
+  SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
   # Must match .dind's image (tag and digest); scripts/ci-config.test.sh
   # holds them together. Straight from Docker Hub, no cache prefix:
   # release:attest runs on the signing runner, which may not reach the cache.
@@ -729,6 +732,33 @@ lint:squawk:
     - ci/squawk/node_modules/.bin/squawk --reporter json internal/db/migrations/postgres/*.sql > squawk-report/squawk.json || rc=$?; ci/squawk/node_modules/.bin/squawk internal/db/migrations/postgres/*.sql || true; exit ${rc:-0}
   artifacts:
     paths: [squawk-report/]
+    expire_in: 30 days
+    when: always
+
+# Semgrep CE (#199, owner decision 70a, 2026-11-20): report-only. Engine LGPL-2.1
+# on the official image pinned by digest. The p/golang and p/typescript rule
+# sets (Semgrep Rules License v1.0: internal use, no redistribution) are fetched
+# at run time, never vendored. Logged out: no `semgrep login`, no app token,
+# --metrics=off, no cache, and no job needs this one. Semgrep skips what .gitignore
+# lists (the Trivy cache dir, node_modules), and --exclude covers fixtures. The rc is kept with
+# `|| rc=$?` because GitLab scripts run under `set -e`.
+lint:semgrep:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image:
+    name: $SEMGREP_IMAGE
+    entrypoint: [""]
+  <<: *static_gate
+  allow_failure: true
+  timeout: 10m
+  script:
+    - mkdir -p semgrep-report
+    - rc=0
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --json --output semgrep-report/semgrep.json --error . || rc=$?
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --error . || rc=$?
+    - exit ${rc:-0}
+  artifacts:
+    paths: [semgrep-report/]
     expire_in: 30 days
     when: always
 
