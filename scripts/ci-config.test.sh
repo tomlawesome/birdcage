@@ -597,5 +597,97 @@ fi
 check "scan:trivy-images sets DOCKER_CONFIG in its script" "$(grep -qx 'docker-config=True' <<< "$creds"; echo $?)" "$creds"
 check "scan:trivy-images's docker config auths name \$CI_REGISTRY" "$(grep -qx 'auths-ci-registry=True' <<< "$creds"; echo $?)" "$creds"
 
+# 9. Semgrep CE (#199, owner decision 70a): report-only job on the official
+#    image pinned by digest, logged out, metrics off, rule sets fetched at run
+#    time. Written from the specification before the job exists.
+sg="$(python3 -I - "$ci" <<'PY'
+import re, sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+gvars = {k: str(v) for k, v in (doc.get("variables") or {}).items()}
+def expand(s):
+    for _ in range(5):
+        s = re.sub(r"\$\{?(\w+)\}?", lambda m: gvars.get(m.group(1), m.group(0)), s)
+    return s
+print("var-image=%s" % gvars.get("SEMGREP_IMAGE", ""))
+job = doc.get("lint:semgrep")
+print("exists=%s" % isinstance(job, dict))
+job = job if isinstance(job, dict) else {}
+img = job.get("image")
+if isinstance(img, dict):
+    img = img.get("name")
+print("image=%s" % expand(img) if isinstance(img, str) else "image=")
+print("allow-failure=%s" % job.get("allow_failure"))
+print("stage=%s" % job.get("stage"))
+lines = []
+for line in job.get("script") or []:
+    if isinstance(line, str):
+        lines += [l.strip() for l in line.splitlines()]
+for l in lines:
+    print("line=" + l)
+    if re.search(r"\bsemgrep\s+(scan|ci)\b", l):
+        print("scan=" + l)
+for l in lines:
+    if re.search(r"semgrep\s+login|SEMGREP_APP_TOKEN", l):
+        print("login=" + l)
+    if re.search(r";\s*rc=\$\?", l):
+        print("semi-rc=" + l)
+    if re.search(r"\|\|\s*rc=\$\?", l):
+        print("or-rc=" + l)
+    if re.search(r"exit\s+\$\{rc:-0\}", l):
+        print("exit-rc=" + l)
+for k, v in (job.get("variables") or {}).items():
+    if re.search(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|CERT", k, re.I) or isinstance(v, dict):
+        print("secret-var=%s" % k)
+if "cache" in job:
+    print("cache=1")
+for name, other in doc.items():
+    if name == "lint:semgrep" or not isinstance(other, dict):
+        continue
+    needs = other.get("needs") or []
+    for n in needs if isinstance(needs, list) else [needs]:
+        n = n.get("job") if isinstance(n, dict) else n
+        if n == "lint:semgrep":
+            print("needed-by=" + name)
+art = job.get("artifacts") or {}
+print("art-paths=%s" % " ".join(art.get("paths") or []))
+print("art-expire=%s" % art.get("expire_in"))
+print("art-when=%s" % art.get("when"))
+PY
+)" || { echo "FAIL could not read lint:semgrep from $ci"; exit 1; }
+sgl() { grep "^$1=" <<< "$sg" || true; }
+check "lint:semgrep exists" "$(grep -qx 'exists=True' <<< "$sg"; echo $?)" "no such job"
+check "lint:semgrep is allow_failure (report-only first)" "$(grep -qx 'allow-failure=True' <<< "$sg"; echo $?)" "$(sgl allow-failure)"
+check "lint:semgrep is in the lint stage" "$(grep -qx 'stage=lint' <<< "$sg"; echo $?)" "$(sgl stage)"
+check "SEMGREP_IMAGE pins semgrep/semgrep:1.185.0 by @sha256 digest" \
+  "$(grep -qE '^var-image=semgrep/semgrep:1\.185\.0@sha256:[0-9a-f]{64}$' <<< "$sg"; echo $?)" "$(sgl var-image)"
+check "lint:semgrep runs on that pinned image" \
+  "$(grep -qE '^image=semgrep/semgrep:1\.185\.0@sha256:[0-9a-f]{64}$' <<< "$sg"; echo $?)" "$(sgl image)"
+check "no :latest semgrep image anywhere in $ci" "$(tf bash -c '! grep -qE "semgrep/semgrep:latest" "$1"' _ "$ci")" "semgrep/semgrep:latest named"
+scans="$(sgl scan)"
+check "lint:semgrep has at least one semgrep scan command" "$(tf [ -n "$scans" ])" "no semgrep scan line"
+r=0; [ -n "$scans" ] || r=1
+while IFS= read -r l; do [ -z "$l" ] || grep -q -- '--metrics=off' <<< "$l" || r=1; done <<< "$scans"
+check "every semgrep command passes --metrics=off" "$r" "$scans"
+check "lint:semgrep uses p/golang" "$(grep -q 'config[ =]p/golang' <<< "$scans"; echo $?)" "$scans"
+check "lint:semgrep uses p/typescript" "$(grep -q 'config[ =]p/typescript' <<< "$scans"; echo $?)" "$scans"
+check "lint:semgrep never logs in or uses SEMGREP_APP_TOKEN" "$(tf [ -z "$(sgl login)" ])" "$(sgl login)"
+check "lint:semgrep defines no secret-like variables" "$(tf [ -z "$(sgl secret-var)" ])" "$(sgl secret-var)"
+check "lint:semgrep has no cache" "$(tf [ -z "$(sgl cache)" ])" "cache set"
+check "no job needs lint:semgrep" "$(tf [ -z "$(sgl needed-by)" ])" "$(sgl needed-by | tr '\n' ' ')"
+check "lint:semgrep keeps semgrep-report/ for 30 days, when always" \
+  "$(grep -qE '^art-paths=.*semgrep-report/?( |$)' <<< "$sg" && grep -qx 'art-expire=30 days' <<< "$sg" && grep -qx 'art-when=always' <<< "$sg"; echo $?)" "$(sgl art-paths) $(sgl art-expire) $(sgl art-when)"
+check "lint:semgrep writes the JSON report to semgrep-report/semgrep.json" \
+  "$(grep -q 'semgrep-report/semgrep.json' <<< "$scans"; echo $?)" "$scans"
+check "lint:semgrep keeps the exit code with '|| rc=\$?' and 'exit \${rc:-0}'" \
+  "$(grep -q '^or-rc=' <<< "$sg" && grep -q '^exit-rc=' <<< "$sg"; echo $?)" "no '|| rc=\$?' / exit \${rc:-0}"
+check "lint:semgrep does not capture the exit code with '; rc=\$?'" "$(tf [ -z "$(sgl semi-rc)" ])" "$(sgl semi-rc)"
+check "dependency-inventory.md has a semgrep row 253 naming 1.185.0 and the Semgrep Rules License" \
+  "$(grep -E '^\| *253 *\| *`semgrep`' "$inv" | grep -q '1\.185\.0' && grep -E '^\| *253 *\| *`semgrep`' "$inv" | grep -q 'Semgrep Rules License'; echo $?)" "no row 253 for \`semgrep\`"
+check "docs/ci-hops.md has a lint:semgrep row" \
+  "$(grep -qE '^\| *`lint:semgrep` *\|' "$repo_root/docs/ci-hops.md"; echo $?)" "no lint:semgrep row"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
