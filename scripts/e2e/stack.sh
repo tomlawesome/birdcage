@@ -196,10 +196,15 @@ helper_script() {
 }
 
 build_helper_image() {
-  # Built from a Dockerfile on stdin: no context to send, and nothing
-  # written to the repository. $ALPINE_IMAGE is CI's image
-  # pin (refs #128, .gitlab-ci.yml); unset on a workstation, where the
-  # plain Docker Hub tag is what was always pulled here.
+  # E2E_HELPER_IMAGE_SOURCE: an image to tag as the helper instead of building
+  # one. live-check.sh runs where no Alpine mirror is reachable, so it builds
+  # the helper from local layers and hands it over under its own name (down
+  # removes $HELPER_IMAGE, so it cannot be built before `up`).
+  if [ -n "${E2E_HELPER_IMAGE_SOURCE:-}" ]; then
+    docker tag "$E2E_HELPER_IMAGE_SOURCE" "$HELPER_IMAGE" \
+      || die "E2E_HELPER_IMAGE_SOURCE=$E2E_HELPER_IMAGE_SOURCE does not exist"
+    return 0
+  fi
   printf 'FROM %s\nRUN apk add --no-cache curl openssl sqlite jq\n' "${ALPINE_IMAGE:-alpine:3.24}" \
     | docker build --quiet --tag "$HELPER_IMAGE" - >/dev/null
 }
@@ -532,7 +537,7 @@ sign_in() {
     || die "could not hand the setup code to the helper"
   code=""
   cat "$REPO_ROOT/scripts/e2e/totp.sh" "$REPO_ROOT/scripts/e2e/first-admin.sh" \
-    | helper_script "https://$BIRDCAGE:8080" "$(dashboard_cacert)" >&2 \
+    | helper_script "https://$BIRDCAGE:8080" "$(dashboard_cacert)" ${E2E_KEEP_LOGIN:+keep-login} >&2 \
     || { log "signing in to the dashboard failed; birdcage log follows"; birdcage_log; die "the first admin could not sign in"; }
 }
 
@@ -756,7 +761,7 @@ up() {
   build_image "$HOLDER_IMAGE" build/holder/Dockerfile "${E2E_HOLDER_IMAGE:+E2E_HOLDER_IMAGE}"
   build_helper_image
 
-  docker network create "$NET" >/dev/null || die "creating network $NET failed"
+  docker network create ${E2E_NET_INTERNAL:+--internal} "$NET" >/dev/null || die "creating network $NET failed"
   local vol
   for vol in "$DATA_VOL" "$TLS_VOL" "$WORK_VOL" "$STATE_VOL" "$LOG_VOL" "$KEY_VOL"; do
     docker volume create "$vol" >/dev/null || die "creating volume $vol failed"
