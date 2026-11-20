@@ -615,7 +615,7 @@ func TestProbeReportsThePoisonerAsAgentHandled(t *testing.T) {
 	if !probe.AgentHandled(poisoner.Service()) {
 		t.Errorf("probe.AgentHandled(%q) = false, want true", poisoner.Service())
 	}
-	for _, other := range []string{"ssh", "portscan", "snmp", "smb"} {
+	for _, other := range []string{"ssh", "portscan", "snmp", "llmnr"} {
 		if probe.AgentHandled(other) {
 			t.Errorf("probe.AgentHandled(%q) = true, want false", other)
 		}
