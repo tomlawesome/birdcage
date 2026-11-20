@@ -702,7 +702,7 @@ lint:knip:
     - (cd ci/knip && npm audit signatures)
     - NODE_MODULES_DIR="$CI_PROJECT_DIR/ci/knip/node_modules" scripts/licence-check-npm.sh
     - mkdir -p knip-report
-    - (cd frontend && ../ci/knip/node_modules/.bin/knip --no-progress --reporter json > ../knip-report/knip.json; rc=$?; ../ci/knip/node_modules/.bin/knip --no-progress; exit $rc)
+    - (cd frontend && ../ci/knip/node_modules/.bin/knip --no-progress --reporter json > ../knip-report/knip.json || rc=$?; ../ci/knip/node_modules/.bin/knip --no-progress || true; exit ${rc:-0})
   artifacts:
     paths: [knip-report/]
     expire_in: 30 days
@@ -726,7 +726,7 @@ lint:squawk:
     - (cd ci/squawk && npm audit signatures)
     - NODE_MODULES_DIR="$CI_PROJECT_DIR/ci/squawk/node_modules" scripts/licence-check-npm.sh
     - mkdir -p squawk-report
-    - ci/squawk/node_modules/.bin/squawk --reporter json internal/db/migrations/postgres/*.sql > squawk-report/squawk.json; rc=$?; ci/squawk/node_modules/.bin/squawk internal/db/migrations/postgres/*.sql; exit $rc
+    - ci/squawk/node_modules/.bin/squawk --reporter json internal/db/migrations/postgres/*.sql > squawk-report/squawk.json || rc=$?; ci/squawk/node_modules/.bin/squawk internal/db/migrations/postgres/*.sql || true; exit ${rc:-0}
   artifacts:
     paths: [squawk-report/]
     expire_in: 30 days
