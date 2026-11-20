@@ -47,8 +47,8 @@ def api(path):
     token = ""
     with open("/work/dashboard-auth") as f:
         token = f.read().strip().split(":", 1)[1].strip()
-    req = urllib.request.Request(DASHBOARD + path, headers={"Authorization": token})
-    with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+    req = urllib.request.Request(DASHBOARD + path, headers={"Authorization": token})  # noqa: S310 -- DASHBOARD is a fixed https URL of the harness's own throwaway container
+    with urllib.request.urlopen(req, context=ctx, timeout=10) as r:  # noqa: S310 -- fixed https URL, see above
         return json.load(r)
 
 
@@ -182,9 +182,9 @@ def trip_ssh(host, legacy=True):
     askpass = tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False)
     askpass.write("#!/bin/sh\necho not-a-password\n")
     askpass.close()
-    os.chmod(askpass.name, 0o755)
+    os.chmod(askpass.name, 0o755)  # noqa: S103 -- throwaway askpass script in the harness's temp dir; ssh refuses a non-executable one
     env = dict(os.environ, SSH_ASKPASS=askpass.name, SSH_ASKPASS_REQUIRE="force", DISPLAY="x")
-    p = subprocess.run(
+    p = subprocess.run(  # noqa: S603 -- fixed argv, no shell; host is a harness container address
         ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
          "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
          "-o", "NumberOfPasswordPrompts=1", "-o", "ConnectTimeout=5",
@@ -215,8 +215,8 @@ def trip_telnet(host):
 
 
 def trip_http(host):
-    p = subprocess.run(
-        ["curl", "-sS", "-m", "10", "-o", "/dev/null", "-w", "http=%{http_code}",
+    p = subprocess.run(  # noqa: S603 -- fixed argv, no shell; host is a harness container address
+        ["curl", "-sS", "-m", "10", "-o", "/dev/null", "-w", "http=%{http_code}",  # noqa: S607 -- curl on PATH in the live-check container
          "-d", "username=admin&password=not-a-password", "http://%s/index.html" % host],
         capture_output=True, text=True)
     return {"command": "curl POST username/password to http://<canary>/ on 80", "result": p.stdout, "err": p.stderr.strip()}
@@ -433,7 +433,7 @@ def smb_list(host):
             s.close()
             if st == 0:
                 seen.append(share)
-        except Exception:
+        except Exception:  # noqa: S110 -- a share that will not open is simply not listed
             pass
     return seen
 
