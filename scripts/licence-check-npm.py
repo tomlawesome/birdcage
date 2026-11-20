@@ -99,6 +99,28 @@ def find_package_roots(node_modules_dir):
     return roots
 
 
+def _spdx_or_operands(expr):
+    """Split a pure SPDX disjunction into its operands (SPDX spec, Annex D).
+
+    `Apache-2.0 OR MIT`, optionally in one pair of outer parentheses, is
+    satisfied by any one operand, so each operand becomes a candidate.
+    Anything else -- AND, WITH, nested parentheses -- is returned whole,
+    so it passes only if that exact string is allowed (fail closed).
+    """
+    s = expr.strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1].strip()
+    tokens = s.split()
+    if "(" in s or ")" in s or len(tokens) < 3 or "OR" not in tokens:
+        return [expr]
+    operands = tokens[0::2]
+    if any(t != "OR" for t in tokens[1::2]) or len(tokens) % 2 == 0:
+        return [expr]
+    if any(o in ("AND", "WITH", "OR") for o in operands):
+        return [expr]
+    return operands
+
+
 def licences_of(pkg):
     """Return the list of licence identifiers a package.json declares.
 
@@ -115,7 +137,7 @@ def licences_of(pkg):
     if lic is None:
         return []
     if isinstance(lic, str):
-        return [lic] if lic.strip() else []
+        return _spdx_or_operands(lic) if lic.strip() else []
     if isinstance(lic, dict):
         t = lic.get("type")
         return [t] if t else []
