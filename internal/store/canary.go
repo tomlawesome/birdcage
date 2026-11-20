@@ -55,7 +55,8 @@ type Canary struct {
 	// ever sets it true -- is the only path onto #45's pending state;
 	// `birdcage canary add`, cmd/seed-story and every existing test
 	// fixture built before this field existed keep registering
-	// immediately, unchanged.
+	// immediately, unchanged. ListCanaries also sets it on read, true
+	// exactly while RegisteredAt is nil (#244).
 	Pending bool `json:"-"`
 
 	// SMBLure, SMBWorkgroup and SMBShares are issue #54's own addition:
@@ -896,6 +897,9 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			}
 			c.RegisteredAt = &t
 		}
+		// Pending is also filled on read (#244) so health rules that
+		// need it, applyOpenCanaryHealth, can see it.
+		c.Pending = registeredAt == nil
 		applyStatus(&c, now)
 		c.BirdcageVersion = birdcageVersion
 		canaries = append(canaries, c)
