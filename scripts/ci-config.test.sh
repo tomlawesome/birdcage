@@ -232,6 +232,123 @@ else
   check "knip is not in frontend/package.json" 0 ""
 fi
 
+# 5b. squawk (#199 item 5, owner decision 69a): same sandbox as knip, own
+#     package, report-only, over the Postgres migrations. Written from the
+#     specification before the job exists.
+sq="$(python3 -I - "$ci" "$repo_root" <<'PY'
+import json, os, re, sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+root = sys.argv[2]
+J = "lint:squawk"
+job = doc.get(J)
+print("exists=%s" % (isinstance(job, dict)))
+job = job if isinstance(job, dict) else {}
+print("allow-failure=%s" % job.get("allow_failure"))
+lines = []
+for line in job.get("script") or []:
+    if isinstance(line, str):
+        lines += [l.strip() for l in line.splitlines()]
+for l in lines:
+    if re.search(r"\bnpm\s+ci\b", l):
+        print("npm-ci=" + l)
+    if re.search(r"\bnpm\s+audit\s+signatures\b", l):
+        print("audit-sig=" + l)
+    if "squawk" in l and "internal/db/migrations/postgres/" in l and "sqlite" not in l:
+        print("scans-postgres=" + l)
+    if "licence-check-npm.sh" in l:
+        print("licence-check=" + l)
+art = job.get("artifacts") or {}
+if any("squawk-report" in str(p) for p in (art.get("paths") or [])) \
+        and art.get("when") == "always" and art.get("expire_in") == "30 days":
+    print("artifact-ok=1")
+cache = job.get("cache")
+for c in (cache if isinstance(cache, list) else [cache] if cache else []):
+    if isinstance(c, dict) and c.get("policy", "pull-push") != "pull":
+        print("cache-push=%s" % c.get("policy", "pull-push"))
+for name, other in doc.items():
+    if name == J or not isinstance(other, dict):
+        continue
+    needs = other.get("needs") or []
+    for n in needs if isinstance(needs, list) else [needs]:
+        n = n.get("job") if isinstance(n, dict) else n
+        if n == J:
+            print("needed-by=" + name)
+for k, v in (job.get("variables") or {}).items():
+    if re.search(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|CERT", k, re.I) \
+            or isinstance(v, dict):
+        print("secret-var=%s" % k)
+
+def load(path):
+    try:
+        return json.load(open(os.path.join(root, path)))
+    except (OSError, ValueError):
+        return None
+kp = load("ci/squawk/package.json")
+if kp is None:
+    print("squawk-pkg=missing")
+else:
+    v = {**(kp.get("dependencies") or {}), **(kp.get("devDependencies") or {})}.get("squawk-cli")
+    print("squawk-version=%s" % v)
+print("lock=%s" % os.path.exists(os.path.join(root, "ci/squawk/package-lock.json")))
+fp = load("frontend/package.json") or {}
+for sec in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+    if "squawk-cli" in (fp.get(sec) or {}):
+        print("squawk-in-frontend=" + sec)
+def txt(p):
+    try:
+        return open(os.path.join(root, p)).read()
+    except OSError:
+        return ""
+inv = txt("supply-chain/dependency-inventory.md")
+print("inventory-row=%s" % bool(re.search(r"^\|[^|]*\|\s*`squawk", inv, re.M)))
+print("policy-listed=%s" % ("ci/squawk/package.json" in txt("supply-chain/policy-files.txt").split()))
+print("hops-row=%s" % ("`lint:squawk`" in txt("docs/ci-hops.md")))
+PY
+)" || { echo "FAIL could not read lint:squawk from $ci"; exit 1; }
+
+chk() { # name, grep-pattern (must match), detail
+  if grep -qE "$2" <<< "$sq"; then check "$1" 0 ""; else check "$1" 1 "$3"; fi
+}
+chk "lint:squawk exists" '^exists=True$' "no such job"
+chk "lint:squawk is allow_failure: true" '^allow-failure=True$' "$(grep '^allow-failure=' <<< "$sq")"
+if grep -q '^npm-ci=' <<< "$sq" && ! grep '^npm-ci=' <<< "$sq" | grep -qv -- '--ignore-scripts'; then
+  check "every npm ci in lint:squawk has --ignore-scripts" 0 ""
+else
+  check "every npm ci in lint:squawk has --ignore-scripts" 1 "$(grep '^npm-ci=' <<< "$sq" | grep -v -- '--ignore-scripts' || echo 'no npm ci line')"
+fi
+chk "lint:squawk runs npm audit signatures" '^audit-sig=' "no such script line"
+chk "lint:squawk runs the npm licence check" '^licence-check=' "no such script line"
+chk "lint:squawk scans internal/db/migrations/postgres/" '^scans-postgres=' "no squawk line over the postgres dir"
+chk "lint:squawk keeps squawk-report/ for 30 days, when always" '^artifact-ok=1$' "artifact missing or wrong"
+if grep -q '^cache-push=' <<< "$sq"; then
+  check "lint:squawk has no cache with a push policy" 1 "$(grep '^cache-push=' <<< "$sq")"
+else
+  check "lint:squawk has no cache with a push policy" 0 ""
+fi
+if grep -q '^needed-by=' <<< "$sq"; then
+  check "no job needs lint:squawk" 1 "$(grep '^needed-by=' <<< "$sq" | tr '\n' ' ')"
+else
+  check "no job needs lint:squawk" 0 ""
+fi
+if grep -qx 'exists=True' <<< "$sq" && ! grep -q '^secret-var=' <<< "$sq"; then
+  check "lint:squawk defines no secret variables" 0 ""
+else
+  check "lint:squawk defines no secret variables" 1 "job missing or has secret-like variables"
+fi
+chk "ci/squawk/package.json pins squawk-cli exactly 2.73.0" '^squawk-version=2\.73\.0$' "$(grep '^squawk-' <<< "$sq" | head -1)"
+chk "ci/squawk/package-lock.json exists" '^lock=True$' "missing"
+if grep -q '^squawk-in-frontend=' <<< "$sq"; then
+  check "squawk-cli is not in frontend/package.json" 1 "$(grep '^squawk-in-frontend=' <<< "$sq")"
+else
+  check "squawk-cli is not in frontend/package.json" 0 ""
+fi
+chk "dependency-inventory.md has a squawk row" '^inventory-row=True$' "no row"
+chk "policy-files.txt lists ci/squawk/package.json" '^policy-listed=True$' "not listed"
+chk "docs/ci-hops.md has a lint:squawk row" '^hops-row=True$' "no row"
+
 # 6. Trivy (#199 items 1-3, owner decision 66a): report-first jobs, installed
 #    only through scripts/ensure-trivy.sh. Written from the specification
 #    before the jobs exist.
