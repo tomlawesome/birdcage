@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- bait names, schedule jitter and query IDs are not secrets (#199)
 	"net"
 	"sync"
@@ -236,7 +237,7 @@ func lookup(ctx context.Context, proto Protocol, name string, seg segment, shape
 	if own != nil && proto != ProtocolNBNS {
 		at := now()
 		for _, s := range sockets {
-			if a, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && a.Port > 0 {
+			if a, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && a.Port > 0 && a.Port <= math.MaxUint16 {
 				own.Add(uint16(a.Port), at)
 			}
 		}
