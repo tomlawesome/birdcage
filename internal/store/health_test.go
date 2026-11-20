@@ -701,3 +701,72 @@ func TestListCanariesAgentOutOfDate(t *testing.T) {
 		}
 	})
 }
+
+// ocDownBeat records a heartbeat whose agent self-report says OpenCanary
+// is not answering (issue #244's fixture: every enrolment sees this until
+// the first self-test passes).
+func ocDownBeat(t *testing.T, database *db.DB, id string, at time.Time) {
+	t.Helper()
+	if err := RecordCanaryAgentHeartbeat(context.Background(), database, id, at, AgentHeartbeat{
+		QueueDepth: 1, LogReadOK: true, LastEventID: "abc", OpenCanaryUp: boolPtr(false),
+	}); err != nil {
+		t.Fatalf("RecordCanaryAgentHeartbeat(%s): %v", id, err)
+	}
+}
+
+// TestListCanariesPendingNeverOpenCanaryDown (#244): a canary still
+// pending (registered_at NULL) does not get opencanary_down even though
+// its heartbeat says OpenCanary is down. A registered one still does.
+func TestListCanariesPendingNeverOpenCanaryDown(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "pend", Name: "pend", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt, Pending: true})
+		insertCanary(t, database, Canary{ID: "reg", Name: "reg", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt})
+
+		now := enrolledAt.Add(time.Minute)
+		ocDownBeat(t, database, "pend", now)
+		ocDownBeat(t, database, "reg", now)
+
+		canaries := listCanaries(t, database, now, rangeDurations[DefaultRange])
+		pend := findCanary(t, canaries, "pend")
+		if pend.RegisteredAt != nil {
+			t.Fatalf("RegisteredAt = %v, want nil (pending)", pend.RegisteredAt)
+		}
+		if hasActive(pend, StateOpenCanaryDown) {
+			t.Errorf("pending canary states %v, want no opencanary_down", pend.ActiveStates)
+		}
+		if pend.Status == string(StateOpenCanaryDown) {
+			t.Errorf("pending canary Status = %q, want not opencanary_down", pend.Status)
+		}
+		reg := findCanary(t, canaries, "reg")
+		if !hasActive(reg, StateOpenCanaryDown) {
+			t.Errorf("registered canary states %v, want opencanary_down", reg.ActiveStates)
+		}
+	})
+}
+
+// TestListCanariesOpenCanaryDownAppearsOnceRegistered (#244): pending to
+// registered while OpenCanary is still down -- opencanary_down appears
+// from the next evaluation.
+func TestListCanariesOpenCanaryDownAppearsOnceRegistered(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		enrolledAt := mustParse(t, "2026-01-01T00:00:00Z")
+		insertCanary(t, database, Canary{ID: "c", Name: "c", Lane: "lan", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt, Pending: true})
+		t1 := enrolledAt.Add(time.Minute)
+		ocDownBeat(t, database, "c", t1)
+
+		if c := findCanary(t, listCanaries(t, database, t1, rangeDurations[DefaultRange]), "c"); hasActive(c, StateOpenCanaryDown) {
+			t.Fatalf("while pending, states %v, want no opencanary_down", c.ActiveStates)
+		}
+
+		if err := SettlePending(context.Background(), database, "c", t1); err != nil {
+			t.Fatalf("SettlePending: %v", err)
+		}
+		t2 := t1.Add(time.Second)
+		ocDownBeat(t, database, "c", t2)
+		c := findCanary(t, listCanaries(t, database, t2, rangeDurations[DefaultRange]), "c")
+		if !hasActive(c, StateOpenCanaryDown) {
+			t.Errorf("after registering, states %v, want opencanary_down", c.ActiveStates)
+		}
+	})
+}

@@ -633,3 +633,51 @@ func TestTickRecordsUpgradeInProgress(t *testing.T) {
 		}
 	})
 }
+
+// ocDownBeat records a heartbeat whose agent self-report says OpenCanary
+// is not answering.
+func ocDownBeat(t *testing.T, database *db.DB, id string, at time.Time) {
+	t.Helper()
+	up := false
+	if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, id, at, store.AgentHeartbeat{
+		QueueDepth: 1, LogReadOK: true, LastEventID: "abc", OpenCanaryUp: &up,
+	}); err != nil {
+		t.Fatalf("RecordCanaryAgentHeartbeat(%s): %v", id, err)
+	}
+}
+
+func hasOpenCanaryDownPeriod(ps []store.StatePeriod) bool {
+	for _, p := range ps {
+		if p.State == string(store.StateOpenCanaryDown) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTickPendingCanaryRecordsNoOpenCanaryDown (#244): a pending canary
+// (registered_at NULL) reporting OpenCanary down records no incident; a
+// registered one does.
+func TestTickPendingCanaryRecordsNoOpenCanaryDown(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		t0 := mustParse(t, "2026-01-01T00:00:00Z")
+		if err := store.InsertCanary(context.Background(), database, store.Canary{
+			ID: "pend", Name: "pend", Lane: "lan", Kind: agentkind.Honeypot, HeartbeatIntervalS: 60, EnrolledAt: t0.Add(-time.Hour), Pending: true,
+		}); err != nil {
+			t.Fatalf("InsertCanary: %v", err)
+		}
+		addCanary(t, database, "reg", "reg", t0)
+		ocDownBeat(t, database, "pend", t0)
+		ocDownBeat(t, database, "reg", t0)
+
+		r := New(database, "")
+		tick(t, r, t0)
+
+		if got := periods(t, database, "pend"); hasOpenCanaryDownPeriod(got) {
+			t.Errorf("pending canary periods = %+v, want no opencanary_down", got)
+		}
+		if got := periods(t, database, "reg"); !hasOpenCanaryDownPeriod(got) {
+			t.Errorf("registered canary periods = %+v, want an opencanary_down period", got)
+		}
+	})
+}
