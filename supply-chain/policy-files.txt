@@ -55,4 +55,5 @@ supply-chain/scan-ceilings.yml
 .golangci.yml
 ruff.toml
 ci/knip/package.json
+ci/squawk/package.json
 frontend/knip.jsonc
