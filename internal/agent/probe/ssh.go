@@ -42,7 +42,7 @@ func probeSSH(ctx context.Context, address string, port int, marker string) erro
 		// The probe is not trying to identify who it is talking to --
 		// only to reach OpenCanary's own listener on this canary's own
 		// address -- so there is no host key to have pinned in advance.
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // nosemgrep: go.lang.security.audit.crypto.insecure_ssh.avoid-ssh-insecure-ignore-host-key -- self-test probe to the canary's own listener with a throwaway credential; no trust decision (#199)
 	}
 
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, cfg)

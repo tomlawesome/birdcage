@@ -3,7 +3,7 @@ package poisoner
 import (
 	"fmt"
 	"hash/fnv"
-	"math/rand/v2"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- bait names, schedule jitter and query IDs are not secrets (#199)
 	"strconv"
 	"strings"
 	"time"

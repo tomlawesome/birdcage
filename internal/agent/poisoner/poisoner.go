@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- bait names, schedule jitter and query IDs are not secrets (#199)
 	"net"
 	"os"
 	"sync"
