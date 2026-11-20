@@ -708,6 +708,30 @@ lint:knip:
     expire_in: 30 days
     when: always
 
+# #199 item 5 (owner decision 69a, 2026-11-20): squawk over the Postgres
+# migrations, sandboxed like lint:knip. Its own package (ci/squawk), never in
+# frontend/. Locked install with no install scripts, signatures and provenance
+# checked, licences gated. No cache, no variables, no job needs it, and the
+# report is the only artefact. Report only for now (allow_failure). The sqlite
+# migrations are not Postgres, so they are not scanned.
+lint:squawk:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image: $NODE_IMAGE
+  <<: *static_gate
+  allow_failure: true
+  timeout: 5m
+  script:
+    - (cd ci/squawk && npm ci --ignore-scripts)
+    - (cd ci/squawk && npm audit signatures)
+    - NODE_MODULES_DIR="$CI_PROJECT_DIR/ci/squawk/node_modules" scripts/licence-check-npm.sh
+    - mkdir -p squawk-report
+    - ci/squawk/node_modules/.bin/squawk --reporter json internal/db/migrations/postgres/*.sql > squawk-report/squawk.json; rc=$?; ci/squawk/node_modules/.bin/squawk internal/db/migrations/postgres/*.sql; exit $rc
+  artifacts:
+    paths: [squawk-report/]
+    expire_in: 30 days
+    when: always
+
 # Trivy (#199 items 1-3, owner decision 66a, 2026-11-19): three report-only
 # jobs, never blocking (allow_failure: true), each keeping a JSON report of
 # HIGH and CRITICAL findings for 30 days. Trivy is installed only by
