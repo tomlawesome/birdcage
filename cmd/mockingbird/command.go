@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- poll-interval jitter only, not security (#199)
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"

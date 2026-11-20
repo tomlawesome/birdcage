@@ -173,7 +173,7 @@ func probePortscan(ctx context.Context, address string, port int) (AttributionFa
 // dial reports an ordinary error, which this carrier already treats as
 // ctx.Err() alone deciding failure -- see probePortscan's own doc.
 func reserveEphemeralPort() (int, error) {
-	ln, err := net.Listen("tcp", ":0")
+	ln, err := net.Listen("tcp", ":0") // nosemgrep: go.lang.security.audit.net.bind_all.avoid-bind-to-all-interfaces -- learns a free port number; the listener is closed at once (#199)
 	if err != nil {
 		return 0, err
 	}

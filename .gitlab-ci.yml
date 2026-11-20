@@ -754,8 +754,8 @@ lint:semgrep:
   script:
     - mkdir -p semgrep-report
     - rc=0
-    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --json --output semgrep-report/semgrep.json --error . || rc=$?
-    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --error . || rc=$?
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --exclude scan-fixtures --json --output semgrep-report/semgrep.json --error . || rc=$?
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --exclude scan-fixtures --error . || rc=$?
     - exit ${rc:-0}
   artifacts:
     paths: [semgrep-report/]
