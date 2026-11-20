@@ -44,6 +44,17 @@ func (inv snmpInventory) line() string {
 	return "snmp detection active"
 }
 
+// snmpUp is the heartbeat's SNMPUp (#243): nil when the SNMP road is off
+// (so a canary that never ran SNMP never grows an snmp self-test target),
+// true when the listener is active.
+func snmpUp(inv snmpInventory) *bool {
+	if !inv.SNMPActive {
+		return nil
+	}
+	up := true
+	return &up
+}
+
 // snmpEnabled reports whether the SNMP road should run at all.
 func snmpEnabled() bool { return os.Getenv(envSNMP) != "0" }
 

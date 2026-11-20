@@ -268,6 +268,8 @@ func main() {
 		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
 			sr := currentSelfReport(version, in, poisonerDetector)
 			sr.OpenCanaryUp = ocProbe.Probe(ctx)
+			sr.SMBLureUp = ocProbe.ProbeSMBLure(ctx)
+			sr.SNMPUp = snmpUp(snmpInv)
 			return sr
 		}, agentSettingsState, poisonerDetector)
 	}()

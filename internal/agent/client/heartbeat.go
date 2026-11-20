@@ -52,6 +52,14 @@ type SelfReport struct {
 	// non-nil otherwise, true only when every configured module answered.
 	OpenCanaryUp *bool
 
+	// SMBLureUp and SNMPUp (#243): whether the SMB lure answers a bare
+	// connection to 445, and whether the SNMP listener is active. nil
+	// means that listener is configured off on this agent (the SMB audit
+	// path unset, the SNMP road off); false means configured but not
+	// answering.
+	SMBLureUp *bool
+	SNMPUp    *bool
+
 	// SettingsHash is issue #124's own addition: SettingsHash's own
 	// digest of this agent's currently-effective per-canary settings
 	// (cmd/mockingbird's own record of what it last validated and
@@ -89,6 +97,8 @@ type wireHeartbeat struct {
 	PoisonerNames     string `json:"poisoner_names,omitempty"`
 	SettingsHash      string `json:"settings_hash,omitempty"`
 	OpenCanaryUp      *bool  `json:"opencanary_up,omitempty"`
+	SMBLureUp         *bool  `json:"smb_lure_up,omitempty"`
+	SNMPUp            *bool  `json:"snmp_up,omitempty"`
 }
 
 // heartbeatResponse is POST /ingest/heartbeat's response body (issue
@@ -135,6 +145,8 @@ func (c *Client) SendHeartbeat(ctx context.Context, token string, report SelfRep
 		PoisonerNames:     report.PoisonerNames,
 		SettingsHash:      report.SettingsHash,
 		OpenCanaryUp:      report.OpenCanaryUp,
+		SMBLureUp:         report.SMBLureUp,
+		SNMPUp:            report.SNMPUp,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("client: encode heartbeat: %w", err)

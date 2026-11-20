@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"time"
 
@@ -242,5 +243,24 @@ func (p *openCanaryProbe) Probe(ctx context.Context) *bool {
 		p.log.Info("opencanary: answering again")
 	}
 	p.down = !up
+	return &up
+}
+
+// ProbeSMBLure is the heartbeat's SMBLureUp (#243): nil when
+// MOCKINGBIRD_SMB_AUDIT_PATH is unset (no SMB lure on this canary), else
+// whether a bare TCP connection to the lure's port 445 succeeds. It sends
+// no SMB bytes, so the lure logs nothing for it; the self-test's
+// probe.ReachSMB is the check that speaks SMB.
+func (p *openCanaryProbe) ProbeSMBLure(ctx context.Context) *bool {
+	if os.Getenv(envSMBAuditPath) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.DialTimeout)
+	defer cancel()
+	up := false
+	if conn, err := p.dial(ctx, "tcp", net.JoinHostPort(p.cfg.Host, "445")); err == nil {
+		_ = conn.Close() // bare connect; nothing to act on a close error
+		up = true
+	}
 	return &up
 }
