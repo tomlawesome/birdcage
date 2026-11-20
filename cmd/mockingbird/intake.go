@@ -165,7 +165,7 @@ func (in *Intake) observeClaim(id string, message []byte) {
 		// events always are), so there is nothing to observe.
 		return
 	}
-	in.claims.observe(id, fields.Service, fields.SourceIP)
+	in.claims.observePort(id, fields.Service, fields.SourceIP, fields.SourcePort)
 }
 
 // SubmitPortscanEvent is the third road into the queue (#65): a port

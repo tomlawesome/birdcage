@@ -37,6 +37,9 @@ type Fields struct {
 	// unmapped, matching internal/ingest/batch.go's own "" -> "unknown"
 	// fallback (issue #53).
 	Service string
+	// SourcePort is the event's src_port, 0 when absent. With SourceIP it
+	// identifies the TCP connection that produced the event (#239).
+	SourcePort int
 }
 
 // eventPayload is the subset of OpenCanary's emitted JSON this package
@@ -46,6 +49,7 @@ type Fields struct {
 // itself is not duplicated here: both packages call internal/opencanary.
 type eventPayload struct {
 	SrcHost string `json:"src_host"`
+	SrcPort *int   `json:"src_port"`
 	DstPort *int   `json:"dst_port"`
 	LogType *int   `json:"logtype"`
 }
@@ -67,6 +71,9 @@ func ExtractFields(message []byte) (Fields, error) {
 		DestPort: opencanary.NoDestPort,
 		LogType:  payload.LogType,
 		Service:  opencanary.ServiceForLogType(payload.LogType),
+	}
+	if payload.SrcPort != nil {
+		f.SourcePort = *payload.SrcPort
 	}
 	if payload.DstPort != nil {
 		f.DestPort = *payload.DstPort
