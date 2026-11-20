@@ -176,12 +176,26 @@ func runSelfTest(ctx context.Context, in *Intake, bait baitLookup, cmd *client.C
 
 	var windows []*claimWindow
 	for _, t := range params.Targets {
-		if probe.Attributed(t.Service) {
+		if probe.Attributed(t.Service) || probe.ConnectionClaimed(t.Service) {
 			windows = append(windows, in.claims.startWindow(t.Service, params.Address, t.Marker))
 		}
 	}
 
 	outcomes := probe.Sweep(ctx, params)
+
+	// An ssh probe's source port is known only once its connection is
+	// open, so it reaches the window after the sweep (#239); every event
+	// of that connection is held until the window resolves below.
+	for _, o := range outcomes {
+		if o.SourcePort == 0 {
+			continue
+		}
+		for _, w := range windows {
+			if w.service == o.Service {
+				w.setSourcePort(o.SourcePort)
+			}
+		}
+	}
 
 	if len(windows) > 0 {
 		select {

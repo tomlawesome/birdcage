@@ -106,8 +106,10 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 `--cap-add NET_RAW` is what lets the canary notice being scanned: the
 agent opens one raw socket inside the container's own network namespace
 (the holder's -- every honeypot canary joins it now, issue #132) to see
-connection attempts aimed at ports none of its emulated services answer
-on, which is the only way it can report a port sweep (OpenCanary's own
+connection attempts aimed at closed ports -- a port counts as closed only
+if nothing on the canary is listening on it, emulated service or not -- which
+is the only way it can report a port sweep (5 different closed ports from one
+address within 30 s) (OpenCanary's own
 port-scan module needs firewall rules and a root process, and this
 container has neither). Leave the flag off and everything else still
 works -- every hit on an emulated service is still reported -- but a
@@ -699,7 +701,7 @@ All three are optional. Set them the same way as the variables in the
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `MOCKINGBIRD_PORTSCAN` | on | Set to `0` to turn port-scan detection off entirely. Any other value, including unset, leaves it on. |
-| `MOCKINGBIRD_PORTSCAN_IGNORE_PORTS` | empty | Comma-separated extra ports to treat as yours, on top of the ones OpenCanary is configured to answer on. For something else sharing the container's network, or a monitoring probe that would otherwise look like a sweep. |
+| `MOCKINGBIRD_PORTSCAN_IGNORE_PORTS` | empty | Comma-separated extra ports to treat as yours, on top of the ones OpenCanary is configured to answer on. Ports with a listening socket on the canary are never counted anyway; this list also covers the case where the canary cannot read its socket table. For something else sharing the container's network, or a monitoring probe that would otherwise look like a sweep. |
 | `MOCKINGBIRD_OPENCANARY_CONF` | `/etc/opencanaryd/opencanary.conf` | Where to read OpenCanary's configuration from. Only change this if you bind-mount your own configuration somewhere else. |
 
 The agent reads the OpenCanary configuration once at startup to work out

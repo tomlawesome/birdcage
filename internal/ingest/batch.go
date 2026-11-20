@@ -200,25 +200,27 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 		// far cheaper than losing the event entirely.
 		//
 		// #46 slice 3: an event carrying self_test_marker is an
-		// attributed-grade claim the agent made locally (note 19897) --
+		// claim the agent made locally (note 19897; ssh, #239) --
 		// corroborated independently by MatchSelfTestClaim, never taken
-		// on trust, and never falling back to a raw substring match (a
-		// marked-grade service proves itself with raw; a claim naming
-		// one is refused, not silently reinterpreted). A refusal is
-		// audited once, by canary/service/reason -- never the marker.
-		if ev.SelfTestMarker != "" {
-			matched, refusal, err := store.MatchSelfTestClaim(r.Context(), h.db, h.selfTestIndex, insert, ev.SelfTestMarker, receivedAt)
+		// on trust. The raw marker is matched first; the claim is tried
+		// only if it did not match. A refusal is audited once, by
+		// canary/service/reason -- never the marker.
+		if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
+			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
+		} else if matched {
+			insert.Synthetic = true
+		} else if ev.SelfTestMarker != "" {
+			// A claim is only tried once the raw marker did not match
+			// (#239): the event that carries the marker itself passes
+			// its target; the claim covers the rest of the connection.
+			claimed, refusal, err := store.MatchSelfTestClaim(r.Context(), h.db, h.selfTestIndex, insert, ev.SelfTestMarker, receivedAt)
 			if err != nil {
 				slog.Error("ingest: self-test claim corroboration failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
-			} else if matched {
+			} else if claimed {
 				insert.Synthetic = true
 			} else {
 				recordSelfTestClaimRefused(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, service, refusal)
 			}
-		} else if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
-			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
-		} else if matched {
-			insert.Synthetic = true
 		}
 
 		if opencanary.IsSelfTestResult(service) {
