@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -520,10 +521,15 @@ func TestMatchSelfTestClaim_MarkedGradeTargetRefused(t *testing.T) {
 		if err := SetCanaryLastSeenAddr(context.Background(), database, "canary-a", "192.0.2.10"); err != nil {
 			t.Fatalf("SetCanaryLastSeenAddr: %v", err)
 		}
-		cmd := mintSelfTestCommand(t, database, idx, "canary-a", now, time.Hour) // ssh, marked grade
+		// ftp, marked grade: since #239 only ssh may be claimed this way.
+		cmd, err := MintSelfTestCommand(context.Background(), database, idx, "canary-a", "192.0.2.10",
+			[]SelfTestTarget{{Service: "ftp", DestPort: 21}}, now, now.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("MintSelfTestCommand: %v", err)
+		}
 		marker := mustDecodeParams(t, cmd).Targets[0].Marker
 
-		alert := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "192.0.2.10"}
+		alert := AlertInsert{InstanceID: "canary-a", Service: "ftp", SourceIP: "192.0.2.10"}
 		matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
 		if err != nil {
 			t.Fatalf("MatchSelfTestClaim: %v", err)
@@ -584,6 +590,158 @@ func TestMatchSelfTestClaim_UnknownMarkerRefused(t *testing.T) {
 		}
 		if refusal == "" {
 			t.Error("a refused claim carries no reason")
+		}
+	})
+}
+
+// mintSSHClaimTarget mints one ssh target (marked grade) for canaryID,
+// sets the canary's last-seen address to addr, and returns the marker.
+// #239: ssh's own events 4000 and 4001 never carry the marker, so the
+// agent claims them by the probe's connection (same src_host and
+// src_port) and birdcage must accept those claims for ssh.
+func mintSSHClaimTarget(t *testing.T, database *db.DB, idx *SelfTestIndex, canaryID, addr string, createdAt time.Time, ttl time.Duration) string {
+	t.Helper()
+	if err := SetCanaryLastSeenAddr(context.Background(), database, canaryID, addr); err != nil {
+		t.Fatalf("SetCanaryLastSeenAddr(%s): %v", canaryID, err)
+	}
+	cmd, err := MintSelfTestCommand(context.Background(), database, idx, canaryID, addr,
+		[]SelfTestTarget{{Service: "ssh", DestPort: 22}}, createdAt, createdAt.Add(ttl))
+	if err != nil {
+		t.Fatalf("MintSelfTestCommand(%s): %v", canaryID, err)
+	}
+	return mustDecodeParams(t, cmd).Targets[0].Marker
+}
+
+// TestMatchSelfTestClaim_SSHClaimsUpToCapThenRefused is #239's cap: one
+// ssh marker corroborates several claims (an ssh connection makes three
+// events), but no more than selfTestClaimCap of them; the next is
+// refused and stays real. The same event presented again is not a new
+// claim.
+func TestMatchSelfTestClaim_SSHClaimsUpToCapThenRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		marker := mintSSHClaimTarget(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+
+		if selfTestClaimCap < 3 {
+			t.Fatalf("selfTestClaimCap = %d, want at least 3 (an ssh connection makes three events)", selfTestClaimCap)
+		}
+		claim := func(n int) (bool, string) {
+			t.Helper()
+			alert := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "192.0.2.10", EventID: fmt.Sprintf("evt-%d", n)}
+			matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+			if err != nil {
+				t.Fatalf("MatchSelfTestClaim(evt-%d): %v", n, err)
+			}
+			return matched, refusal
+		}
+		for n := 1; n <= selfTestClaimCap; n++ {
+			if matched, refusal := claim(n); !matched {
+				t.Fatalf("claim %d of %d on an ssh marker was refused: %q", n, selfTestClaimCap, refusal)
+			}
+		}
+		if matched, _ := claim(1); !matched {
+			t.Error("a retried claim of an already-claimed event was refused")
+		}
+		matched, refusal := claim(selfTestClaimCap + 1)
+		if matched {
+			t.Fatalf("claim %d (over the cap of %d) was corroborated", selfTestClaimCap+1, selfTestClaimCap)
+		}
+		if refusal == "" {
+			t.Error("a refused claim carries no reason")
+		}
+		if strings.Contains(refusal, marker) {
+			t.Error("the refusal reason contains the marker")
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_SSHWrongSourceRefused: the ssh multi-event claim
+// is still corroborated against the canary's last-seen address.
+func TestMatchSelfTestClaim_SSHWrongSourceRefused(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now()
+		marker := mintSSHClaimTarget(t, database, idx, "canary-a", "192.0.2.10", now, time.Hour)
+
+		alert := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "198.51.100.7", EventID: "evt-1"}
+		matched, _, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+		if err != nil {
+			t.Fatalf("MatchSelfTestClaim: %v", err)
+		}
+		if matched {
+			t.Fatal("an ssh claim from a source other than the canary's last-seen address was corroborated")
+		}
+	})
+}
+
+// TestMatchSelfTestClaim_ClaimedSiblingsDoNotPassTheTarget: a claim only
+// marks an event synthetic. Claiming 4000 and 4001 (no marker in raw)
+// must not pass the ssh target; only the marker inside 4002's raw does.
+func TestMatchSelfTestClaim_ClaimedSiblingsDoNotPassTheTarget(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now().UTC()
+		marker := mintSSHClaimTarget(t, database, idx, "canary-a", "192.0.2.10", now, 10*time.Minute)
+
+		for _, id := range []string{"evt-4000", "evt-4001"} {
+			alert := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "192.0.2.10", EventID: id, Raw: `{"logtype": 4000}`}
+			matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, alert, marker, now)
+			if err != nil || !matched {
+				t.Fatalf("claim %s = %v, %q, %v, want matched", id, matched, refusal, err)
+			}
+		}
+
+		afterDeadline := now.Add(11 * time.Minute)
+		if _, err := SweepExpiredSelfTestRuns(context.Background(), database, afterDeadline); err != nil {
+			t.Fatalf("SweepExpiredSelfTestRuns: %v", err)
+		}
+		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour, "")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastSelfTestPassed != nil && *c.LastSelfTestPassed {
+			t.Fatal("the run passed on claimed siblings alone; only the raw marker in 4002 may pass the target")
+		}
+		if len(c.SelfTestFailedServices) != 1 || c.SelfTestFailedServices[0] != "ssh" {
+			t.Fatalf("SelfTestFailedServices = %v, want [ssh]", c.SelfTestFailedServices)
+		}
+	})
+}
+
+// TestMatchSelfTest_RawMarkerPassesAfterClaimedSiblings: the same run
+// does pass once 4002's raw carries the marker, whether or not siblings
+// were claimed first.
+func TestMatchSelfTest_RawMarkerPassesAfterClaimedSiblings(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+		idx := NewSelfTestIndex()
+		now := time.Now().UTC()
+		marker := mintSSHClaimTarget(t, database, idx, "canary-a", "192.0.2.10", now, 10*time.Minute)
+
+		sibling := AlertInsert{InstanceID: "canary-a", Service: "ssh", SourceIP: "192.0.2.10", EventID: "evt-4000"}
+		if matched, refusal, err := MatchSelfTestClaim(context.Background(), database, idx, sibling, marker, now); err != nil || !matched {
+			t.Fatalf("sibling claim = %v, %q, %v, want matched", matched, refusal, err)
+		}
+		target := AlertInsert{InstanceID: "canary-a", Service: "ssh", DestPort: 22, SourceIP: "192.0.2.10", EventID: "evt-4002", Raw: `{"USERNAME":"` + marker + `"}`}
+		if matched, err := MatchSelfTest(context.Background(), database, idx, target, now); err != nil || !matched {
+			t.Fatalf("MatchSelfTest(4002) = %v, %v, want true, nil", matched, err)
+		}
+		afterDeadline := now.Add(11 * time.Minute)
+		if _, err := SweepExpiredSelfTestRuns(context.Background(), database, afterDeadline); err != nil {
+			t.Fatalf("SweepExpiredSelfTestRuns: %v", err)
+		}
+		canaries, err := ListCanaries(context.Background(), database, afterDeadline, 24*time.Hour, "")
+		if err != nil {
+			t.Fatalf("ListCanaries: %v", err)
+		}
+		c := findCanary(t, canaries, "canary-a")
+		if c.LastSelfTestPassed == nil || !*c.LastSelfTestPassed {
+			t.Fatalf("LastSelfTestPassed = %v, want true", c.LastSelfTestPassed)
 		}
 	})
 }
