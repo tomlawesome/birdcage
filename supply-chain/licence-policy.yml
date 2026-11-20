@@ -57,7 +57,7 @@ allow-go-module-licenses:
   # gauntlet itself.
   - github.com/coreos/go-oidc/v3/oidc@v3.21.0 Apache-2.0
   # gauntlet/oidc.
-  - github.com/go-jose/go-jose/v4@v4.1.4 Apache-2.0
+  - github.com/go-jose/go-jose/v4@v4.1.6 Apache-2.0
   # gauntlet/oidc, through go-oidc.
   - github.com/go-webauthn/x/crypto/secp256k1@v0.3.1 ISC
   # gauntlet/passkey, through go-webauthn/webauthn. The rest of
