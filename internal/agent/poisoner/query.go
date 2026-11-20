@@ -213,7 +213,7 @@ func openNBNSSocket(seg segment) (querySocket, error) {
 //
 // An answer is a hit. There is nothing to decide about it here -- the bait
 // name does not exist, so the only correct response was silence.
-func lookup(ctx context.Context, proto Protocol, name string, seg segment, shape Shape, r *rand.Rand, arpPath string) ([]Answer, error) {
+func lookup(ctx context.Context, proto Protocol, name string, seg segment, shape Shape, r *rand.Rand, arpPath string, own OwnPortsRecorder, now func() time.Time) ([]Answer, error) {
 	questions, err := buildQuestions(proto, name, shape, r)
 	if err != nil {
 		return nil, err
@@ -232,6 +232,15 @@ func lookup(ctx context.Context, proto Protocol, name string, seg segment, shape
 			_ = s.conn.Close()
 		}
 	}()
+
+	if own != nil && proto != ProtocolNBNS {
+		at := now()
+		for _, s := range sockets {
+			if a, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && a.Port > 0 {
+				own.Add(uint16(a.Port), at)
+			}
+		}
+	}
 
 	record := asked{name: name, proto: proto, ids: make(map[uint16]struct{}, len(questions))}
 	for _, q := range questions {
