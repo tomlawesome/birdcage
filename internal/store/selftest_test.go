@@ -707,8 +707,8 @@ func TestMatchSelfTestClaim_ClaimedSiblingsDoNotPassTheTarget(t *testing.T) {
 		if c.LastSelfTestPassed != nil && *c.LastSelfTestPassed {
 			t.Fatal("the run passed on claimed siblings alone; only the raw marker in 4002 may pass the target")
 		}
-		if len(c.SelfTestFailedServices) != 1 || c.SelfTestFailedServices[0] != "ssh" {
-			t.Fatalf("SelfTestFailedServices = %v, want [ssh]", c.SelfTestFailedServices)
+		if len(c.SelfTestFailedServices) != 1 || c.SelfTestFailedServices[0] != "ssh 22" {
+			t.Fatalf("SelfTestFailedServices = %v, want [ssh 22]", c.SelfTestFailedServices)
 		}
 	})
 }
