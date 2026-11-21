@@ -64,6 +64,12 @@ type ingestHeartbeat struct {
 	// never be read as an explicit false.
 	OpenCanaryUp *bool `json:"opencanary_up,omitempty"`
 
+	// SMBLureUp and SNMPUp (#243): whether the SMB lure and the SNMP
+	// listener answer. Absent when that listener is configured off, or
+	// from an older agent; stored as reported, so absence is NULL.
+	SMBLureUp *bool `json:"smb_lure_up,omitempty"`
+	SNMPUp    *bool `json:"snmp_up,omitempty"`
+
 	// SettingsHash is issue #124's own addition: the sha256 hex of this
 	// agent's currently-effective per-canary settings
 	// (client.SettingsHash, computed identically on both sides -- see
@@ -210,6 +216,8 @@ func (h *ingestHandler) handleHoneypotHeartbeat(w http.ResponseWriter, r *http.R
 		PositionFound:     body.PositionFound,
 		PoisonerNames:     body.PoisonerNames,
 		OpenCanaryUp:      body.OpenCanaryUp,
+		SMBLureUp:         body.SMBLureUp,
+		SNMPUp:            body.SNMPUp,
 	}
 	if err := store.RecordCanaryAgentHeartbeat(r.Context(), h.db, tok.CanaryID, h.now().UTC(), report); err != nil {
 		if errors.Is(err, store.ErrCanaryNotFound) {

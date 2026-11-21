@@ -370,3 +370,66 @@ func TestSendHeartbeatOversizedResponseBodyReturnsNilNotError(t *testing.T) {
 		t.Fatalf("SendHeartbeat settings = %v, want nil for a response body over the %d-byte cap", settings, maxResponseBytes)
 	}
 }
+
+// TestSendHeartbeatRoundTripsSMBLureAndSNMPUp (#243): the two listener
+// flags are optional like OpenCanaryUp -- empty, true and false each reach
+// the stored columns as NULL, 1 and 0, and an empty one is never sent as
+// false.
+func TestSendHeartbeatRoundTripsSMBLureAndSNMPUp(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		smb, snmp *bool
+		wantSMB   *int64
+		wantSNMP  *int64
+	}{
+		{"both empty", nil, nil, nil, nil},
+		{"both true", &yes, &yes, int64p(1), int64p(1)},
+		{"smb false snmp empty", &no, nil, int64p(0), nil},
+		{"smb empty snmp false", nil, &no, nil, int64p(0)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				enrollCanary(t, database, "canary-a")
+				c, _ := newIngestServer(t, database, agentkind.Honeypot)
+				token := mintToken(t, database, "canary-a")
+
+				if _, err := c.SendHeartbeat(ctx(), token, SelfReport{
+					QueueDepth: 1, LogReadOK: true, LastEventID: validID1, AgentVersion: "1.2.3",
+					SMBLureUp: tc.smb, SNMPUp: tc.snmp,
+				}); err != nil {
+					t.Fatalf("SendHeartbeat: %v", err)
+				}
+
+				var smb, snmp *int64
+				row := database.QueryRow(`SELECT agent_smb_lure_up, agent_snmp_up FROM agents WHERE id = ?`, "canary-a")
+				if err := row.Scan(&smb, &snmp); err != nil {
+					t.Fatalf("scan agent_smb_lure_up, agent_snmp_up: %v", err)
+				}
+				if !sameInt64Ptr(smb, tc.wantSMB) {
+					t.Errorf("agent_smb_lure_up = %v, want %v", deref(smb), deref(tc.wantSMB))
+				}
+				if !sameInt64Ptr(snmp, tc.wantSNMP) {
+					t.Errorf("agent_snmp_up = %v, want %v", deref(snmp), deref(tc.wantSNMP))
+				}
+			})
+		})
+	}
+}
+
+func int64p(v int64) *int64 { return &v }
+
+func sameInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func deref(p *int64) any {
+	if p == nil {
+		return "NULL"
+	}
+	return *p
+}

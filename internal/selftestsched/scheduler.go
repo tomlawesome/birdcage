@@ -296,6 +296,19 @@ func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCa
 		}
 		targets = append(targets, store.SelfTestTarget{Service: service, DestPort: port})
 	}
+	// smb and snmp (#243): neither is in the profile port list. A target is
+	// added for each listener the agent's last heartbeat reported on at
+	// all, up or down. The heartbeat value is stored as reported (a nil
+	// overwrites), and the agent sends nil only when that listener is
+	// configured off, false when it is configured but not answering -- so
+	// "reported" means "currently configured": a lure that dies fails its
+	// self-test, while one that is turned off leaves the self-test.
+	if c.SNMPUp != nil {
+		targets = append(targets, store.SelfTestTarget{Service: "snmp", DestPort: 161})
+	}
+	if c.SMBLureUp != nil {
+		targets = append(targets, store.SelfTestTarget{Service: "smb", DestPort: 445})
+	}
 	// portscan is the agent's own detector (#65), not an OpenCanary
 	// module with a listening port of its own -- always on for every
 	// honeypot canary, regardless of what c.Ports lists (#46 slice 3).

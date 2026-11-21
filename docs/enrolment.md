@@ -472,6 +472,19 @@ marked hit. Only once every target answers -- marked or claimed -- does
 the canary flip from **pending** to registered; from then on it's an
 ordinary canary, subject to the daily schedule like any other.
 
+The SMB lure and SNMP are on that list too, once the agent's heartbeat
+reports them (#243), because neither port is in the profile list. SNMP is
+marked like tftp and sip: the marker rides in the community string. SMB
+is a reachability check: the agent sends one SMB2 NEGOTIATE to the lure
+on 445, needs a reply starting `\xfeSMB`, and reports "reachable" itself;
+a lure that does not answer reports nothing, so the run fails and the
+failed-services list names `smb`. The heartbeat's own check is a bare
+TCP connect, which the lure does not log. Each flag is sent only while
+that listener is configured on (the SNMP road not switched off,
+`MOCKINGBIRD_SMB_AUDIT_PATH` set), so a lure you turn off leaves the
+self-test, and the canary page's listening row names `snmp 161` and
+`smb 445` only while they answer.
+
 If that first run times out unanswered, the canary stays pending -- and
 also shows self-test failed -- and birdcage mints another run every ten
 minutes until one passes, whether or not the daily self-test is switched

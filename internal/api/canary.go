@@ -206,6 +206,16 @@ func (h *handler) canaryFacts(r *http.Request, c store.Canary, now time.Time) (c
 		PoisonerNames:      c.PoisonerNames,
 	}
 
+	// #243: the SNMP and SMB listeners are not in the profile port list;
+	// the agent's own heartbeat flags add them, in the same "service port"
+	// form, only when answering.
+	if c.AgentSNMPUp != nil && *c.AgentSNMPUp {
+		facts.Ports = joinListening(facts.Ports, "snmp 161")
+	}
+	if c.AgentSMBLureUp != nil && *c.AgentSMBLureUp {
+		facts.Ports = joinListening(facts.Ports, "smb 445")
+	}
+
 	enabled, err := store.GetSetting(r.Context(), h.db, store.SettingSelfTestEnabled)
 	if err != nil {
 		return canaryFacts{}, err
@@ -322,4 +332,13 @@ func (h *handler) handleCanaryRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, canaryRunsResponse{Runs: runs})
+}
+
+// joinListening appends one "service port" entry to the listening row,
+// using the " · " separator store.portsDisplay puts between entries.
+func joinListening(ports, entry string) string {
+	if ports == "" {
+		return entry
+	}
+	return ports + " · " + entry
 }

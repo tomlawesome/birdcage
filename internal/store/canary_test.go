@@ -575,3 +575,69 @@ func TestSelfTestCanaryByID(t *testing.T) {
 		}
 	})
 }
+
+// TestAgentListenerFlagsStoredAndCarried (#243): RecordCanaryAgentHeartbeat
+// writes agent_smb_lure_up and agent_snmp_up (NULL when the agent says
+// nothing), ListCanaries reads them back, and SelfTestCanary carries them to
+// the scheduler.
+func TestAgentListenerFlagsStoredAndCarried(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+
+		sc, ok, err := SelfTestCanaryByID(ctx, database, "canary-a")
+		if err != nil || !ok {
+			t.Fatalf("SelfTestCanaryByID = %v, %v", ok, err)
+		}
+		if sc.SMBLureUp != nil || sc.SNMPUp != nil {
+			t.Errorf("before any heartbeat SMBLureUp, SNMPUp = %v, %v, want nil, nil", sc.SMBLureUp, sc.SNMPUp)
+		}
+
+		smb, snmp := true, false
+		now := time.Now().UTC()
+		if err := RecordCanaryAgentHeartbeat(ctx, database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: &smb, SNMPUp: &snmp,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		var colSMB, colSNMP *int64
+		if err := database.QueryRow(`SELECT agent_smb_lure_up, agent_snmp_up FROM agents WHERE id = ?`, "canary-a").Scan(&colSMB, &colSNMP); err != nil {
+			t.Fatalf("scan listener columns: %v", err)
+		}
+		if colSMB == nil || *colSMB != 1 || colSNMP == nil || *colSNMP != 0 {
+			t.Errorf("columns = %v, %v, want 1, 0", colSMB, colSNMP)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.AgentSMBLureUp == nil || !*c.AgentSMBLureUp || c.AgentSNMPUp == nil || *c.AgentSNMPUp {
+			t.Errorf("Canary flags = %v, %v, want true, false", c.AgentSMBLureUp, c.AgentSNMPUp)
+		}
+
+		sc, ok, err = SelfTestCanaryByID(ctx, database, "canary-a")
+		if err != nil || !ok {
+			t.Fatalf("SelfTestCanaryByID after heartbeat = %v, %v", ok, err)
+		}
+		if sc.SMBLureUp == nil || !*sc.SMBLureUp || sc.SNMPUp == nil || *sc.SNMPUp {
+			t.Errorf("SelfTestCanary flags = %v, %v, want true, false", sc.SMBLureUp, sc.SNMPUp)
+		}
+
+		// The list the scheduler walks carries them too.
+		list, err := ListHoneypotCanariesForSelfTest(ctx, database)
+		if err != nil {
+			t.Fatalf("ListHoneypotCanariesForSelfTest: %v", err)
+		}
+		var found bool
+		for _, l := range list {
+			if l.ID == "canary-a" {
+				found = true
+				if l.SMBLureUp == nil || !*l.SMBLureUp || l.SNMPUp == nil || *l.SNMPUp {
+					t.Errorf("listed flags = %v, %v, want true, false", l.SMBLureUp, l.SNMPUp)
+				}
+			}
+		}
+		if !found {
+			t.Error("canary-a missing from ListHoneypotCanariesForSelfTest")
+		}
+	})
+}

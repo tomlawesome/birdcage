@@ -239,8 +239,8 @@ type baitLookup interface {
 }
 
 // runAgentHandledTarget runs a target internal/agent/probe deliberately
-// left to this binary (probe.StatusAgentHandled). Today that is #86's
-// poisoner and nothing else.
+// left to this binary (probe.StatusAgentHandled): #86's poisoner and
+// #243's SMB reachability check.
 //
 // The grading is inverted from every other target: #86 slice C grades
 // SILENCE as a pass, because the names the detector asks for do not
@@ -260,6 +260,17 @@ type baitLookup interface {
 func runAgentHandledTarget(ctx context.Context, in *Intake, bait baitLookup, params selftest.Params, target selftest.Target) {
 	runID := params.RunID
 	service := target.Service
+	if service == "smb" {
+		// #243: a reachability check. Success is reported as a result
+		// event carrying the marker; failure reports nothing, so the run
+		// fails at its deadline and the failed-services list names smb.
+		if err := probe.ReachSMB(ctx, params.Address, target.DestPort); err != nil {
+			selftestLog.Warn(fmt.Sprintf("%s: smb lure did not answer an SMB2 negotiate: %s", runID, safeErr(err)))
+			return
+		}
+		reportSelfTestResult(in, runID, service, selfTestOutcomeReachable, target.Marker)
+		return
+	}
 	if service != poisoner.Service() {
 		selftestLog.Warn(fmt.Sprintf("%s: target %s is agent-handled but this binary has nothing to run for it", runID, service))
 		return

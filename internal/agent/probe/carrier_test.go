@@ -46,12 +46,13 @@ func TestAttributionCarriers_CoversTheDocumentedTable(t *testing.T) {
 }
 
 // TestNotProbeable_MatchesTheOutOfScopeList pins #46 slice 2's remaining
-// exclusions: smb and llmnr must classify as StatusNotProbeable, never
+// exclusions: llmnr (smb left in #243) must classify as StatusNotProbeable, never
 // StatusNoCarrier, so a log reader can tell "ruled out" apart from "this
 // build doesn't know how yet." vnc, ntp and portscan moved out of this
 // set in slice 2 -- see carrier_test.go's other test.
 func TestNotProbeable_MatchesTheOutOfScopeList(t *testing.T) {
-	want := []string{"smb", "llmnr"}
+	// smb moved out in #243: the agent checks the lure's reachability itself.
+	want := []string{"llmnr"}
 	for _, svc := range want {
 		if !notProbeable[svc] {
 			t.Errorf("notProbeable[%q] = false, want true", svc)
@@ -59,6 +60,25 @@ func TestNotProbeable_MatchesTheOutOfScopeList(t *testing.T) {
 		if _, ok := carriers[svc]; ok {
 			t.Errorf("carriers[%q] exists for a service #46 rules out of scope", svc)
 		}
+	}
+}
+
+// TestAgentHandled_SMBIsAgentHandled pins #243's move: smb is a
+// reachability check the agent reports itself (a marker cannot be used --
+// the lure logs only completed file closes), so it is agent-handled, and
+// in no other table.
+func TestAgentHandled_SMBIsAgentHandled(t *testing.T) {
+	if !agentHandled["smb"] || !AgentHandled("smb") {
+		t.Error("smb is not agent-handled, want true (#243)")
+	}
+	if notProbeable["smb"] {
+		t.Error(`notProbeable["smb"] = true, want false once the agent probes it`)
+	}
+	if _, ok := carriers["smb"]; ok {
+		t.Error(`carriers["smb"] exists; smb's pass is a reachability report, not a marker`)
+	}
+	if Attributed("smb") {
+		t.Error("Attributed(smb) = true, want false")
 	}
 }
 
@@ -84,8 +104,8 @@ func TestAgentHandled_IsThePoisonerAndNothingElse(t *testing.T) {
 	if notProbeable["poisoner"] {
 		t.Error(`notProbeable["poisoner"] = true: the poisoner is probeable, just not here`)
 	}
-	// And nothing else is agent-handled, so a future addition has to be
-	// deliberate.
+	// And nothing else is agent-handled (smb since #243), so a future
+	// addition has to be deliberate.
 	for svc := range carriers {
 		if AgentHandled(svc) {
 			t.Errorf("AgentHandled(%q) = true for a service with a carrier here", svc)

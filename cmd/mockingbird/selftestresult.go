@@ -30,6 +30,10 @@ const (
 	// alert for it has already gone out separately, through the ordinary
 	// event path; this only records how the self-test itself turned out.
 	selfTestOutcomeAnswered = "answered"
+
+	// selfTestOutcomeReachable is the SMB lure's pass (#243): it answered
+	// an SMB2 NEGOTIATE. Failure is silence on the wire, never reported.
+	selfTestOutcomeReachable = "reachable"
 )
 
 // openCanaryTimeLayout is the timestamp format OpenCanary writes into every
@@ -78,7 +82,8 @@ type selfTestResultLogda struct {
 	// is not a claim about anything else -- it is the event itself.
 	MARKER string `json:"MARKER"`
 
-	// OUTCOME is selfTestOutcomeSilence or selfTestOutcomeAnswered.
+	// OUTCOME is selfTestOutcomeSilence, selfTestOutcomeAnswered or
+	// selfTestOutcomeReachable.
 	OUTCOME string `json:"OUTCOME"`
 
 	// TARGET is the service the result is about ("poisoner"), so one
