@@ -87,7 +87,7 @@ func TestClaimReachesBirdcageSynthetic(t *testing.T) {
 		defer cancel()
 		go runSenderLoop(runCtx, c, newTokenStoreForTest(token), in, newPacer())
 
-		alerts := waitForAlertCount(t, database, testCanaryID, 1, 5*time.Second)
+		alerts := waitForAlertCount(t, database, testCanaryID, 1, alertWaitBound)
 		if !alerts[0].Synthetic {
 			t.Fatalf("alert = %+v, want synthetic = true (a claimed event birdcage corroborated)", alerts[0])
 		}
@@ -115,7 +115,7 @@ func TestUnclaimedAttributedEventReachesBirdcageReal(t *testing.T) {
 		defer cancel()
 		go runSenderLoop(runCtx, c, newTokenStoreForTest(token), in, newPacer())
 
-		alerts := waitForAlertCount(t, database, testCanaryID, 1, 5*time.Second)
+		alerts := waitForAlertCount(t, database, testCanaryID, 1, alertWaitBound)
 		if alerts[0].Synthetic {
 			t.Fatalf("alert = %+v, want synthetic = false (no claim was ever made)", alerts[0])
 		}
