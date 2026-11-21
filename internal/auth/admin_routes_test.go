@@ -183,3 +183,28 @@ func TestAdminWritesAreAuditedWithTheSignedInUsername(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminWritesRefusedWithoutAPublicURL (#227 amendment): with
+// BIRDCAGE_PUBLIC_URL unset there is nothing to check an Origin against, and
+// no Sec-Fetch-Site fallback either, so every admin write is refused 403 --
+// same-origin Fetch Metadata with no Origin, and even a perfect-looking Origin.
+func TestAdminWritesRefusedWithoutAPublicURL(t *testing.T) {
+	database := openDatabase(t)
+	seedCanary(t, database)
+	sys, runner := startAdminSystemWith(t, database, testKey('a'), false)
+	admin := sys.signInFirstAdmin(t)
+
+	for name, header := range map[string]map[string]string{
+		"same-origin, no Origin": {csrfHeader: csrfValue, "Sec-Fetch-Site": "same-origin"},
+		"Origin of the server":   originOf(sys),
+	} {
+		for _, r := range adminRoutes {
+			if status, body := adminCall(t, admin, sys.server.URL, r, header); status != http.StatusForbidden {
+				t.Errorf("%s %s (%s, no public URL): status %d, want 403; body=%s", r.method, r.path, name, status, body)
+			}
+		}
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("run-now calls = %v, want none", runner.calls)
+	}
+}

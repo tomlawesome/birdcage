@@ -28,12 +28,12 @@ func hasState(c Canary, state HealthState) bool {
 	return false
 }
 
-// TestMaintenanceQuietsSilentUntilItEnds: a canary that has missed its
-// heartbeats shows no "silent" warning while now < until (scheduled
-// downtime, #227), the warning is back once until has passed, and a
-// neighbour not in maintenance stays silent throughout. MaintenanceUntil
-// is nil outside maintenance and the stored end time inside it.
-func TestMaintenanceQuietsSilentUntilItEnds(t *testing.T) {
+// TestMaintenanceKeepsSilentReportedAsAFlag: maintenance is a flag, not a
+// rewrite of state (#227 amendment). A canary that has missed its
+// heartbeats is still reported silent while now < until, with
+// MaintenanceUntil set; once until has passed MaintenanceUntil is nil and
+// it is still silent. A neighbour is untouched.
+func TestMaintenanceKeepsSilentReportedAsAFlag(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		beat := mustParse(t, "2026-01-01T01:00:00Z")
 		maintenanceCanary(t, database, "canary-a", beat)
@@ -52,8 +52,8 @@ func TestMaintenanceQuietsSilentUntilItEnds(t *testing.T) {
 
 		during := listCanaries(t, database, now.Add(time.Hour), rangeDurations[DefaultRange])
 		a := findCanary(t, during, "canary-a")
-		if hasState(a, StateSilent) || a.Status == "silent" {
-			t.Errorf("in maintenance: Status %q ActiveStates %v, want no silent warning", a.Status, a.ActiveStates)
+		if a.Status != "silent" || !hasState(a, StateSilent) {
+			t.Errorf("in maintenance: Status %q ActiveStates %v, want silent still reported", a.Status, a.ActiveStates)
 		}
 		if a.MaintenanceUntil == nil || !a.MaintenanceUntil.Equal(until) {
 			t.Errorf("MaintenanceUntil = %v, want %v", a.MaintenanceUntil, until)
@@ -66,7 +66,7 @@ func TestMaintenanceQuietsSilentUntilItEnds(t *testing.T) {
 		for _, at := range []time.Time{until, until.Add(time.Second)} {
 			after := findCanary(t, listCanaries(t, database, at, rangeDurations[DefaultRange]), "canary-a")
 			if after.Status != "silent" || !hasState(after, StateSilent) {
-				t.Errorf("at %v (until passed): Status %q ActiveStates %v, want silent back", at, after.Status, after.ActiveStates)
+				t.Errorf("at %v (until passed): Status %q ActiveStates %v, want silent", at, after.Status, after.ActiveStates)
 			}
 			if after.MaintenanceUntil != nil {
 				t.Errorf("at %v (until passed): MaintenanceUntil = %v, want nil", at, after.MaintenanceUntil)
@@ -75,9 +75,9 @@ func TestMaintenanceQuietsSilentUntilItEnds(t *testing.T) {
 	})
 }
 
-// TestMaintenanceQuietsAFailedSelfTest: a failed self-test is a health
-// warning too, and quiet in maintenance.
-func TestMaintenanceQuietsAFailedSelfTest(t *testing.T) {
+// TestMaintenanceKeepsAFailedSelfTestReported: a failed self-test is still
+// reported in maintenance, with MaintenanceUntil set, and nil after.
+func TestMaintenanceKeepsAFailedSelfTestReported(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
 		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22,80", HeartbeatIntervalS: 60, EnrolledAt: time.Now().UTC().Add(-time.Hour)})
 		idx := NewSelfTestIndex()
@@ -101,15 +101,15 @@ func TestMaintenanceQuietsAFailedSelfTest(t *testing.T) {
 		if err := SetCanaryMaintenance(context.Background(), database, "canary-a", until, afterDeadline, "erebus-admin"); err != nil {
 			t.Fatalf("SetCanaryMaintenance: %v", err)
 		}
-		if c := findCanary(t, listCanaries(t, database, afterDeadline, 24*time.Hour), "canary-a"); hasState(c, StateTestFailed) {
-			t.Errorf("in maintenance: ActiveStates %v still has self_test_failed", c.ActiveStates)
+		if c := findCanary(t, listCanaries(t, database, afterDeadline, 24*time.Hour), "canary-a"); !hasState(c, StateTestFailed) || c.MaintenanceUntil == nil || !c.MaintenanceUntil.Equal(until) {
+			t.Errorf("in maintenance: ActiveStates %v MaintenanceUntil %v, want self_test_failed still reported and until %v", c.ActiveStates, c.MaintenanceUntil, until)
 		}
 		later := until.Add(time.Second)
 		if err := RecordHeartbeat(context.Background(), database, "canary-a", later); err != nil {
 			t.Fatalf("RecordHeartbeat: %v", err)
 		}
-		if c := findCanary(t, listCanaries(t, database, later, 24*time.Hour), "canary-a"); !hasState(c, StateTestFailed) {
-			t.Errorf("after until: ActiveStates %v, want self_test_failed back", c.ActiveStates)
+		if c := findCanary(t, listCanaries(t, database, later, 24*time.Hour), "canary-a"); !hasState(c, StateTestFailed) || c.MaintenanceUntil != nil {
+			t.Errorf("after until: ActiveStates %v MaintenanceUntil %v, want self_test_failed and nil", c.ActiveStates, c.MaintenanceUntil)
 		}
 	})
 }

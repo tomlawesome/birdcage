@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/db"
+	"github.com/tomlawesome/birdcage/internal/selftestsched"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -235,8 +238,8 @@ func TestAdminMaintenancePutDefaultsTo24Hours(t *testing.T) {
 	if parsed, err := time.Parse(time.RFC3339, got); err != nil || !parsed.Equal(want) {
 		t.Errorf("GET /api/canaries maintenance_until = %q, want %v", got, want)
 	}
-	if st := f.canaryJSON(t)["status"]; st == "silent" {
-		t.Errorf("status = %v while in maintenance, want the silent warning quiet", st)
+	if st := f.canaryJSON(t)["status"]; st != "silent" {
+		t.Errorf("status = %v while in maintenance, want silent still reported (maintenance is a flag)", st)
 	}
 }
 
@@ -374,8 +377,8 @@ func TestHitDuringMaintenanceIsStillReturnedByAlertsAPI(t *testing.T) {
 	if got := alerts(f.dash); len(got) != 1 || got[0].SourceIP != "203.0.113.9" {
 		t.Fatalf("alerts during maintenance = %+v, want the hit", got)
 	}
-	if st := f.canaryJSON(t)["status"]; st == "silent" {
-		t.Errorf("status during maintenance = %v, want quiet", st)
+	if c := f.canaryJSON(t); c["status"] != "silent" || c["maintenance_until"] == nil {
+		t.Errorf("during maintenance: status %v maintenance_until %v, want silent still reported and until set", c["status"], c["maintenance_until"])
 	}
 
 	later := newHandler(f.database, fixedNow(until.Add(time.Minute)), nil)
@@ -419,5 +422,37 @@ func TestCanaryPageCarriesMaintenanceUntil(t *testing.T) {
 	f.do(t, http.MethodPut, "/api/admin/canaries/canary-a/maintenance", "")
 	if got, _ := get()["maintenance_until"].(string); got != f.now.Add(24*time.Hour).Format(time.RFC3339) {
 		t.Errorf("maintenance_until = %q, want %q", got, f.now.Add(24*time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestAdminSelfTestConflictSaysWhy (#227 amendment): the 409 names the real
+// reason. A honeypot heard from but with no ports to probe says "no ports";
+// one never heard from says it has not been heard from. Run against the real
+// scheduler, since the reason comes from its refusal.
+func TestAdminSelfTestConflictSaysWhy(t *testing.T) {
+	database := openTempDB(t)
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	insertCanary(t, database, store.Canary{ID: "no-ports", Name: "no-ports", Lane: "lan", Ports: "", HeartbeatIntervalS: 60, EnrolledAt: now.Add(-time.Hour)})
+	insertCanary(t, database, store.Canary{ID: "unheard", Name: "unheard", Lane: "lan", Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: now.Add(-time.Hour)})
+	if err := store.SetCanaryLastSeenAddr(context.Background(), database, "no-ports", "192.0.2.10"); err != nil {
+		t.Fatalf("SetCanaryLastSeenAddr: %v", err)
+	}
+	sched := selftestsched.New(database, store.NewSelfTestIndex(), fixedNow(now), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f := &adminFixture{database: database, now: now, admin: NewAdminHandler(database, fixedNow(now), sched)}
+
+	detailOf := func(id string) string {
+		rec := f.do(t, http.MethodPost, "/api/admin/canaries/"+id+"/self-test", "")
+		assertProblem(t, rec, http.StatusConflict)
+		var p struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &p)
+		return p.Detail
+	}
+	if d := detailOf("no-ports"); !strings.Contains(d, "no ports") {
+		t.Errorf("409 detail for a heard-from honeypot with no ports = %q, want it to say it has no ports to probe", d)
+	}
+	if d := detailOf("unheard"); !strings.Contains(d, "heard from") || strings.Contains(d, "no ports") {
+		t.Errorf("409 detail for a never-heard-from honeypot = %q, want the not-heard-from reason", d)
 	}
 }

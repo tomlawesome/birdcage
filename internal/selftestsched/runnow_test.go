@@ -93,3 +93,104 @@ func TestRunNowUnknownCanary(t *testing.T) {
 		}
 	})
 }
+
+// openCommandID is the command id of canaryID's most recent run.
+func openCommandID(t *testing.T, database *db.DB, canaryID string) string {
+	t.Helper()
+	var id string
+	if err := database.QueryRow(`SELECT command_id FROM self_test_runs WHERE agent_id = ? ORDER BY issued_at DESC LIMIT 1`, canaryID).Scan(&id); err != nil {
+		t.Fatalf("latest run for %s: %v", canaryID, err)
+	}
+	return id
+}
+
+// TestOtherMintPathsAddNothingWhileARunNowRunIsOpen (#227 amendment): one
+// open self-test per canary across every path. With a run-now run open
+// (past the 2-minute double-mint guard, so only "a run is open" can stop
+// them), a scheduled tick, a rotation mint and a first-contact mint each
+// leave exactly one run.
+func TestOtherMintPathsAddNothingWhileARunNowRunIsOpen(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+		insertHoneypotCanary(t, database, "canary-a", "22,80", "192.0.2.10")
+
+		now := time.Date(2026, 1, 1, 4, 5, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		if _, created, err := s.RunNow(context.Background(), "canary-a"); err != nil || !created {
+			t.Fatalf("RunNow = %v, %v, want created", created, err)
+		}
+
+		now = time.Date(2026, 1, 1, 4, 12, 0, 0, time.UTC) // 7 minutes on, the scheduled minute
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Errorf("after a scheduled tick: runs = %d, want 1", n)
+		}
+
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "true")
+		s.RotationSucceeded(context.Background(), "canary-a", now)
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Errorf("after a rotation mint: runs = %d, want 1", n)
+		}
+
+		s.FirstContact(context.Background(), "canary-a", now)
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Errorf("after a first-contact mint: runs = %d, want 1", n)
+		}
+	})
+}
+
+// TestRunNowWhileAScheduledRunIsOpenAnswersWithIt: the other way round.
+func TestRunNowWhileAScheduledRunIsOpenAnswersWithIt(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+		insertHoneypotCanary(t, database, "canary-a", "22,80", "192.0.2.10")
+
+		now := time.Date(2026, 1, 1, 4, 12, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+		scheduled := openCommandID(t, database, "canary-a")
+
+		now = now.Add(5 * time.Minute)
+		id, created, err := s.RunNow(context.Background(), "canary-a")
+		if err != nil {
+			t.Fatalf("RunNow: %v", err)
+		}
+		if created || id != scheduled {
+			t.Errorf("RunNow = %q, created=%v, want the scheduled run %q, created=false", id, created, scheduled)
+		}
+		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
+			t.Errorf("runs = %d, want 1", n)
+		}
+	})
+}
+
+// TestRunNowFindsAScanRunOpenPastThirtyMinutes: a scan run issued more than
+// scanRunWindow ago but not yet swept is still open. RunNow answers with its
+// command id, created=false, no error -- not a failure.
+func TestRunNowFindsAScanRunOpenPastThirtyMinutes(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		insertScannerCanary(t, database, "scanner-a", false)
+		issued := time.Date(2026, 1, 1, 4, 0, 0, 0, time.UTC)
+		cmd, err := store.MintScanCommand(context.Background(), database, "scanner-a", store.TriggerProof, issued, issued.Add(scanRunWindow))
+		if err != nil {
+			t.Fatalf("MintScanCommand: %v", err)
+		}
+
+		now := issued.Add(40 * time.Minute)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		id, created, err := s.RunNow(context.Background(), "scanner-a")
+		if err != nil {
+			t.Fatalf("RunNow with a long-open scan run: %v", err)
+		}
+		if created || id != cmd.ID {
+			t.Errorf("RunNow = %q, created=%v, want %q, created=false", id, created, cmd.ID)
+		}
+		if n := selfTestRunCount(t, database, "scanner-a"); n != 1 {
+			t.Errorf("runs = %d, want 1", n)
+		}
+	})
+}

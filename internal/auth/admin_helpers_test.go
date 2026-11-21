@@ -32,8 +32,18 @@ func (r *recordingRunner) RunNow(_ context.Context, canaryID string) (string, bo
 // server's own address, so a matching Origin is the server's own URL.
 func startAdminSystem(t *testing.T, database *db.DB, key []byte) (*system, *recordingRunner) {
 	t.Helper()
+	return startAdminSystemWith(t, database, key, true)
+}
+
+// startAdminSystemWith is startAdminSystem with BIRDCAGE_PUBLIC_URL either
+// set to the server's own address or left empty.
+func startAdminSystemWith(t *testing.T, database *db.DB, key []byte, withPublicURL bool) (*system, *recordingRunner) {
+	t.Helper()
 	server := httptest.NewUnstartedServer(nil)
-	publicURL := "http://" + server.Listener.Addr().String()
+	publicURL := ""
+	if withPublicURL {
+		publicURL = "http://" + server.Listener.Addr().String()
+	}
 	logger, capture := newLogCapture()
 	svc, err := auth.Open(context.Background(), database, auth.Config{Key: key, PublicURL: publicURL}, logger)
 	if err != nil {
