@@ -83,6 +83,44 @@ func HasRecentSelfTestRun(ctx context.Context, database *db.DB, canaryID string,
 	return n > 0, nil
 }
 
+// ErrSelfTestNotReady is a run-now request (#227) for a canary with nothing
+// to test yet: a honeypot that has never been heard from has no address to
+// probe.
+var ErrSelfTestNotReady = errors.New("store: canary has no address to self-test yet")
+
+// OpenSelfTestCommandID returns the command id of canaryID's newest run
+// that is neither completed nor past its deadline at now, for run-now's
+// "at most one open per canary" rule (#227). open is false when none.
+func OpenSelfTestCommandID(ctx context.Context, database *db.DB, canaryID string, now time.Time) (id string, open bool, err error) {
+	query := fmt.Sprintf(`
+		SELECT command_id, issued_at FROM self_test_runs
+		WHERE agent_id = ? AND completed_at IS NULL AND %s`,
+		timeCompare(database.Engine, "deadline_at", ">"))
+	rows, err := database.QueryContext(ctx, query, canaryID, now.UTC().Format(receivedAtLayout))
+	if err != nil {
+		return "", false, fmt.Errorf("query open self_test_runs for %s: %w", canaryID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var newest time.Time
+	for rows.Next() {
+		var cmd, issued string
+		if err := rows.Scan(&cmd, &issued); err != nil {
+			return "", false, fmt.Errorf("scan open self_test_runs: %w", err)
+		}
+		t, err := time.Parse(receivedAtLayout, issued)
+		if err != nil {
+			return "", false, fmt.Errorf("parse issued_at %q: %w", issued, err)
+		}
+		if !open || t.After(newest) {
+			id, newest, open = cmd, t, true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", false, fmt.Errorf("iterate open self_test_runs: %w", err)
+	}
+	return id, open, nil
+}
+
 func MintSelfTestCommand(ctx context.Context, database *db.DB, idx *SelfTestIndex, canaryID, address string, targets []SelfTestTarget, createdAt, expiresAt time.Time) (CanaryCommand, error) {
 	if len(targets) == 0 {
 		return CanaryCommand{}, selftest.ErrNoTargets

@@ -224,6 +224,13 @@ type Canary struct {
 	dbRefreshFailingSince *time.Time
 	dbRefreshError        string
 
+	// MaintenanceUntil (#227) is the end of this canary's maintenance
+	// window while it is in one (now < the stored end time), else nil.
+	// Always present in JSON, null when off. maintenanceUntil is the raw
+	// stored value, read back before applyMaintenance decides.
+	MaintenanceUntil *time.Time `json:"maintenance_until"`
+	maintenanceUntil *time.Time
+
 	// ActiveStates is every state active on this canary right now,
 	// worst first by healthStateRank -- the whole set Status names only
 	// the head of. Issue #56's history needs all of it: a canary that
@@ -817,7 +824,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			credential_dual_use_addrs, credential_dual_use_addrs_at,
 			credential_dual_use_versions, credential_dual_use_versions_at,
 			db_refresh_failing_since, db_refresh_error, agent_opencanary_up,
-			agent_smb_lure_up, agent_snmp_up
+			agent_smb_lure_up, agent_snmp_up, maintenance_until
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -843,14 +850,18 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agentOpenCanaryUp  *int64
 			agentSMBLureUp     *int64
 			agentSNMPUp        *int64
+			maintenanceUntil   *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
 			&agentVersion, &poisonerNames,
 			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt,
 			&dbFailingSince, &dbRefreshError, &agentOpenCanaryUp,
-			&agentSMBLureUp, &agentSNMPUp); err != nil {
+			&agentSMBLureUp, &agentSNMPUp, &maintenanceUntil); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
+		}
+		if c.maintenanceUntil, err = parseNullableTime(maintenanceUntil, "maintenance_until"); err != nil {
+			return nil, err
 		}
 		if c.dbRefreshFailingSince, err = parseNullableTime(dbFailingSince, "db_refresh_failing_since"); err != nil {
 			return nil, err
@@ -970,6 +981,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			return nil, fmt.Errorf("credential state for %s: %w", canaries[i].ID, err)
 		}
 		applyDBRefreshHealth(&canaries[i], now)
+		applyMaintenance(&canaries[i], now)
 	}
 	return canaries, nil
 }

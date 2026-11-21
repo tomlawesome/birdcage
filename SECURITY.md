@@ -377,6 +377,29 @@ only at the point that text is displayed, per surface:
   mirrors, and `TestSecurityDocListsEveryDashboardRoute` fails when a
   route is registered there without a row here.
 
+  The three write routes (issue #227) are a separate admin surface
+  (`internal/api/admin.go`'s `adminRouteSpecs`), not part of the table
+  above. They are mounted on the signed-in-session side only, so a read
+  API token gets 404 on every one of them, and 403 if a token is somehow
+  in the request context. A session must belong to an admin account, send
+  `X-Requested-With: birdcage`, and send an `Origin` header matching
+  `BIRDCAGE_PUBLIC_URL` -- or, when `Origin` is absent,
+  `Sec-Fetch-Site: same-origin` (OWASP CSRF Prevention Cheat Sheet:
+  verifying origin with standard headers; Fetch Metadata). Anything else
+  is 403. Errors are RFC 9457 problem+json, and each write leaves an
+  audit row naming the signed-in username.
+
+  | Route                                         | Method | Auth                                                              |
+  | --------------------------------------------- | ------ | ----------------------------------------------------------------- |
+  | `/api/admin/canaries/{id}/self-test`          | POST   | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+  | `/api/admin/canaries/{id}/maintenance`        | PUT    | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+  | `/api/admin/canaries/{id}/maintenance`        | DELETE | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+
+  `PUT` takes an optional `{"until": <RFC 3339>}`, at most 7 days ahead
+  (default 24 hours), and quiets the canary's health warnings (silent,
+  failed self-test) until then; hits are reported exactly as before.
+  Maintenance always ends, so a dead canary cannot stay quiet forever.
+
   `/api/stream` (issue #44) is a server-sent-events connection birdcage
   holds open rather than answering once, so it caps
   total concurrent connections (`internal/stream.Hub`, 256) and drops the
