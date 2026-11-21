@@ -267,8 +267,17 @@ canary_page() {
   helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canary?id=$SMB_LURE_CANARY_ID&range=14d'"
 }
 
+# page_lists prints, on fd 3, the time and the facts.ports each attempt
+# saw (cut to 200 characters), so a run that never matches shows why. What
+# it accepts is unchanged. poll() sends both stdout and stderr of the
+# command to /dev/null, so the trace goes to fd 3, a copy of the script's stderr.
+exec 3>&2
 page_lists() {
-  canary_page | jq -e --arg s "$1" '.facts.ports | contains($s)'
+  local page
+  page="$(canary_page)" || return 1
+  printf '%s page_lists %s: facts.ports=%s\n' "$(date -u +%H:%M:%S)" "$1" \
+    "$(printf '%s' "$page" | jq -c '.facts.ports' 2>&1 | head -c 200)" >&3
+  printf '%s' "$page" | jq -e --arg s "$1" '.facts.ports | contains($s)'
 }
 
 page_lacks() {
