@@ -71,7 +71,12 @@ variables:
   # on purpose, with the coverage floors re-measured in the same change.
   GOLANG_IMAGE: golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   NODE_IMAGE: node:26-trixie
-  PYTHON_ALPINE_IMAGE: python:3.15-alpine
+  # Tag AND index digest (#234): bump together, on purpose. 3.14 not 3.15:
+  # PyYAML 6.0.3 (ci/requirements-ci.txt) has no cp315 musllinux wheel yet, and
+  # the hashed install is --only-binary. Refresh the digest with
+  # `docker buildx imagetools inspect python:3.14-alpine` (the top-level
+  # Digest), and re-check ci/requirements-ci.txt's hashes if the Python minor moves.
+  PYTHON_ALPINE_IMAGE: python:3.14-alpine@sha256:5862d971d1f0ae26b258cefa4e893556b1d3aba81bd2ff30888704ad378bab67
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
@@ -327,7 +332,7 @@ release_readiness:
   before_script:
     - apk add --no-cache bash curl git >/dev/null
     # Pinned (#215 design check): supply-chain/dependency-inventory.md row 202.
-    - pip install --quiet pyyaml==6.0.3
+    - pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
   script:
     - git fetch --quiet --tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
@@ -438,7 +443,7 @@ lint:ci:
   needs: [{job: release_readiness, optional: true}]
   before_script:
     - apk add --no-cache bash >/dev/null
-    - pip install --quiet pyyaml
+    - pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt
   script:
     - python3 scripts/ci-e2e-guard.py
     - scripts/ci-e2e-guard.test.sh
@@ -497,7 +502,7 @@ lint:scripts:
     # xz: scripts/ensure-shellcheck.test.sh packs and unpacks .tar.xz
     # fixtures, as the real shellcheck release is .tar.xz (#199).
     - apk add --no-cache bash curl git xz >/dev/null
-    - pip install --quiet pyyaml
+    - pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt
   script:
     - |
       set -eu
@@ -876,7 +881,7 @@ audit:staleness:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION == "staleness"
     - when: never
   before_script:
-    - pip install --quiet pyyaml
+    - pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt
   script:
     - python3 scripts/staleness-check.py --report staleness-report.md
   artifacts:

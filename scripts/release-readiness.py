@@ -388,7 +388,10 @@ class RealLookups:
     def evidence(self, image, digest, commit):
         base = os.environ.get("CI_REGISTRY_IMAGE") if self.ci else None
         if not base:
-            base = f"{registry_host(self.gitlab_host)}/{self.project_path}"
+            host = registry_host(self.gitlab_host)
+            if not host:
+                raise LookupFailed("registry host not set (CI_REGISTRY)")
+            base = f"{host}/{self.project_path}"
         if self._cosign is None:
             out = run(["bash", os.path.join(HERE, "ensure-cosign.sh")],
                       timeout=COSIGN_INSTALL_TIMEOUT, env=child_env())
@@ -508,7 +511,8 @@ def gitlab_project(url):
 
 
 def registry_host(gitlab_host):
-    return os.environ.get("CI_REGISTRY") or f"registry.{gitlab_host or 'localhost'}"
+    """The registry host from CI_REGISTRY; never derived from the GitLab host."""
+    return os.environ.get("CI_REGISTRY") or None
 
 
 # ---------------------------------------------------------------------------
