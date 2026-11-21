@@ -3,6 +3,7 @@ package selftestsched
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,8 +32,20 @@ func TestRunNowQueuesOneSelfTest(t *testing.T) {
 		if n := selfTestRunCount(t, database, "canary-a"); n != 1 {
 			t.Fatalf("self_test_runs = %d, want 1", n)
 		}
-		if got := mintedTargetServices(t, database, "canary-a"); len(got) != 2 {
-			t.Errorf("minted targets = %v, want one per port (ssh, http)", got)
+		// "Runs like a scheduled one": the same targets a scheduled mint
+		// makes for an identical canary (ports plus the agent's own
+		// portscan and poisoner probes), not a count hard-coded here.
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "13:37")
+		insertHoneypotCanary(t, database, "canary-b", "22,80", "192.0.2.11")
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "canary-b"); n != 1 {
+			t.Fatalf("scheduled run for canary-b: self_test_runs = %d, want 1", n)
+		}
+		got, want := mintedTargetServices(t, database, "canary-a"), mintedTargetServices(t, database, "canary-b")
+		if len(got) == 0 || strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("run-now targets = %v, scheduled targets = %v, want the same", got, want)
 		}
 	})
 }
