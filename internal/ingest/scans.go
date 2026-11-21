@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,6 +144,13 @@ func (h *ingestHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		slog.Error("ingest: handleScan reached without a canary token in context")
 		writeIngestError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if ok, retry := h.scanLimiters.allow(tok.CanaryID, h.now()); !ok {
+		recordRateLimitCrossed(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, "scans/min")
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		writeIngestError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 

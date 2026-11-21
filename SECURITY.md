@@ -107,6 +107,13 @@ This section is rewritten route-by-route when #8 lands.
   contains a link trains the operator to click links in alert mails,
   which is the delivery mechanism of the phishing message that would
   impersonate this one.
+- **Ingest field and rate bounds (issue #233).** A stolen agent token must
+  not grow the database without limit. `raw` is kept to 8192 bytes (cut at
+  a UTF-8 boundary, with a `[truncated by birdcage]` suffix inside the
+  cap); `service` over 64 bytes and `self_test_marker` over the minted
+  length (32 hex characters) are rejected per event; `POST /ingest/scans`
+  is capped at 60 requests/minute per canary on top of the shared
+  requests/minute cap, answering 429 with `Retry-After`.
 - **The mail rate limits are security controls, not tuning.** A token
   conflict is driven by a signal an attacker paces — they choose when
   the stolen credential is presented — so without a bound they would

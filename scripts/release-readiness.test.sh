@@ -1316,5 +1316,44 @@ for rid in gomod:golang.org/x/net tool:cosign "action:actions/checkout#ci.yml"; 
   expect "V5 $rid: a minor bump released 47 days ago counts as behind, S1 fails" 1 '^FAIL S1 ' "=$rid"
 done
 
+# --- #234/#181: CI_REGISTRY unset must not invent registry.<gitlab-host> ---
+# Drive the lookups object directly with every request path patched to record
+# a call. Local (not CI) mode, so evidence() falls back to registry_host().
+if env -u CI_REGISTRY -u CI_REGISTRY_IMAGE -u CI_REGISTRY_USER -u CI_REGISTRY_PASSWORD \
+   python3 -I - "$script" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("rr_unset", sys.argv[1])
+rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)
+host = "gitlab.example.invalid"
+calls = []
+def spy(name):
+    def f(*a, **k):
+        calls.append(name); raise AssertionError("request made via " + name)
+    return f
+rr.urlopen = spy("urlopen")
+rr.run = spy("run")
+rr.RealLookups._v2_digest = lambda self, *a, **k: spy("_v2_digest")()
+rr.RealLookups._token = lambda self, *a, **k: spy("_token")()
+# 1. The helper no longer derives a registry host from the GitLab host.
+got = rr.registry_host(host)
+assert "registry." + host not in str(got or ""), "registry host derived from the GitLab host: %r" % (got,)
+# 2. evidence() reports it and makes no request. It may raise LookupFailed
+#    (reported as UNCHECKED) or return the message; it must say so.
+lk = rr.RealLookups(False, "https://%s/group/birdcage.git" % host)
+msg = ""
+try:
+    r = lk.evidence("birdcage", "sha256:" + "0" * 64, "0" * 40)
+    msg = str(r)
+except rr.LookupFailed as e:
+    msg = str(e)
+except AssertionError as e:
+    raise AssertionError("a registry request was made: %s" % e)
+assert not calls, "registry requests made: %s" % calls
+assert "registry host not set" in msg, "message does not say 'registry host not set': %r" % msg
+assert "registry." + host not in msg, "message names a derived registry host: %r" % msg
+PYEOF
+then echo "ok   U1 CI_REGISTRY unset: 'registry host not set', no registry.<host>, no request"; pass=$((pass + 1))
+else echo "FAIL U1 CI_REGISTRY unset: must say 'registry host not set', derive no registry.<host>, make no request"; fail=$((fail + 1)); fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

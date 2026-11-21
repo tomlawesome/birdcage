@@ -1,0 +1,8 @@
+# Python packages the CI jobs on $PYTHON_ALPINE_IMAGE install (#181, #234):
+# pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt
+# Hashes cover the CPython 3.14 musllinux x86_64 and aarch64 wheels of PyYAML
+# 6.0.3 (PyYAML's PyPI JSON API, https://pypi.org/pypi/PyYAML/6.0.3/json).
+# Change the image's Python minor and these hashes change with it.
+pyyaml==6.0.3 \
+    --hash=sha256:5190d403f121660ce8d1d2c1bb2ef1bd05b5f68533fc5c2ea899bd15f4399b35 \
+    --hash=sha256:7c6610def4f163542a622a73fb39f534f8c101d690126992300bf3207eab9764
