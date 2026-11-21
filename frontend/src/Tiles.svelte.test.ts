@@ -35,7 +35,7 @@ describe('Tiles.svelte: outline class per status', () => {
   })
 })
 
-describe('Tiles.svelte: write actions wait for their routes (#228)', () => {
+describe('Tiles.svelte: with no role given the tile draws no write pill (#227)', () => {
   it('a silent tile offers "open" but no "mark as maintenance"', () => {
     const { container } = render(Tiles, { canaries: [canary({ status: 'silent' })], trace, range: '24h' })
     const pills = [...container.querySelectorAll('.tile .acts .pill')].map((p) => p.textContent ?? '')
