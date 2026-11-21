@@ -159,8 +159,12 @@ func (h *handler) handleCanaries(w http.ResponseWriter, r *http.Request) {
 		// costs nothing worth a join.
 		results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, c.ID)
 		if err != nil {
+			// A failed lookup is a store fault, not an absent self-test:
+			// answering 200 without self_test would look like "never
+			// ran" to the page (#224). Fail the whole response instead.
 			log.Printf("api: self-test service results for %s: %v", c.ID, err)
-			continue // the run-level summary above still renders; per-service detail is best-effort
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
 		}
 		if ok {
 			out[i].SelfTest = results
