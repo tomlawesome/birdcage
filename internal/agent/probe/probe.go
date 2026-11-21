@@ -79,8 +79,8 @@ const (
 	StatusNoCarrier
 
 	// StatusNotProbeable means the target names one of #46's
-	// out-of-scope services (smb, llmnr -- see carrier.go's
-	// notProbeable). Nothing is attempted.
+	// out-of-scope services (llmnr only -- see carrier.go's
+	// notProbeable; smb is StatusAgentHandled). Nothing is attempted.
 	StatusNotProbeable
 
 	// StatusAgentHandled means the target names a service cmd/mockingbird

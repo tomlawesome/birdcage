@@ -253,10 +253,10 @@ type baitLookup interface {
 // cannot yet be told that a poisoner target passed: every grade it
 // records is proved by a marker-bearing event arriving
 // (internal/store/selftest_grade.go), and silence produces no event to
-// carry a marker. Nothing mints a poisoner target for that reason, so in
-// this build this function runs only if something else starts minting
-// one -- at which point the log line below is what says whether the bait
-// went out.
+// carry a marker. The scheduler (internal/selftestsched) always mints a
+// poisoner target for every honeypot canary, so this function runs for
+// each such run; the log line below is what says whether the bait went
+// out.
 func runAgentHandledTarget(ctx context.Context, in *Intake, bait baitLookup, params selftest.Params, target selftest.Target) {
 	runID := params.RunID
 	service := target.Service
