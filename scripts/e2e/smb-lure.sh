@@ -303,7 +303,8 @@ run_self_test() {
 }
 
 # newest_run_failed_naming prints success when the newest self-test run
-# issued after SELFTEST_FROM has failed and names the service.
+# issued after SELFTEST_FROM has failed and lists the service exactly as
+# failed_services spells it, "service port" (e.g. "smb 445").
 SELFTEST_FROM=""
 newest_run_failed_naming() {
   canary_jq "-e --arg s '$1' --arg f '$SELFTEST_FROM' '[.self_test_runs[] | select(.issued_at > \$f)] | any(.passed == false and ((.failed_services // []) | index(\$s) != null))'"
@@ -338,7 +339,7 @@ SELFTEST_WINDOW_S=$(( 10 * 60 ))
 SELFTEST_TICK_S=60
 SELFTEST_MARGIN_S=60
 SELFTEST_FAIL_WAIT_S=$(( SELFTEST_SCHEDULE_LEAD_S + SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
-poll "$SELFTEST_FAIL_WAIT_S" newest_run_failed_naming smb \
+poll "$SELFTEST_FAIL_WAIT_S" newest_run_failed_naming "smb 445" \
   || fail "no self-test run failed naming smb after waiting ${SELFTEST_FAIL_WAIT_S} attempts (>= ${SELFTEST_FAIL_WAIT_S} s: lead ${SELFTEST_SCHEDULE_LEAD_S} s + window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s) with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
 ok "the failed run names smb (self_test_failed)"
 
