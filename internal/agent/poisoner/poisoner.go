@@ -48,8 +48,19 @@ type Config struct {
 	// at a fixture.
 	ARPPath string
 
+	// OwnPorts, when set, is told the local port of every LLMNR and mDNS
+	// query socket as it sends, so the port-scan detector can skip the
+	// late answers (issue #240). An interface so this package does not
+	// import portscan.
+	OwnPorts OwnPortsRecorder
+
 	// Now is injected by the tests. Nil means time.Now.
 	Now func() time.Time
+}
+
+// OwnPortsRecorder is what lookup tells about each query socket's port.
+type OwnPortsRecorder interface {
+	Add(port uint16, at time.Time)
 }
 
 // Detector asks the segment for names nobody should answer, listens for
@@ -567,7 +578,7 @@ func (d *Detector) lookupLocked(ctx context.Context, proto Protocol, name string
 	d.randMu.Lock()
 	r := d.rand
 	d.randMu.Unlock()
-	return lookup(ctx, proto, name, d.segment, shape, r, d.arpPath)
+	return lookup(ctx, proto, name, d.segment, shape, r, d.arpPath, d.cfg.OwnPorts, d.now)
 }
 
 // emit encodes one answer and hands it to the submit callback.

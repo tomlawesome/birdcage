@@ -113,6 +113,11 @@ type Config struct {
 
 	// ReadFile reads the /proc/net socket tables. Nil means os.ReadFile.
 	ReadFile func(name string) ([]byte, error)
+
+	// OwnPorts holds the ports the poisoner's own queries left from
+	// (issue #240); UDP datagrams to one of them are answers, not probes.
+	// Nil means no exemption.
+	OwnPorts *OwnPorts
 }
 
 // Detector watches for scans until its context is cancelled.
@@ -280,6 +285,11 @@ func (d *Detector) handle(b []byte) {
 		return
 	}
 	if _, listening := d.ignore[p.DstPort]; listening {
+		return
+	}
+	// A late answer to the poisoner's own query: UDP only, so a TCP SYN
+	// to the same port number still counts.
+	if p.Protocol == ProtoUDP && d.cfg.OwnPorts.Recent(p.DstPort, d.now()) {
 		return
 	}
 	det, ok := d.tracker.Observe(p)
