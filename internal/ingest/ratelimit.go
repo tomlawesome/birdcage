@@ -123,3 +123,52 @@ func recordRateLimitCrossed(ctx context.Context, database *db.DB, now func() tim
 		slog.Error("ingest: record rate limit crossing", "canary", canaryID, "limit", limit, "err", err)
 	}
 }
+
+// scanPerCanaryPerMinute is issue #233's per-canary cap on POST
+// /ingest/scans, on top of the shared requests/min cap. A real scanner
+// posts a few times an hour; every accepted scan writes rows.
+const scanPerCanaryPerMinute = 60
+
+// scanPruneThreshold is the map size above which scanLimiters drops
+// canaries whose bucket has refilled (idle ones), keeping the map
+// bounded by recent activity rather than by every canary ever seen.
+const scanPruneThreshold = 1024
+
+// scanLimiters is the per-canary scan token-bucket set, keyed on the
+// authenticated token's canary like limiterRegistry (same x/time/rate
+// shape, initialised full), but pruned.
+type scanLimiters struct {
+	mu   sync.Mutex
+	byID map[string]*rate.Limiter
+}
+
+func newScanLimiters() *scanLimiters {
+	return &scanLimiters{byID: make(map[string]*rate.Limiter)}
+}
+
+// allow reports whether canaryID may post one more scan at now. When it
+// may not, retryAfter is the whole seconds (at least 1) until it may.
+func (s *scanLimiters) allow(canaryID string, now time.Time) (ok bool, retryAfter int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lim, found := s.byID[canaryID]
+	if !found {
+		if len(s.byID) >= scanPruneThreshold {
+			for id, l := range s.byID {
+				// A full bucket is indistinguishable from a fresh one.
+				if l.TokensAt(now) >= scanPerCanaryPerMinute {
+					delete(s.byID, id)
+				}
+			}
+		}
+		lim = rate.NewLimiter(perMinute(scanPerCanaryPerMinute), scanPerCanaryPerMinute)
+		s.byID[canaryID] = lim
+	}
+	res := lim.ReserveN(now, 1)
+	if delay := res.DelayFrom(now); res.OK() && delay > 0 {
+		res.CancelAt(now)
+		secs := int(delay/time.Second) + 1
+		return false, secs
+	}
+	return true, 0
+}

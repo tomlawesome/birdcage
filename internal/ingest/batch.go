@@ -10,10 +10,12 @@ import (
 	"net/netip"
 	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/opencanary"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -184,7 +186,7 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			SourceIP:   ev.SourceIP,
 			DestPort:   ev.DestPort,
 			Service:    service,
-			Raw:        ev.Raw,
+			Raw:        truncateRaw(ev.Raw),
 			ReceivedAt: receivedAt, // birdcage's own receipt time, never agent-supplied
 			EventID:    ev.EventID,
 		}
@@ -308,7 +310,37 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 	if ev.DestPort != -1 && (ev.DestPort < 0 || ev.DestPort > 65535) {
 		return "invalid dest_port", false
 	}
+	// Issue #233: bound the free-text fields a stolen token controls.
+	if len(ev.Service) > maxServiceBytes {
+		return "service too long", false
+	}
+	if len(ev.SelfTestMarker) > maxMarkerChars {
+		return "self_test_marker too long", false
+	}
 	return "", true
+}
+
+// Issue #233 field bounds. maxMarkerChars is the length of a minted
+// marker (selftest.MarkerBytes, hex-encoded: two characters per byte).
+const (
+	maxRawBytes     = 8192
+	maxServiceBytes = 64
+	maxMarkerChars  = selftest.MarkerBytes * 2
+	rawTruncSuffix  = " [truncated by birdcage]"
+)
+
+// truncateRaw keeps raw whole when it fits maxRawBytes, otherwise cuts
+// it at a UTF-8 rune boundary so that raw plus rawTruncSuffix is at most
+// maxRawBytes.
+func truncateRaw(raw string) string {
+	if len(raw) <= maxRawBytes {
+		return raw
+	}
+	cut := maxRawBytes - len(rawTruncSuffix)
+	for cut > 0 && !utf8.RuneStart(raw[cut]) {
+		cut--
+	}
+	return raw[:cut] + rawTruncSuffix
 }
 
 // recordSelfTestClaimRefused writes selftest.claim_refused (#46 slice
