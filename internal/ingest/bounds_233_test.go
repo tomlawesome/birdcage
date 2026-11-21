@@ -176,7 +176,10 @@ func TestHandleScanPerCanaryCapIs60PerMinute(t *testing.T) {
 		enrollCanaryKind(t, database, "canary-b", agentkind.Scanner)
 		rawA := mintToken(t, database, "canary-a")
 		rawB := mintToken(t, database, "canary-b")
-		h := newHandler(database, nil, time.Now, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
+		// Fixed clock: the limiter refills a token a second, so a real clock
+		// lets a slow runner refill one before the 61st post (#251).
+		now := time.Now().UTC()
+		h := newHandler(database, nil, func() time.Time { return now }, defaultLimiterLimits, store.NewSelfTestIndex(), nil)
 
 		for i := 1; i <= boundsScanPerMin; i++ {
 			rec := boundsPost(h, rawA, validScanOKBody)
