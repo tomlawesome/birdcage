@@ -92,3 +92,11 @@ the whole account.
 - 2026-11-21 · f647bda (batch-a) · pipeline 5115 / e2e:portscan · the same
   message and cause: a second alert from another address on the e2e network.
   Passed in pipeline 5128 on unchanged product code.
+
+## TestCheckStartupAuthContinuityAllowsAUsedDatabaseWithAccounts (cmd/birdcage)
+
+- 2026-11-21 · 2090fe6 · pipeline 5140 (!187) / test:go, job 61454 ·
+  subtest a_user.register_audit_row: "register first admin: status 500,
+  want 201", with "no such table: audit_log" and "no such table: approvals"
+  logged nearby; the package took 580 s. The test is unchanged since #164
+  and passed in pipeline 5128; three local runs straight after passed.
