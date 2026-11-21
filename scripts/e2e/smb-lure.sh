@@ -326,8 +326,20 @@ ok "smb 445 left the listening row"
 step "a self-test with the lure down fails, naming smb (#243)"
 SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_self_test
-poll 300 newest_run_failed_naming smb \
-  || fail "no self-test run failed naming smb after the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+# A down service sends no event (cmd/mockingbird/command.go:263-268), so the
+# run only fails when its deadline passes and SweepExpiredSelfTestRuns runs on
+# a scheduler tick. Wait for all of: the schedule lead (run_self_test's +120 s,
+# and up to 59 s more because the time is HH:MM), the window
+# (internal/selftestsched/scheduler.go:49, selfTestWindow = 10 min), one tick
+# (cmd/birdcage/main.go:188, selfTestTickInterval = 1 min), and a margin.
+# poll sleeps 1 s per attempt (journey.sh poll), so attempts >= seconds.
+SELFTEST_SCHEDULE_LEAD_S=$(( 120 + 59 ))
+SELFTEST_WINDOW_S=$(( 10 * 60 ))
+SELFTEST_TICK_S=60
+SELFTEST_MARGIN_S=60
+SELFTEST_FAIL_WAIT_S=$(( SELFTEST_SCHEDULE_LEAD_S + SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+poll "$SELFTEST_FAIL_WAIT_S" newest_run_failed_naming smb \
+  || fail "no self-test run failed naming smb after waiting ${SELFTEST_FAIL_WAIT_S} attempts (>= ${SELFTEST_FAIL_WAIT_S} s: lead ${SELFTEST_SCHEDULE_LEAD_S} s + window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s) with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
 ok "the failed run names smb (self_test_failed)"
 
 step "the lure starts again, and the next self-test passes (#243)"
