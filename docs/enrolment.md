@@ -107,7 +107,7 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 agent opens one raw socket inside the container's own network namespace
 (the holder's -- every honeypot canary joins it now, issue #132) to see
 connection attempts aimed at closed ports -- a port counts as closed only
-if nothing on the canary is listening on it, emulated service or not -- which
+if nothing on the canary is listening on it, emulated service or not; answers to the canary's own bait lookups are not counted -- which
 is the only way it can report a port sweep (5 different closed ports from one
 address within 30 s) (OpenCanary's own
 port-scan module needs firewall rules and a root process, and this

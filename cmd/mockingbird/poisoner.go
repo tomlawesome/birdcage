@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/poisoner"
+	"github.com/tomlawesome/birdcage/internal/agent/portscan"
 )
 
 // Environment variables the poisoner road reads (issue #86). All
@@ -215,11 +216,20 @@ func plural(n int, one, many string) string {
 // environment-variable defaults can never disagree about the starting
 // point.
 func newPoisonerRoad(in *Intake, log *slog.Logger) (*poisoner.Detector, poisonerInventory, poisoner.Config) {
+	return newPoisonerRoadWith(in, log, nil)
+}
+
+// newPoisonerRoadWith is newPoisonerRoad telling own the port of each query
+// socket (issue #240); nil means nothing is recorded.
+func newPoisonerRoadWith(in *Intake, log *slog.Logger, own *portscan.OwnPorts) (*poisoner.Detector, poisonerInventory, poisoner.Config) {
 	if !poisonerEnabled() {
 		return nil, poisonerInventory{Active: false}, poisoner.Config{}
 	}
 
 	cfg, warnings := poisonerSettings()
+	if own != nil {
+		cfg.OwnPorts = own
+	}
 	detector, more := poisoner.New(cfg, in.SubmitPoisonerEvent, log)
 	for _, w := range append(warnings, more...) {
 		log.Warn(w)
