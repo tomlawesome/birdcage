@@ -296,8 +296,14 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 	// netip.ParseAddr, not net.ParseIP, because a zoned IPv6 link-local
 	// address (e.g. "fe80::1%eth0") is an ordinary hit on a LAN honeypot
 	// and net.ParseIP rejects the zone suffix outright. A non-empty value
-	// that parses as neither is still rejected.
+	// that parses as neither is still rejected. ParseAddr accepts a zone
+	// of any length, so a stolen token could store a body-sized address:
+	// refuse one over maxSourceIPBytes (never truncate -- a cut address is
+	// a wrong address, and a cut zone can name another interface).
 	if ev.SourceIP != "" {
+		if len(ev.SourceIP) > maxSourceIPBytes {
+			return "source_ip too long", false
+		}
 		if _, err := netip.ParseAddr(ev.SourceIP); err != nil {
 			return "invalid source_ip", false
 		}
@@ -322,11 +328,16 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 
 // Issue #233 field bounds. maxMarkerChars is the length of a minted
 // marker (selftest.MarkerBytes, hex-encoded: two characters per byte).
+// maxSourceIPBytes: the longest textual IP is 45 bytes (IPv4-mapped
+// "ffff:...:255.255.255.255"); a real zone is an interface name of at
+// most 15 bytes on Linux (IFNAMSIZ-1) or a scope id of at most 10 digits
+// on Windows; 45 + 1 + 15 = 61, rounded up to 64.
 const (
-	maxRawBytes     = 8192
-	maxServiceBytes = 64
-	maxMarkerChars  = selftest.MarkerBytes * 2
-	rawTruncSuffix  = " [truncated by birdcage]"
+	maxRawBytes      = 8192
+	maxServiceBytes  = 64
+	maxSourceIPBytes = 64
+	maxMarkerChars   = selftest.MarkerBytes * 2
+	rawTruncSuffix   = " [truncated by birdcage]"
 )
 
 // truncateRaw keeps raw whole when it fits maxRawBytes, otherwise cuts

@@ -110,8 +110,8 @@ This section is rewritten route-by-route when #8 lands.
 - **Ingest field and rate bounds (issue #233).** A stolen agent token must
   not grow the database without limit. `raw` is kept to 8192 bytes (cut at
   a UTF-8 boundary, with a `[truncated by birdcage]` suffix inside the
-  cap); `service` over 64 bytes and `self_test_marker` over the minted
-  length (32 hex characters) are rejected per event; `POST /ingest/scans`
+  cap); `service` and `source_ip` over 64 bytes and `self_test_marker`
+  over the minted length (32 hex characters) are rejected per event; `POST /ingest/scans`
   is capped at 60 requests/minute per canary on top of the shared
   requests/minute cap, answering 429 with `Retry-After`.
 - **The mail rate limits are security controls, not tuning.** A token
@@ -471,8 +471,9 @@ image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
   configure to avoid plain HTTP; the only choice left is which
   certificate a browser trusts.
 - Put it behind a VPN (e.g. WireGuard/Tailscale) if you need to reach it
-  from outside that LAN -- there is no login screen to stop anyone who
-  reaches it in v1.
+  from outside that LAN -- the dashboard asks for a sign-in (every
+  `/api/` route needs a signed-in session or a read API token), but a
+  sign-in screen is not a substitute for keeping it off the open internet.
 - Keep CrowdSec/RouterOS credentials in environment variables or secrets,
   not in a config file that might be more widely readable than your
   environment.

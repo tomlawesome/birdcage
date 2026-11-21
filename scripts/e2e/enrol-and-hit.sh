@@ -135,11 +135,19 @@ esac
 step "a HEAD request to the http lure is reported (issue #141)"
 # OpenCanary's http.log_unimplemented_method_requests flag (logtype 3002)
 # is what turns this probe into an event; with it off a scanner's HEAD
-# leaves no trace. The path is unique so the match cannot be an old hit.
+# leaves no trace. An earlier http alert on port 80 must not satisfy the
+# step, so take the highest http alert id held before the request and
+# accept only an alert with a higher id. (The stored raw line is not
+# relied on to carry the request path.)
+head_base="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -r '[.alerts[].id] | max // 0'")" \
+  || fail "could not read the http alerts before the HEAD request" "$E2E_BIRDCAGE"
+case "$head_base" in
+  ''|*[!0-9]*) fail "the http alert baseline is not a number: $head_base" "$E2E_BIRDCAGE" ;;
+esac
 helper "curl -sS -I --max-time 10 -o /dev/null 'http://$E2E_CANARY:80/e2e-head-probe'" \
   || fail "the HEAD request could not be sent to $E2E_CANARY:80" "$E2E_CANARY"
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -e '[.alerts[] | select(.dest_port == 80)] | length > 0'" \
-  || fail "/api/alerts never contained an http event on port 80 for the HEAD request after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -e '[.alerts[] | select(.dest_port == 80 and .id > $head_base)] | length > 0'" \
+  || fail "/api/alerts never contained a new http event on port 80 for the HEAD request after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
 ok "HEAD request to $E2E_CANARY:80 became an http alert"
 
 step "GET /api/canaries counts only this journey's real hits"
