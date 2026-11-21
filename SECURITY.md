@@ -471,8 +471,9 @@ image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
   configure to avoid plain HTTP; the only choice left is which
   certificate a browser trusts.
 - Put it behind a VPN (e.g. WireGuard/Tailscale) if you need to reach it
-  from outside that LAN -- there is no login screen to stop anyone who
-  reaches it in v1.
+  from outside that LAN -- the dashboard asks for a sign-in (every
+  `/api/` route needs a signed-in session or a read API token), but a
+  sign-in screen is not a substitute for keeping it off the open internet.
 - Keep CrowdSec/RouterOS credentials in environment variables or secrets,
   not in a config file that might be more widely readable than your
   environment.

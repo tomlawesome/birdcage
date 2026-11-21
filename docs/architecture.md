@@ -52,7 +52,7 @@ to 60/minute per canary (429 plus `Retry-After`), in addition to the shared
 | CrowdSec integration | Place a permanent ban in the CrowdSec Local API on an operator's request (`birdcage crowdsec add`), add-only, over the stdlib; no automatic trigger until #6 | Landed with #4; see [ADR-0014](adr/0014-crowdsec-permanent-ban-publisher.md) |
 | RouterOS mitigation | Apply firewall/address-list changes via a service account | Not yet implemented -- #5 |
 | Audit log | Append-only record of every automated action taken | Write path landed (`internal/audit`); every CrowdSec outcome is a row (#4), RouterOS follows with #5 |
-| Auth | Local accounts, OIDC, sessions, API/ingest tokens -- copied model from mikroview | Not yet implemented -- #8; see [ADR-0003](adr/0003-mikroview-sidecar.md) |
+| Auth | Local accounts, OIDC, sessions, API/ingest tokens -- copied model from mikroview | Landed with #8: sign-in through gauntlet (`internal/auth`); see [ADR-0016](adr/0016-sign-in-with-gauntlet.md) |
 
 ## Data model
 
