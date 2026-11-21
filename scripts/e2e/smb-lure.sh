@@ -298,7 +298,7 @@ run_self_test() {
   local when
   "$E2E_STACK" birdcage settings set selftest_enabled true >/dev/null || fail "could not enable self-tests"
   "$E2E_STACK" birdcage settings set selftest_use_rotation_schedule false >/dev/null || fail "could not choose the own schedule"
-  when="$(date -u -d '+2 minutes' +%H:%M)"
+  when="$(date -u -d "@$(( $(date -u +%s) + 120 ))" +%H:%M)"
   "$E2E_STACK" birdcage settings set selftest_schedule "$when" >/dev/null || fail "could not set the self-test schedule"
 }
 
