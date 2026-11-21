@@ -249,14 +249,13 @@ type baitLookup interface {
 // alert for it has already gone out through the ordinary event path by
 // the time LookupOnce returns.
 //
-// This currently reports to the operator's log and no further. Birdcage
-// cannot yet be told that a poisoner target passed: every grade it
-// records is proved by a marker-bearing event arriving
-// (internal/store/selftest_grade.go), and silence produces no event to
-// carry a marker. The scheduler (internal/selftestsched) always mints a
-// poisoner target for every honeypot canary, so this function runs for
-// each such run; the log line below is what says whether the bait went
-// out.
+// Every grade birdcage records is proved by a marker-bearing event
+// arriving (internal/store/selftest_grade.go), and silence produces no
+// event to carry a marker. So this function reports the outcome itself,
+// in a result event carrying the target's marker (reportSelfTestResult).
+// The scheduler (internal/selftestsched) mints a poisoner target for
+// every honeypot canary, so this runs on every such run; the log lines
+// below say whether the bait went out.
 func runAgentHandledTarget(ctx context.Context, in *Intake, bait baitLookup, params selftest.Params, target selftest.Target) {
 	runID := params.RunID
 	service := target.Service
