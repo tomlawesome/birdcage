@@ -55,6 +55,12 @@ the whole account.
   `scripts/ensure-gitleaks.sh` got "curl: (22) The requested URL returned
   error: 504" from github.com before any scan ran. Retried as job 28489.
 
+## golangci-lint build: module downloads cut off (lint:go)
+
+- 2026-11-21 · e1f21a7 · pipeline 5166 (!187) / lint:go, job 61870 ·
+  building the linter, every module fetch from the Go module proxy ended
+  "unexpected EOF" before any lint ran. Retried as job 62001.
+
 ## startup-refusals.sh -- first refusal outlived its 15 s bound (local)
 
 - 2026-10-10 · 2cbda6f plus the uncommitted #8 slice C journeys · local
