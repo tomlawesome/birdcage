@@ -711,7 +711,7 @@ check "every pip install in .gitlab-ci.yml uses --require-hashes" "$(tf bash -c 
 
 # Self-test: the checks above must fail on a digest-less image and on a bare
 # pip install, so they cannot pass by finding nothing.
-st="$(mktemp -d)"; trap 'rm -rf "$st"' EXIT
+st="$(mktemp -d)"
 sed -E 's#^(\s*PYTHON_ALPINE_IMAGE:\s*python:[^@[:space:]]+)@sha256:[0-9a-f]{64}#\1#' "$ci" > "$st/nodigest.yml"
 check "self-test: a PYTHON_ALPINE_IMAGE without digest is caught" \
   "$(tf bash -c 'grep -q "^PYTHON_ALPINE_IMAGE" <<< "$1"' _ "$(pin_failures "$st/nodigest.yml")")" "not caught"
@@ -720,6 +720,38 @@ check "self-test: a bare pip install pyyaml is caught" \
   "$(tf bash -c 'grep -q "pip install pyyaml" <<< "$1"' _ "$(pin_failures "$st/barepip.yml")")" "not caught"
 printf 'variables:\n  PYTHON_ALPINE_IMAGE: python:3.15-alpine@sha256:%064d\nj:\n  script:\n    - pip install --require-hashes -r r.txt\n' 0 > "$st/good.yml"
 check "self-test: a pinned image and hashed pip install pass" "$(tf [ -z "$(pin_failures "$st/good.yml")" ])" "$(pin_failures "$st/good.yml")"
+
+# 8. Every script line parses as a string (#234). GitLab refuses a job whose
+#    script, before_script or after_script holds a non-string item; an
+#    unquoted "pip install --only-binary :all:" parses as a mapping.
+script_nonstrings() {
+  python3 -I - "$1" <<'PY'
+import sys, yaml
+class L(yaml.SafeLoader):
+    pass
+L.add_multi_constructor("!", lambda loader, suffix, node: None)  # !reference
+doc = yaml.load(open(sys.argv[1]), Loader=L)
+def bad(v):
+    if isinstance(v, str) or v is None:
+        return False
+    if isinstance(v, list):
+        return any(bad(x) for x in v)
+    return True
+for name, job in doc.items():
+    if not isinstance(job, dict):
+        continue
+    for key in ("script", "before_script", "after_script"):
+        if key in job and bad(job[key]):
+            print("%s:%s holds a non-string item" % (name, key))
+PY
+}
+check "every script line in .gitlab-ci.yml parses as a string" "$(tf [ -z "$(script_nonstrings "$ci")" ])" "$(script_nonstrings "$ci" | head -3 | tr '\n' ';')"
+st2="$(mktemp -d)"; trap 'rm -rf "$st" "$st2"' EXIT
+printf 'j:\n  before_script:\n    - pip install --only-binary :all: -r x\n  script:\n    - echo ok\n' > "$st2/bad.yml"
+printf 'j:\n  before_script:\n    - "pip install --only-binary :all: -r x"\n  script:\n    - [echo, ok]\n' > "$st2/good.yml"
+check "self-test: an unquoted 'pip install --only-binary :all:' line is caught" \
+  "$(tf bash -c 'grep -q "j:before_script" <<< "$1"' _ "$(script_nonstrings "$st2/bad.yml")")" "not caught"
+check "self-test: a quoted line and a nested list of strings pass" "$(tf [ -z "$(script_nonstrings "$st2/good.yml")" ])" "$(script_nonstrings "$st2/good.yml")"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
