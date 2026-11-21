@@ -6,15 +6,16 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.9
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/tomlawesome/gauntlet v0.4.3
+	github.com/tomlawesome/gauntlet v0.4.4
 	golang.org/x/crypto v0.59.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/time v0.16.0
 	modernc.org/sqlite v1.62.0
 )
 
 require (
+	github.com/boombuler/barcode v1.1.0 // indirect
 	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
