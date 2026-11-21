@@ -689,5 +689,37 @@ check "dependency-inventory.md has a semgrep row 253 naming 1.185.0 and the Semg
 check "docs/ci-hops.md has a lint:semgrep row" \
   "$(grep -qE '^\| *`lint:semgrep` *\|' "$repo_root/docs/ci-hops.md"; echo $?)" "no lint:semgrep row"
 
+# 7. Supply-chain pins (#234, #181). pin_failures <ci file> prints one line
+#    per breach: PYTHON_ALPINE_IMAGE without a sha256 digest (as
+#    DOCKER_CLI_IMAGE has), or a `pip install` without --require-hashes.
+pin_failures() {
+  python3 -I - "$1" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+m = re.search(r"^\s*PYTHON_ALPINE_IMAGE:\s*(\S+)", text, re.M)
+if not m or not re.fullmatch(r"python:[^@\s]+@sha256:[0-9a-f]{64}", m.group(1).strip("'\"")):
+    print("PYTHON_ALPINE_IMAGE is not python:<tag>@sha256:<digest>: %s" % (m.group(1) if m else "missing"))
+for n, line in enumerate(text.splitlines(), 1):
+    code = line.split("#", 1)[0]
+    if re.search(r"\bpip3?\s+install\b", code) and "--require-hashes" not in code:
+        print("line %d: pip install without --require-hashes: %s" % (n, line.strip()))
+PY
+}
+pf="$(pin_failures "$ci")"
+check "PYTHON_ALPINE_IMAGE is pinned by sha256 digest" "$(tf bash -c '! grep -q "^PYTHON_ALPINE_IMAGE" <<< "$1"' _ "$pf")" "$(grep '^PYTHON_ALPINE_IMAGE' <<< "$pf")"
+check "every pip install in .gitlab-ci.yml uses --require-hashes" "$(tf bash -c '! grep -q "pip install" <<< "$1"' _ "$pf")" "$(grep 'pip install' <<< "$pf" | head -3 | tr '\n' ';')"
+
+# Self-test: the checks above must fail on a digest-less image and on a bare
+# pip install, so they cannot pass by finding nothing.
+st="$(mktemp -d)"; trap 'rm -rf "$st"' EXIT
+sed -E 's#^(\s*PYTHON_ALPINE_IMAGE:\s*python:[^@[:space:]]+)@sha256:[0-9a-f]{64}#\1#' "$ci" > "$st/nodigest.yml"
+check "self-test: a PYTHON_ALPINE_IMAGE without digest is caught" \
+  "$(tf bash -c 'grep -q "^PYTHON_ALPINE_IMAGE" <<< "$1"' _ "$(pin_failures "$st/nodigest.yml")")" "not caught"
+{ cat "$ci"; printf '\n_selftest:\n  script:\n    - pip install pyyaml\n'; } > "$st/barepip.yml"
+check "self-test: a bare pip install pyyaml is caught" \
+  "$(tf bash -c 'grep -q "pip install pyyaml" <<< "$1"' _ "$(pin_failures "$st/barepip.yml")")" "not caught"
+printf 'variables:\n  PYTHON_ALPINE_IMAGE: python:3.15-alpine@sha256:%064d\nj:\n  script:\n    - pip install --require-hashes -r r.txt\n' 0 > "$st/good.yml"
+check "self-test: a pinned image and hashed pip install pass" "$(tf [ -z "$(pin_failures "$st/good.yml")" ])" "$(pin_failures "$st/good.yml")"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
