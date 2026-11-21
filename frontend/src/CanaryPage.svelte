@@ -56,35 +56,62 @@
   // the 202 the pill reads "self-test queued…" until a fetch shows a run
   // issued later than the newest one at click time; App's refetch is
   // asked for every 10 s meanwhile.
+  // The API gives runs no command id and the 202 no `created` flag, so
+  // "queued" follows time and completion: from the click until no run
+  // issued after it is still open, no run that was open at the click is
+  // still open, and at least one of those two things was seen. The poll
+  // stops after QUEUE_CEILING_MS (the API carries no deadline).
   const QUEUE_POLL_MS = 10_000
-  const newestRun = (): number => Math.max(-Infinity, ...page.self_test_runs.map((r) => Date.parse(r.issued_at)))
-  let queuedFrom: { id: string; newest: number } | null = $state(null)
+  const QUEUE_CEILING_MS = 10 * 60_000
+  type Queued = { id: string; at: number; newest: number; openAtClick: string[] }
+  const runsOf = () => page.self_test_runs
+  const newestRun = (): number => Math.max(-Infinity, ...runsOf().map((r) => Date.parse(r.issued_at)))
+  let queuedFrom: Queued | null = $state(null)
   let queued = $derived.by(() => {
-    const q: { id: string; newest: number } | null = queuedFrom
-    return q !== null && q.id === page.canary.id && !(newestRun() > q.newest)
+    const q: Queued | null = queuedFrom
+    if (q === null || q.id !== page.canary.id) return false
+    const runs = runsOf()
+    const newOnes = runs.filter((r) => Date.parse(r.issued_at) > q.newest)
+    if (newOnes.some((r) => !r.completed_at)) return true
+    if (runs.some((r) => q.openAtClick.includes(r.issued_at) && !r.completed_at)) return true
+    return newOnes.length === 0 && q.openAtClick.length === 0
   })
   let actError: string | null = $state(null)
+  let busy: AdminWrite[] = $state([])
+  const maintenanceBusy = $derived(busy.includes('maintenance-set') || busy.includes('maintenance-end'))
   let inMaintenance = $derived(!!page.canary.maintenance_until)
   let isAdmin = $derived(role === 'admin')
 
   $effect(() => {
-    if (!queued) return
+    const q = queuedFrom
+    if (!queued || q === null) return
     const timer = setInterval(() => onchanged?.(), QUEUE_POLL_MS)
-    return () => clearInterval(timer)
+    const ceiling = setTimeout(() => (queuedFrom = null), Math.max(0, q.at + QUEUE_CEILING_MS - Date.now()))
+    return () => {
+      clearInterval(timer)
+      clearTimeout(ceiling)
+    }
   })
 
   async function write(kind: AdminWrite) {
-    if (kind === 'selftest' && queued) return
+    if (kind === 'selftest' ? queued || busy.includes('selftest') : maintenanceBusy) return
     actError = null
+    busy = [...busy, kind]
     const id = page.canary.id
     const newest = newestRun()
+    const openAtClick = runsOf()
+      .filter((r) => !r.completed_at)
+      .map((r) => r.issued_at)
     try {
       await sendAdminWrite(kind, id)
     } catch (err) {
       actError = writeErrorText(kind, err)
       return
+    } finally {
+      if (kind !== 'selftest') busy = busy.filter((k) => k !== kind)
     }
-    if (kind === 'selftest') queuedFrom = { id, newest }
+    if (kind === 'selftest') queuedFrom = { id, at: Date.now(), newest, openAtClick }
+    busy = busy.filter((k) => k !== kind)
     onchanged?.()
   }
 
@@ -224,7 +251,7 @@
         <span class="pill" class:quiet={action.quiet}>{action.label}</span>
       {/each}
       {#if isAdmin && page.canary.status !== 'silent'}
-        <button type="button" class="pill" class:quiet={queued} disabled={queued} onclick={() => write('selftest')}>
+        <button type="button" class="pill" class:quiet={queued} disabled={queued || busy.includes('selftest')} onclick={() => write('selftest')}>
           {queued ? 'self-test queued…' : 'run the self-test now ▸'}
         </button>
       {/if}
@@ -233,6 +260,7 @@
           type="button"
           class="pill"
           class:quiet={!inMaintenance}
+          disabled={maintenanceBusy}
           onclick={() => write(inMaintenance ? 'maintenance-end' : 'maintenance-set')}
         >
           {inMaintenance ? MAINTENANCE_END_LABEL : MAINTENANCE_SET_LABEL}

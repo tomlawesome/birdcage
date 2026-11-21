@@ -412,5 +412,9 @@ export function computeTileStatus(
 ): TileStatusResult {
   const result = computeBaseTileStatus(canary, now, lastHit)
   if (!canary.maintenance_until || LOUD_STATES.includes(canary.status)) return result
+  // A hit line (a visitor in the window) wins too: maintenance quiets
+  // health warnings, never hits.
+  const hitLine = canary.status !== 'silent' && !otherStateLine(canary, now) && (canary.hits?.length ?? 0) > 0
+  if (hitLine) return result
   return { ...result, maintenance: stamp(canary.maintenance_until, true) }
 }

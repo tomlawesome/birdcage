@@ -268,8 +268,12 @@
   // already owns. null only before the first effect run, which never
   // overlaps with the stream effect actually receiving a message.
   let triggerRefresh: (() => void) | null = null
+  // A write's refetch: like triggerRefresh, but a load already in flight
+  // (which may have read before the write) is followed by one more, at
+  // most one pending.
+  let triggerWriteRefresh: (() => void) | null = null
   /** #227: the admin pills ask for the refetch the poll already does. */
-  const refetchNow = () => triggerRefresh?.()
+  const refetchNow = () => triggerWriteRefresh?.()
 
   // Refetches whenever activeRange changes and every REFRESH_MS after
   // that; `inFlight` is local to this effect run (a fresh false every
@@ -306,6 +310,7 @@
     const gen = epoch
     const current = () => range === activeRange && gen === epoch
     let inFlight = false
+    let again = false
     const load = async () => {
       if (inFlight) return
       inFlight = true
@@ -379,9 +384,17 @@
         await canaryLoad
         await runsLoad
         inFlight = false
+        if (again) {
+          again = false
+          if (current()) void load()
+        }
       }
     }
     triggerRefresh = load
+    triggerWriteRefresh = () => {
+      if (inFlight) again = true
+      else void load()
+    }
     load()
     const interval = setInterval(load, REFRESH_MS)
     return () => clearInterval(interval)

@@ -23,7 +23,10 @@
   }: { canaries: Canary[]; trace: TraceResponse; range: Range; role?: string; onchanged?: () => void } = $props()
 
   let actError: { id: string; text: string } | null = $state(null)
+  let busy: string[] = $state([])
   async function maintain(c: Canary) {
+    if (busy.includes(c.id)) return
+    busy = [...busy, c.id]
     const kind: AdminWrite = c.maintenance_until ? 'maintenance-end' : 'maintenance-set'
     actError = null
     try {
@@ -31,6 +34,8 @@
     } catch (err) {
       actError = { id: c.id, text: writeErrorText(kind, err) }
       return
+    } finally {
+      busy = busy.filter((x) => x !== c.id)
     }
     onchanged?.()
   }
@@ -116,7 +121,7 @@
         <div class="acts">
           <a class="pill" href={canaryHref(c.id)}>open {c.name} &#9656;</a>
           {#if role === 'admin'}
-            <button type="button" class="pill" class:quiet={!c.maintenance_until} onclick={() => maintain(c)}>
+            <button type="button" class="pill" class:quiet={!c.maintenance_until} disabled={busy.includes(c.id)} onclick={() => maintain(c)}>
               {c.maintenance_until ? MAINTENANCE_END_LABEL : MAINTENANCE_SET_LABEL}
             </button>
           {/if}
