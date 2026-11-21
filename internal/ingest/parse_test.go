@@ -47,6 +47,35 @@ func TestParseOpenCanaryMessage(t *testing.T) {
 			service:    "http",
 		},
 		{
+			// OpenCanary 0.9.10 modules/http.py _log_unimplemented_method: logtype
+			// LOG_HTTP_UNIMPLEMENTED_METHOD (3002), logdata SKIN, HOSTNAME, PATH,
+			// USERAGENT, REQUEST_TYPE (the method). Needs
+			// http.log_unimplemented_method_requests (#141).
+			name: "http HEAD request (logtype 3002)",
+			raw: datagram("30", "canary-h",
+				`{"dst_host": "192.0.2.10", "dst_port": 80, "logdata": {"HOSTNAME": "192.0.2.10", "PATH": "/robots.txt", `+
+					`"REQUEST_TYPE": "HEAD", "SKIN": "nasLogin", "USERAGENT": "probe/1.0"}, `+
+					`"logtype": 3002, "node_id": "canary-h", "src_host": "198.51.100.8", "src_port": 40001}`),
+			instanceID: "canary-h",
+			sourceIP:   "198.51.100.8",
+			destPort:   80,
+			service:    "http",
+		},
+		{
+			// modules/http.py RedirectCustomHeaders.render: logtype
+			// LOG_HTTP_REDIRECT (3003), logdata HOSTNAME, PATH, USERAGENT (no
+			// method, no SKIN). Needs http.log_redirect_request (#141).
+			name: "http redirect request (logtype 3003)",
+			raw: datagram("30", "canary-r",
+				`{"dst_host": "192.0.2.10", "dst_port": 80, "logdata": {"HOSTNAME": "192.0.2.10", "PATH": "/index.html", `+
+					`"USERAGENT": "<not supplied>"}, `+
+					`"logtype": 3003, "node_id": "canary-r", "src_host": "198.51.100.9", "src_port": 40002}`),
+			instanceID: "canary-r",
+			sourceIP:   "198.51.100.9",
+			destPort:   80,
+			service:    "http",
+		},
+		{
 			name: "base ping (logtype 1004)",
 			raw: datagram("14", "canary-c",
 				`{"dst_host": "", "dst_port": -1, "logdata": {}, "logtype": 1004, "node_id": "canary-c"}`),
