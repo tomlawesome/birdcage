@@ -36,7 +36,7 @@ for how nodes get configured to point at their birdcage instance at
 install time.
 
 Ingest bounds (#233): `raw` is truncated at 8192 bytes (UTF-8 safe, suffix
-` [truncated by birdcage]`); `service` over 64 bytes and `self_test_marker`
+` [truncated by birdcage]`); `service` and `source_ip` over 64 bytes and `self_test_marker`
 over 32 characters are rejected per event; `POST /ingest/scans` is limited
 to 60/minute per canary (429 plus `Retry-After`), in addition to the shared
 3,000 requests/minute and 60,000 events/minute caps.

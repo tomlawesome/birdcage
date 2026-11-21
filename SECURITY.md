@@ -110,8 +110,8 @@ This section is rewritten route-by-route when #8 lands.
 - **Ingest field and rate bounds (issue #233).** A stolen agent token must
   not grow the database without limit. `raw` is kept to 8192 bytes (cut at
   a UTF-8 boundary, with a `[truncated by birdcage]` suffix inside the
-  cap); `service` over 64 bytes and `self_test_marker` over the minted
-  length (32 hex characters) are rejected per event; `POST /ingest/scans`
+  cap); `service` and `source_ip` over 64 bytes and `self_test_marker`
+  over the minted length (32 hex characters) are rejected per event; `POST /ingest/scans`
   is capped at 60 requests/minute per canary on top of the shared
   requests/minute cap, answering 429 with `Retry-After`.
 - **The mail rate limits are security controls, not tuning.** A token
