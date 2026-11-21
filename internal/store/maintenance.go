@@ -17,7 +17,8 @@ const (
 
 // SetCanaryMaintenance puts canaryID in maintenance until until (scheduled
 // downtime, #227): while now < until its health warnings -- silent and a
-// failed self-test -- are quiet. Hits are untouched. The column is
+// failed self-test -- show as quiet (the states themselves are still
+// reported). Hits are untouched. The column is
 // birdcage-side state, not an agent setting, so the settings hash does not
 // move. The write and its audit row (canary.maintenance.set, target the
 // canary id, triggeredBy the caller) share one transaction. An unknown
@@ -69,31 +70,16 @@ func writeMaintenance(ctx context.Context, database *db.DB, canaryID string, unt
 	return nil
 }
 
-// applyMaintenance fills c.MaintenanceUntil while now < the stored end
-// time and, then, removes the health warnings maintenance quiets: silent
-// (so also its missed-heartbeat detail) and self-test failed. Every other
-// state, and hits, are left exactly as computed. Runs last in
-// ListCanaries so it sees the full state set.
+// applyMaintenance sets c.MaintenanceUntil while now < the stored end
+// time, and nothing else: maintenance is a flag, not a rewrite of state.
+// Every health state stays exactly as computed (silent, self-test
+// failed, ...), so the API and the history recorder see no recovery that
+// did not happen; the page shows the warnings as quiet. Hits are
+// untouched too.
 func applyMaintenance(c *Canary, now time.Time) {
 	if c.maintenanceUntil == nil || !now.Before(*c.maintenanceUntil) {
 		return
 	}
 	until := *c.maintenanceUntil
 	c.MaintenanceUntil = &until
-
-	kept := make([]string, 0, len(c.ActiveStates))
-	for _, s := range c.ActiveStates {
-		if s == string(StateSilent) || s == string(StateTestFailed) {
-			continue
-		}
-		kept = append(kept, s)
-	}
-	c.SilentForS, c.BeatsMissed = nil, nil
-	c.ActiveStates = kept
-	if len(kept) == 0 {
-		c.ActiveStates = nil
-		c.Status = string(StateOK)
-		return
-	}
-	c.Status = kept[0]
 }

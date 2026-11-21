@@ -485,11 +485,15 @@ func (s *Service) Wrap(dashboard http.Handler) http.Handler {
 // gets dashboard's 404. admin is guarded here, not by itself: a token in
 // the request context is 403, the account must be an admin, the request
 // must carry X-Requested-With, and an Origin matching Config.PublicURL --
-// or, with no Origin, Sec-Fetch-Site: same-origin (OWASP CSRF Prevention
+// or, with no Origin, Sec-Fetch-Site: same-origin (with no PublicURL every
+// admin write is refused, and one warning is logged here) (OWASP CSRF Prevention
 // Cheat Sheet, verifying origin with standard headers). Refusals are RFC
 // 9457 problem+json. The signed-in username reaches admin through
 // api.WithActor. Call it once instead of Wrap, before serving.
 func (s *Service) WrapWithAdmin(dashboard, admin http.Handler) http.Handler {
+	if originOf(s.publicURL) == "" {
+		s.log.Warn("BIRDCAGE_PUBLIC_URL is not set (or is not an http(s) address): the admin actions on the canary page (run a self-test, maintenance) are refused until it is")
+	}
 	return s.wrap(dashboard, admin)
 }
 
@@ -551,10 +555,14 @@ func (s *Service) adminGuard(admin http.Handler) http.Handler {
 // sameOrigin is the Origin / Fetch Metadata check: a present Origin must
 // equal the dashboard's own (origin, from BIRDCAGE_PUBLIC_URL); with none,
 // the browser must say Sec-Fetch-Site: same-origin. With no public URL
-// configured nothing can match, so every request is refused.
+// configured there is nothing to check against and no fallback is taken
+// on trust: every request is refused.
 func sameOrigin(r *http.Request, origin string) bool {
+	if origin == "" {
+		return false
+	}
 	if got := r.Header.Get("Origin"); got != "" {
-		return origin != "" && originOf(got) == origin
+		return originOf(got) == origin
 	}
 	return r.Header.Get("Sec-Fetch-Site") == "same-origin"
 }

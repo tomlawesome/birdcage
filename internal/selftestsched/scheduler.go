@@ -81,9 +81,9 @@ type Scheduler struct {
 	now func() time.Time
 	log *slog.Logger
 
-	// runNowMu serialises RunNow, so two requests for the same canary
-	// cannot both find no open run and both mint one.
-	runNowMu sync.Mutex
+	// mintMu serialises every mint path with RunNow, so two triggers for
+	// the same canary cannot both find no open run and both mint one.
+	mintMu sync.Mutex
 }
 
 // New constructs a Scheduler. idx must be the same index passed to
@@ -265,6 +265,16 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	if c.Kind != agentkind.Honeypot && c.Kind != agentkind.Scanner {
 		return fmt.Errorf("%w: canary %s is kind %q", ErrUnknownKind, c.ID, c.Kind)
 	}
+	// One open run per canary across every path (#227): a scheduled,
+	// rotation, first-contact or retry mint adds nothing while a run,
+	// from any of them or from run-now, is still open.
+	s.mintMu.Lock()
+	defer s.mintMu.Unlock()
+	if _, open, err := store.OpenSelfTestCommandID(ctx, s.db, c.ID, now); err != nil {
+		return fmt.Errorf("check open self-test runs: %w", err)
+	} else if open {
+		return nil
+	}
 	recent, err := store.HasRecentSelfTestRun(ctx, s.db, c.ID, now.Add(-guard))
 	if err != nil {
 		return fmt.Errorf("check recent self-test runs: %w", err)
@@ -359,8 +369,8 @@ func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCa
 // store.ErrSelfTestNotReady. A scanner is ordered a scan, its kind's
 // proof.
 func (s *Scheduler) RunNow(ctx context.Context, canaryID string) (commandID string, created bool, err error) {
-	s.runNowMu.Lock()
-	defer s.runNowMu.Unlock()
+	s.mintMu.Lock()
+	defer s.mintMu.Unlock()
 	now := s.now().UTC()
 
 	c, ok, err := store.SelfTestCanaryByID(ctx, s.db, canaryID)
@@ -378,8 +388,11 @@ func (s *Scheduler) RunNow(ctx context.Context, canaryID string) (commandID stri
 
 	switch c.Kind {
 	case agentkind.Honeypot:
-		if !eligible(c) {
+		if c.LastSeenAddr == nil || *c.LastSeenAddr == "" {
 			return "", false, store.ErrSelfTestNotReady
+		}
+		if len(c.Ports) == 0 {
+			return "", false, store.ErrSelfTestNoPorts
 		}
 		id, err := s.mintHoneypotSelfTest(ctx, c, now)
 		if err != nil {
@@ -389,9 +402,9 @@ func (s *Scheduler) RunNow(ctx context.Context, canaryID string) (commandID stri
 	case agentkind.Scanner:
 		cmd, err := store.MintScanCommand(ctx, s.db, c.ID, store.TriggerManual, now, now.Add(scanRunWindow))
 		if errors.Is(err, store.ErrScanRunOpen) {
-			// An open scan run past its deadline, not yet swept: it is
-			// still the one the scanner will answer.
-			id, open, lerr := store.OpenSelfTestCommandID(ctx, s.db, canaryID, now.Add(-scanRunWindow))
+			// The same rule MintScanCommand refused on: any run not
+			// completed, even past its deadline and not yet swept.
+			id, open, lerr := store.OpenScanCommandID(ctx, s.db, canaryID)
 			if lerr != nil || !open {
 				return "", false, err
 			}

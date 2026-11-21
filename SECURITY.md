@@ -386,7 +386,9 @@ only at the point that text is displayed, per surface:
   `BIRDCAGE_PUBLIC_URL` -- or, when `Origin` is absent,
   `Sec-Fetch-Site: same-origin` (OWASP CSRF Prevention Cheat Sheet:
   verifying origin with standard headers; Fetch Metadata). Anything else
-  is 403. Errors are RFC 9457 problem+json, and each write leaves an
+  is 403. With `BIRDCAGE_PUBLIC_URL` unset there is nothing to match, so
+  every admin write is refused (no `Sec-Fetch-Site` fallback); birdcage
+  logs a warning at start. Errors are RFC 9457 problem+json, and each write leaves an
   audit row naming the signed-in username.
 
   | Route                                         | Method | Auth                                                              |

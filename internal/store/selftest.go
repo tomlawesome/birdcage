@@ -88,6 +88,27 @@ func HasRecentSelfTestRun(ctx context.Context, database *db.DB, canaryID string,
 // probe.
 var ErrSelfTestNotReady = errors.New("store: canary has no address to self-test yet")
 
+// ErrSelfTestNoPorts is a run-now request (#227) for a honeypot that has
+// been heard from but has no ports to probe.
+var ErrSelfTestNoPorts = errors.New("store: canary has no ports to self-test")
+
+// OpenScanCommandID returns the command id of canaryID's open scan run by
+// the rule MintScanCommand refuses a second one on: not completed, with a
+// stage, whatever its deadline.
+func OpenScanCommandID(ctx context.Context, database *db.DB, canaryID string) (id string, open bool, err error) {
+	err = database.QueryRowContext(ctx, `
+		SELECT command_id FROM self_test_runs
+		WHERE agent_id = ? AND completed_at IS NULL AND stage IS NOT NULL
+		ORDER BY issued_at DESC LIMIT 1`, canaryID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("query open scan run for %s: %w", canaryID, err)
+	}
+	return id, true, nil
+}
+
 // OpenSelfTestCommandID returns the command id of canaryID's newest run
 // that is neither completed nor past its deadline at now, for run-now's
 // "at most one open per canary" rule (#227). open is false when none.

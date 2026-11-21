@@ -134,6 +134,8 @@ func (h *handler) adminFailed(w http.ResponseWriter, what string, err error) {
 		WriteProblem(w, http.StatusNotFound, "unknown canary")
 	case errors.Is(err, store.ErrSelfTestNotReady):
 		WriteProblem(w, http.StatusConflict, "this canary has not been heard from yet, so there is nothing to self-test")
+	case errors.Is(err, store.ErrSelfTestNoPorts):
+		WriteProblem(w, http.StatusConflict, "this canary has no ports to probe, so there is nothing to self-test")
 	default:
 		log.Printf("api: %s: %v", what, err)
 		WriteProblem(w, http.StatusInternalServerError, "")
