@@ -108,10 +108,9 @@
       actError = writeErrorText(kind, err)
       return
     } finally {
-      if (kind !== 'selftest') busy = busy.filter((k) => k !== kind)
+      busy = busy.filter((k) => k !== kind)
     }
     if (kind === 'selftest') queuedFrom = { id, at: Date.now(), newest, openAtClick }
-    busy = busy.filter((k) => k !== kind)
     onchanged?.()
   }
 
