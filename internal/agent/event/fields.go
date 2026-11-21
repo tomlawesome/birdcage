@@ -3,6 +3,7 @@ package event
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/tomlawesome/birdcage/internal/opencanary"
 )
@@ -45,13 +46,38 @@ type Fields struct {
 // eventPayload is the subset of OpenCanary's emitted JSON this package
 // reads. It mirrors internal/ingest/parse.go's openCanaryPayload field
 // for field (same wire shape -- both packages decode the same
-// json.dumps(logdata, sort_keys=True) string). The service-name mapping
+// json.dumps(logdata, sort_keys=True) string), except that the integer
+// fields here also accept numeric strings (see lenientInt). The service-name mapping
 // itself is not duplicated here: both packages call internal/opencanary.
 type eventPayload struct {
-	SrcHost string `json:"src_host"`
-	SrcPort *int   `json:"src_port"`
-	DstPort *int   `json:"dst_port"`
-	LogType *int   `json:"logtype"`
+	SrcHost string     `json:"src_host"`
+	SrcPort lenientInt `json:"src_port"`
+	DstPort lenientInt `json:"dst_port"`
+	LogType lenientInt `json:"logtype"`
+}
+
+// lenientInt reads a JSON number or a numeric string; any other value
+// leaves it nil (absent) rather than failing the whole decode, because
+// OpenCanary's smb module sends the port as a string ("src_port": "-1").
+type lenientInt struct{ v *int }
+
+func (l *lenientInt) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) != nil {
+		s = string(b)
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		l.v = &n
+	}
+	return nil
+}
+
+// port returns the value as a port, nil when absent or negative.
+func (l lenientInt) port() *int {
+	if l.v == nil || *l.v < 0 {
+		return nil
+	}
+	return l.v
 }
 
 // ExtractFields decodes message -- the verbatim bytes IDFromLogLine or
@@ -69,14 +95,14 @@ func ExtractFields(message []byte) (Fields, error) {
 	f := Fields{
 		SourceIP: payload.SrcHost,
 		DestPort: opencanary.NoDestPort,
-		LogType:  payload.LogType,
-		Service:  opencanary.ServiceForLogType(payload.LogType),
+		LogType:  payload.LogType.v,
+		Service:  opencanary.ServiceForLogType(payload.LogType.v),
 	}
-	if payload.SrcPort != nil {
-		f.SourcePort = *payload.SrcPort
+	if p := payload.SrcPort.port(); p != nil {
+		f.SourcePort = *p
 	}
-	if payload.DstPort != nil {
-		f.DestPort = *payload.DstPort
+	if p := payload.DstPort.port(); p != nil {
+		f.DestPort = *p
 	}
 	return f, nil
 }
