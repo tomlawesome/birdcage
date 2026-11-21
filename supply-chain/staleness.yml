@@ -53,6 +53,14 @@ accepted:
     held-at: "3.0.0"
     reason: "opencanary==0.9.10 pins hpfeeds==3.0.0 exactly; moves only with a new OpenCanary release"
     review-by: "2026-12-27"
+  # #234/#181, 2026-11-21: the CI pip installs are hashed and binary-only,
+  # and PyYAML 6.0.3 has no CPython 3.15 musllinux wheel. Staying on 3.14
+  # costs nothing these jobs use. Move when PyYAML ships a cp315 musllinux wheel.
+  # held-at carries the digest, as the row is pinned tag@digest: bump both.
+  - pin: "image:python:3.14-alpine"
+    held-at: "3.14-alpine@sha256:5862d971d1f0ae26b258cefa4e893556b1d3aba81bd2ff30888704ad378bab67"
+    reason: "PyYAML 6.0.3 has no cp315 musllinux wheel, and ci/requirements-ci.txt installs binary-only with hashes; move when one ships"
+    review-by: "2026-12-27"
   # Owner decisions on #140, 2026-09-27.
   - pin: "image:python:3.13-slim-trixie"
     held-at: "3.13-slim-trixie"
