@@ -12,7 +12,7 @@ import { canariesPhrase, minutesPhrase, rangeLong, servicesNarrative, triedNarra
 import { portForService } from './ports'
 import { wordOrNumber } from './words'
 import type { Segment } from './types'
-import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
+import { MIKROVIEW_LINKS_LIVE } from '../writeActions'
 import { canaryHref } from '../route'
 
 interface EventTime {
@@ -214,7 +214,6 @@ export function computeDroppedOutRow(canary: Canary): EventRow {
     actions: [
       { label: `open ${canary.name} ▸`, href: canaryHref(canary.id) },
       ...(MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }] : []),
-      ...(WRITE_ROUTES_LIVE ? [{ label: 'mark as maintenance', quiet: true }] : []),
     ],
   }
 }

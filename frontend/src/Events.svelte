@@ -13,8 +13,32 @@
   import { buildEventRows, computeEventsHeading, QUIET_LINE, type EventRow } from './lib/sentence'
   import { isSilent } from './lib/sentence/eventRow'
 
-  let { canaries, visitors, trace, range }: { canaries: Canary[]; visitors: Visitor[]; trace: TraceResponse; range: Range } =
-    $props()
+  import { MAINTENANCE_END_LABEL, MAINTENANCE_SET_LABEL, sendAdminWrite, writeErrorText, type AdminWrite } from './lib/adminWrite'
+
+  // #227: `role` gates the maintenance pill (admin only); `onchanged` is
+  // App's refetch, called after a 2xx write.
+  let {
+    canaries,
+    visitors,
+    trace,
+    range,
+    role,
+    onchanged,
+  }: { canaries: Canary[]; visitors: Visitor[]; trace: TraceResponse; range: Range; role?: string; onchanged?: () => void } = $props()
+
+  let canaryById = $derived(new Map(canaries.map((c) => [c.id, c])))
+  let actError: { key: string; text: string } | null = $state(null)
+  async function maintain(key: string, c: Canary) {
+    const kind: AdminWrite = c.maintenance_until ? 'maintenance-end' : 'maintenance-set'
+    actError = null
+    try {
+      await sendAdminWrite(kind, c.id)
+    } catch (err) {
+      actError = { key, text: writeErrorText(kind, err) }
+      return
+    }
+    onchanged?.()
+  }
 
   let heading = $derived(computeEventsHeading(canaries, visitors, range))
   // Same test as buildEventRows uses, so the heading and rows move down
@@ -61,7 +85,8 @@
       </div>
       {#if row.actions.length > 0}
         <div class="acts">
-          {#each row.actions as a, k (k)}{#if a.href}<a class="pill" class:quiet={a.quiet} href={a.href}>{a.label}</a>{:else}<span class="pill" class:quiet={a.quiet}>{a.label}</span>{/if}{/each}
+          {#each row.actions as a, k (k)}{#if a.href}<a class="pill" class:quiet={a.quiet} href={a.href}>{a.label}</a>{:else}<span class="pill" class:quiet={a.quiet}>{a.label}</span>{/if}{/each}{#if role === 'admin' && row.key.startsWith('dropped-') && canaryById.get(row.key.slice(8))}{@const c = canaryById.get(row.key.slice(8))!}<button type="button" class="pill" class:quiet={!c.maintenance_until} onclick={() => maintain(row.key, c)}>{c.maintenance_until ? MAINTENANCE_END_LABEL : MAINTENANCE_SET_LABEL}</button>{/if}
+          {#if actError && actError.key === row.key}<p class="act-error" role="alert">{actError.text}</p>{/if}
         </div>
       {/if}
     </div>
@@ -202,6 +227,17 @@
     white-space: nowrap;
   }
   .pill.quiet {
+    color: var(--ink-3);
+  }
+  button.pill {
+    appearance: none;
+    background: none;
+    cursor: pointer;
+  }
+  .act-error {
+    flex-basis: 100%;
+    margin: 0;
+    font: 11px var(--sans);
     color: var(--ink-3);
   }
   .legend {

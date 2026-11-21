@@ -134,6 +134,10 @@ export interface CredentialConflict {
 export interface Canary {
   id: string
   name: string
+  /** #227: end of an admin-set maintenance window; null or absent when
+   * not in maintenance. A flag over the state, never a replacement for
+   * it: `status` keeps saying what is true. */
+  maintenance_until?: string | null
   lane: Lane
   ports: string
   status: CanaryStatus

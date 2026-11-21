@@ -41,3 +41,16 @@ export function relativeDayLabel(at: string, now: string): string {
   if (days === 1) return 'yesterday'
   return `${days} days ago`
 }
+
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+/** "sun 13 sep 22:00" (or the date alone) -- the facts column's own stamp. */
+export function stamp(iso: string, withClock: boolean): string {
+  const d = new Date(iso)
+  const date = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
+  if (!withClock) return date
+  const hh = String(d.getUTCHours()).padStart(2, '0')
+  const mm = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${date} ${hh}:${mm}`
+}

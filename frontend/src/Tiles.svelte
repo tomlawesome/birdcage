@@ -10,9 +10,30 @@
   import type { Canary, Range, TraceResponse } from './lib/types'
   import { computeTileStatus, type TileHit } from './lib/sentence'
   import { canaryHref } from './lib/route'
-  import { WRITE_ROUTES_LIVE } from './lib/writeActions'
+  import { MAINTENANCE_END_LABEL, MAINTENANCE_SET_LABEL, sendAdminWrite, writeErrorText, type AdminWrite } from './lib/adminWrite'
 
-  let { canaries, trace, range }: { canaries: Canary[]; trace: TraceResponse; range: Range } = $props()
+  // #227: `role` gates the maintenance pill (admin only); `onchanged` is
+  // App's refetch, called after a 2xx write.
+  let {
+    canaries,
+    trace,
+    range,
+    role,
+    onchanged,
+  }: { canaries: Canary[]; trace: TraceResponse; range: Range; role?: string; onchanged?: () => void } = $props()
+
+  let actError: { id: string; text: string } | null = $state(null)
+  async function maintain(c: Canary) {
+    const kind: AdminWrite = c.maintenance_until ? 'maintenance-end' : 'maintenance-set'
+    actError = null
+    try {
+      await sendAdminWrite(kind, c.id)
+    } catch (err) {
+      actError = { id: c.id, text: writeErrorText(kind, err) }
+      return
+    }
+    onchanged?.()
+  }
 
   const LANE_ORDER = ['lan', 'srv', 'iot', 'guest'] as const
   const RANGE_LABELS: Record<Range, string> = { '15m': '15 m', '1h': '1 h', '24h': '24 h', '14d': '14 d', '90d': '90 d' }
@@ -50,27 +71,32 @@
         last_self_test_at: c.last_self_test_at,
         last_self_test_passed: c.last_self_test_passed,
         self_test_failed_services: c.self_test_failed_services,
+        maintenance_until: c.maintenance_until,
       },
       trace.now,
       trace.last_hit,
     )}
+    {@const critical =
+      c.status === 'token_conflict' ||
+      c.status === 'credential_conflict' ||
+      c.status === 'not_delivering' ||
+      c.status === 'opencanary_down' ||
+      c.status === 'hits_merged' ||
+      c.status === 'self_test_failed' ||
+      c.status === 'throttled'}
     <div
       class="tile k-{c.lane}"
       class:silent={c.status === 'silent'}
-      class:critical={c.status === 'token_conflict' ||
-        c.status === 'credential_conflict' ||
-        c.status === 'not_delivering' ||
-        c.status === 'opencanary_down' ||
-        c.status === 'hits_merged' ||
-        c.status === 'self_test_failed' ||
-        c.status === 'throttled'}
+      class:critical
       class:conflict={c.status === 'token_conflict' || c.status === 'credential_conflict'}
       class:degraded={c.status === 'rotation_stalled' ||
         c.status === 'renewal_stalled' ||
         c.status === 'upgrade_in_progress' ||
         c.status === 'agent_out_of_date' ||
-        c.status === 'db_stale'}
+        c.status === 'db_stale' ||
+        (status.maintenance !== undefined && !critical)}
       class:pending={c.status === 'pending'}
+      class:maint={status.maintenance !== undefined}
     >
       <!-- The tile is the way into the canary's own page (issue #118).
            The name is the link, so the whole fleet is navigable without
@@ -79,7 +105,9 @@
       <div class="st">
         {#each status.lines as line, i (i)}
           {#if i > 0}<br />{/if}
-          {#each line as seg, j (j)}{#if seg.cls}<span class={seg.cls}>{seg.text}</span>{:else}{seg.text}{/if}{/each}
+          {#if i === 0 && status.maintenance}<span class="wn">◌ maintenance until {status.maintenance} · <span class="rest">{#each line as seg, j (j)}{#if seg.cls}<span class={seg.cls}>{seg.text}</span>{:else}{seg.text}{/if}{/each}</span></span>{:else}
+            {#each line as seg, j (j)}{#if seg.cls}<span class={seg.cls}>{seg.text}</span>{:else}{seg.text}{/if}{/each}
+          {/if}
         {/each}
       </div>
       <div class="pt">{c.ports}</div>
@@ -87,8 +115,13 @@
       {#if c.status === 'silent'}
         <div class="acts">
           <a class="pill" href={canaryHref(c.id)}>open {c.name} &#9656;</a>
-          {#if WRITE_ROUTES_LIVE}<span class="pill quiet">mark as maintenance</span>{/if}
+          {#if role === 'admin'}
+            <button type="button" class="pill" class:quiet={!c.maintenance_until} onclick={() => maintain(c)}>
+              {c.maintenance_until ? MAINTENANCE_END_LABEL : MAINTENANCE_SET_LABEL}
+            </button>
+          {/if}
         </div>
+        {#if actError && actError.id === c.id}<p class="act-error" role="alert">{actError.text}</p>{/if}
       {/if}
     </div>
   {/each}
@@ -206,6 +239,11 @@
     color: var(--repeat);
     font-weight: 700;
   }
+  /* The underlying line moves whole to the next line rather than
+     leaving its symbol behind. */
+  .tile .st :global(.rest) {
+    display: inline-block;
+  }
   .tile .st :global(.off) {
     color: var(--ink);
     font-weight: 700;
@@ -214,6 +252,19 @@
     margin-top: 8px;
     font: 10px var(--mono);
     color: var(--ink-3);
+  }
+  /* The maintenance line costs the tile one text line. The state history
+     starts a fixed distance below the tile row, so the line is paid for
+     here, in the spacing, and the row stays as tall as a plain silent
+     tile's. */
+  .tile.maint {
+    padding-bottom: 8px;
+  }
+  .tile.maint .pt {
+    margin-top: 4px;
+  }
+  .tile.maint .acts {
+    margin-top: 6px;
   }
   .tile .big {
     position: absolute;
@@ -250,6 +301,19 @@
     white-space: nowrap;
   }
   .pill.quiet {
+    color: var(--ink-3);
+  }
+  button.pill {
+    appearance: none;
+    background: none;
+    cursor: pointer;
+  }
+  button.pill:disabled {
+    cursor: default;
+  }
+  .act-error {
+    margin: 6px 0 0;
+    font: 11px var(--sans);
     color: var(--ink-3);
   }
 </style>

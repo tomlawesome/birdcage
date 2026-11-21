@@ -12,7 +12,7 @@
 // times and kinds this needs only exist at that granularity.
 import type { CanaryDbRefresh, CanaryLastRun, CanaryRun, CanaryStatus, CredentialConflict, LastHit, VisitorKind } from '../types'
 import { durationExact } from './duration'
-import { formatClock, formatClockShort, relativeDayLabel } from './time'
+import { formatClock, formatClockShort, relativeDayLabel, stamp } from './time'
 import { portForService } from './ports'
 import { buildQuietStory, computeQuietDays } from './quietStory'
 import { stageLabel } from './stage'
@@ -26,6 +26,8 @@ export interface TileHit {
 }
 
 export interface TileCanaryInput {
+  /** #227: end of an admin-set maintenance window, if any. */
+  maintenance_until?: string | null
   status: CanaryStatus
   last_heartbeat_at: string | null
   silent_for_s?: number
@@ -82,6 +84,11 @@ export interface TileCanaryInput {
 }
 
 export interface TileStatusResult {
+  /** #227: the stamped end of maintenance, set when the tile's first
+   * line should read "◌ maintenance until <stamp> · <line>". Not set
+   * where a hit or critical line wins (hits merged, a conflict, not
+   * delivering): maintenance quiets health warnings, never those. */
+  maintenance?: string
   /** One to three lines; each further line is a line break, never inline. */
   lines: Segment[][]
 }
@@ -340,7 +347,7 @@ function otherStateLine(canary: TileCanaryInput, now: string): Segment[] | null 
   }
 }
 
-export function computeTileStatus(
+function computeBaseTileStatus(
   canary: TileCanaryInput,
   now: string,
   lastHit: LastHit | null = null,
@@ -394,4 +401,16 @@ export function computeTileStatus(
       ? [{ text: `from inside ${formatClockShort(rep.at)}` }]
       : [{ text: `one touch ${relativeDayLabel(rep.at, now)}` }]
   return withSelfTest([primary, secondary], canary)
+}
+
+const LOUD_STATES: string[] = ['hits_merged', 'token_conflict', 'credential_conflict', 'not_delivering']
+
+export function computeTileStatus(
+  canary: TileCanaryInput,
+  now: string,
+  lastHit: LastHit | null = null,
+): TileStatusResult {
+  const result = computeBaseTileStatus(canary, now, lastHit)
+  if (!canary.maintenance_until || LOUD_STATES.includes(canary.status)) return result
+  return { ...result, maintenance: stamp(canary.maintenance_until, true) }
 }
