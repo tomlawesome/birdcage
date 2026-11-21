@@ -143,6 +143,10 @@ type SceneName =
   | 'canary-failed'
   | 'canary-silent'
   | 'canary-night'
+  // #227: the silent canary in admin maintenance -- the scene for the
+  // canary page's maintenance row, the tile's "◌ maintenance" line and
+  // the dropped-out row's "end maintenance" pill.
+  | 'canary-silent-maintenance'
   // Issue #45's own gap: a scanner mid-proof, its ordered run open at
   // db_refreshed -- no fixture scene covered 'pending' before this. Not
   // wired into scripts/canary-compare.mjs's pixel gate: that would need
@@ -169,6 +173,7 @@ const SCENES: SceneName[] = [
   'canary-failed',
   'canary-silent',
   'canary-night',
+  'canary-silent-maintenance',
   'canary-pending',
   'canary-agent-out-of-date',
   'canary-upgrade-in-progress',
@@ -198,6 +203,8 @@ async function loadFixture(scene: SceneName): Promise<Fixture> {
       return (await import('../dev/fixtures/canary-failed.json')) as unknown as Fixture
     case 'canary-silent':
       return (await import('../dev/fixtures/canary-silent.json')) as unknown as Fixture
+    case 'canary-silent-maintenance':
+      return (await import('../dev/fixtures/canary-silent-maintenance.json')) as unknown as Fixture
     case 'canary-night':
       return (await import('../dev/fixtures/canary-night.json')) as unknown as Fixture
     case 'canary-pending':

@@ -226,7 +226,7 @@ describe('defaultActions: one action set per kind', () => {
   })
 })
 
-describe('computeDroppedOutRow: write actions wait for their routes (#228)', () => {
+describe('computeDroppedOutRow: the helper adds no maintenance action; Events.svelte draws it (#227)', () => {
   it('offers only open, no lookback and no "mark as maintenance" (#229)', () => {
     const silent: Canary = { ...canaries[0], status: 'silent', last_heartbeat_at: '2026-09-12T21:30:00Z' }
     const labels = computeDroppedOutRow(silent).actions.map((a) => a.label)

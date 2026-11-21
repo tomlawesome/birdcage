@@ -407,3 +407,60 @@ func TestHandleCanaryListensRowNamesSMBAndSNMPOnlyWhenReported(t *testing.T) {
 		})
 	}
 }
+
+// #227: a self-test run that is still open is always listed, even when
+// it was issued before the range window starts (a scan run open for 20
+// minutes on the 15 m range), so the page can tell a queued run from a
+// finished one. Completed runs keep the window rule.
+func TestHandleCanaryListsOpenRunsOutsideTheWindow(t *testing.T) {
+	database := openTempDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 22, 0, 0, 0, time.UTC)
+	enrolledAt := now.Add(-48 * time.Hour)
+	insertCanary(t, database, store.Canary{
+		ID: "canary-iot", Name: "canary-iot", Lane: "iot",
+		Ports: "22", HeartbeatIntervalS: 60, EnrolledAt: enrolledAt,
+	})
+	idx := store.NewSelfTestIndex()
+	targets := []store.SelfTestTarget{{Service: "ssh", DestPort: 22}}
+
+	doneAt := now.Add(-30 * time.Minute)
+	cmd, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "198.51.100.9", targets, doneAt, doneAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("MintSelfTestCommand (completed run): %v", err)
+	}
+	params, err := selftest.DecodeParams([]byte(cmd.Params))
+	if err != nil {
+		t.Fatalf("DecodeParams: %v", err)
+	}
+	alert := store.AlertInsert{InstanceID: "canary-iot", Service: "ssh", DestPort: 22, Raw: `{"probe":"` + params.Targets[0].Marker + `"}`}
+	if matched, err := store.MatchSelfTest(ctx, database, idx, alert, doneAt); err != nil || !matched {
+		t.Fatalf("MatchSelfTest = %v, %v, want true, nil", matched, err)
+	}
+
+	openAt := now.Add(-20 * time.Minute)
+	if _, err := store.MintSelfTestCommand(ctx, database, idx, "canary-iot", "198.51.100.9", targets, openAt, openAt.Add(time.Hour)); err != nil {
+		t.Fatalf("MintSelfTestCommand (open run): %v", err)
+	}
+	if err := store.RecordHeartbeat(ctx, database, "canary-iot", now); err != nil {
+		t.Fatalf("RecordHeartbeat: %v", err)
+	}
+
+	h := newHandler(database, fixedNow(now), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/canary?id=canary-iot&range=15m", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp canaryPageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.SelfTestRuns) != 1 {
+		t.Fatalf("self_test_runs = %+v, want only the open run (the completed one is outside the 15 m window)", resp.SelfTestRuns)
+	}
+	run := resp.SelfTestRuns[0]
+	if !run.IssuedAt.Equal(openAt) || run.CompletedAt != nil {
+		t.Errorf("run = %+v, want the open run issued at %v with no completed_at", run, openAt)
+	}
+}

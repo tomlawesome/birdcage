@@ -17,6 +17,7 @@
   import { factRows } from './lib/canary/facts'
   import { runRows, stageTimeline } from './lib/canary/runs'
   import { formatClock } from './lib/sentence/time'
+  import { MAINTENANCE_END_LABEL, MAINTENANCE_SET_LABEL, sendAdminWrite, writeErrorText, type AdminWrite } from './lib/adminWrite'
 
   let {
     page,
@@ -25,6 +26,8 @@
     history,
     range,
     runs = null,
+    role,
+    onchanged,
   }: {
     page: CanaryPageResponse
     trace: TraceResponse
@@ -32,6 +35,11 @@
     history: HistoryResponse | null
     range: Range
     runs?: RunsResponse | null
+    /** The signed-in role: the write pills are drawn for 'admin' only. */
+    role?: string
+    /** Asks App to refetch this page: after any 2xx write, and every
+     * 10 s while a self-test is queued. */
+    onchanged?: () => void
   } = $props()
 
   let input: CanaryPageInput = $derived({ page, trace, visitors, history })
@@ -43,6 +51,68 @@
   let rows = $derived(threadRows(input))
   let facts = $derived(factRows(input))
   let actions = $derived(canaryActions(input))
+
+  // #227: the write pills. The self-test is queued server-side, so after
+  // the 202 the pill reads "self-test queued…" until a fetch shows a run
+  // issued later than the newest one at click time; App's refetch is
+  // asked for every 10 s meanwhile.
+  // The API gives runs no command id and the 202 no `created` flag, so
+  // "queued" follows time and completion: from the click until no run
+  // issued after it is still open, no run that was open at the click is
+  // still open, and at least one of those two things was seen. The poll
+  // stops after QUEUE_CEILING_MS (the API carries no deadline).
+  const QUEUE_POLL_MS = 10_000
+  const QUEUE_CEILING_MS = 10 * 60_000
+  type Queued = { id: string; at: number; newest: number; openAtClick: string[] }
+  const runsOf = () => page.self_test_runs
+  const newestRun = (): number => Math.max(-Infinity, ...runsOf().map((r) => Date.parse(r.issued_at)))
+  let queuedFrom: Queued | null = $state(null)
+  let queued = $derived.by(() => {
+    const q: Queued | null = queuedFrom
+    if (q === null || q.id !== page.canary.id) return false
+    const runs = runsOf()
+    const newOnes = runs.filter((r) => Date.parse(r.issued_at) > q.newest)
+    if (newOnes.some((r) => !r.completed_at)) return true
+    if (runs.some((r) => q.openAtClick.includes(r.issued_at) && !r.completed_at)) return true
+    return newOnes.length === 0 && q.openAtClick.length === 0
+  })
+  let actError: string | null = $state(null)
+  let busy: AdminWrite[] = $state([])
+  const maintenanceBusy = $derived(busy.includes('maintenance-set') || busy.includes('maintenance-end'))
+  let inMaintenance = $derived(!!page.canary.maintenance_until)
+  let isAdmin = $derived(role === 'admin')
+
+  $effect(() => {
+    const q = queuedFrom
+    if (!queued || q === null) return
+    const timer = setInterval(() => onchanged?.(), QUEUE_POLL_MS)
+    const ceiling = setTimeout(() => (queuedFrom = null), Math.max(0, q.at + QUEUE_CEILING_MS - Date.now()))
+    return () => {
+      clearInterval(timer)
+      clearTimeout(ceiling)
+    }
+  })
+
+  async function write(kind: AdminWrite) {
+    if (kind === 'selftest' ? queued || busy.includes('selftest') : maintenanceBusy) return
+    actError = null
+    busy = [...busy, kind]
+    const id = page.canary.id
+    const newest = newestRun()
+    const openAtClick = runsOf()
+      .filter((r) => !r.completed_at)
+      .map((r) => r.issued_at)
+    try {
+      await sendAdminWrite(kind, id)
+    } catch (err) {
+      actError = writeErrorText(kind, err)
+      return
+    } finally {
+      busy = busy.filter((k) => k !== kind)
+    }
+    if (kind === 'selftest') queuedFrom = { id, at: Date.now(), newest, openAtClick }
+    onchanged?.()
+  }
 
   // Issue #54: the upgrade-command fact row is a copyable code block,
   // not a label/value pair, so it renders outside the label/value grid
@@ -174,12 +244,29 @@
       {/if}
     {/each}
   </div>
-  {#if actions.length > 0}
+  {#if actions.length > 0 || isAdmin}
     <div class="acts">
       {#each actions as action (action.label)}
         <span class="pill" class:quiet={action.quiet}>{action.label}</span>
       {/each}
+      {#if isAdmin && page.canary.status !== 'silent'}
+        <button type="button" class="pill" class:quiet={queued} disabled={queued || busy.includes('selftest')} onclick={() => write('selftest')}>
+          {queued ? 'self-test queued…' : 'run the self-test now ▸'}
+        </button>
+      {/if}
+      {#if isAdmin}
+        <button
+          type="button"
+          class="pill"
+          class:quiet={!inMaintenance}
+          disabled={maintenanceBusy}
+          onclick={() => write(inMaintenance ? 'maintenance-end' : 'maintenance-set')}
+        >
+          {inMaintenance ? MAINTENANCE_END_LABEL : MAINTENANCE_SET_LABEL}
+        </button>
+      {/if}
     </div>
+    {#if actError}<p class="act-error" role="alert">{actError}</p>{/if}
   {/if}
 </div>
 
@@ -589,6 +676,20 @@
     white-space: nowrap;
   }
   .pill.quiet {
+    color: var(--ink-3);
+  }
+  button.pill {
+    appearance: none;
+    background: none;
+    cursor: pointer;
+  }
+  button.pill:disabled {
+    cursor: default;
+  }
+  /* Styled like App's .menu-error. */
+  .act-error {
+    margin: 8px 0 0;
+    font: 11px var(--sans);
     color: var(--ink-3);
   }
 

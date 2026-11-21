@@ -396,8 +396,11 @@ func main() {
 	// token from here on; the frontend still loads without one, so the
 	// sign-in screen can. The canary listeners below never pass through
 	// it. Wrapped here, after buildDashboardServer has built the mux, and
-	// before anything serves.
-	dashboardServer.Handler = authService.Wrap(dashboardServer.Handler)
+	// before anything serves. The admin write routes (#227: run a
+	// self-test now, set and clear maintenance) are mounted beside it, on
+	// the session side only, with the real scheduler as their runner.
+	adminHandler := api.NewAdminHandler(database, time.Now, selfTestScheduler)
+	dashboardServer.Handler = authService.WrapWithAdmin(dashboardServer.Handler, adminHandler)
 
 	ingestServer, enrolServer, err := buildIngestServers(cfg, database, birdcageCA, hub, selfTestIndex, selfTestScheduler, configLog, ingestLog, enrolLog)
 	if err != nil {

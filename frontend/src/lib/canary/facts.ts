@@ -5,6 +5,7 @@
 import { intervalWords } from './sentence'
 import { canaryOf, selfTestCards, type CanaryPageInput } from './model'
 import { shortVersion } from '../sentence/version'
+import { stamp } from '../sentence/time'
 
 export interface FactRow {
   label: string
@@ -36,18 +37,6 @@ function hasState(canary: { status: string; active_states?: string[] }, state: s
 export function upgradeCommandCLI(canary: { id: string; upgrade_available?: boolean }): string | null {
   if (!canary.upgrade_available || !SAFE_AGENT_ID.test(canary.id)) return null
   return `birdcage agent upgrade-command ${canary.id}`
-}
-
-const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-
-function stamp(iso: string, withClock: boolean): string {
-  const d = new Date(iso)
-  const date = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
-  if (!withClock) return date
-  const hh = String(d.getUTCHours()).padStart(2, '0')
-  const mm = String(d.getUTCMinutes()).padStart(2, '0')
-  return `${date} ${hh}:${mm}`
 }
 
 /** "25 h" / "3 d" -- a countdown, not a duration: hours stay hours up to
@@ -92,6 +81,7 @@ export function factRows(input: CanaryPageInput): FactRow[] {
     label: 'self-test',
     value: facts.self_test_enabled ? `daily · ${facts.self_test_schedule}` : 'off',
   })
+  if (canary.maintenance_until) rows.push({ label: 'maintenance', value: `until ${stamp(canary.maintenance_until, true)}`, accent: true })
   rows.push({ label: 'enrolled', value: stamp(facts.enrolled_at, true) })
   if (facts.agent_version) rows.push({ label: 'agent', value: `mockingbird ${facts.agent_version}` })
 

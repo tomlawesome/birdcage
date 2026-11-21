@@ -48,6 +48,9 @@ type handler struct {
 	// server's own advertise host, enrol port, CA pin and image refs.
 	// The zero value prints no command; see UpgradeConfig.
 	upgrade UpgradeConfig
+	// runner queues a self-test on request (#227). Only the admin
+	// handler uses it; nil elsewhere.
+	runner SelfTestRunner
 }
 
 // NewHandler wires the dashboard API. It does no sign-in of its own:

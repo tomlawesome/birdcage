@@ -26,7 +26,7 @@ type SelfTestRunDetail struct {
 }
 
 // ListSelfTestRuns returns canaryID's self-test runs issued within
-// [since, until], newest first, each with its unmatched targets when it
+// [since, until] (plus any still-open run, however old), newest first, each with its unmatched targets when it
 // failed.
 //
 // Loaded whole and filtered in Go rather than bounded by an SQL range on
@@ -50,7 +50,14 @@ func ListSelfTestRuns(ctx context.Context, database *db.DB, canaryID string, sin
 		if err != nil {
 			return nil, err
 		}
-		if r.IssuedAt.Before(since) || r.IssuedAt.After(until) {
+		// A run still open is always listed, whenever it was issued: the
+		// admin pill's queued state (#227) follows it until it completes.
+		// A completed run keeps the window rule.
+		if r.CompletedAt == nil {
+			if r.IssuedAt.After(until) {
+				continue
+			}
+		} else if r.IssuedAt.Before(since) || r.IssuedAt.After(until) {
 			continue
 		}
 		runs = append(runs, SelfTestRunDetail{SelfTestRun: r})
