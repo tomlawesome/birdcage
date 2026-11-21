@@ -250,6 +250,22 @@ func TestTriedForHTTP(t *testing.T) {
 			want: "/login admin / letmein",
 		},
 		{
+			name: "HEAD request (logtype 3002) reads as a visit to its path",
+			raw: datagram(`{"logdata": {"HOSTNAME": "192.0.2.10", "PATH": "/robots.txt", "REQUEST_TYPE": "HEAD", ` +
+				`"SKIN": "nasLogin", "USERAGENT": "probe/1.0"}, "logtype": 3002}`),
+			want: "/robots.txt",
+		},
+		{
+			name: "OPTIONS request (logtype 3002) reads as a visit to its path",
+			raw:  datagram(`{"logdata": {"PATH": "/", "REQUEST_TYPE": "OPTIONS"}, "logtype": 3002}`),
+			want: "/",
+		},
+		{
+			name: "redirect request (logtype 3003) reads as a visit to its path",
+			raw:  datagram(`{"logdata": {"HOSTNAME": "192.0.2.10", "PATH": "/index.html", "USERAGENT": "<not supplied>"}, "logtype": 3003}`),
+			want: "/index.html",
+		},
+		{
 			name: "no PATH at all falls back to the service name",
 			raw:  datagram(`{"logdata": {}, "logtype": 3000}`),
 			want: "http",

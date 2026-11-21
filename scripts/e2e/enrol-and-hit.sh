@@ -132,6 +132,16 @@ case "$alert" in
   *) fail "the ftp alert does not name port 21: $alert" "$E2E_BIRDCAGE" ;;
 esac
 
+step "a HEAD request to the http lure is reported (issue #141)"
+# OpenCanary's http.log_unimplemented_method_requests flag (logtype 3002)
+# is what turns this probe into an event; with it off a scanner's HEAD
+# leaves no trace. The path is unique so the match cannot be an old hit.
+helper "curl -sS -I --max-time 10 -o /dev/null 'http://$E2E_CANARY:80/e2e-head-probe'" \
+  || fail "the HEAD request could not be sent to $E2E_CANARY:80" "$E2E_CANARY"
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -e '[.alerts[] | select(.dest_port == 80)] | length > 0'" \
+  || fail "/api/alerts never contained an http event on port 80 for the HEAD request after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
+ok "HEAD request to $E2E_CANARY:80 became an http alert"
+
 step "GET /api/canaries counts only this journey's real hits"
 # Issue #117: OpenCanary logs its own start-up lines (logtype 1000-1006,
 # service "base") through the log the agent tails, and the agent

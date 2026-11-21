@@ -156,10 +156,14 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 	out := canaryPageCanary{canaryWithSelfTest: canaryWithSelfTest{Canary: *found}}
 	results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, found.ID)
 	if err != nil {
-		// Best-effort, exactly as handleCanaries treats it: the
-		// run-level summary on the canary still renders.
+		// A failed lookup is a store fault, not an absent self-test:
+		// answering 200 without self_test would look like "never ran"
+		// to the page, exactly as handleCanaries refuses to (#224).
 		log.Printf("api: self-test service results for %s: %v", found.ID, err)
-	} else if ok {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ok {
 		out.SelfTest = results
 	}
 

@@ -12,7 +12,11 @@ record lives here.
 - The emulated services and their log lines: ssh, telnet, ftp, http,
   mysql, smb (the parse of `logdata`, `internal/store/visitor.go`
   `triedFor`), portscan, snmp, vnc. The self-test grades of proof (#46)
-  rest on those lines carrying the probe's marker.
+  rest on those lines carrying the probe's marker. The http flags
+  `log_unimplemented_method_requests` and `log_redirect_request` (both
+  true in `build/opencanary/opencanary.conf`) make HEAD, OPTIONS and other
+  non-GET/POST requests (logtype 3002) and redirects (3003) show as http
+  alerts.
 - The log file, tailed by the agent (`internal/agent/tailer`) with a
   saved position, so a canary restart loses nothing.
 
