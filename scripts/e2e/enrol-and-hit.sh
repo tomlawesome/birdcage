@@ -133,21 +133,29 @@ case "$alert" in
 esac
 
 step "a HEAD request to the http lure is reported (issue #141)"
-# OpenCanary's http.log_unimplemented_method_requests flag (logtype 3002)
-# is what turns this probe into an event; with it off a scanner's HEAD
-# leaves no trace. An earlier http alert on port 80 must not satisfy the
-# step, so take the highest http alert id held before the request and
-# accept only an alert with a higher id. (The stored raw line is not
-# relied on to carry the request path.)
+# OpenCanary 0.9.10 logs a HEAD (logtype 3002, via its
+# http.log_unimplemented_method_requests flag) only on the login page; a
+# HEAD to any other path, a 404 included, logs nothing (see the note on
+# #141). So the probe asks for /index.html. An earlier http alert on port
+# 80 must not satisfy the step, and neither may the canary's own
+# self-test alert (synthetic, from the canary itself, #239): take the
+# highest http alert id held before the request, and accept only a
+# non-synthetic alert with a higher id whose source is the helper
+# container that sent the HEAD. The helper reads its own address in the
+# same run as the request, so the two cannot differ. (The stored raw line
+# is not relied on to carry the request path.)
 head_base="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -r '[.alerts[].id] | max // 0'")" \
   || fail "could not read the http alerts before the HEAD request" "$E2E_BIRDCAGE"
 case "$head_base" in
   ''|*[!0-9]*) fail "the http alert baseline is not a number: $head_base" "$E2E_BIRDCAGE" ;;
 esac
-helper "curl -sS -I --max-time 10 -o /dev/null 'http://$E2E_CANARY:80/e2e-head-probe'" \
+head_src="$(helper "hostname -i | cut -d' ' -f1; curl -sS -I --max-time 10 -o /dev/null 'http://$E2E_CANARY:80/index.html'")" \
   || fail "the HEAD request could not be sent to $E2E_CANARY:80" "$E2E_CANARY"
-poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -e '[.alerts[] | select(.dest_port == 80 and .id > $head_base)] | length > 0'" \
-  || fail "/api/alerts never contained a new http event on port 80 for the HEAD request after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
+case "$head_src" in
+  ''|*[!0-9.]*) fail "could not learn the helper's own address: $head_src" ;;
+esac
+poll 30 helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?service=http' | jq -e '[.alerts[] | select(.dest_port == 80 and .id > $head_base and .synthetic == false and .source_ip == \"$head_src\")] | length > 0'" \
+  || fail "/api/alerts never contained a new non-synthetic http event on port 80 from $head_src for the HEAD request after 30 attempts" "$E2E_CANARY" "$E2E_BIRDCAGE"
 ok "HEAD request to $E2E_CANARY:80 became an http alert"
 
 step "GET /api/canaries counts only this journey's real hits"
@@ -155,17 +163,16 @@ step "GET /api/canaries counts only this journey's real hits"
 # service "base") through the log the agent tails, and the agent
 # forwards them -- birdcage must never store or count them. This
 # canary's hits must be exactly the real, non-base traffic this journey
-# produced: the one FTP login above, plus the one SSH pre-login artifact
-# every fresh canary's own SSH listener logs at start-up from
-# 127.0.0.1 (logtype 4000, out of scope for #117 -- see the issue body).
-# A canary fresh off enrolment showed ~11 hits before this fix, purely
-# from base start-up lines; this must now read 2, not a double-digit
-# count.
+# produced: the FTP login and the HEAD request above, both from the
+# helper's address. The canary's own SSH self-test connection (logtype
+# 4000, from 127.0.0.1) is not a hit: it is synthetic since #239. A canary
+# fresh off enrolment showed ~11 hits before #117's fix, purely from base
+# start-up lines; this must now read 2, not a double-digit count.
 canary_json2="$(helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -c --arg id '$E2E_CANARY_ID' '.canaries[] | select(.id == \$id)'")" \
   || fail "GET /api/canaries did not run" "$E2E_BIRDCAGE"
 case "$canary_json2" in
   *'"hits":2'*) ok "hits: $canary_json2" ;;
-  *) fail "hits is not 2 (1 FTP login + 1 SSH pre-login artifact) -- base start-up lines are being counted as hits: $canary_json2" "$E2E_BIRDCAGE" ;;
+  *) fail "hits is not 2 (1 FTP login + 1 HEAD request) -- base start-up lines are being counted as hits: $canary_json2" "$E2E_BIRDCAGE" ;;
 esac
 
 step "GET /api/alerts lists no base rows"
