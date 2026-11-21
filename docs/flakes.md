@@ -89,3 +89,11 @@ the whole account.
   the e2e network (5 ports), not the sweeper, and the helper counts alerts
   per canary rather than per source. The product's per-source cooldown held.
   Retried as job 56773, which passed.
+
+## e2e:portscan -- step 3 (second port-scan source)
+
+- 2026-11-21 · f647bda (batch-a) · pipeline 5115 / e2e:portscan ·
+  "port-scan alert count climbed to 2 after sweeping 25 ports -- the rate cap
+  did not hold": the second alert came from another address on the e2e
+  network, not the sweeper (same cause as the 2026-11-18 sighting above).
+  Passed in pipeline 5128 on unchanged product code.
