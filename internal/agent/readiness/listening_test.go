@@ -202,3 +202,68 @@ func TestConnectLoggingModulesNamesSSH(t *testing.T) {
 		t.Error("ftp logs only on login attempts and must still be dialled")
 	}
 }
+
+func TestListeningPortsToleratesMissingTCP6(t *testing.T) {
+	t.Parallel()
+	got, err := ListeningPorts(fakeReadFile(map[string]string{"/proc/net/tcp": tcpTable}))
+	if err != nil {
+		t.Fatalf("a host with IPv6 disabled must still read: %v", err)
+	}
+	if !got[22] || !got[80] || len(got) != 2 {
+		t.Errorf("want exactly 22 and 80 from tcp, got %v", got)
+	}
+}
+
+func TestListeningPortsFailsOnUnreadableTable(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("read failed")
+	// A missing tcp is an error, not "nothing listening".
+	if got, err := ListeningPorts(fakeReadFile(map[string]string{"/proc/net/tcp6": procHeader})); !errors.Is(err, os.ErrNotExist) || got != nil {
+		t.Errorf("missing tcp: got %v, %v, want nil and ErrNotExist", got, err)
+	}
+	// tcp6 failing for any reason other than not-existing is an error too.
+	rf := func(name string) ([]byte, error) {
+		if name == "/proc/net/tcp6" {
+			return nil, boom
+		}
+		return []byte(tcpTable), nil
+	}
+	if got, err := ListeningPorts(rf); !errors.Is(err, boom) || got != nil {
+		t.Errorf("unreadable tcp6: got %v, %v, want nil and the read error", got, err)
+	}
+}
+
+func TestListeningPortsSkipsMalformedRows(t *testing.T) {
+	t.Parallel()
+	const listen = " 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 1 1 0 100 0 0 10 0\n"
+	table := procHeader +
+		"   0: NOCOLON" + listen + // local address without a port separator
+		"   1: 00000000:ZZZZ" + listen + // port is not hex
+		"   2: 00000000:10000" + listen + // port overflows 16 bits
+		"   3: 00000000:0050" + listen // the only good row
+	got, err := ListeningPorts(fakeReadFile(map[string]string{"/proc/net/tcp": table, "/proc/net/tcp6": procHeader}))
+	if err != nil {
+		t.Fatalf("ListeningPorts: %v", err)
+	}
+	if len(got) != 1 || !got[80] {
+		t.Errorf("want only port 80, got %v", got)
+	}
+}
+
+// With no socket-table reader, a connect-logging module is reported down
+// with an error and still never dialled; other modules are dialled as usual.
+func TestCheckWithNilListeningReportsSSHDownWithoutDialling(t *testing.T) {
+	t.Parallel()
+	rd := &recordingDial{}
+	res := byModule(CheckWith(context.Background(), rd.dial, nil, "192.0.2.1",
+		map[string]int{"ssh": 22, "http": 80}, time.Second))
+	if res["ssh"].Up || res["ssh"].Err == nil {
+		t.Errorf("ssh without a reader must be down with an error, got %+v", res["ssh"])
+	}
+	if rd.saw("192.0.2.1:22") {
+		t.Error("ssh port was dialled (#238)")
+	}
+	if !res["http"].Up || !rd.saw("192.0.2.1:80") {
+		t.Errorf("http must still be dialled and up, got %+v", res["http"])
+	}
+}

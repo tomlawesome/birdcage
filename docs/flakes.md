@@ -55,6 +55,12 @@ the whole account.
   `scripts/ensure-gitleaks.sh` got "curl: (22) The requested URL returned
   error: 504" from github.com before any scan ran. Retried as job 28489.
 
+## golangci-lint build: module downloads cut off (lint:go)
+
+- 2026-11-21 · e1f21a7 · pipeline 5166 (!187) / lint:go, job 61870 ·
+  building the linter, every module fetch from the Go module proxy ended
+  "unexpected EOF" before any lint ran. Retried as job 62001.
+
 ## startup-refusals.sh -- first refusal outlived its 15 s bound (local)
 
 - 2026-10-10 · 2cbda6f plus the uncommitted #8 slice C journeys · local
@@ -89,3 +95,14 @@ the whole account.
   the e2e network (5 ports), not the sweeper, and the helper counts alerts
   per canary rather than per source. The product's per-source cooldown held.
   Retried as job 56773, which passed.
+- 2026-11-21 · f647bda (batch-a) · pipeline 5115 / e2e:portscan · the same
+  message and cause: a second alert from another address on the e2e network.
+  Passed in pipeline 5128 on unchanged product code.
+
+## TestCheckStartupAuthContinuityAllowsAUsedDatabaseWithAccounts (cmd/birdcage)
+
+- 2026-11-21 · 2090fe6 · pipeline 5140 (!187) / test:go, job 61454 ·
+  subtest a_user.register_audit_row: "register first admin: status 500,
+  want 201", with "no such table: audit_log" and "no such table: approvals"
+  logged nearby; the package took 580 s. The test is unchanged since #164
+  and passed in pipeline 5128; three local runs straight after passed.

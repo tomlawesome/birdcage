@@ -57,7 +57,48 @@ fail() {
     { docker logs "$container" 2>&1 || echo "(no log: $container does not exist)"; } \
       | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2
   done
+  fail_diagnostics "$@"
   exit 1
+}
+
+# fail_diagnostics is what fail() adds after the per-container dump, so a
+# red pipeline shows enough to diagnose (pipeline 5115's failures did not):
+# which container holds which address, the tail of every other stack
+# container's log, and the alerts and canaries birdcage stores. Every
+# section is bounded and ends in `|| true`: a dump must never fail the dump.
+# Sign-in tokens never reach the log: DASHBOARD_AUTH is curl's `-H @file`,
+# so the token is read inside the helper container; nothing here prints it
+# or the auth file.
+fail_diagnostics() {
+  local prefix="${E2E_PREFIX:-}" c
+  if [ -z "$prefix" ]; then
+    echo "--- diagnostics skipped: E2E_PREFIX unset ---" >&2
+    return 0
+  fi
+  echo "--- containers and addresses ($prefix*) ---" >&2
+  local names dumped=" $* "
+  [ "$#" -gt 0 ] || dumped=" ${E2E_BIRDCAGE:-} "
+  names="$(timeout 30 docker ps -a --filter "name=^${prefix}" --format '{{.Names}}' 2>&1 | sort)" || true
+  for c in $names; do
+    # shellcheck disable=SC2016  # Go template, not shell
+    timeout 10 docker inspect --format '{{.Name}}{{range $k, $v := .NetworkSettings.Networks}} {{$k}}={{$v.IPAddress}}{{end}}' "$c" >&2 2>&1 || true
+  done
+  for c in $names; do
+    case "$dumped" in *" $c "*) continue ;; esac
+    echo "--- docker logs --tail 200 $c ---" >&2
+    { timeout 30 docker logs --tail 200 "$c" 2>&1 || echo "(no log: $c)"; } \
+      | sed -E 's/with (setup|unlock) code [A-Za-z0-9-]+/with \1 code <redacted>/g' >&2 || true
+  done
+  echo "--- birdcage alerts: id received_at source_ip service dest_port logtype synthetic ---" >&2
+  if [ -z "${DASHBOARD_AUTH:-}" ] || [ -z "${BIRDCAGE_URL:-}" ] \
+    || ! helper 'test -s /work/dashboard-auth' >/dev/null 2>&1; then
+    echo "(skipped: dashboard sign-in not set up at this step)" >&2
+    return 0
+  fi
+  # logtype lives inside the stored raw OpenCanary line, not as an alert field.
+  helper "curl -sS --max-time 10 --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/alerts?limit=200' | jq -r '.alerts[] | [.id, .received_at, .source_ip, .service, .dest_port, (try (.raw | fromjson | .logtype) catch null), .synthetic] | @tsv'" 2>&1 | head -n 300 >&2 || true
+  echo "--- birdcage canaries: id name hits status ---" >&2
+  helper "curl -sS --max-time 10 --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canaries' | jq -r '.canaries[] | [.id, .name, .hits, .status] | @tsv'" 2>&1 | head -n 100 >&2 || true
 }
 
 # helper runs a shell command inside the harness's helper container: on

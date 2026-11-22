@@ -109,3 +109,16 @@ func TestShippedConfLogsHEADOptionsAndRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestModulePortsRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "bad.conf")
+	if err := os.WriteFile(path, []byte(`{"ssh.enabled": true, "ssh.port": 22`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ports, err := ModulePorts(path)
+	if err == nil || ports != nil {
+		t.Fatalf("ModulePorts = %v, %v, want nil and a parse error", ports, err)
+	}
+}

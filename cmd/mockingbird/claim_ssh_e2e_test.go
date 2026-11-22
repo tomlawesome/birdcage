@@ -91,7 +91,7 @@ func TestSSHConnectionEventsAllReachBirdcageSynthetic(t *testing.T) {
 		defer cancel()
 		go runSenderLoop(runCtx, c, newTokenStoreForTest(token), in, newPacer())
 
-		alerts := waitForAlertCount(t, database, testCanaryID, 3, 5*time.Second)
+		alerts := waitForAlertCount(t, database, testCanaryID, 3, alertWaitBound)
 		if len(alerts) != 3 {
 			t.Fatalf("got %d alerts, want 3", len(alerts))
 		}
@@ -138,7 +138,7 @@ func TestSSHEventFromAnotherSourcePortIsNotClaimed(t *testing.T) {
 		defer cancel()
 		go runSenderLoop(runCtx, c, newTokenStoreForTest(token), in, newPacer())
 
-		alerts := waitForAlertCount(t, database, testCanaryID, 3, 5*time.Second)
+		alerts := waitForAlertCount(t, database, testCanaryID, 3, alertWaitBound)
 		for _, a := range alerts {
 			other := strings.Contains(a.Raw, fmt.Sprintf(`"src_port": %d`, otherPort))
 			if other && a.Synthetic {
