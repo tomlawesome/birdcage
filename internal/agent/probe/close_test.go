@@ -3,6 +3,7 @@ package probe
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"strconv"
@@ -49,11 +50,12 @@ func resetClose(c net.Conn) {
 }
 
 // tdsPacket builds a TDS packet of the given type with a payload of n bytes.
-func tdsPacket(typ byte, n int) []byte {
+func tdsPacket(typ byte, n uint16) []byte {
 	total := 8 + n
 	p := make([]byte, total)
-	p[0], p[1], p[2], p[3], p[6] = typ, 0x01, byte(total>>8), byte(total), 0x01
-	for i := 8; i < total; i++ {
+	p[0], p[1], p[6] = typ, 0x01, 0x01
+	binary.BigEndian.PutUint16(p[2:4], total)
+	for i := 8; i < int(total); i++ {
 		p[i] = 0xAB
 	}
 	return p
@@ -91,7 +93,7 @@ func checkLogin7(t *testing.T, r tdsResult, marker string) {
 	u := utf16.Encode([]rune(marker))
 	want := make([]byte, 0, len(u)*2)
 	for _, c := range u {
-		want = append(want, byte(c), byte(c>>8))
+		want = binary.LittleEndian.AppendUint16(want, c)
 	}
 	if !bytes.Contains(r.pkt, want) {
 		t.Errorf("LOGIN7 does not contain the UTF-16LE marker %q", marker)
