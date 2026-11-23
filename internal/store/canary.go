@@ -433,7 +433,7 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 // internal/selftestsched's pending retry re-mints each one's proof, by
 // kind, until it passes.
 func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM agents WHERE registered_at IS NULL`)
+	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr, agent_smb_lure_up, agent_snmp_up FROM agents WHERE registered_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query pending canaries: %w", err)
 	}
@@ -442,13 +442,15 @@ func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Sel
 	var out []SelfTestCanary
 	for rows.Next() {
 		var (
-			sc       SelfTestCanary
-			kind     string
-			portsRaw string
+			sc            SelfTestCanary
+			kind          string
+			portsRaw      string
+			smbUp, snmpUp *int64
 		)
-		if err := rows.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr); err != nil {
+		if err := rows.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &smbUp, &snmpUp); err != nil {
 			return nil, fmt.Errorf("scan pending canary: %w", err)
 		}
+		sc.SMBLureUp, sc.SNMPUp = nullableBool(smbUp), nullableBool(snmpUp)
 		sc.Kind = agentkind.Kind(kind)
 		sc.Pending = true
 		sc.Ports = parsePorts(portsRaw)
