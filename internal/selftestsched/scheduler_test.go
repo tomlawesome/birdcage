@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -897,6 +898,124 @@ func TestTickRetriesPendingCanaryOncePerWindowWhateverTheSettings(t *testing.T) 
 		}
 		if n := selfTestRunCount(t, database, "pending"); n != 2 {
 			t.Fatalf("runs for pending after the window = %d, want 2 (re-minted once the first expired)", n)
+		}
+	})
+}
+
+// setAgentFlags records an agent heartbeat carrying the given listener flags.
+func setAgentFlags(t *testing.T, database *db.DB, id string, smb, snmp *bool) {
+	t.Helper()
+	if smb == nil && snmp == nil {
+		return
+	}
+	if err := store.RecordCanaryAgentHeartbeat(context.Background(), database, id, time.Now().UTC(), store.AgentHeartbeat{
+		QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: smb, SNMPUp: snmp,
+	}); err != nil {
+		t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+	}
+}
+
+func hasService(services []string, svc string) bool {
+	for _, x := range services {
+		if x == svc {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPendingRetryAddsSMBAndSNMPOnceReported (#253): a pending honeypot whose
+// first run expired gets a retry run whose targets follow the agent's
+// reported smb and snmp flags exactly as the scheduled run's do.
+func TestPendingRetryAddsSMBAndSNMPOnceReported(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		smb, snmp *bool
+		want      int
+		wantSMB   bool
+		wantSNMP  bool
+	}{
+		{"neither reported", nil, nil, 12, false, false},
+		{"both up", &yes, &yes, 14, true, true},
+		{"both reported down", &no, &no, 14, true, true},
+		{"only smb reported down", &no, nil, 13, true, false},
+		{"only snmp reported", nil, &yes, 13, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				mustSetSetting(t, database, store.SettingSelfTestEnabled, "false")
+				mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+				mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+				profile, ok := agentkind.Lookup(agentkind.Honeypot)
+				if !ok {
+					t.Fatal("no honeypot profile")
+				}
+				insertPendingHoneypotCanary(t, database, "pending", profile.Ports, "192.0.2.10")
+				setAgentFlags(t, database, "pending", tc.smb, tc.snmp)
+
+				start := time.Date(2026, 9, 23, 4, 12, 0, 0, time.UTC)
+				now := start
+				s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+				s.Tick(context.Background()) // first run
+				now = start.Add(selfTestWindow + time.Minute)
+				s.Tick(context.Background()) // sweeps the first run, retry mints the second
+				if n := selfTestRunCount(t, database, "pending"); n != 2 {
+					t.Fatalf("runs = %d, want 2 (first expired, retry minted)", n)
+				}
+
+				services := mintedTargetServices(t, database, "pending")
+				if len(services) != tc.want {
+					t.Fatalf("retry minted %d targets %v, want %d", len(services), services, tc.want)
+				}
+				if hasService(services, "smb") != tc.wantSMB || hasService(services, "snmp") != tc.wantSNMP {
+					t.Errorf("smb=%v snmp=%v in %v, want smb=%v snmp=%v", hasService(services, "smb"), hasService(services, "snmp"), services, tc.wantSMB, tc.wantSNMP)
+				}
+			})
+		})
+	}
+}
+
+// TestScheduledAndPendingRetryMintTheSameTargets (#253): for the same canary
+// state, the scheduled run and the pending retry build the same target set.
+func TestScheduledAndPendingRetryMintTheSameTargets(t *testing.T) {
+	yes, no := true, false
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		mustSetSetting(t, database, store.SettingSelfTestEnabled, "true")
+		mustSetSetting(t, database, store.SettingSelfTestUseRotationSchedule, "false")
+		mustSetSetting(t, database, store.SettingSelfTestSchedule, "04:12")
+		profile, ok := agentkind.Lookup(agentkind.Honeypot)
+		if !ok {
+			t.Fatal("no honeypot profile")
+		}
+		// Same state on both: ports, address, smb down, snmp up.
+		insertHoneypotCanary(t, database, "registered", profile.Ports, "192.0.2.11")
+		insertPendingHoneypotCanary(t, database, "pending", profile.Ports, "192.0.2.12")
+		setAgentFlags(t, database, "registered", &no, &yes)
+		setAgentFlags(t, database, "pending", &no, &yes)
+
+		// 05:00 is off the scheduled minute: only the pending retry mints,
+		// for the pending canary. The next day's 04:12 is the scheduled run,
+		// which mints for the registered canary. The retry's targets are read
+		// before that tick, since the scheduled run also mints for pending
+		// canaries.
+		now := time.Date(2026, 9, 23, 5, 0, 0, 0, time.UTC)
+		s := New(database, store.NewSelfTestIndex(), func() time.Time { return now }, discardLogger())
+		s.Tick(context.Background())
+		if n := selfTestRunCount(t, database, "registered"); n != 0 {
+			t.Fatalf("registered canary got %d runs at 05:00, want 0", n)
+		}
+		retry := mintedTargetServices(t, database, "pending")
+		now = time.Date(2026, 9, 24, 4, 12, 0, 0, time.UTC)
+		s.Tick(context.Background())
+
+		scheduled := mintedTargetServices(t, database, "registered")
+		if len(scheduled) != 14 {
+			t.Fatalf("scheduled targets = %d %v, want 14", len(scheduled), scheduled)
+		}
+		if strings.Join(scheduled, ",") != strings.Join(retry, ",") {
+			t.Errorf("pending retry targets %v differ from scheduled targets %v", retry, scheduled)
 		}
 	})
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -551,6 +552,62 @@ func TestListHoneypotCanariesForSelfTest(t *testing.T) {
 			t.Fatalf("LastSeenAddr = %v, want 192.0.2.10", c.LastSeenAddr)
 		}
 	})
+}
+
+// TestListPendingCanariesForSelfTestCarriesListenerFlags (#253): the pending
+// retry reads the same agent_smb_lure_up / agent_snmp_up flags the scheduled
+// and by-id queries do: true, false and NULL (never reported) come back as
+// *true, *false and nil, and a registered canary is still left out.
+func TestListPendingCanariesForSelfTestCarriesListenerFlags(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		report    bool
+		smb, snmp *bool
+	}{
+		{"never reported", false, nil, nil},
+		{"both up", true, &yes, &yes},
+		{"both down", true, &no, &no},
+		{"smb up, snmp not reported", true, &yes, nil},
+		{"smb not reported, snmp down", true, nil, &no},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				ctx := context.Background()
+				insertCanary(t, database, Canary{ID: "pending-a", Name: "p", Lane: "l", Ports: "22", EnrolledAt: time.Now(), Pending: true})
+				insertCanary(t, database, Canary{ID: "registered-a", Name: "r", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+				if tc.report {
+					if err := RecordCanaryAgentHeartbeat(ctx, database, "pending-a", time.Now().UTC(), AgentHeartbeat{
+						QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: tc.smb, SNMPUp: tc.snmp,
+					}); err != nil {
+						t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+					}
+				}
+
+				got, err := ListPendingCanariesForSelfTest(ctx, database)
+				if err != nil {
+					t.Fatalf("ListPendingCanariesForSelfTest: %v", err)
+				}
+				if len(got) != 1 || got[0].ID != "pending-a" {
+					t.Fatalf("got %+v, want only pending-a", got)
+				}
+				same := func(a, b *bool) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+				fmtb := func(b *bool) string {
+					if b == nil {
+						return "nil"
+					}
+					return fmt.Sprint(*b)
+				}
+				if !same(got[0].SMBLureUp, tc.smb) {
+					t.Errorf("SMBLureUp = %s, want %s", fmtb(got[0].SMBLureUp), fmtb(tc.smb))
+				}
+				if !same(got[0].SNMPUp, tc.snmp) {
+					t.Errorf("SNMPUp = %s, want %s", fmtb(got[0].SNMPUp), fmtb(tc.snmp))
+				}
+			})
+		})
+	}
 }
 
 // TestSelfTestCanaryByID covers both the found and not-found cases.
