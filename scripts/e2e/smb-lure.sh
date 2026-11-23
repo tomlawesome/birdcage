@@ -319,6 +319,19 @@ wait_for_no_open_self_test() {
     || fail "an earlier self-test run never closed: the lure canary still had an open run after waiting ${wait_s} s (window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s), so a scheduled run would be skipped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
 }
 
+# canary_registered succeeds when the lure canary has registered_at (omitted
+# while it is pending, internal/api/canary.go).
+canary_registered() {
+  canary_jq "-e '.canary.registered_at != null'"
+}
+
+# canary_registered_and_idle: registered AND no open self-test run. A pending
+# canary never gets there: the pending retry re-mints in the same tick that
+# sweeps its expired run (#253, pipeline 5241).
+canary_registered_and_idle() {
+  canary_registered && no_open_self_test
+}
+
 # run_self_test schedules one self-test for the next minute (the same
 # settings the surface journey uses) and puts the schedule settings back.
 run_self_test() {
@@ -345,6 +358,20 @@ step "the canary's page lists the SMB lure and SNMP as listening (#243)"
 poll 150 page_lists "smb 445" || fail "the page's listening row never showed smb 445: $(canary_page)" "$SMB_LURE_CANARY"
 poll 150 page_lists "snmp 161" || fail "the page's listening row never showed snmp 161: $(canary_page)" "$SMB_LURE_CANARY"
 ok "the listening row names smb 445 and snmp 161"
+
+step "the lure canary is registered and has no open self-test, before the lure stops (#253)"
+# Worst case: a still-open run expires (one window plus a tick), a retry run
+# then completes (another window plus a tick), plus a margin.
+IDLE_WAIT_S=$(( 2 * SELFTEST_WINDOW_S + 2 * SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+if ! poll "$IDLE_WAIT_S" canary_registered_and_idle; then
+  if ! canary_registered >/dev/null 2>&1; then
+    why="the canary was still pending (no registered_at), so its enrolment proof kept being retried"
+  else
+    why="the canary was registered but a self-test run was still open"
+  fi
+  fail "$why after waiting ${IDLE_WAIT_S} s (2 x window ${SELFTEST_WINDOW_S} s + 2 x tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s): $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+fi
+ok "the canary is registered and idle"
 
 step "the lure stops, and smb 445 leaves the listening row (#243)"
 docker stop --time 10 "$SMB_LURE" >/dev/null || fail "could not stop the lure" "$SMB_LURE"
