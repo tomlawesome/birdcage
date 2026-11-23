@@ -292,6 +292,33 @@ page_lacks() {
   canary_jq "-e --arg s '$1' '.facts.ports | contains(\$s) | not'"
 }
 
+# The self-test timings (seconds). Defined here, ahead of the first step that
+# schedules a run, because the open-run wait below and the failure wait in step
+# 13 both use them. SELFTEST_WINDOW_S is selfTestWindow, 10 min
+# (internal/selftestsched/scheduler.go:49); SELFTEST_TICK_S is one scheduler
+# tick (cmd/birdcage/main.go:188, selfTestTickInterval = 1 min).
+SELFTEST_SCHEDULE_LEAD_S=$(( 120 + 59 ))
+SELFTEST_WINDOW_S=$(( 10 * 60 ))
+SELFTEST_TICK_S=60
+SELFTEST_MARGIN_S=60
+
+# no_open_self_test succeeds when every self-test run of the lure canary has
+# completed_at (the field is omitted while a run is open). #253: the canary's
+# first self-test, its enrolment proof, can still be open when step 13
+# schedules a run, and one open self-test per canary (#227) makes the
+# scheduler skip the scheduled run, which is not retried until the next day.
+no_open_self_test() {
+  canary_jq "-e '[(.self_test_runs // [])[] | select(.completed_at == null)] | length == 0'"
+}
+
+# wait_for_no_open_self_test waits, within one run window plus a tick and a
+# margin, for an earlier run to close before run_self_test schedules.
+wait_for_no_open_self_test() {
+  local wait_s=$(( SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+  poll "$wait_s" no_open_self_test \
+    || fail "an earlier self-test run never closed: the lure canary still had an open run after waiting ${wait_s} s (window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s), so a scheduled run would be skipped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+}
+
 # run_self_test schedules one self-test for the next minute (the same
 # settings the surface journey uses) and puts the schedule settings back.
 run_self_test() {
@@ -325,6 +352,7 @@ poll 150 page_lacks "smb 445" || fail "smb 445 stayed in the listening row with 
 ok "smb 445 left the listening row"
 
 step "a self-test with the lure down fails, naming smb (#243)"
+wait_for_no_open_self_test
 SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_self_test
 # A down service sends no event (cmd/mockingbird/command.go:263-268), so the
@@ -334,10 +362,6 @@ run_self_test
 # (internal/selftestsched/scheduler.go:49, selfTestWindow = 10 min), one tick
 # (cmd/birdcage/main.go:188, selfTestTickInterval = 1 min), and a margin.
 # poll sleeps 1 s per attempt (journey.sh poll), so attempts >= seconds.
-SELFTEST_SCHEDULE_LEAD_S=$(( 120 + 59 ))
-SELFTEST_WINDOW_S=$(( 10 * 60 ))
-SELFTEST_TICK_S=60
-SELFTEST_MARGIN_S=60
 SELFTEST_FAIL_WAIT_S=$(( SELFTEST_SCHEDULE_LEAD_S + SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
 poll "$SELFTEST_FAIL_WAIT_S" newest_run_failed_naming "smb 445" \
   || fail "no self-test run failed naming smb after waiting ${SELFTEST_FAIL_WAIT_S} attempts (>= ${SELFTEST_FAIL_WAIT_S} s: lead ${SELFTEST_SCHEDULE_LEAD_S} s + window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s) with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
@@ -347,6 +371,7 @@ step "the lure starts again, and the next self-test passes (#243)"
 docker start "$SMB_LURE" >/dev/null || fail "could not start the lure" "$SMB_LURE"
 "$SMB_LURE_STACK" restart-lure || fail "the lure did not answer after starting" "$SMB_LURE"
 poll 150 page_lists "smb 445" || fail "smb 445 never came back to the listening row: $(canary_page)" "$SMB_LURE_CANARY"
+wait_for_no_open_self_test
 SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_self_test
 poll 300 newest_run_passed \
