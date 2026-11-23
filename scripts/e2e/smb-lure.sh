@@ -319,10 +319,10 @@ wait_for_no_open_self_test() {
     || fail "an earlier self-test run never closed: the lure canary still had an open run after waiting ${wait_s} s (window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s), so a scheduled run would be skipped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
 }
 
-# canary_registered succeeds when the lure canary has registered_at (omitted
+# canary_registered succeeds when the lure canary has facts.registered_at (omitted
 # while it is pending, internal/api/canary.go).
 canary_registered() {
-  canary_jq "-e '.canary.registered_at != null'"
+  canary_jq "-e '.facts.registered_at != null'"
 }
 
 # canary_registered_and_idle: registered AND no open self-test run. A pending

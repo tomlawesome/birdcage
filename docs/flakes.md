@@ -106,3 +106,13 @@ the whole account.
   want 201", with "no such table: audit_log" and "no such table: approvals"
   logged nearby; the package took 580 s. The test is unchanged since #164
   and passed in pipeline 5128; three local runs straight after passed.
+
+## upgrade.sh step 8, the upgraded canary's self-test never completes (e2e:enrol-and-hit)
+
+- 2026-11-23 · 05af5d1 · pipeline 5260 (!190) / e2e:enrol-and-hit:postgres,
+  job 62984 · "no self-test issued after the upgrade passed": the run minted
+  at 12:10:43 (12 targets) stayed open; the agent logged "11 ok ... 1
+  agent-handled (of 12 targets)" at 12:11:45, so one target's event never
+  matched at birdcage within the step's 6.5 minutes. The change under test
+  touches only pending canaries, and this one was registered. Passed in
+  pipeline 5241 on batch-a. Cause unknown; not touched.
