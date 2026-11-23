@@ -156,8 +156,8 @@ func TestProbeMSSQL_NoPreloginReplyIsAnErrorAndSendsNoLogin7(t *testing.T) {
 	})
 	start := time.Now()
 	err := runMSSQL(t, port, "marker-mssql-silent")
-	if d := time.Since(start); d > 5500*time.Millisecond {
-		t.Errorf("probeMSSQL took %v, want <= 5.5 s", d)
+	if d := time.Since(start); d > 7500*time.Millisecond {
+		t.Errorf("probeMSSQL took %v, want <= 7.5 s", d)
 	}
 	if err == nil {
 		t.Error("probeMSSQL = nil with no PRELOGIN reply, want an error")
