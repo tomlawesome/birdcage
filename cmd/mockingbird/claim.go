@@ -3,6 +3,8 @@ package main
 import (
 	"sync"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agent/probe"
 )
 
 // selfTestClaimWindow is how long the agent watches its own intake for
@@ -23,8 +25,28 @@ type claimWindow struct {
 	service string
 	address string // the canary's own address the probe dialed -- selftest.Params.Address
 	marker  string
+	tr      *claimTracker
 
-	candidates []string // queue.Event ids
+	candidates []candidate // in arrival order
+
+	// srcPort is the probe's own TCP source port (ssh only, #239); 0 until
+	// setSourcePort. At resolve it selects which candidates are claimed.
+	srcPort int
+}
+
+// candidate is one observed event: its queue id and the source port it
+// carried (0 when none).
+type candidate struct {
+	id   string
+	port int
+}
+
+// setSourcePort records the ssh probe's TCP source port. It takes the
+// tracker's lock because resolveWindow reads it from another goroutine.
+func (w *claimWindow) setSourcePort(port int) {
+	w.tr.mu.Lock()
+	defer w.tr.mu.Unlock()
+	w.srcPort = port
 }
 
 // claimTracker correlates attributed probes with the events they
@@ -72,7 +94,7 @@ func (t *claimTracker) active() bool {
 // wall-clock duration or a goroutine race between registration and the
 // test's own observe calls.
 func (t *claimTracker) startWindow(service, address, marker string) *claimWindow {
-	w := &claimWindow{service: service, address: address, marker: marker}
+	w := &claimWindow{service: service, address: address, marker: marker, tr: t}
 	t.mu.Lock()
 	t.windows = append(t.windows, w)
 	t.mu.Unlock()
@@ -96,8 +118,21 @@ func (t *claimTracker) resolveWindow(w *claimWindow) {
 			break
 		}
 	}
+	if probe.ConnectionClaimed(w.service) {
+		// ssh (#239): one connection makes several events, all with the
+		// probe's own src_host and src_port. No port, no claim.
+		if w.srcPort == 0 {
+			return
+		}
+		for _, c := range w.candidates {
+			if c.port == w.srcPort {
+				t.claimed[c.id] = w.marker
+			}
+		}
+		return
+	}
 	if len(w.candidates) == 1 {
-		t.claimed[w.candidates[0]] = w.marker
+		t.claimed[w.candidates[0].id] = w.marker
 	}
 }
 
@@ -110,6 +145,12 @@ func (t *claimTracker) resolveWindow(w *claimWindow) {
 // event -- one whose observe call lands after the window closed -- finds
 // no window to join and is never claimed, the safe direction.
 func (t *claimTracker) observe(id, service, sourceIP string) {
+	t.observePort(id, service, sourceIP, 0)
+}
+
+// observePort is observe with the event's source port, which the ssh
+// window (#239) matches against the probe's own.
+func (t *claimTracker) observePort(id, service, sourceIP string, port int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, w := range t.windows {
@@ -119,13 +160,13 @@ func (t *claimTracker) observe(id, service, sourceIP string) {
 			// guarantees it), so count distinct ids, not calls.
 			duplicate := false
 			for _, c := range w.candidates {
-				if c == id {
+				if c.id == id {
 					duplicate = true
 					break
 				}
 			}
 			if !duplicate {
-				w.candidates = append(w.candidates, id)
+				w.candidates = append(w.candidates, candidate{id: id, port: port})
 			}
 		}
 	}
@@ -139,7 +180,7 @@ func (t *claimTracker) pending(id string) bool {
 	defer t.mu.Unlock()
 	for _, w := range t.windows {
 		for _, c := range w.candidates {
-			if c == id {
+			if c.id == id {
 				return true
 			}
 		}

@@ -20,7 +20,7 @@ export interface LoaderData {
 // 'stale': at least one fetch has succeeded, but the most recent one
 // failed -- the page keeps showing the last good data, with only the
 // footer slot saying the cage stopped answering.
-export type LoaderPhase = 'loading' | 'error' | 'ready' | 'stale'
+type LoaderPhase = 'loading' | 'error' | 'ready' | 'stale'
 
 export interface LoaderState {
   phase: LoaderPhase

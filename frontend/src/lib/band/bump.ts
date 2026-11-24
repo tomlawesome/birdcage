@@ -12,7 +12,7 @@ export function bumpPath(x0: number, x1: number, y: number, h: number, x1Limit: 
 
 // Port of gen.py's CH/LH constants: px per mono character at 10.5px, and
 // a two-line label's height.
-export const CH = 6.4
+const CH = 6.4
 export const LH = 28
 
 /** Port of gen.py's shared width formula used by both label_box and the placement loop. */

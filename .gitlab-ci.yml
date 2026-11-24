@@ -71,13 +71,21 @@ variables:
   # on purpose, with the coverage floors re-measured in the same change.
   GOLANG_IMAGE: golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   NODE_IMAGE: node:26-trixie
-  PYTHON_ALPINE_IMAGE: python:3.15-alpine
+  # Tag AND index digest (#234): bump together, on purpose. 3.14 not 3.15:
+  # PyYAML 6.0.3 (ci/requirements-ci.txt) has no cp315 musllinux wheel yet, and
+  # the hashed install is --only-binary. Refresh the digest with
+  # `docker buildx imagetools inspect python:3.14-alpine` (the top-level
+  # Digest), and re-check ci/requirements-ci.txt's hashes if the Python minor moves.
+  PYTHON_ALPINE_IMAGE: python:3.14-alpine@sha256:5862d971d1f0ae26b258cefa4e893556b1d3aba81bd2ff30888704ad378bab67
   # Pinned to the OpenCanary image's own base (build/opencanary/Dockerfile),
   # not the newest Python: lint:licences-python audits the pip packages
   # exactly as that image installs them, and zope.interface==7.2 (pinned by
   # build/opencanary/requirements.txt) has no 3.14 wheel yet.
   PYTHON_SLIM_IMAGE: python:3.13-slim-trixie
   ALPINE_IMAGE: alpine:3.24
+  # Semgrep CE (#199, owner decision 70a): tag and multi-arch index digest, bumped
+  # together on purpose. Straight from Docker Hub; CI-only, never shipped.
+  SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
   # Must match .dind's image (tag and digest); scripts/ci-config.test.sh
   # holds them together. Straight from Docker Hub, no cache prefix:
   # release:attest runs on the signing runner, which may not reach the cache.
@@ -324,7 +332,7 @@ release_readiness:
   before_script:
     - apk add --no-cache bash curl git >/dev/null
     # Pinned (#215 design check): supply-chain/dependency-inventory.md row 202.
-    - pip install --quiet pyyaml==6.0.3
+    - 'pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt'
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
   script:
     - git fetch --quiet --tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
@@ -368,7 +376,22 @@ lint:go:
     # Built from source with the image's Go: the prebuilt binary is built
     # with an older Go and refuses go.mod's `go 1.27.4` directive.
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
-    - golangci-lint run ./...
+    # .golangci.yml lists the linters; gosec (#199) and dupl (#200) are run
+    # separately below.
+    - golangci-lint run --disable gosec,dupl ./...
+    # gosec, inside the same golangci-lint: its self-test on the planted module
+    # under scripts/scan-fixtures/gosec, then the real run, report kept as an
+    # artifact. Blocks (#199): a high count above its ceiling in
+    # supply-chain/scan-ceilings.yml fails the job.
+    - scripts/static-scan.sh gosec
+    # dupl (#200), same shape. Blocks: a count above the go-dupl ceiling (0)
+    # in supply-chain/scan-ceilings.yml fails the job, as does a broken
+    # self-test or a failed run.
+    - scripts/static-scan.sh dupl
+  artifacts:
+    paths: [static-scan-reports/]
+    expire_in: 30 days
+    when: always
 
 # Ported from licence.yml; the script is host independent by design.
 lint:licences:
@@ -420,7 +443,7 @@ lint:ci:
   needs: [{job: release_readiness, optional: true}]
   before_script:
     - apk add --no-cache bash >/dev/null
-    - pip install --quiet pyyaml
+    - 'pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt'
   script:
     - python3 scripts/ci-e2e-guard.py
     - scripts/ci-e2e-guard.test.sh
@@ -476,8 +499,10 @@ lint:scripts:
     # where curl happens to exist.
     # git: scripts/release-candidate.test.sh builds merge shapes in a
     # scratch repository.
-    - apk add --no-cache bash curl git >/dev/null
-    - pip install --quiet pyyaml
+    # xz: scripts/ensure-shellcheck.test.sh packs and unpacks .tar.xz
+    # fixtures, as the real shellcheck release is .tar.xz (#199).
+    - apk add --no-cache bash curl git xz >/dev/null
+    - 'pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt'
   script:
     - |
       set -eu
@@ -540,6 +565,7 @@ test:release-scripts:
         scripts/mirror-image.test.sh \
         scripts/release-version.test.sh \
         scripts/release-candidate.test.sh \
+        scripts/release-note.test.sh \
         scripts/image-tag-policy.test.sh \
         scripts/policy-version.test.sh \
         scripts/ci-ensure-image.test.sh \
@@ -628,6 +654,205 @@ lint:gitleaks:
     - scripts/gitleaks-scan.test.sh
     - scripts/gitleaks-scan.sh .
 
+# Code scanning, slice 1 of #199: actionlint and zizmor over the workflow
+# files, ruff (security rules only, ruff.toml) over the tracked Python, and
+# shellcheck over the tracked shell scripts. gosec is in lint:go. Each tool is
+# installed from a SHA-256 pinned release by scripts/ensure-<tool>.sh and first
+# run on a planted defect under scripts/scan-fixtures/ (it must fail), then on
+# the tree; scripts/static-scan.sh is the one place the command lines live, and
+# it compares each finding count with supply-chain/scan-ceilings.yml
+# (scripts/scan-ceiling.py: a ceiling only goes down). The job holds no secret:
+# zizmor runs offline with no token. Reports are kept for 30 days.
+# Blocking (#199): a count above a ceiling, a broken self-test or a reasonless
+# suppression fails the pipeline.
+# $GOLANG_IMAGE (Debian) has glibc for zizmor; xz for the shellcheck archive is
+# installed from the image's Debian repositories in before_script.
+# Not .fast_gate: it takes more than 40 seconds, so it does not run on the push
+# that lands on dev.
+lint:static-scan:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image: $GOLANG_IMAGE
+  <<: [*static_gate, *git_safe]
+  timeout: 2m
+  before_script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    # $GOLANG_IMAGE has no xz, which the shellcheck .tar.xz needs: the
+    # OS package from the image's own Debian repositories, nothing else.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends xz-utils
+    - scripts/ensure-actionlint.sh /usr/local/bin
+    - scripts/ensure-zizmor.sh /usr/local/bin
+    - scripts/ensure-ruff.sh /usr/local/bin
+    - scripts/ensure-shellcheck.sh /usr/local/bin
+  script:
+    - scripts/static-scan.sh
+  artifacts:
+    paths: [static-scan-reports/]
+    expire_in: 30 days
+    when: always
+
+# #200 (dead code and duplication): knip over frontend/, sandboxed (owner
+# 57a). Its own package (ci/knip), never in frontend/, so it is absent from
+# test:frontend's node_modules and cache. Locked install with no install
+# scripts, signatures and provenance checked, licences gated. No cache, no
+# variables, no job needs it, and the report is the only artefact. Report
+# only for now (allow_failure); a follow-up makes it blocking.
+lint:knip:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image: $NODE_IMAGE
+  <<: *static_gate
+  allow_failure: true
+  timeout: 5m
+  script:
+    - (cd frontend && npm ci --ignore-scripts)
+    - (cd ci/knip && npm ci --ignore-scripts)
+    - (cd ci/knip && npm audit signatures)
+    - NODE_MODULES_DIR="$CI_PROJECT_DIR/ci/knip/node_modules" scripts/licence-check-npm.sh
+    - mkdir -p knip-report
+    - (cd frontend && ../ci/knip/node_modules/.bin/knip --no-progress --reporter json > ../knip-report/knip.json || rc=$?; ../ci/knip/node_modules/.bin/knip --no-progress || true; exit ${rc:-0})
+  artifacts:
+    paths: [knip-report/]
+    expire_in: 30 days
+    when: always
+
+# #199 item 5 (owner decision 69a, 2026-11-20): squawk over the Postgres
+# migrations, sandboxed like lint:knip. Its own package (ci/squawk), never in
+# frontend/. Locked install with no install scripts, signatures and provenance
+# checked, licences gated. No cache, no variables, no job needs it, and the
+# report is the only artefact. Report only for now (allow_failure). The sqlite
+# migrations are not Postgres, so they are not scanned.
+lint:squawk:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image: $NODE_IMAGE
+  <<: *static_gate
+  allow_failure: true
+  timeout: 5m
+  script:
+    - (cd ci/squawk && npm ci --ignore-scripts)
+    - (cd ci/squawk && npm audit signatures)
+    - NODE_MODULES_DIR="$CI_PROJECT_DIR/ci/squawk/node_modules" scripts/licence-check-npm.sh
+    - mkdir -p squawk-report
+    - ci/squawk/node_modules/.bin/squawk --reporter json internal/db/migrations/postgres/*.sql > squawk-report/squawk.json || rc=$?; ci/squawk/node_modules/.bin/squawk internal/db/migrations/postgres/*.sql || true; exit ${rc:-0}
+  artifacts:
+    paths: [squawk-report/]
+    expire_in: 30 days
+    when: always
+
+# Semgrep CE (#199, owner decision 70a, 2026-11-20): report-only. Engine LGPL-2.1
+# on the official image pinned by digest. The p/golang and p/typescript rule
+# sets (Semgrep Rules License v1.0: internal use, no redistribution) are fetched
+# at run time, never vendored. Logged out: no `semgrep login`, no app token,
+# --metrics=off, no cache, and no job needs this one. Semgrep skips what .gitignore
+# lists (the Trivy cache dir, node_modules), and --exclude covers fixtures. The rc is kept with
+# `|| rc=$?` because GitLab scripts run under `set -e`.
+lint:semgrep:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  image:
+    name: $SEMGREP_IMAGE
+    entrypoint: [""]
+  <<: *static_gate
+  allow_failure: true
+  timeout: 10m
+  script:
+    - mkdir -p semgrep-report
+    - rc=0
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --exclude scan-fixtures --json --output semgrep-report/semgrep.json --error . || rc=$?
+    - semgrep scan --metrics=off --config p/golang --config p/typescript --exclude node_modules --exclude testdata --exclude fixtures --exclude scan-fixtures --error . || rc=$?
+    - exit ${rc:-0}
+  artifacts:
+    paths: [semgrep-report/]
+    expire_in: 30 days
+    when: always
+
+# Trivy (#199 items 1-3, owner decision 66a, 2026-11-19): three report-only
+# jobs, never blocking (allow_failure: true), each keeping a JSON report of
+# HIGH and CRITICAL findings for 30 days. Trivy is installed only by
+# scripts/ensure-trivy.sh -- a pinned release whose checksums file is verified
+# with cosign -- never a vendor-published container image or a third-party
+# action: Trivy's release channels were hijacked in March 2026 (CVE-2026-33634). CI-only, never
+# shipped. The vulnerability database is fetched at run time and kept in a
+# GitLab cache (TRIVY_CACHE_DIR under the project dir), never committed.
+# $GOLANG_IMAGE (Debian) has curl, tar and bash, which ensure-trivy.sh and
+# ensure-cosign.sh need.
+.trivy_job: &trivy_job
+  image: $GOLANG_IMAGE
+  allow_failure: true
+  variables:
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivy-cache
+  cache:
+    key: trivy-db
+    paths: [.trivy-cache/]
+  before_script:
+    - scripts/ensure-trivy.sh /usr/local/bin
+  artifacts:
+    paths: [trivy-reports/]
+    expire_in: 30 days
+    when: always
+
+# Item 1: Dockerfile misconfiguration. Fast and offline of the vulnerability
+# database, but it shares the cache and installer with the other two.
+lint:trivy-config:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  <<: [*static_gate, *trivy_job]
+  script:
+    - mkdir -p trivy-reports
+    - trivy config --ignorefile .trivyignore.yaml --severity HIGH,CRITICAL --format json --output trivy-reports/config.json build/
+
+# Item 3: vulnerable and licence-restricted dependencies in the lockfiles
+# (npm, Go modules) of the repository itself.
+lint:trivy-fs:
+  stage: lint
+  needs: [{job: release_readiness, optional: true}]
+  <<: [*static_gate, *trivy_job]
+  script:
+    - mkdir -p trivy-reports
+    - trivy fs --ignorefile .trivyignore.yaml --scanners vuln,license --severity HIGH,CRITICAL --format json --output trivy-reports/fs.json .
+
+# Item 2: the six images build:images pushed to this project's registry. Needs
+# build:images for the pushed repo@digest names in its release.env dotenv
+# (<NAME>_BUILD_DIGEST), pulled with the job-token credentials exactly as
+# build:images logs in, never a personal token. No Docker daemon: trivy reads
+# the registry directly. Same gate as build:images, so it never waits on a job
+# that is skipped.
+# The credentials are scoped to $CI_REGISTRY through a private DOCKER_CONFIG
+# (auths for that host only; Trivy's keychain reads it), not TRIVY_USERNAME /
+# TRIVY_PASSWORD: those (--username/--password) are sent as basic auth to every
+# registry Trivy contacts, including its vulnerability-DB registries
+# (pkg/remote/remote.go authOptions), so the job token would leave this host.
+# The directory is mode 700, outside the cache and artifact paths, never
+# echoed, and removed by a trap on exit. base64 is coreutils in $GOLANG_IMAGE.
+scan:trivy-images:
+  stage: test
+  needs:
+    - job: build:images
+      artifacts: true
+  <<: [*gate, *trivy_job]
+  variables:
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivy-cache
+  script:
+    - mkdir -p trivy-reports
+    - |
+      set -eu
+      DOCKER_CONFIG="$(mktemp -d)"
+      export DOCKER_CONFIG
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+      chmod 700 "$DOCKER_CONFIG"
+      (
+        umask 077
+        auth="$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')"
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$auth" > "$DOCKER_CONFIG/config.json"
+      )
+      for name in birdcage mockingbird nightjar smb-lure holder opencanary; do
+        upper="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
+        ref_var="${upper}_BUILD_DIGEST"
+        ref="${!ref_var:?${ref_var} missing from build:images' release.env}"
+        trivy image --ignorefile .trivyignore.yaml --image-src remote --severity HIGH,CRITICAL --format json --output "trivy-reports/${name}.json" "$ref"
+      done
+
 # #139: nothing else in this file ever checks a pin against its own
 # upstream -- every version above is trusted to still be current for as
 # long as nobody happens to look. scripts/staleness-check.py is that
@@ -656,7 +881,7 @@ audit:staleness:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PIPELINE_SCHEDULE_DESCRIPTION == "staleness"
     - when: never
   before_script:
-    - pip install --quiet pyyaml
+    - 'pip install --quiet --require-hashes --only-binary :all: -r ci/requirements-ci.txt'
   script:
     - python3 scripts/staleness-check.py --report staleness-report.md
   artifacts:
@@ -3068,9 +3293,19 @@ release:promote:
       {
         echo "RELEASE_TAG=$(scripts/release-version.sh --tag)"
         echo "RELEASE_COMMIT=$commit"
+        # The repositories promoted, for release:gitlab's note (#230).
+        echo "RELEASE_BIRDCAGE_REPO=$BIRDCAGE_RELEASE_REPO"
+        echo "RELEASE_MOCKINGBIRD_REPO=$MOCKINGBIRD_RELEASE_REPO"
+        echo "RELEASE_NIGHTJAR_REPO=$NIGHTJAR_RELEASE_REPO"
+        echo "RELEASE_SMB_LURE_REPO=$SMB_LURE_RELEASE_REPO"
+        echo "RELEASE_HOLDER_REPO=$HOLDER_RELEASE_REPO"
+        echo "RELEASE_OPENCANARY_REPO=$OPENCANARY_RELEASE_REPO"
       } > promotion.env
       cat promotion.env
   artifacts:
+    # The file as well as the report: release:gitlab reads the file.
+    paths:
+      - promotion.env
     reports:
       dotenv: promotion.env
     expire_in: 90 days
@@ -3133,25 +3368,18 @@ release:gitlab:
     # Same reason as release:mirror-release (#171): without this an empty
     # tag reaches release-cli, because echo succeeds either way.
     - 'test -n "${RELEASE_TAG:-}" && test -n "${RELEASE_COMMIT:-}" || { echo "no RELEASE_TAG/RELEASE_COMMIT: release:promote did not finish"; exit 1; }'
+    # The note names each image from what release:promote reported, and
+    # fails here -- before any release is made -- if one is empty (#230).
+    - sh scripts/release-note.sh promotion.env > release-note.md
+    - cat release-note.md
     - echo "tagging $RELEASE_COMMIT as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
     tag_message: birdcage $RELEASE_TAG
     ref: $CI_COMMIT_SHA
     name: $RELEASE_TAG
-    description: |
-      Images published by digest, promoted from the build `preview` tested:
-
-      - `$BIRDCAGE_RELEASE_REPO:$RELEASE_TAG`
-      - `$MOCKINGBIRD_RELEASE_REPO:$RELEASE_TAG`
-      - `$NIGHTJAR_RELEASE_REPO:$RELEASE_TAG`
-      - `$SMB_LURE_RELEASE_REPO:$RELEASE_TAG`
-      - `$HOLDER_RELEASE_REPO:$RELEASE_TAG`
-      - `$OPENCANARY_RELEASE_REPO:$RELEASE_TAG`
-
-      Verify before you run either of them -- docs/releasing.md has the
-      commands. Both carry a key-based validation attestation; the keyless
-      countersignature is added by hand on GitHub after the cut.
+    # Written by the script section from release:promote's report (#230).
+    description: ./release-note.md
 
 sync:mirror-to-github:
   stage: sync

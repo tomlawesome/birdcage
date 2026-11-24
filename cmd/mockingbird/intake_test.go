@@ -56,6 +56,12 @@ func newTestIntake(t *testing.T, qcfg queue.Config) (*Intake, string) {
 	return in, logPath
 }
 
+// alertWaitBound is how long a test waits for alerts to arrive through the
+// real sender. waitForAlertCount polls and returns as soon as the count is
+// reached, so the bound costs nothing on a fast host; it is generous so a
+// loaded CI runner does not fail the test (#251, CI job 61299).
+const alertWaitBound = 30 * time.Second
+
 func waitForAlertCount(t *testing.T, database *db.DB, canaryID string, want int, timeout time.Duration) []store.Alert {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

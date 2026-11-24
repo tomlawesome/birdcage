@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- poll-interval jitter only, not security (#199)
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
@@ -176,12 +176,26 @@ func runSelfTest(ctx context.Context, in *Intake, bait baitLookup, cmd *client.C
 
 	var windows []*claimWindow
 	for _, t := range params.Targets {
-		if probe.Attributed(t.Service) {
+		if probe.Attributed(t.Service) || probe.ConnectionClaimed(t.Service) {
 			windows = append(windows, in.claims.startWindow(t.Service, params.Address, t.Marker))
 		}
 	}
 
 	outcomes := probe.Sweep(ctx, params)
+
+	// An ssh probe's source port is known only once its connection is
+	// open, so it reaches the window after the sweep (#239); every event
+	// of that connection is held until the window resolves below.
+	for _, o := range outcomes {
+		if o.SourcePort == 0 {
+			continue
+		}
+		for _, w := range windows {
+			if w.service == o.Service {
+				w.setSourcePort(o.SourcePort)
+			}
+		}
+	}
 
 	if len(windows) > 0 {
 		select {
@@ -225,8 +239,8 @@ type baitLookup interface {
 }
 
 // runAgentHandledTarget runs a target internal/agent/probe deliberately
-// left to this binary (probe.StatusAgentHandled). Today that is #86's
-// poisoner and nothing else.
+// left to this binary (probe.StatusAgentHandled): #86's poisoner and
+// #243's SMB reachability check.
 //
 // The grading is inverted from every other target: #86 slice C grades
 // SILENCE as a pass, because the names the detector asks for do not
@@ -235,17 +249,27 @@ type baitLookup interface {
 // alert for it has already gone out through the ordinary event path by
 // the time LookupOnce returns.
 //
-// This currently reports to the operator's log and no further. Birdcage
-// cannot yet be told that a poisoner target passed: every grade it
-// records is proved by a marker-bearing event arriving
-// (internal/store/selftest_grade.go), and silence produces no event to
-// carry a marker. Nothing mints a poisoner target for that reason, so in
-// this build this function runs only if something else starts minting
-// one -- at which point the log line below is what says whether the bait
-// went out.
+// Every grade birdcage records is proved by a marker-bearing event
+// arriving (internal/store/selftest_grade.go), and silence produces no
+// event to carry a marker. So this function reports the outcome itself,
+// in a result event carrying the target's marker (reportSelfTestResult).
+// The scheduler (internal/selftestsched) mints a poisoner target for
+// every honeypot canary, so this runs on every such run; the log lines
+// below say whether the bait went out.
 func runAgentHandledTarget(ctx context.Context, in *Intake, bait baitLookup, params selftest.Params, target selftest.Target) {
 	runID := params.RunID
 	service := target.Service
+	if service == "smb" {
+		// #243: a reachability check. Success is reported as a result
+		// event carrying the marker; failure reports nothing, so the run
+		// fails at its deadline and the failed-services list names smb.
+		if err := probe.ReachSMB(ctx, params.Address, target.DestPort); err != nil {
+			selftestLog.Warn(fmt.Sprintf("%s: smb lure did not answer an SMB2 negotiate: %s", runID, safeErr(err)))
+			return
+		}
+		reportSelfTestResult(in, runID, service, selfTestOutcomeReachable, target.Marker)
+		return
+	}
 	if service != poisoner.Service() {
 		selftestLog.Warn(fmt.Sprintf("%s: target %s is agent-handled but this binary has nothing to run for it", runID, service))
 		return

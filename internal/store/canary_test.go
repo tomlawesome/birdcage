@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -553,6 +554,62 @@ func TestListHoneypotCanariesForSelfTest(t *testing.T) {
 	})
 }
 
+// TestListPendingCanariesForSelfTestCarriesListenerFlags (#253): the pending
+// retry reads the same agent_smb_lure_up / agent_snmp_up flags the scheduled
+// and by-id queries do: true, false and NULL (never reported) come back as
+// *true, *false and nil, and a registered canary is still left out.
+func TestListPendingCanariesForSelfTestCarriesListenerFlags(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		report    bool
+		smb, snmp *bool
+	}{
+		{"never reported", false, nil, nil},
+		{"both up", true, &yes, &yes},
+		{"both down", true, &no, &no},
+		{"smb up, snmp not reported", true, &yes, nil},
+		{"smb not reported, snmp down", true, nil, &no},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachEngine(t, func(t *testing.T, database *db.DB) {
+				ctx := context.Background()
+				insertCanary(t, database, Canary{ID: "pending-a", Name: "p", Lane: "l", Ports: "22", EnrolledAt: time.Now(), Pending: true})
+				insertCanary(t, database, Canary{ID: "registered-a", Name: "r", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+				if tc.report {
+					if err := RecordCanaryAgentHeartbeat(ctx, database, "pending-a", time.Now().UTC(), AgentHeartbeat{
+						QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: tc.smb, SNMPUp: tc.snmp,
+					}); err != nil {
+						t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+					}
+				}
+
+				got, err := ListPendingCanariesForSelfTest(ctx, database)
+				if err != nil {
+					t.Fatalf("ListPendingCanariesForSelfTest: %v", err)
+				}
+				if len(got) != 1 || got[0].ID != "pending-a" {
+					t.Fatalf("got %+v, want only pending-a", got)
+				}
+				same := func(a, b *bool) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+				fmtb := func(b *bool) string {
+					if b == nil {
+						return "nil"
+					}
+					return fmt.Sprint(*b)
+				}
+				if !same(got[0].SMBLureUp, tc.smb) {
+					t.Errorf("SMBLureUp = %s, want %s", fmtb(got[0].SMBLureUp), fmtb(tc.smb))
+				}
+				if !same(got[0].SNMPUp, tc.snmp) {
+					t.Errorf("SNMPUp = %s, want %s", fmtb(got[0].SNMPUp), fmtb(tc.snmp))
+				}
+			})
+		})
+	}
+}
+
 // TestSelfTestCanaryByID covers both the found and not-found cases.
 func TestSelfTestCanaryByID(t *testing.T) {
 	forEachEngine(t, func(t *testing.T, database *db.DB) {
@@ -572,6 +629,72 @@ func TestSelfTestCanaryByID(t *testing.T) {
 		}
 		if ok {
 			t.Fatal("SelfTestCanaryByID(unknown canary) = true, want false")
+		}
+	})
+}
+
+// TestAgentListenerFlagsStoredAndCarried (#243): RecordCanaryAgentHeartbeat
+// writes agent_smb_lure_up and agent_snmp_up (NULL when the agent says
+// nothing), ListCanaries reads them back, and SelfTestCanary carries them to
+// the scheduler.
+func TestAgentListenerFlagsStoredAndCarried(t *testing.T) {
+	forEachEngine(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		insertCanary(t, database, Canary{ID: "canary-a", Name: "a", Lane: "l", Ports: "22", EnrolledAt: time.Now()})
+
+		sc, ok, err := SelfTestCanaryByID(ctx, database, "canary-a")
+		if err != nil || !ok {
+			t.Fatalf("SelfTestCanaryByID = %v, %v", ok, err)
+		}
+		if sc.SMBLureUp != nil || sc.SNMPUp != nil {
+			t.Errorf("before any heartbeat SMBLureUp, SNMPUp = %v, %v, want nil, nil", sc.SMBLureUp, sc.SNMPUp)
+		}
+
+		smb, snmp := true, false
+		now := time.Now().UTC()
+		if err := RecordCanaryAgentHeartbeat(ctx, database, "canary-a", now, AgentHeartbeat{
+			QueueDepth: 1, LogReadOK: true, LastEventID: "abc", SMBLureUp: &smb, SNMPUp: &snmp,
+		}); err != nil {
+			t.Fatalf("RecordCanaryAgentHeartbeat: %v", err)
+		}
+
+		var colSMB, colSNMP *int64
+		if err := database.QueryRow(`SELECT agent_smb_lure_up, agent_snmp_up FROM agents WHERE id = ?`, "canary-a").Scan(&colSMB, &colSNMP); err != nil {
+			t.Fatalf("scan listener columns: %v", err)
+		}
+		if colSMB == nil || *colSMB != 1 || colSNMP == nil || *colSNMP != 0 {
+			t.Errorf("columns = %v, %v, want 1, 0", colSMB, colSNMP)
+		}
+
+		c := findCanary(t, listCanaries(t, database, now, rangeDurations[DefaultRange]), "canary-a")
+		if c.AgentSMBLureUp == nil || !*c.AgentSMBLureUp || c.AgentSNMPUp == nil || *c.AgentSNMPUp {
+			t.Errorf("Canary flags = %v, %v, want true, false", c.AgentSMBLureUp, c.AgentSNMPUp)
+		}
+
+		sc, ok, err = SelfTestCanaryByID(ctx, database, "canary-a")
+		if err != nil || !ok {
+			t.Fatalf("SelfTestCanaryByID after heartbeat = %v, %v", ok, err)
+		}
+		if sc.SMBLureUp == nil || !*sc.SMBLureUp || sc.SNMPUp == nil || *sc.SNMPUp {
+			t.Errorf("SelfTestCanary flags = %v, %v, want true, false", sc.SMBLureUp, sc.SNMPUp)
+		}
+
+		// The list the scheduler walks carries them too.
+		list, err := ListHoneypotCanariesForSelfTest(ctx, database)
+		if err != nil {
+			t.Fatalf("ListHoneypotCanariesForSelfTest: %v", err)
+		}
+		var found bool
+		for _, l := range list {
+			if l.ID == "canary-a" {
+				found = true
+				if l.SMBLureUp == nil || !*l.SMBLureUp || l.SNMPUp == nil || *l.SNMPUp {
+					t.Errorf("listed flags = %v, %v, want true, false", l.SMBLureUp, l.SNMPUp)
+				}
+			}
+		}
+		if !found {
+			t.Error("canary-a missing from ListHoneypotCanariesForSelfTest")
 		}
 	})
 }

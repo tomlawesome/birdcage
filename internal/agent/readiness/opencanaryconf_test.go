@@ -1,6 +1,7 @@
 package readiness
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,5 +86,39 @@ func TestModulePortsSurvivesAMissingFile(t *testing.T) {
 	_, err := ModulePorts(filepath.Join(t.TempDir(), "absent.conf"))
 	if err == nil {
 		t.Fatal("expected an error for a missing config file")
+	}
+}
+
+// TestShippedConfLogsHEADOptionsAndRedirects pins issue #141's two OpenCanary
+// http flags: without them a HEAD or OPTIONS probe (logtype 3002) and a
+// redirected request (logtype 3003) leave no log line at all.
+func TestShippedConfLogsHEADOptionsAndRedirects(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(shippedConf)
+	if err != nil {
+		t.Fatalf("read %s: %v", shippedConf, err)
+	}
+	var conf map[string]any
+	if err := json.Unmarshal(data, &conf); err != nil {
+		t.Fatalf("parse %s: %v", shippedConf, err)
+	}
+	for _, key := range []string{"http.log_unimplemented_method_requests", "http.log_redirect_request"} {
+		if got, ok := conf[key].(bool); !ok || !got {
+			t.Errorf("%s = %v, want true", key, conf[key])
+		}
+	}
+}
+
+func TestModulePortsRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "bad.conf")
+	if err := os.WriteFile(path, []byte(`{"ssh.enabled": true, "ssh.port": 22`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ports, err := ModulePorts(path)
+	if err == nil || ports != nil {
+		t.Fatalf("ModulePorts = %v, %v, want nil and a parse error", ports, err)
 	}
 }

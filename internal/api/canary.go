@@ -156,10 +156,14 @@ func (h *handler) handleCanary(w http.ResponseWriter, r *http.Request) {
 	out := canaryPageCanary{canaryWithSelfTest: canaryWithSelfTest{Canary: *found}}
 	results, ok, err := store.SelfTestServiceResults(r.Context(), h.db, found.ID)
 	if err != nil {
-		// Best-effort, exactly as handleCanaries treats it: the
-		// run-level summary on the canary still renders.
+		// A failed lookup is a store fault, not an absent self-test:
+		// answering 200 without self_test would look like "never ran"
+		// to the page, exactly as handleCanaries refuses to (#224).
 		log.Printf("api: self-test service results for %s: %v", found.ID, err)
-	} else if ok {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ok {
 		out.SelfTest = results
 	}
 
@@ -204,6 +208,16 @@ func (h *handler) canaryFacts(r *http.Request, c store.Canary, now time.Time) (c
 		RegisteredAt:       c.RegisteredAt,
 		AgentVersion:       c.AgentVersion,
 		PoisonerNames:      c.PoisonerNames,
+	}
+
+	// #243: the SNMP and SMB listeners are not in the profile port list;
+	// the agent's own heartbeat flags add them, in the same "service port"
+	// form, only when answering.
+	if c.AgentSNMPUp != nil && *c.AgentSNMPUp {
+		facts.Ports = joinListening(facts.Ports, "snmp 161")
+	}
+	if c.AgentSMBLureUp != nil && *c.AgentSMBLureUp {
+		facts.Ports = joinListening(facts.Ports, "smb 445")
 	}
 
 	enabled, err := store.GetSetting(r.Context(), h.db, store.SettingSelfTestEnabled)
@@ -322,4 +336,13 @@ func (h *handler) handleCanaryRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, canaryRunsResponse{Runs: runs})
+}
+
+// joinListening appends one "service port" entry to the listening row,
+// using the " · " separator store.portsDisplay puts between entries.
+func joinListening(ports, entry string) string {
+	if ports == "" {
+		return entry
+	}
+	return ports + " · " + entry
 }

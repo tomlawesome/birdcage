@@ -56,9 +56,7 @@ func Attributed(service string) bool {
 }
 
 // notProbeable are the services #46 rules out of scope for this build:
-// smb needs a real Samba audit VFS this build cannot provide (a deploy
-// dependency, not a protocol limit -- see note 19797), and llmnr's own
-// detector (#86) is a separate, not-yet-designed feature -- OpenCanary's
+// llmnr's own detector (#86) is a separate, not-yet-designed feature -- OpenCanary's
 // own llmnr module stays permanently disabled per notes 20752/20767, so
 // there is currently no live target for a carrier to trigger at all. A
 // target naming one of these is reported as StatusNotProbeable; nothing
@@ -66,7 +64,6 @@ func Attributed(service string) bool {
 // reader can tell "ruled out" apart from "this build doesn't know how
 // yet."
 var notProbeable = map[string]bool{
-	"smb":   true,
 	"llmnr": true,
 }
 
@@ -74,7 +71,11 @@ var notProbeable = map[string]bool{
 // because cmd/mockingbird probes them itself, holding the detector that
 // does the work.
 //
-// poisoner (#86) is the only one. Its probe is one bait lookup on a
+// smb (#243) is a reachability check, not a marker: the lure logs only
+// completed file closes, so cmd/mockingbird runs probe.ReachSMB and
+// reports the result itself.
+//
+// poisoner (#86) is the other. Its probe is one bait lookup on a
 // multicast group or a subnet broadcast, made by the live
 // internal/agent/poisoner detector -- the same one whose sockets are
 // already open and whose bait names are already settled. This package may
@@ -88,8 +89,14 @@ var notProbeable = map[string]bool{
 // own, rather than being left to read a "no carrier" as a gap.
 var agentHandled = map[string]bool{
 	"poisoner": true,
+	"smb":      true,
 }
 
 // AgentHandled reports whether service is probed by cmd/mockingbird
 // itself rather than by this package -- see agentHandled.
 func AgentHandled(service string) bool { return agentHandled[service] }
+
+// ConnectionClaimed reports whether service's probe reports the source
+// port of its own connection, so the agent can claim every event of
+// that connection, not just the one carrying the marker (#239).
+func ConnectionClaimed(service string) bool { return service == "ssh" }

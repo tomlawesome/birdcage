@@ -1,0 +1,10 @@
+# Planted defect for the actionlint self-test (#199). Expected: exit 1 and the
+# `expression` rule id (misspelled context property), plus an undefined needs.
+name: planted
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    needs: [no-such-job]
+    steps:
+      - run: echo "${{ github.evnt.name }}"

@@ -1,0 +1,10 @@
+{
+  "name": "birdcage-ci-squawk",
+  "private": true,
+  "version": "0.0.0",
+  "description": "squawk (Postgres migration linter), installed apart from frontend/ (#199)",
+  "license": "LicenseRef-Birdcage-Noncommercial-1.0",
+  "dependencies": {
+    "squawk-cli": "2.73.0"
+  }
+}

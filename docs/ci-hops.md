@@ -85,7 +85,7 @@ of it by this issue.
 
 | check | why it is here |
 | --- | --- |
-| `lint:go` | Go source changes on nearly every branch. |
+| `lint:go` | Go source changes on nearly every branch. Also runs gosec (#199; a high count above its ceiling fails the job) and dupl (#200; duplicated blocks of 150 tokens or more, test files excluded; blocks: a count above the go-dupl ceiling (0) in supply-chain/scan-ceilings.yml fails the job). |
 | `lint:licences` | A dependency can arrive on any branch; a licence found late is found after it shipped. |
 | `lint:ci` | Guards this arrangement. Cheapest job in the pipeline. |
 | `lint:agent-deps` | ADR-0008 decision 4 -- no server package may reach the agent image. Broken by an ordinary import. |
@@ -93,10 +93,16 @@ of it by this issue.
 | `lint:flake-check` | #196: the flake log must have an issue and a quarantine entry for any flake with three sightings, and no malformed sighting. A text check on one file, so it costs seconds. |
 | `lint:govulncheck` | #51: a known-vulnerable dependency or stdlib CVE can land on any branch and stay until someone reads an advisory by hand; catching it at the same hop as every other lint job is what makes that not happen. |
 | `lint:gitleaks` | #28: a secret can arrive in a commit any way other than this host's own pre-commit gate (a different machine, a direct push with the hook bypassed on a workstation without it). Full-history, every merge request and `dev`, same reasoning as the other lint jobs -- a gap found late is found after it shipped. |
+| `lint:static-scan` | #199: code scanning. actionlint and zizmor over the workflow files, ruff (security rules) over the tracked Python, shellcheck over the tracked shell scripts; gosec runs inside `lint:go`. Each tool runs first on a planted defect and must fail, then on the tree; a finding count above its ceiling in `supply-chain/scan-ceilings.yml` fails, as does a reasonless suppression. Merge requests, `dev`, `preview` and `main`, like the other static checks. Not a fast check: it does not run on the push that lands on `dev`. Reports are kept as artifacts for 30 days. |
+| `lint:squawk` | #199: a Postgres migration that takes a long lock or rewrites a table is found when it is written, not when it runs against a live database. squawk over `internal/db/migrations/postgres/*.sql` (the sqlite set is not Postgres), report only (allow_failure) for now. Installed apart from `frontend/` in `ci/squawk`, with no install scripts. The report is kept as an artifact for 30 days. |
+| `lint:semgrep` | #199: a Go or TypeScript code pattern the Semgrep CE rule sets flag (p/golang, p/typescript) can arrive on any branch. Report-only (`allow_failure`), JSON report kept 30 days; runs from the official image pinned by digest, logged out with `--metrics=off`, rules fetched at run time. |
+| `lint:trivy-config` | #199: Dockerfile misconfiguration (HIGH and CRITICAL) can arrive on any branch that touches `build/`. Report-only (`allow_failure`), JSON report kept 30 days; Trivy is installed by `scripts/ensure-trivy.sh` (cosign-verified release). |
+| `lint:trivy-fs` | #199: a vulnerable or licence-restricted npm or Go dependency can arrive in any lockfile change. Report-only, JSON report kept 30 days; the vulnerability database comes from a GitLab cache. |
 | `test:frontend` | Unit tests and the pixel gates (band, below the band, canary page, sign-in door). Head of the longest chain, so it starts immediately. |
 | `test:go` | The unit suite, against SQLite and a real Postgres. |
 | `test:go:quarantine` | #196: the tests in `scripts/quarantine.txt`, kept out of `test:go` after a third flake sighting. Does not block (`allow_failure`); not an e2e job. |
 | `test:smoke` | The real binary driven by a browser, in Firefox (#83) -- the owner's browser, so it is the bar every change has to clear. It signs in through the door's screens first (#8): first run with the logged setup code, an authenticator app, the recovery codes, enter. #81 widened its journeys past the hero sentence and four tiles: every section rendering with no console error, the range picker actually re-querying, a live event over the real ingest path reaching the page by SSE, the status strip including the mail item, and a killed birdcage read as a message rather than a blank page. |
+| `scan:trivy-images` | #199: a HIGH or CRITICAL vulnerability in the six images `build:images` pushes (birdcage, mockingbird, nightjar, smb-lure, holder, opencanary). Needs `build:images` and reads the pushed digests from the registry with the job token, passed through a private `DOCKER_CONFIG` scoped to `$CI_REGISTRY` (never `TRIVY_USERNAME`/`TRIVY_PASSWORD`, which reach the DB registries too). Report-only, JSON report kept 30 days. |
 | `test:image:birdcage` | Proves the shipped image starts and answers. |
 | `test:image:mockingbird` | Proves nothing in the agent image runs as root. |
 | `test:image:opencanary` | Issue #132's own split of what this job used to prove about the combined image: OpenCanary starts as uid 65532 under its shipped hardening and answers a real FTP client. |

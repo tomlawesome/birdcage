@@ -34,6 +34,7 @@ type ingestHandler struct {
 	hub           *stream.Hub
 	now           func() time.Time
 	limiters      *limiterRegistry
+	scanLimiters  *scanLimiters
 	coalescer     *auditCoalescer
 	selfTestIndex *store.SelfTestIndex
 	rotationHook  SelfTestRotationHook
@@ -138,7 +139,7 @@ func ingestRoutes(h *ingestHandler) []ingestRoute {
 // to cross in a handful of calls rather than thousands -- mirroring
 // internal/api's own newHandler/NewHandler split.
 func newHandler(database *db.DB, hub *stream.Hub, now func() time.Time, limits limiterLimits, idx *store.SelfTestIndex, hook SelfTestRotationHook, opts ...Option) http.Handler {
-	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook,
+	h := &ingestHandler{db: database, hub: hub, now: now, limiters: newLimiterRegistry(limits), scanLimiters: newScanLimiters(), coalescer: newAuditCoalescer(), selfTestIndex: idx, rotationHook: hook,
 		certTTL: DefaultClientCertTTL, dualUse: newDualUseTracker(), findingsRetentionDays: DefaultFindingsRetentionDays}
 	for _, opt := range opts {
 		opt(h)

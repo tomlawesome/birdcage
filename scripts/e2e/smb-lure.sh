@@ -259,4 +259,150 @@ want=$((before + 1))
 [ "$after" = "$want" ] || fail "$after alerts name $SMB_LURE_BAIT_TWO after OpenCanary's restart, want $want -- the canary's own reporting was disturbed by a container it does not own" "$SMB_LURE_CANARY" "$SMB_LURE_OPENCANARY" "$E2E_BIRDCAGE"
 ok "the canary and the lure kept reporting through OpenCanary's own restart ($before -> $after)"
 
+# --- #243: the SMB lure and SNMP are listed and self-tested ---------------
+
+# canary_page prints /api/canary for the lure canary: its facts (the
+# "listening" row) and its self-test runs.
+canary_page() {
+  helper "curl -sS --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canary?id=$SMB_LURE_CANARY_ID&range=14d'"
+}
+
+# canary_jq runs one jq program (its arguments, as one string) over a fresh
+# GET of the lure canary's page, inside the helper: the runner's shell has no
+# jq (CI pipeline 5140), and the JSON never round-trips through it. As
+# upgrade.sh's page_jq does. Inside the double-quoted helper string a literal
+# $ in the program is written \$, and the program's own quotes \".
+canary_jq() {
+  helper "curl -sS --fail --cacert /tls/dashboard-ca.pem $DASHBOARD_AUTH '$BIRDCAGE_URL/api/canary?id=$SMB_LURE_CANARY_ID&range=14d' | jq $1"
+}
+
+# page_lists prints, on fd 3, the time and the facts.ports each attempt
+# saw (cut to 200 characters), so a run that never matches shows why. The
+# trace is a second helper call and never decides pass or fail. poll()
+# sends both stdout and stderr of the command to /dev/null, so the trace
+# goes to fd 3, a copy of the script's stderr.
+exec 3>&2
+page_lists() {
+  printf '%s page_lists %s: facts.ports=%s\n' "$(date -u +%H:%M:%S)" "$1" \
+    "$(canary_jq "-c '.facts.ports'" 2>&1 | head -c 200)" >&3
+  canary_jq "-e --arg s '$1' '.facts.ports | contains(\$s)'"
+}
+
+page_lacks() {
+  canary_jq "-e --arg s '$1' '.facts.ports | contains(\$s) | not'"
+}
+
+# The self-test timings (seconds). Defined here, ahead of the first step that
+# schedules a run, because the open-run wait below and the failure wait in step
+# 13 both use them. SELFTEST_WINDOW_S is selfTestWindow, 10 min
+# (internal/selftestsched/scheduler.go:49); SELFTEST_TICK_S is one scheduler
+# tick (cmd/birdcage/main.go:188, selfTestTickInterval = 1 min).
+SELFTEST_SCHEDULE_LEAD_S=$(( 120 + 59 ))
+SELFTEST_WINDOW_S=$(( 10 * 60 ))
+SELFTEST_TICK_S=60
+SELFTEST_MARGIN_S=60
+
+# no_open_self_test succeeds when every self-test run of the lure canary has
+# completed_at (the field is omitted while a run is open). #253: the canary's
+# first self-test, its enrolment proof, can still be open when step 13
+# schedules a run, and one open self-test per canary (#227) makes the
+# scheduler skip the scheduled run, which is not retried until the next day.
+no_open_self_test() {
+  canary_jq "-e '[(.self_test_runs // [])[] | select(.completed_at == null)] | length == 0'"
+}
+
+# wait_for_no_open_self_test waits, within one run window plus a tick and a
+# margin, for an earlier run to close before run_self_test schedules.
+wait_for_no_open_self_test() {
+  local wait_s=$(( SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+  poll "$wait_s" no_open_self_test \
+    || fail "an earlier self-test run never closed: the lure canary still had an open run after waiting ${wait_s} s (window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s), so a scheduled run would be skipped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+}
+
+# canary_registered succeeds when the lure canary has facts.registered_at (omitted
+# while it is pending, internal/api/canary.go).
+canary_registered() {
+  canary_jq "-e '.facts.registered_at != null'"
+}
+
+# canary_registered_and_idle: registered AND no open self-test run. A pending
+# canary never gets there: the pending retry re-mints in the same tick that
+# sweeps its expired run (#253, pipeline 5241).
+canary_registered_and_idle() {
+  canary_registered && no_open_self_test
+}
+
+# run_self_test schedules one self-test for the next minute (the same
+# settings the surface journey uses) and puts the schedule settings back.
+run_self_test() {
+  local when
+  "$E2E_STACK" birdcage settings set selftest_enabled true >/dev/null || fail "could not enable self-tests"
+  "$E2E_STACK" birdcage settings set selftest_use_rotation_schedule false >/dev/null || fail "could not choose the own schedule"
+  when="$(date -u -d "@$(( $(date -u +%s) + 120 ))" +%H:%M)"
+  "$E2E_STACK" birdcage settings set selftest_schedule "$when" >/dev/null || fail "could not set the self-test schedule"
+}
+
+# newest_run_failed_naming prints success when the newest self-test run
+# issued after SELFTEST_FROM has failed and lists the service exactly as
+# failed_services spells it, "service port" (e.g. "smb 445").
+SELFTEST_FROM=""
+newest_run_failed_naming() {
+  canary_jq "-e --arg s '$1' --arg f '$SELFTEST_FROM' '[.self_test_runs[] | select(.issued_at > \$f)] | any(.passed == false and ((.failed_services // []) | index(\$s) != null))'"
+}
+
+newest_run_passed() {
+  canary_jq "-e --arg f '$SELFTEST_FROM' '[.self_test_runs[] | select(.issued_at > \$f)] | any(.passed == true)'"
+}
+
+step "the canary's page lists the SMB lure and SNMP as listening (#243)"
+poll 150 page_lists "smb 445" || fail "the page's listening row never showed smb 445: $(canary_page)" "$SMB_LURE_CANARY"
+poll 150 page_lists "snmp 161" || fail "the page's listening row never showed snmp 161: $(canary_page)" "$SMB_LURE_CANARY"
+ok "the listening row names smb 445 and snmp 161"
+
+step "the lure canary is registered and has no open self-test, before the lure stops (#253)"
+# Worst case: a still-open run expires (one window plus a tick), a retry run
+# then completes (another window plus a tick), plus a margin.
+IDLE_WAIT_S=$(( 2 * SELFTEST_WINDOW_S + 2 * SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+if ! poll "$IDLE_WAIT_S" canary_registered_and_idle; then
+  if ! canary_registered >/dev/null 2>&1; then
+    why="the canary was still pending (no registered_at), so its enrolment proof kept being retried"
+  else
+    why="the canary was registered but a self-test run was still open"
+  fi
+  fail "$why after waiting ${IDLE_WAIT_S} s (2 x window ${SELFTEST_WINDOW_S} s + 2 x tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s): $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+fi
+ok "the canary is registered and idle"
+
+step "the lure stops, and smb 445 leaves the listening row (#243)"
+docker stop --time 10 "$SMB_LURE" >/dev/null || fail "could not stop the lure" "$SMB_LURE"
+poll 150 page_lacks "smb 445" || fail "smb 445 stayed in the listening row with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY"
+ok "smb 445 left the listening row"
+
+step "a self-test with the lure down fails, naming smb (#243)"
+wait_for_no_open_self_test
+SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_self_test
+# A down service sends no event (cmd/mockingbird/command.go:263-268), so the
+# run only fails when its deadline passes and SweepExpiredSelfTestRuns runs on
+# a scheduler tick. Wait for all of: the schedule lead (run_self_test's +120 s,
+# and up to 59 s more because the time is HH:MM), the window
+# (internal/selftestsched/scheduler.go:49, selfTestWindow = 10 min), one tick
+# (cmd/birdcage/main.go:188, selfTestTickInterval = 1 min), and a margin.
+# poll sleeps 1 s per attempt (journey.sh poll), so attempts >= seconds.
+SELFTEST_FAIL_WAIT_S=$(( SELFTEST_SCHEDULE_LEAD_S + SELFTEST_WINDOW_S + SELFTEST_TICK_S + SELFTEST_MARGIN_S ))
+poll "$SELFTEST_FAIL_WAIT_S" newest_run_failed_naming "smb 445" \
+  || fail "no self-test run failed naming smb after waiting ${SELFTEST_FAIL_WAIT_S} attempts (>= ${SELFTEST_FAIL_WAIT_S} s: lead ${SELFTEST_SCHEDULE_LEAD_S} s + window ${SELFTEST_WINDOW_S} s + tick ${SELFTEST_TICK_S} s + margin ${SELFTEST_MARGIN_S} s) with the lure stopped: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+ok "the failed run names smb (self_test_failed)"
+
+step "the lure starts again, and the next self-test passes (#243)"
+docker start "$SMB_LURE" >/dev/null || fail "could not start the lure" "$SMB_LURE"
+"$SMB_LURE_STACK" restart-lure || fail "the lure did not answer after starting" "$SMB_LURE"
+poll 150 page_lists "smb 445" || fail "smb 445 never came back to the listening row: $(canary_page)" "$SMB_LURE_CANARY"
+wait_for_no_open_self_test
+SELFTEST_FROM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_self_test
+poll 300 newest_run_passed \
+  || fail "the self-test did not pass with the lure back: $(canary_page)" "$SMB_LURE_CANARY" "$E2E_BIRDCAGE"
+ok "the next self-test run passed, smb included"
+
 finish

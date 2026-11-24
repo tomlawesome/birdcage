@@ -268,6 +268,12 @@
   // already owns. null only before the first effect run, which never
   // overlaps with the stream effect actually receiving a message.
   let triggerRefresh: (() => void) | null = null
+  // A write's refetch: like triggerRefresh, but a load already in flight
+  // (which may have read before the write) is followed by one more, at
+  // most one pending.
+  let triggerWriteRefresh: (() => void) | null = null
+  /** #227: the admin pills ask for the refetch the poll already does. */
+  const refetchNow = () => triggerWriteRefresh?.()
 
   // Refetches whenever activeRange changes and every REFRESH_MS after
   // that; `inFlight` is local to this effect run (a fresh false every
@@ -279,9 +285,22 @@
   // required fallback: it stays exactly as it was before that issue,
   // so a stream that never connects, drops, or is disabled leaves the
   // dashboard behaving exactly as it does today.
+  // Issue #190 (owner answer 55b): background checks of a hidden tab keep
+  // the session's idle timer awake, so the poll and the stream below pause
+  // while the tab is hidden (Page Visibility API). Showing the tab re-runs
+  // the poll effect, whose immediate load() is the one refresh.
+  const isTabVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  let tabVisible = $state(isTabVisible())
+  onMount(() => {
+    const onVisibility = () => (tabVisible = isTabVisible())
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  })
+
   $effect(() => {
     // Nothing is fetched while the door is (or may be) showing.
     if (phase !== 'in') return
+    if (!tabVisible) return
     const range = activeRange
     // Read here so the effect re-subscribes on navigation: moving to a
     // canary page must fetch that page now, not on the next 30 s tick.
@@ -291,6 +310,7 @@
     const gen = epoch
     const current = () => range === activeRange && gen === epoch
     let inFlight = false
+    let again = false
     const load = async () => {
       if (inFlight) return
       inFlight = true
@@ -364,9 +384,17 @@
         await canaryLoad
         await runsLoad
         inFlight = false
+        if (again) {
+          again = false
+          if (current()) void load()
+        }
       }
     }
     triggerRefresh = load
+    triggerWriteRefresh = () => {
+      if (inFlight) again = true
+      else void load()
+    }
     load()
     const interval = setInterval(load, REFRESH_MS)
     return () => clearInterval(interval)
@@ -391,6 +419,7 @@
   // it did before this effect existed.
   $effect(() => {
     if (phase !== 'in') return
+    if (!tabVisible) return
     if (typeof EventSource === 'undefined') return
     // A fixture scene has no server behind it: the fetches above already
     // answer from the fixture, and the stream must stay closed too.
@@ -565,7 +594,7 @@
       <!-- Issue #118: one canary's own page. The shell above is
            unchanged; only what fills main is. -->
       {#if canaryPage && trace}
-        <CanaryPage page={canaryPage} {trace} {visitors} {history} runs={canaryRuns} range={activeRange} />
+        <CanaryPage page={canaryPage} {trace} {visitors} {history} runs={canaryRuns} range={activeRange} role={session?.role} onchanged={refetchNow} />
       {:else}
         <div class="state-line">
           {#if canaryFailed}there is no agent called {route.id} &middot; <a href={cageHref}>back to the cage</a>{:else}listening
@@ -583,9 +612,9 @@
           >{:else}<span class={seg.cls}>{seg.text}</span>{/if}{/each}
       </div>
       <Band {trace} />
-      <Tiles {canaries} {trace} range={activeRange} />
+      <Tiles {canaries} {trace} range={activeRange} role={session?.role} onchanged={refetchNow} />
       <History {history} failed={historyFailed} range={activeRange} />
-      <Events {canaries} {visitors} {trace} range={activeRange} />
+      <Events {canaries} {visitors} {trace} range={activeRange} role={session?.role} onchanged={refetchNow} />
     {/if}
   </main>
 

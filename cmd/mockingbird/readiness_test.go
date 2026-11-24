@@ -10,8 +10,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/birdcage/internal/agent/readiness"
 )
 
 // captureLogger is a *slog.Logger whose output can be asserted on,
@@ -325,5 +328,83 @@ func TestDefaultReadinessConfigMatchesShippedDefaults(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("defaultReadinessConfig() = %+v, want %+v", got, want)
+	}
+}
+
+// Issue #238: the probe must not connect to a module that logs on bare
+// connect (ssh). Seam: openCanaryProbe has two injectable fields,
+// `dial readiness.DialFunc` and `listening readiness.ListeningFunc`,
+// defaulting to readiness.Dial and a /proc/net/tcp{,6} reader.
+type probeDialRecorder struct {
+	mu     sync.Mutex
+	dialed []string
+}
+
+func (r *probeDialRecorder) dial(_ context.Context, _, address string) (net.Conn, error) {
+	r.mu.Lock()
+	r.dialed = append(r.dialed, address)
+	r.mu.Unlock()
+	c, s := net.Pipe()
+	_ = s.Close()
+	return c, nil
+}
+
+func (r *probeDialRecorder) saw(address string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, a := range r.dialed {
+		if a == address {
+			return true
+		}
+	}
+	return false
+}
+
+func fakeListening(ports ...int) readiness.ListeningFunc {
+	return func() (map[int]bool, error) {
+		m := map[int]bool{}
+		for _, p := range ports {
+			m[p] = true
+		}
+		return m, nil
+	}
+}
+
+func TestOpenCanaryProbeDoesNotDialSSHWhenListening(t *testing.T) {
+	t.Parallel()
+	conf := writeConf(t, map[string]int{"ssh": 22, "ftp": 21})
+	log, _ := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	rd := &probeDialRecorder{}
+	probe.dial = rd.dial
+	probe.listening = fakeListening(22)
+
+	got := probe.Probe(context.Background())
+	if got == nil || !*got {
+		t.Fatalf("Probe() = %v, want true", got)
+	}
+	if rd.saw("127.0.0.1:22") {
+		t.Fatal("probe dialled the ssh port; that shows as a visitor every heartbeat (#238)")
+	}
+	if !rd.saw("127.0.0.1:21") {
+		t.Errorf("ftp must still be dialled, dialled %v", rd.dialed)
+	}
+}
+
+func TestOpenCanaryProbeReportsDownWhenSSHNotListening(t *testing.T) {
+	t.Parallel()
+	conf := writeConf(t, map[string]int{"ssh": 22, "ftp": 21})
+	log, _ := captureLogger()
+	probe := newOpenCanaryProbe(fastReadinessConfig(conf), log)
+	rd := &probeDialRecorder{}
+	probe.dial = rd.dial
+	probe.listening = fakeListening(80) // ssh absent
+
+	got := probe.Probe(context.Background())
+	if got == nil || *got {
+		t.Fatalf("Probe() = %v, want false *bool", got)
+	}
+	if rd.saw("127.0.0.1:22") {
+		t.Fatal("probe dialled the ssh port")
 	}
 }

@@ -10,10 +10,12 @@ import (
 	"net/netip"
 	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tomlawesome/birdcage/internal/audit"
 	"github.com/tomlawesome/birdcage/internal/db"
 	"github.com/tomlawesome/birdcage/internal/opencanary"
+	"github.com/tomlawesome/birdcage/internal/selftest"
 	"github.com/tomlawesome/birdcage/internal/store"
 )
 
@@ -184,7 +186,7 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 			SourceIP:   ev.SourceIP,
 			DestPort:   ev.DestPort,
 			Service:    service,
-			Raw:        ev.Raw,
+			Raw:        truncateRaw(ev.Raw),
 			ReceivedAt: receivedAt, // birdcage's own receipt time, never agent-supplied
 			EventID:    ev.EventID,
 		}
@@ -200,25 +202,27 @@ func (h *ingestHandler) handleBatch(w http.ResponseWriter, r *http.Request) {
 		// far cheaper than losing the event entirely.
 		//
 		// #46 slice 3: an event carrying self_test_marker is an
-		// attributed-grade claim the agent made locally (note 19897) --
+		// claim the agent made locally (note 19897; ssh, #239) --
 		// corroborated independently by MatchSelfTestClaim, never taken
-		// on trust, and never falling back to a raw substring match (a
-		// marked-grade service proves itself with raw; a claim naming
-		// one is refused, not silently reinterpreted). A refusal is
-		// audited once, by canary/service/reason -- never the marker.
-		if ev.SelfTestMarker != "" {
-			matched, refusal, err := store.MatchSelfTestClaim(r.Context(), h.db, h.selfTestIndex, insert, ev.SelfTestMarker, receivedAt)
+		// on trust. The raw marker is matched first; the claim is tried
+		// only if it did not match. A refusal is audited once, by
+		// canary/service/reason -- never the marker.
+		if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
+			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
+		} else if matched {
+			insert.Synthetic = true
+		} else if ev.SelfTestMarker != "" {
+			// A claim is only tried once the raw marker did not match
+			// (#239): the event that carries the marker itself passes
+			// its target; the claim covers the rest of the connection.
+			claimed, refusal, err := store.MatchSelfTestClaim(r.Context(), h.db, h.selfTestIndex, insert, ev.SelfTestMarker, receivedAt)
 			if err != nil {
 				slog.Error("ingest: self-test claim corroboration failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
-			} else if matched {
+			} else if claimed {
 				insert.Synthetic = true
 			} else {
 				recordSelfTestClaimRefused(r.Context(), h.db, h.now, h.coalescer, tok.CanaryID, service, refusal)
 			}
-		} else if matched, err := store.MatchSelfTest(r.Context(), h.db, h.selfTestIndex, insert, receivedAt); err != nil {
-			slog.Error("ingest: self-test match failed; storing as a real alert", "canary", tok.CanaryID, "event_id", ev.EventID, "err", err)
-		} else if matched {
-			insert.Synthetic = true
 		}
 
 		if opencanary.IsSelfTestResult(service) {
@@ -292,8 +296,14 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 	// netip.ParseAddr, not net.ParseIP, because a zoned IPv6 link-local
 	// address (e.g. "fe80::1%eth0") is an ordinary hit on a LAN honeypot
 	// and net.ParseIP rejects the zone suffix outright. A non-empty value
-	// that parses as neither is still rejected.
+	// that parses as neither is still rejected. ParseAddr accepts a zone
+	// of any length, so a stolen token could store a body-sized address:
+	// refuse one over maxSourceIPBytes (never truncate -- a cut address is
+	// a wrong address, and a cut zone can name another interface).
 	if ev.SourceIP != "" {
+		if len(ev.SourceIP) > maxSourceIPBytes {
+			return "source_ip too long", false
+		}
 		if _, err := netip.ParseAddr(ev.SourceIP); err != nil {
 			return "invalid source_ip", false
 		}
@@ -306,7 +316,42 @@ func validateEvent(ev ingestEvent) (reason string, ok bool) {
 	if ev.DestPort != -1 && (ev.DestPort < 0 || ev.DestPort > 65535) {
 		return "invalid dest_port", false
 	}
+	// Issue #233: bound the free-text fields a stolen token controls.
+	if len(ev.Service) > maxServiceBytes {
+		return "service too long", false
+	}
+	if len(ev.SelfTestMarker) > maxMarkerChars {
+		return "self_test_marker too long", false
+	}
 	return "", true
+}
+
+// Issue #233 field bounds. maxMarkerChars is the length of a minted
+// marker (selftest.MarkerBytes, hex-encoded: two characters per byte).
+// maxSourceIPBytes: the longest textual IP is 45 bytes (IPv4-mapped
+// "ffff:...:255.255.255.255"); a real zone is an interface name of at
+// most 15 bytes on Linux (IFNAMSIZ-1) or a scope id of at most 10 digits
+// on Windows; 45 + 1 + 15 = 61, rounded up to 64.
+const (
+	maxRawBytes      = 8192
+	maxServiceBytes  = 64
+	maxSourceIPBytes = 64
+	maxMarkerChars   = selftest.MarkerBytes * 2
+	rawTruncSuffix   = " [truncated by birdcage]"
+)
+
+// truncateRaw keeps raw whole when it fits maxRawBytes, otherwise cuts
+// it at a UTF-8 rune boundary so that raw plus rawTruncSuffix is at most
+// maxRawBytes.
+func truncateRaw(raw string) string {
+	if len(raw) <= maxRawBytes {
+		return raw
+	}
+	cut := maxRawBytes - len(rawTruncSuffix)
+	for cut > 0 && !utf8.RuneStart(raw[cut]) {
+		cut--
+	}
+	return raw[:cut] + rawTruncSuffix
 }
 
 // recordSelfTestClaimRefused writes selftest.claim_refused (#46 slice

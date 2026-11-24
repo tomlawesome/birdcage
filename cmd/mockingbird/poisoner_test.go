@@ -556,7 +556,7 @@ func TestRunAgentHandledTargetRefusesAnUnknownService(t *testing.T) {
 	in, _ := newTestIntake(t, queue.Config{})
 
 	bait := &fakeBait{}
-	params := selfTestParams("smb", "m-smb")
+	params := selfTestParams("llmnr", "m-llmnr")
 	runAgentHandledTarget(context.Background(), in, bait, params, params.Targets[0])
 	if bait.calls != 0 {
 		t.Error("a bait lookup ran for a service that is not the poisoner")
@@ -615,7 +615,7 @@ func TestProbeReportsThePoisonerAsAgentHandled(t *testing.T) {
 	if !probe.AgentHandled(poisoner.Service()) {
 		t.Errorf("probe.AgentHandled(%q) = false, want true", poisoner.Service())
 	}
-	for _, other := range []string{"ssh", "portscan", "snmp", "smb"} {
+	for _, other := range []string{"ssh", "portscan", "snmp", "llmnr"} {
 		if probe.AgentHandled(other) {
 			t.Errorf("probe.AgentHandled(%q) = true, want false", other)
 		}

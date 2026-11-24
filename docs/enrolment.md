@@ -106,8 +106,10 @@ token valid for 5 minutes (until 2026-09-19T06:58:08Z); single use
 `--cap-add NET_RAW` is what lets the canary notice being scanned: the
 agent opens one raw socket inside the container's own network namespace
 (the holder's -- every honeypot canary joins it now, issue #132) to see
-connection attempts aimed at ports none of its emulated services answer
-on, which is the only way it can report a port sweep (OpenCanary's own
+connection attempts aimed at closed ports -- a port counts as closed only
+if nothing on the canary is listening on it, emulated service or not; answers to the canary's own bait lookups are not counted -- which
+is the only way it can report a port sweep (5 different closed ports from one
+address within 30 s) (OpenCanary's own
 port-scan module needs firewall rules and a root process, and this
 container has neither). Leave the flag off and everything else still
 works -- every hit on an emulated service is still reported -- but a
@@ -181,7 +183,9 @@ exit (#69's own mechanism, superseded). Instead the agent dials
 OpenCanary's own configured ports once per heartbeat and reports what it
 finds; a dead OpenCanary shows up on the canary's tile within one
 heartbeat interval as `opencanary_down`, and clears on the next heartbeat
-that finds it answering again.
+that finds it answering again. It is not raised while the canary is still
+pending (before its first self-test passes), when OpenCanary is normally
+still starting.
 
 `build/opencanary/README.md` has the per-flag hardening evidence, the
 same way `build/smb-lure/README.md` has it for the lure below.
@@ -468,6 +472,19 @@ marked hit. Only once every target answers -- marked or claimed -- does
 the canary flip from **pending** to registered; from then on it's an
 ordinary canary, subject to the daily schedule like any other.
 
+The SMB lure and SNMP are on that list too, once the agent's heartbeat
+reports them (#243), because neither port is in the profile list. SNMP is
+marked like tftp and sip: the marker rides in the community string. SMB
+is a reachability check: the agent sends one SMB2 NEGOTIATE to the lure
+on 445, needs a reply starting `\xfeSMB`, and reports "reachable" itself;
+a lure that does not answer reports nothing, so the run fails and the
+failed-services list names `smb`. The heartbeat's own check is a bare
+TCP connect, which the lure does not log. Each flag is sent only while
+that listener is configured on (the SNMP road not switched off,
+`MOCKINGBIRD_SMB_AUDIT_PATH` set), so a lure you turn off leaves the
+self-test, and the canary page's listening row names `snmp 161` and
+`smb 445` only while they answer.
+
 If that first run times out unanswered, the canary stays pending -- and
 also shows self-test failed -- and birdcage mints another run every ten
 minutes until one passes, whether or not the daily self-test is switched
@@ -697,7 +714,7 @@ All three are optional. Set them the same way as the variables in the
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `MOCKINGBIRD_PORTSCAN` | on | Set to `0` to turn port-scan detection off entirely. Any other value, including unset, leaves it on. |
-| `MOCKINGBIRD_PORTSCAN_IGNORE_PORTS` | empty | Comma-separated extra ports to treat as yours, on top of the ones OpenCanary is configured to answer on. For something else sharing the container's network, or a monitoring probe that would otherwise look like a sweep. |
+| `MOCKINGBIRD_PORTSCAN_IGNORE_PORTS` | empty | Comma-separated extra ports to treat as yours, on top of the ones OpenCanary is configured to answer on. Ports with a listening socket on the canary are never counted anyway; this list also covers the case where the canary cannot read its socket table. For something else sharing the container's network, or a monitoring probe that would otherwise look like a sweep. |
 | `MOCKINGBIRD_OPENCANARY_CONF` | `/etc/opencanaryd/opencanary.conf` | Where to read OpenCanary's configuration from. Only change this if you bind-mount your own configuration somewhere else. |
 
 The agent reads the OpenCanary configuration once at startup to work out
@@ -837,8 +854,10 @@ The floor and ceiling defaults above are **provisional guesses**, not
 measured values. They will be replaced with real numbers taken from a
 packet capture (issue #121). Meanwhile you can change them yourself
 with the two variables above. Neither may be
-below `1s`: a lower value is refused, because a canary that fast would
-broadcast continuously.
+below `1s`, because a canary that fast would broadcast continuously. If
+you set one lower, the canary logs a warning and uses the default
+instead. If a lower value is pushed as a setting later (see below), the
+canary logs a warning and keeps the value it already has.
 
 ### Changing these later
 

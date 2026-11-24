@@ -303,7 +303,7 @@ describe('canaryActions: only the ones the state earns', () => {
   })
 })
 
-describe('canaryActions: write pills are hidden until their routes exist (#228)', () => {
+describe('canaryActions: the helper draws no write pills; the components draw them (#227)', () => {
   const scenes = ['quiet', 'failed', 'silent', 'night', 'pending', 'agentOutOfDate', 'upgradeInProgress'] as const
 
   it.each(scenes)('%s offers neither the self-test nor maintenance pill', (scene) => {

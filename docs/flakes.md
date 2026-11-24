@@ -55,6 +55,12 @@ the whole account.
   `scripts/ensure-gitleaks.sh` got "curl: (22) The requested URL returned
   error: 504" from github.com before any scan ran. Retried as job 28489.
 
+## golangci-lint build: module downloads cut off (lint:go)
+
+- 2026-11-21 · e1f21a7 · pipeline 5166 (!187) / lint:go, job 61870 ·
+  building the linter, every module fetch from the Go module proxy ended
+  "unexpected EOF" before any lint ran. Retried as job 62001.
+
 ## startup-refusals.sh -- first refusal outlived its 15 s bound (local)
 
 - 2026-10-10 · 2cbda6f plus the uncommitted #8 slice C journeys · local
@@ -81,3 +87,46 @@ the whole account.
   average about 56) · SecureCookie_false: "POST .../api/auth/totp/confirm:
   context deadline exceeded"; the package took 607 s. Passed alone straight
   after (16 s) and in the full Postgres rerun on the same code.
+
+## portscan step 3, the rate cap holds (e2e:portscan)
+
+- 2026-11-18 · bafbcfe · pipeline 4681 (!154) / e2e:portscan, job 56419 ·
+  "alert count climbed to 2": the second alert came from another address on
+  the e2e network (5 ports), not the sweeper, and the helper counts alerts
+  per canary rather than per source. The product's per-source cooldown held.
+  Retried as job 56773, which passed.
+- 2026-11-21 · f647bda (batch-a) · pipeline 5115 / e2e:portscan · the same
+  message and cause: a second alert from another address on the e2e network.
+  Passed in pipeline 5128 on unchanged product code.
+
+## TestCheckStartupAuthContinuityAllowsAUsedDatabaseWithAccounts (cmd/birdcage)
+
+- 2026-11-21 · 2090fe6 · pipeline 5140 (!187) / test:go, job 61454 ·
+  subtest a_user.register_audit_row: "register first admin: status 500,
+  want 201", with "no such table: audit_log" and "no such table: approvals"
+  logged nearby; the package took 580 s. The test is unchanged since #164
+  and passed in pipeline 5128; three local runs straight after passed.
+
+## upgrade.sh step 8, the upgraded canary's self-test never completes (e2e:enrol-and-hit)
+
+- 2026-11-23 · 05af5d1 · pipeline 5260 (!190) / e2e:enrol-and-hit:postgres,
+  job 62984 · "no self-test issued after the upgrade passed": the run minted
+  at 12:10:43 (12 targets) stayed open; the agent logged "11 ok ... 1
+  agent-handled (of 12 targets)" at 12:11:45, so one target's event never
+  matched at birdcage within the step's 6.5 minutes. The change under test
+  touches only pending canaries, and this one was registered. Passed in
+  pipeline 5241 on batch-a. Cause unknown; not touched.
+
+## staleness-check.test.sh --deadline case ran slow (lint:scripts)
+
+- 2026-11-23 · 9cda877 (batch-a) · pipeline 5268 (!186) / lint:scripts,
+  job 63167 · "--deadline: exit 1 after 7s (want 1, under 6s)": the right
+  exit code, a second over the bound, on a runner also carrying the e2e
+  journeys. The script is unchanged in batch-a's recent fixes.
+
+## Frontend tests hit Vitest's 5 s timeout (test:frontend)
+
+- 2026-11-23 · 9cda877 (batch-a) · pipeline 5268 (!186) / test:frontend,
+  job 63180 · CanaryPage.admin.svelte.test.ts:53 and
+  src/door/bars.draw.test.ts:66, each "Test timed out in 5000ms", under the
+  same load. Neither file changed in batch-a's recent fixes.

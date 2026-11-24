@@ -63,7 +63,7 @@ export interface PlacedLabel {
   stem: string
 }
 
-export interface Box {
+interface Box {
   xFrom: number
   xTo: number
   top: number

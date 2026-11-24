@@ -100,6 +100,7 @@ import (
 	"syscall"
 
 	"github.com/tomlawesome/birdcage/internal/agent/client"
+	"github.com/tomlawesome/birdcage/internal/agent/portscan"
 	"github.com/tomlawesome/birdcage/internal/agent/renewal"
 	"github.com/tomlawesome/birdcage/internal/logging"
 )
@@ -206,7 +207,14 @@ func main() {
 	// runPortscanRoad is then a no-op, so the goroutine count below does
 	// not depend on it.
 	portscanLog := logging.New("portscan")
-	detector, inventory := newPortscanRoad(cfg, in, portscanLog)
+	// One record shared by both roads (issue #240): the poisoner says where
+	// its queries left from, the detector skips the answers. Only worth
+	// making when both run; either road alone gets nil.
+	var ownPorts *portscan.OwnPorts
+	if portscanEnabled() && poisonerEnabled() {
+		ownPorts = portscan.NewOwnPorts()
+	}
+	detector, inventory := newPortscanRoadWith(cfg, in, portscanLog, ownPorts)
 	portscanLog.Info(inventory.line())
 
 	// The snmp road (#88): the UDP socket is opened here for the same
@@ -241,7 +249,7 @@ func main() {
 	// detector means the road is off or nothing bound, and
 	// runPoisonerRoad is then a no-op.
 	poisonerLog := logging.New("poisoner")
-	poisonerDetector, poisonerInv, poisonerCfg := newPoisonerRoad(in, poisonerLog)
+	poisonerDetector, poisonerInv, poisonerCfg := newPoisonerRoadWith(in, poisonerLog, ownPorts)
 	poisonerLog.Info(poisonerInv.line())
 
 	// agentSettings (issue #124) is this canary's record of what
@@ -268,6 +276,8 @@ func main() {
 		runHeartbeatLoop(ctx, c, ts, rm, func() client.SelfReport {
 			sr := currentSelfReport(version, in, poisonerDetector)
 			sr.OpenCanaryUp = ocProbe.Probe(ctx)
+			sr.SMBLureUp = ocProbe.ProbeSMBLure(ctx)
+			sr.SNMPUp = snmpUp(snmpInv)
 			return sr
 		}, agentSettingsState, poisonerDetector)
 	}()

@@ -6,9 +6,9 @@
 // canary, so "the other three are fine" has no place here and "it" does.
 import type { Canary, TraceHit, Visitor, VisitorKind } from '../types'
 import type { Segment } from '../sentence/types'
-import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
+import { MIKROVIEW_LINKS_LIVE } from '../writeActions'
 import { agoWords, durationCoarse, durationExact } from '../sentence/duration'
-import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel } from '../sentence/time'
+import { calendarDaysBetween, formatClock, formatClockShort, relativeDayLabel, stamp } from '../sentence/time'
 import { canariesPhrase, triedNarrative } from '../sentence/narrative'
 import { numberToWords, plural, wordOrNumber } from '../sentence/words'
 import { shortVersion } from '../sentence/version'
@@ -16,7 +16,6 @@ import { stageLabel } from '../sentence/stage'
 import {
   canaryOf,
   lastCompletedRun,
-  periodsHere,
   selfTestCards,
   silences,
   traceOf,
@@ -35,7 +34,7 @@ export function dateLower(iso: string): string {
 }
 
 /** "Wed 12 Aug" -- prose capitalisation, as the hero's sub uses it. */
-export function dateProper(iso: string): string {
+function dateProper(iso: string): string {
   const lower = dateLower(iso)
   return lower.replace(/(^|\s)([a-z])/g, (_, lead: string, letter: string) => `${lead}${letter.toUpperCase()}`)
 }
@@ -750,9 +749,17 @@ function portOf(canary: Canary, service: string): string | null {
 
 export function canarySentence(input: CanaryPageInput): CanarySentence {
   const scene = canaryScene(input)
-  if (scene.kind === 'visited') return visitedSentence(input, scene.visitor, scene.hit)
-  if (scene.kind === 'state') return stateSentence(input, scene.status)
-  return quietSentence(input)
+  const s =
+    scene.kind === 'visited'
+      ? visitedSentence(input, scene.visitor, scene.hit)
+      : scene.kind === 'state'
+        ? stateSentence(input, scene.status)
+        : quietSentence(input)
+  // #227: maintenance is a flag over whatever the state says, so the
+  // sentence is the state's own, plus one clause.
+  const until = canaryOf(input).maintenance_until
+  if (!until) return s
+  return { ...s, sub: [...s.sub, { text: ` In maintenance until ${stamp(until, true)}: health warnings are quiet, hits are not.` }] }
 }
 
 // ---------------------------------------------------------------- footer
@@ -830,11 +837,11 @@ export interface CanaryAction {
 }
 
 /** The actions the state earns (ADR-0004 rule 5): run the self-test now,
- * lookback in mikroview, raw lines, mark as maintenance. Each appears
- * only where it would do something -- a silent canary cannot be probed,
- * and there is nothing to look back at on a canary nothing has touched.
- * Nothing here is wired to a handler yet; the page shows what the state
- * earns, and the issues that implement each action fill them in. */
+ * lookback in mikroview, raw lines. Each appears
+ * only where it would do something. The write pills (#227: the
+ * self-test and maintenance) are not listed here: they depend on the
+ * signed-in role and on a write in flight, so CanaryPage draws them
+ * itself, after these. */
 export function canaryActions(input: CanaryPageInput): CanaryAction[] {
   const canary = canaryOf(input)
   const scene = canaryScene(input)
@@ -844,14 +851,10 @@ export function canaryActions(input: CanaryPageInput): CanaryAction[] {
   if (scene.kind === 'visited') {
     if (MIKROVIEW_LINKS_LIVE) out.push({ label: 'lookback in mikroview ▸', quiet: false })
     if (MIKROVIEW_LINKS_LIVE && hits.length > 0) out.push({ label: 'raw lines ▸', quiet: false })
-    // Reachable, but not what this page is about right now.
-    if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now', quiet: true })
     return out
   }
 
-  if (WRITE_ROUTES_LIVE && canary.status !== 'silent') out.push({ label: 'run the self-test now ▸', quiet: false })
   if (MIKROVIEW_LINKS_LIVE && (canary.status !== 'ok' || hits.length > 0)) out.push({ label: 'lookback in mikroview ▸', quiet: false })
-  if (WRITE_ROUTES_LIVE) out.push({ label: 'mark as maintenance', quiet: true })
   return out
 }
 

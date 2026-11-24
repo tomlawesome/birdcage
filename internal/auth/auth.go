@@ -17,7 +17,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +131,9 @@ type Service struct {
 	signIns *gauntlet.SignInHistory
 	geo     *geoip.Manager
 	log     *slog.Logger
+
+	// publicURL is Config.PublicURL, the origin admin writes must come from.
+	publicURL string
 
 	codes *heldCodes
 
@@ -328,7 +333,7 @@ func Open(ctx context.Context, database *db.DB, cfg Config, log *slog.Logger) (*
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
-	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, codes: codes, cancel: cancel}
+	s := &Service{gate: g, signIns: signIns, geo: geo, log: log, publicURL: cfg.PublicURL, codes: codes, cancel: cancel}
 	s.loop(func() { sweepTokens(loopCtx, g, log) })
 	if refresher != nil {
 		s.loop(func() { refresher.Run(loopCtx) })
@@ -471,6 +476,28 @@ func (s *Service) CountryLookupEnabled() bool { return s.geo != nil }
 // nothing: it does not extend the session's idle expiry, so an open
 // stream idles its session out like any other client (#190).
 func (s *Service) Wrap(dashboard http.Handler) http.Handler {
+	return s.wrap(dashboard, nil)
+}
+
+// WrapWithAdmin is Wrap with the admin write routes (#227) mounted under
+// /api/admin/. They are on the session side only (the inner mux), so a
+// bearer token, which Wrap answers from dashboard, finds nothing there and
+// gets dashboard's 404. admin is guarded here, not by itself: a token in
+// the request context is 403, the account must be an admin, the request
+// must carry X-Requested-With, and an Origin matching Config.PublicURL --
+// or, with no Origin, Sec-Fetch-Site: same-origin (with no PublicURL every
+// admin write is refused, and one warning is logged here) (OWASP CSRF Prevention
+// Cheat Sheet, verifying origin with standard headers). Refusals are RFC
+// 9457 problem+json. The signed-in username reaches admin through
+// api.WithActor. Call it once instead of Wrap, before serving.
+func (s *Service) WrapWithAdmin(dashboard, admin http.Handler) http.Handler {
+	if originOf(s.publicURL) == "" {
+		s.log.Warn("BIRDCAGE_PUBLIC_URL is not set (or is not an http(s) address): the admin actions on the canary page (run a self-test, maintenance) are refused until it is")
+	}
+	return s.wrap(dashboard, admin)
+}
+
+func (s *Service) wrap(dashboard, admin http.Handler) http.Handler {
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		check := func() bool { return s.gate.StillSignedIn(r) == nil }
 		dashboard.ServeHTTP(w, r.WithContext(api.WithCredentialCheck(r.Context(), check)))
@@ -482,6 +509,9 @@ func (s *Service) Wrap(dashboard http.Handler) http.Handler {
 	inner.Handle("/api/auth/", routes)
 	inner.Handle("/api/tokens", routes)
 	inner.Handle("/api/tokens/", routes)
+	if admin != nil {
+		inner.Handle("/api/admin/", s.adminGuard(admin))
+	}
 	inner.Handle("/api/", guarded)
 	protected := s.gate.Protect(inner)
 
@@ -489,6 +519,71 @@ func (s *Service) Wrap(dashboard http.Handler) http.Handler {
 	outer.Handle("/api/", protected)
 	outer.Handle("/", dashboard)
 	return outer
+}
+
+// adminGuard is the checks in front of the admin write routes. Only the
+// session path reaches it (see WrapWithAdmin), so the token and user it
+// finds in the context are the gate's own.
+func (s *Service) adminGuard(admin http.Handler) http.Handler {
+	origin := originOf(s.publicURL)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refuse := func(why, detail string) {
+			s.log.Warn(fmt.Sprintf("admin route refused: %s: %q %q", why, r.Method, r.URL.Path))
+			api.WriteProblem(w, http.StatusForbidden, detail)
+		}
+		if gate.TokenFromContext(r) != nil {
+			refuse("token in context", "an API token cannot use this route")
+			return
+		}
+		user := gate.UserFromContext(r)
+		if user == nil || !user.Role.AtLeast(gauntlet.RoleAdmin) {
+			refuse("not an admin", "this route needs an admin account")
+			return
+		}
+		if r.Header.Get("X-Requested-With") != csrfValue {
+			refuse("no X-Requested-With", "the X-Requested-With header is missing or wrong")
+			return
+		}
+		if !sameOrigin(r, origin) {
+			refuse("origin", "the request did not come from this dashboard")
+			return
+		}
+		admin.ServeHTTP(w, r.WithContext(api.WithActor(r.Context(), user.Username)))
+	})
+}
+
+// sameOrigin is the Origin / Fetch Metadata check: a present Origin must
+// equal the dashboard's own (origin, from BIRDCAGE_PUBLIC_URL); with none,
+// the browser must say Sec-Fetch-Site: same-origin. With no public URL
+// configured there is nothing to check against and no fallback is taken
+// on trust: every request is refused.
+func sameOrigin(r *http.Request, origin string) bool {
+	if origin == "" {
+		return false
+	}
+	if got := r.Header.Get("Origin"); got != "" {
+		return originOf(got) == origin
+	}
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+}
+
+// originOf reduces a URL to its lower-case scheme://host[:port] origin,
+// with a default port dropped, or "" if it is not an absolute http(s) URL.
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	port := u.Port()
+	defaultPort := (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443")
+	if port != "" && !defaultPort {
+		host += ":" + port
+	}
+	return strings.ToLower(u.Scheme) + "://" + host
 }
 
 // geoConfig builds the country-data settings, or reports false when no

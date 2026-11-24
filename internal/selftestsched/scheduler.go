@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/tomlawesome/birdcage/internal/agentkind"
@@ -79,6 +80,10 @@ type Scheduler struct {
 	idx *store.SelfTestIndex
 	now func() time.Time
 	log *slog.Logger
+
+	// mintMu serialises every mint path with RunNow, so two triggers for
+	// the same canary cannot both find no open run and both mint one.
+	mintMu sync.Mutex
 }
 
 // New constructs a Scheduler. idx must be the same index passed to
@@ -260,6 +265,16 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 	if c.Kind != agentkind.Honeypot && c.Kind != agentkind.Scanner {
 		return fmt.Errorf("%w: canary %s is kind %q", ErrUnknownKind, c.ID, c.Kind)
 	}
+	// One open run per canary across every path (#227): a scheduled,
+	// rotation, first-contact or retry mint adds nothing while a run,
+	// from any of them or from run-now, is still open.
+	s.mintMu.Lock()
+	defer s.mintMu.Unlock()
+	if _, open, err := store.OpenSelfTestCommandID(ctx, s.db, c.ID, now); err != nil {
+		return fmt.Errorf("check open self-test runs: %w", err)
+	} else if open {
+		return nil
+	}
 	recent, err := store.HasRecentSelfTestRun(ctx, s.db, c.ID, now.Add(-guard))
 	if err != nil {
 		return fmt.Errorf("check recent self-test runs: %w", err)
@@ -278,13 +293,15 @@ func (s *Scheduler) mintForCanary(ctx context.Context, c store.SelfTestCanary, n
 		s.log.Info("minted scan proof command", "canary", c.ID, "command_id", cmd.ID)
 		return nil
 	}
-	return s.mintHoneypotSelfTest(ctx, c, now)
+	_, err = s.mintHoneypotSelfTest(ctx, c, now)
+	return err
 }
 
-// mintHoneypotSelfTest derives a honeypot's targets and mints its run.
-func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCanary, now time.Time) error {
+// mintHoneypotSelfTest derives a honeypot's targets and mints its run,
+// returning the new command's id.
+func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCanary, now time.Time) (string, error) {
 	if c.LastSeenAddr == nil || *c.LastSeenAddr == "" {
-		return fmt.Errorf("honeypot %s has no last-seen address to probe", c.ID)
+		return "", fmt.Errorf("honeypot %s has no last-seen address to probe", c.ID)
 	}
 
 	var targets []store.SelfTestTarget
@@ -295,6 +312,19 @@ func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCa
 			continue
 		}
 		targets = append(targets, store.SelfTestTarget{Service: service, DestPort: port})
+	}
+	// smb and snmp (#243): neither is in the profile port list. A target is
+	// added for each listener the agent's last heartbeat reported on at
+	// all, up or down. The heartbeat value is stored as reported (a nil
+	// overwrites), and the agent sends nil only when that listener is
+	// configured off, false when it is configured but not answering -- so
+	// "reported" means "currently configured": a lure that dies fails its
+	// self-test, while one that is turned off leaves the self-test.
+	if c.SNMPUp != nil {
+		targets = append(targets, store.SelfTestTarget{Service: "snmp", DestPort: 161})
+	}
+	if c.SMBLureUp != nil {
+		targets = append(targets, store.SelfTestTarget{Service: "smb", DestPort: 445})
 	}
 	// portscan is the agent's own detector (#65), not an OpenCanary
 	// module with a listening port of its own -- always on for every
@@ -324,10 +354,70 @@ func (s *Scheduler) mintHoneypotSelfTest(ctx context.Context, c store.SelfTestCa
 	deadline := now.Add(selfTestWindow)
 	cmd, err := store.MintSelfTestCommand(ctx, s.db, s.idx, c.ID, *c.LastSeenAddr, targets, now, deadline)
 	if err != nil {
-		return fmt.Errorf("mint self-test command: %w", err)
+		return "", fmt.Errorf("mint self-test command: %w", err)
 	}
 	s.log.Info("minted self-test command", "canary", c.ID, "command_id", cmd.ID, "targets", len(targets))
-	return nil
+	return cmd.ID, nil
+}
+
+// RunNow queues one self-test for canaryID at once, for an operator's
+// request (#227): the request is the trigger, so it does not wait for the
+// scheduled minute and ignores selftest_enabled. At most one run is open
+// per canary: while one is, RunNow returns its command id with
+// created=false and mints nothing. An unknown canary is
+// store.ErrCanaryNotFound; a honeypot with no address to probe yet is
+// store.ErrSelfTestNotReady. A scanner is ordered a scan, its kind's
+// proof.
+func (s *Scheduler) RunNow(ctx context.Context, canaryID string) (commandID string, created bool, err error) {
+	s.mintMu.Lock()
+	defer s.mintMu.Unlock()
+	now := s.now().UTC()
+
+	c, ok, err := store.SelfTestCanaryByID(ctx, s.db, canaryID)
+	if err != nil {
+		return "", false, fmt.Errorf("look up canary for run-now self-test: %w", err)
+	}
+	if !ok {
+		return "", false, store.ErrCanaryNotFound
+	}
+	if id, open, err := store.OpenSelfTestCommandID(ctx, s.db, canaryID, now); err != nil {
+		return "", false, err
+	} else if open {
+		return id, false, nil
+	}
+
+	switch c.Kind {
+	case agentkind.Honeypot:
+		if c.LastSeenAddr == nil || *c.LastSeenAddr == "" {
+			return "", false, store.ErrSelfTestNotReady
+		}
+		if len(c.Ports) == 0 {
+			return "", false, store.ErrSelfTestNoPorts
+		}
+		id, err := s.mintHoneypotSelfTest(ctx, c, now)
+		if err != nil {
+			return "", false, err
+		}
+		return id, true, nil
+	case agentkind.Scanner:
+		cmd, err := store.MintScanCommand(ctx, s.db, c.ID, store.TriggerManual, now, now.Add(scanRunWindow))
+		if errors.Is(err, store.ErrScanRunOpen) {
+			// The same rule MintScanCommand refused on: any run not
+			// completed, even past its deadline and not yet swept.
+			id, open, lerr := store.OpenScanCommandID(ctx, s.db, canaryID)
+			if lerr != nil || !open {
+				return "", false, err
+			}
+			return id, false, nil
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("mint scan command: %w", err)
+		}
+		s.log.Info("minted scan command on request", "canary", c.ID, "command_id", cmd.ID)
+		return cmd.ID, true, nil
+	default:
+		return "", false, fmt.Errorf("%w: canary %s is kind %q", ErrUnknownKind, c.ID, c.Kind)
+	}
 }
 
 // FirstContact implements internal/ingest.SelfTestRotationHook's second

@@ -131,6 +131,12 @@ func listenPort(listen string) (uint16, bool) {
 // which is strictly worse than one that reports hits on its emulated
 // services but misses a sweep of closed ports.
 func newPortscanRoad(cfg Config, in *Intake, log *slog.Logger) (*portscan.Detector, agentInventory) {
+	return newPortscanRoadWith(cfg, in, log, nil)
+}
+
+// newPortscanRoadWith is newPortscanRoad sharing own with the poisoner
+// road (issue #240); nil means no exemption.
+func newPortscanRoadWith(cfg Config, in *Intake, log *slog.Logger, own *portscan.OwnPorts) (*portscan.Detector, agentInventory) {
 	if !portscanEnabled() {
 		// No line of its own: the inventory line main prints already
 		// says detection is off, and the operator who set the variable
@@ -146,6 +152,7 @@ func newPortscanRoad(cfg Config, in *Intake, log *slog.Logger) (*portscan.Detect
 	detector, warning := portscan.New(portscan.Config{
 		ConfPath:         os.Getenv(envOpenCanaryConf),
 		ExtraIgnorePorts: ignore,
+		OwnPorts:         own,
 	}, in.SubmitPortscanEvent, log)
 	if warning != "" {
 		log.Warn(warning)

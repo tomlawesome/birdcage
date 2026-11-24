@@ -19,7 +19,6 @@ export NO_REAL_NAMES_KEY_FILE="$key"
 hmac() { # hmac <keyfile> <word>: keyed hash of the lowercase word, as the guard computes it
   python3 -I -c 'import hmac,hashlib,sys; print(hmac.new(open(sys.argv[1],"rb").read(), sys.argv[2].encode(), hashlib.sha256).hexdigest())' "$1" "$2"
 }
-kcmsg="no-real-names key check"
 kc() { # kc <keyfile>: the key-check line for that key, as the spec defines it
   python3 -I -c 'import hmac,hashlib,sys; print("fingerprint: "+hmac.new(open(sys.argv[1],"rb").read(), b"no-real-names key check", hashlib.sha256).hexdigest())' "$1"
 }
@@ -219,7 +218,7 @@ if echo "$add_out" | grep -qi zanzibar; then echo "FAIL --add output echoes the 
 # a word on argv is refused: non-zero, no hash printed, no traceback
 for argv_form in "--add zanzibar" "--add=zanzibar"; do
   got=0
-  # shellcheck disable=SC2086
+  # shellcheck disable=SC2086  # argv_form is split on purpose: it holds the flag and the word as separate arguments
   add_out="$(printf 'other\n' | python3 "$guard" --key-file "$key" $argv_form 2>&1)" || got=$?
   if [ "$got" != 0 ]; then echo "ok   '$argv_form' is rejected (exit $got)"; pass=$((pass+1)); else echo "FAIL '$argv_form' was accepted"; fail=$((fail+1)); fi
   if echo "$add_out" | grep -Eq '[0-9a-f]{64}'; then echo "FAIL '$argv_form' printed a hash"; fail=$((fail+1)); else echo "ok   '$argv_form' prints no hash"; pass=$((pass+1)); fi

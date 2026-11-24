@@ -100,6 +100,36 @@ mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"MIT"}'
 mkpkg "$nm/foo/node_modules" evil '{"name":"evil","version":"9.9.9","license":"GPL-3.0"}'
 expect 1 "a disallowed licence in a nested node_modules is caught" "$nm" "$good_policy"
 
+# SPDX expressions in the license string (SPDX spec, Annex D): an OR passes
+# if any operand is allowed; AND, WITH and nesting fail closed.
+nm="$work/spdx-or-paren-pass/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"(Apache-2.0 OR MIT)"}'
+expect 0 "a parenthesised OR with an allowed operand passes" "$nm" "$good_policy"
+
+nm="$work/spdx-or-bare-pass/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"Apache-2.0 OR MIT"}'
+expect 0 "a bare OR with an allowed operand passes" "$nm" "$good_policy"
+
+nm="$work/spdx-or-none-allowed/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"(GPL-3.0 OR AGPL-3.0)"}'
+expect 1 "an OR with no allowed operand is caught" "$nm" "$good_policy"
+
+nm="$work/spdx-and-expr/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"(MIT AND GPL-3.0)"}'
+expect 1 "an AND expression fails closed" "$nm" "$good_policy"
+
+nm="$work/spdx-with-expr/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"Apache-2.0 WITH LLVM-exception"}'
+expect 1 "a WITH expression fails closed" "$nm" "$good_policy"
+
+nm="$work/spdx-nested-expr/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"((MIT OR GPL-3.0) AND BSD-3-Clause)"}'
+expect 1 "nested parentheses fail closed" "$nm" "$good_policy"
+
+nm="$work/spdx-lower-or/node_modules"
+mkpkg "$nm" foo '{"name":"foo","version":"1.0.0","license":"mit or apache-2.0"}'
+expect 1 "lowercase operators are not SPDX operators and fail" "$nm" "$good_policy"
+
 # The real thing must pass -- where there is a real thing to check. A fresh
 # checkout and every worktree have no frontend/node_modules, so without this
 # guard the suite fails there with nothing installed to examine, which says

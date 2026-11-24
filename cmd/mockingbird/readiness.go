@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"time"
 
@@ -86,7 +87,7 @@ func runReadinessCheck(ctx context.Context, cfg readinessConfig, log *slog.Logge
 			}
 		}
 
-		for _, r := range readiness.Check(ctx, readiness.Dial, cfg.Host, pending, cfg.DialTimeout) {
+		for _, r := range readiness.CheckWith(ctx, readiness.Dial, procListening, cfg.Host, pending, cfg.DialTimeout) {
 			if r.Up {
 				up[r.Module] = true
 			}
@@ -147,7 +148,17 @@ type openCanaryProbe struct {
 	ports map[string]int // nil if opencanary.conf could not be read
 	log   *slog.Logger
 	down  bool // last-reported state, so a log line prints only on change
+
+	// dial and listening are injectable for tests; newOpenCanaryProbe
+	// sets the production values. ssh is judged from listening, never
+	// dialled (#238).
+	dial      readiness.DialFunc
+	listening readiness.ListeningFunc
 }
+
+// procListening reads the LISTEN sockets of this network namespace, which
+// mockingbird shares with OpenCanary (both join the holder's).
+func procListening() (map[int]bool, error) { return readiness.ListeningPorts(os.ReadFile) }
 
 // udpOnlyModules are OpenCanary modules whose protocol is UDP, reused
 // from readiness.ModulePorts' own port map even though nothing here can
@@ -191,7 +202,7 @@ func newOpenCanaryProbe(cfg readinessConfig, log *slog.Logger) *openCanaryProbe 
 	allPorts, err := readiness.ModulePorts(confPath)
 	if err != nil {
 		log.Warn(fmt.Sprintf("opencanary probe: could not read OpenCanary's configuration, reporting no opinion: %s", safeErr(err)))
-		return &openCanaryProbe{cfg: cfg, log: log}
+		return &openCanaryProbe{cfg: cfg, log: log, dial: readiness.Dial, listening: procListening}
 	}
 	ports := make(map[string]int, len(allPorts))
 	for module, port := range allPorts {
@@ -200,7 +211,7 @@ func newOpenCanaryProbe(cfg readinessConfig, log *slog.Logger) *openCanaryProbe 
 		}
 		ports[module] = port
 	}
-	return &openCanaryProbe{cfg: cfg, ports: ports, log: log}
+	return &openCanaryProbe{cfg: cfg, ports: ports, log: log, dial: readiness.Dial, listening: procListening}
 }
 
 // Probe dials every configured module port once and reports whether all
@@ -216,7 +227,7 @@ func (p *openCanaryProbe) Probe(ctx context.Context) *bool {
 	if len(p.ports) == 0 {
 		return nil
 	}
-	results := readiness.Check(ctx, readiness.Dial, p.cfg.Host, p.ports, p.cfg.DialTimeout)
+	results := readiness.CheckWith(ctx, p.dial, p.listening, p.cfg.Host, p.ports, p.cfg.DialTimeout)
 	up := true
 	var down []string
 	for _, r := range results {
@@ -232,5 +243,24 @@ func (p *openCanaryProbe) Probe(ctx context.Context) *bool {
 		p.log.Info("opencanary: answering again")
 	}
 	p.down = !up
+	return &up
+}
+
+// ProbeSMBLure is the heartbeat's SMBLureUp (#243): nil when
+// MOCKINGBIRD_SMB_AUDIT_PATH is unset (no SMB lure on this canary), else
+// whether a bare TCP connection to the lure's port 445 succeeds. It sends
+// no SMB bytes, so the lure logs nothing for it; the self-test's
+// probe.ReachSMB is the check that speaks SMB.
+func (p *openCanaryProbe) ProbeSMBLure(ctx context.Context) *bool {
+	if os.Getenv(envSMBAuditPath) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.DialTimeout)
+	defer cancel()
+	up := false
+	if conn, err := p.dial(ctx, "tcp", net.JoinHostPort(p.cfg.Host, "445")); err == nil {
+		_ = conn.Close() // bare connect; nothing to act on a close error
+		up = true
+	}
 	return &up
 }

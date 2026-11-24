@@ -1,0 +1,12 @@
+# Planted defect for the zizmor self-test (#199). Expected: non-zero exit and
+# the `template-injection` rule id (plus dangerous-triggers).
+name: planted
+on: pull_request_target
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000000
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "${{ github.event.pull_request.title }}"

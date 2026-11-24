@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # first-admin.sh -- the sign-in every dashboard journey shares (#8,
 # ADR-0016): create the first admin with the setup code birdcage logged,
 # enrol an authenticator app, sign in with password and code, and mint
@@ -150,6 +151,12 @@ jq -e '.secondFactor | index("totp")' /tmp/body >/dev/null \
 CODE="$(totp_code "$TOTP_SECRET" "$(($(date +%s) / 30 + 1))")" || die "could not compute an authenticator code"
 status="$(CODE="$CODE" jq -nc '{code: env.CODE}' | post /api/auth/login/factor /tmp/login.jar)"
 expect 200 "POST /api/auth/login/factor"
+# Third argument "keep-login" (stack.sh, E2E_KEEP_LOGIN=1): leave the throwaway
+# admin's credentials in the work volume so a browser run (live-check.sh's
+# screenshots) can sign in through the real door. Off by default.
+if [ "${3:-}" = keep-login ]; then
+  (umask 077 && printf '%s\n%s\n%s\n' "$USERNAME" "$PASSWORD" "$TOTP_SECRET" > /work/ui-login)
+fi
 TOTP_SECRET='' CODE=''
 status="$(get /api/auth/session /tmp/login.jar)"
 expect 200 "GET /api/auth/session after signing in"

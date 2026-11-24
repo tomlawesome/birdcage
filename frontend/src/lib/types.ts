@@ -83,12 +83,12 @@ export type RunStage = 'ordered' | 'collected' | 'mounts_checked' | 'db_refreshe
 /** Who asked for the run: 'proof' is the scanner's own first-contact
  * proof or a silent scanner's 30-minute retry; 'manual' is an admin's
  * "scan now" (ADR-0012 decision 7, MR 2, not built by this slice). */
-export type RunTrigger = 'proof' | 'manual'
+type RunTrigger = 'proof' | 'manual'
 
 /** How an ordered run ended (ADR-0012 decision 4): 'pass' settles
  * pending for a proof run, 'fail' is a snapshot that answered but did
  * not pass, 'expired' is the 30-minute cap reached with no answer. */
-export type RunVerdict = 'pass' | 'fail' | 'expired'
+type RunVerdict = 'pass' | 'fail' | 'expired'
 
 /** On a canary (fleet list and canary page), present only while a scan
  * run is open (ADR-0012 decisions 6 and 9). Never carries the run id --
@@ -134,6 +134,10 @@ export interface CredentialConflict {
 export interface Canary {
   id: string
   name: string
+  /** #227: end of an admin-set maintenance window; null or absent when
+   * not in maintenance. A flag over the state, never a replacement for
+   * it: `status` keeps saying what is true. */
+  maintenance_until?: string | null
   lane: Lane
   ports: string
   status: CanaryStatus
@@ -228,7 +232,7 @@ export interface Canary {
  * grades of proof, internal/store/selftest_grade.go). A service the run
  * never probed has no entry at all -- absence is how "untested" is
  * carried, which is why there is no third value here. */
-export type SelfTestGrade = 'marked' | 'challenge_marked' | 'attributed'
+type SelfTestGrade = 'marked' | 'challenge_marked' | 'attributed'
 
 /** One service's outcome in a canary's most recently completed self-test
  * run (GET /api/canaries' and GET /api/canary's `self_test` array). */
@@ -243,7 +247,7 @@ export interface CanariesResponse {
 }
 
 /** One touched canary within a GET /api/visitors entry. */
-export interface VisitorCanaryHits {
+interface VisitorCanaryHits {
   id: string
   hits: number
 }
@@ -347,7 +351,7 @@ export type HistoryState =
 
 /** Why a period ended: the state cleared, a quiet period covered it, or
  * birdcage stopped watching. null while the period is still open. */
-export type HistoryEndReason = 'cleared' | 'quiet_period' | 'unobserved'
+type HistoryEndReason = 'cleared' | 'quiet_period' | 'unobserved'
 
 /** One unbroken run of a state (issue #56). `ended_at` null means the
  * period is still open and runs to the response's `until`; flap_count
@@ -407,7 +411,7 @@ export interface HistoryResponse {
  * fleet read carries. Who enrolled it is deliberately not here: birdcage
  * has no operator identity yet (issue #8), so the API does not claim
  * one. */
-export interface CanaryFacts {
+interface CanaryFacts {
   kind: string
   lane: string
   ports: string
@@ -442,7 +446,7 @@ export interface CanaryFacts {
  * settings hash covering every row, not a per-key acknowledgement, so it
  * reads true only when the agent's most recently reported hash matches
  * every row shown here, this one included. */
-export interface CanarySettingFact {
+interface CanarySettingFact {
   key: string
   value: string
   version: number

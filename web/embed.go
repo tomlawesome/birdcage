@@ -62,7 +62,7 @@ func Handler() (http.Handler, error) {
 	}
 	fileServer := http.FileServer(http.FS(dist))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clean := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		clean := path.Clean(strings.TrimPrefix(r.URL.Path, "/")) // nosemgrep: go.lang.security.filepath-clean-misuse.filepath-clean-misuse -- lookup in the read-only embedded fs.FS, which rejects .. paths (#199)
 		if clean == "." || clean == "" {
 			clean = "index.html"
 		}

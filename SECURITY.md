@@ -107,6 +107,13 @@ This section is rewritten route-by-route when #8 lands.
   contains a link trains the operator to click links in alert mails,
   which is the delivery mechanism of the phishing message that would
   impersonate this one.
+- **Ingest field and rate bounds (issue #233).** A stolen agent token must
+  not grow the database without limit. `raw` is kept to 8192 bytes (cut at
+  a UTF-8 boundary, with a `[truncated by birdcage]` suffix inside the
+  cap); `service` and `source_ip` over 64 bytes and `self_test_marker`
+  over the minted length (32 hex characters) are rejected per event; `POST /ingest/scans`
+  is capped at 60 requests/minute per canary on top of the shared
+  requests/minute cap, answering 429 with `Retry-After`.
 - **The mail rate limits are security controls, not tuning.** A token
   conflict is driven by a signal an attacker paces — they choose when
   the stolen credential is presented — so without a bound they would
@@ -377,6 +384,31 @@ only at the point that text is displayed, per surface:
   mirrors, and `TestSecurityDocListsEveryDashboardRoute` fails when a
   route is registered there without a row here.
 
+  The three write routes (issue #227) are a separate admin surface
+  (`internal/api/admin.go`'s `adminRouteSpecs`), not part of the table
+  above. They are mounted on the signed-in-session side only, so a read
+  API token gets 404 on every one of them, and 403 if a token is somehow
+  in the request context. A session must belong to an admin account, send
+  `X-Requested-With: birdcage`, and send an `Origin` header matching
+  `BIRDCAGE_PUBLIC_URL` -- or, when `Origin` is absent,
+  `Sec-Fetch-Site: same-origin` (OWASP CSRF Prevention Cheat Sheet:
+  verifying origin with standard headers; Fetch Metadata). Anything else
+  is 403. With `BIRDCAGE_PUBLIC_URL` unset there is nothing to match, so
+  every admin write is refused (no `Sec-Fetch-Site` fallback); birdcage
+  logs a warning at start. Errors are RFC 9457 problem+json, and each write leaves an
+  audit row naming the signed-in username.
+
+  | Route                                         | Method | Auth                                                              |
+  | --------------------------------------------- | ------ | ----------------------------------------------------------------- |
+  | `/api/admin/canaries/{id}/self-test`          | POST   | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+  | `/api/admin/canaries/{id}/maintenance`        | PUT    | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+  | `/api/admin/canaries/{id}/maintenance`        | DELETE | admin session, `X-Requested-With`, `Origin` or `Sec-Fetch-Site`   |
+
+  `PUT` takes an optional `{"until": <RFC 3339>}`, at most 7 days ahead
+  (default 24 hours), and quiets the canary's health warnings (silent,
+  failed self-test) until then; hits are reported exactly as before.
+  Maintenance always ends, so a dead canary cannot stay quiet forever.
+
   `/api/stream` (issue #44) is a server-sent-events connection birdcage
   holds open rather than answering once, so it caps
   total concurrent connections (`internal/stream.Hub`, 256) and drops the
@@ -419,6 +451,16 @@ image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
   protection on known provider tokens (see issue #28 for why those two
   do not already cover this).
 
+- **`lint:static-scan`** (issue #199) scans the repository's own code
+  with four released binaries, each checksum-pinned by
+  `scripts/ensure-<tool>.sh`: `actionlint` and `zizmor` (offline, no
+  token) over the GitHub workflow files, `ruff` (security rules only) over
+  the Python and `shellcheck` over the shell scripts. gosec runs inside
+  `lint:go`, as part of golangci-lint. Each tool first has to fail on a
+  planted defect under `scripts/scan-fixtures/`. Existing findings are
+  frozen in `supply-chain/scan-ceilings.yml`, a ceiling that only goes
+  down; a suppression always carries a reason.
+
 ## Recommended deployment hardening
 
 - Install birdcage's CA certificate (`BIRDCAGE_CA_DIR/ca.pem`) in your
@@ -429,8 +471,9 @@ image -- both are CI-only tools (`supply-chain/dependency-inventory.md`,
   configure to avoid plain HTTP; the only choice left is which
   certificate a browser trusts.
 - Put it behind a VPN (e.g. WireGuard/Tailscale) if you need to reach it
-  from outside that LAN -- there is no login screen to stop anyone who
-  reaches it in v1.
+  from outside that LAN -- the dashboard asks for a sign-in (every
+  `/api/` route needs a signed-in session or a read API token), but a
+  sign-in screen is not a substitute for keeping it off the open internet.
 - Keep CrowdSec/RouterOS credentials in environment variables or secrets,
   not in a config file that might be more widely readable than your
   environment.

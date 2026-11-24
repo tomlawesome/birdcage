@@ -299,7 +299,8 @@ floors:
                              # privileged-port floor -- are still the gap;
                              # slice C's e2e journey covers those against a
                              # real Responder, not a gap to close here.
-  internal/agent/portscan: 68
+  internal/agent/portscan: 74 # 74.2% measured with -race, 2026-11-21 (#251,
+                              # CI pipeline 5147; was floored at 68).
   internal/agent/probe: 90
   internal/agent/queue: 86
   internal/agent/readiness: 97 # New package (#65): independently dials the

@@ -12,15 +12,15 @@ import { canariesPhrase, minutesPhrase, rangeLong, servicesNarrative, triedNarra
 import { portForService } from './ports'
 import { wordOrNumber } from './words'
 import type { Segment } from './types'
-import { MIKROVIEW_LINKS_LIVE, WRITE_ROUTES_LIVE } from '../writeActions'
+import { MIKROVIEW_LINKS_LIVE } from '../writeActions'
 import { canaryHref } from '../route'
 
-export interface EventTime {
+interface EventTime {
   primary: string
   small: string
 }
 
-export interface EventKind {
+interface EventKind {
   symbol: string
   label: string
   small: string
@@ -50,14 +50,6 @@ const KIND_LABEL: Record<VisitorKind, string> = {
   repeat: 'REPEAT',
   inside: 'FROM INSIDE',
   touch: 'ONE TOUCH',
-}
-
-/** The newest visitor's `last_at` stands in for "now" -- Events reads only
- * /api/visitors (issue #38), and a still-arriving visitor's last hit is
- * effectively the current time anyway. */
-export function deriveNow(visitors: Visitor[]): string | null {
-  if (visitors.length === 0) return null
-  return visitors.reduce((max, v) => (v.last_at > max ? v.last_at : max), visitors[0].last_at)
 }
 
 function elapsedSmall(at: string, now: string): string {
@@ -222,7 +214,6 @@ export function computeDroppedOutRow(canary: Canary): EventRow {
     actions: [
       { label: `open ${canary.name} ▸`, href: canaryHref(canary.id) },
       ...(MIKROVIEW_LINKS_LIVE ? [{ label: 'lookback in mikroview ▸' }] : []),
-      ...(WRITE_ROUTES_LIVE ? [{ label: 'mark as maintenance', quiet: true }] : []),
     ],
   }
 }

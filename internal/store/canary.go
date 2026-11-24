@@ -55,7 +55,8 @@ type Canary struct {
 	// ever sets it true -- is the only path onto #45's pending state;
 	// `birdcage canary add`, cmd/seed-story and every existing test
 	// fixture built before this field existed keep registering
-	// immediately, unchanged.
+	// immediately, unchanged. ListCanaries also sets it on read, true
+	// exactly while RegisteredAt is nil (#244).
 	Pending bool `json:"-"`
 
 	// SMBLure, SMBWorkgroup and SMBShares are issue #54's own addition:
@@ -131,6 +132,14 @@ type Canary struct {
 	// has never reported -- which must never be confused with an
 	// explicit false. Same convention as AgentLogReadOK above.
 	AgentOpenCanaryUp *bool `json:"-"`
+
+	// AgentSMBLureUp and AgentSNMPUp (#243) are the agent's last
+	// self-reported state of the SMB lure and the SNMP listener, stored as
+	// reported on each heartbeat (a nil overwrites). nil means that
+	// listener is configured off, or the agent predates the field; false
+	// means configured but not answering; true means answering.
+	AgentSMBLureUp *bool `json:"-"`
+	AgentSNMPUp    *bool `json:"-"`
 
 	// LastSeenAddr (issue #46 item 1) is the peer host of this canary's
 	// most recent accepted ingest heartbeat, set by
@@ -214,6 +223,13 @@ type Canary struct {
 	// by applyDBRefreshHealth.
 	dbRefreshFailingSince *time.Time
 	dbRefreshError        string
+
+	// MaintenanceUntil (#227) is the end of this canary's maintenance
+	// window while it is in one (now < the stored end time), else nil.
+	// Always present in JSON, null when off. maintenanceUntil is the raw
+	// stored value, read back before applyMaintenance decides.
+	MaintenanceUntil *time.Time `json:"maintenance_until"`
+	maintenanceUntil *time.Time
 
 	// ActiveStates is every state active on this canary right now,
 	// worst first by healthStateRank -- the whole set Status names only
@@ -324,6 +340,32 @@ type SelfTestCanary struct {
 	// the canary's first self-test round trip has not passed yet, so
 	// the scheduler keeps re-minting one for it until it does.
 	Pending bool
+	// SMBLureUp and SNMPUp are the agent's last heartbeat values for the
+	// two listeners (#243); see Canary.AgentSMBLureUp. The scheduler adds
+	// a self-test target for each that is non-nil.
+	SMBLureUp *bool
+	SNMPUp    *bool
+}
+
+// nullableBool converts a stored nullable 0/1 INTEGER to a *bool.
+func nullableBool(v *int64) *bool {
+	if v == nil {
+		return nil
+	}
+	b := *v != 0
+	return &b
+}
+
+// boolToNullable is nullableBool's write side: nil binds to SQL NULL.
+func boolToNullable(b *bool) *int64 {
+	if b == nil {
+		return nil
+	}
+	v := int64(0)
+	if *b {
+		v = 1
+	}
+	return &v
 }
 
 // parsePorts parses canaries.ports (a comma-separated list of bare port
@@ -357,7 +399,7 @@ func parsePorts(raw string) []int {
 // per-minute tick to filter down to the ones with a LastSeenAddr and at
 // least one port.
 func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr, registered_at FROM agents WHERE kind = ?`, string(agentkind.Honeypot))
+	rows, err := database.QueryContext(ctx, `SELECT id, ports, last_seen_addr, registered_at, agent_smb_lure_up, agent_snmp_up FROM agents WHERE kind = ?`, string(agentkind.Honeypot))
 	if err != nil {
 		return nil, fmt.Errorf("query honeypot canaries: %w", err)
 	}
@@ -366,13 +408,15 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 	var out []SelfTestCanary
 	for rows.Next() {
 		var (
-			sc           SelfTestCanary
-			portsRaw     string
-			registeredAt *string
+			sc            SelfTestCanary
+			portsRaw      string
+			registeredAt  *string
+			smbUp, snmpUp *int64
 		)
-		if err := rows.Scan(&sc.ID, &portsRaw, &sc.LastSeenAddr, &registeredAt); err != nil {
+		if err := rows.Scan(&sc.ID, &portsRaw, &sc.LastSeenAddr, &registeredAt, &smbUp, &snmpUp); err != nil {
 			return nil, fmt.Errorf("scan honeypot canary: %w", err)
 		}
+		sc.SMBLureUp, sc.SNMPUp = nullableBool(smbUp), nullableBool(snmpUp)
 		sc.Kind = agentkind.Honeypot
 		sc.Pending = registeredAt == nil
 		sc.Ports = parsePorts(portsRaw)
@@ -389,7 +433,7 @@ func ListHoneypotCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Se
 // internal/selftestsched's pending retry re-mints each one's proof, by
 // kind, until it passes.
 func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]SelfTestCanary, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr FROM agents WHERE registered_at IS NULL`)
+	rows, err := database.QueryContext(ctx, `SELECT id, kind, ports, last_seen_addr, agent_smb_lure_up, agent_snmp_up FROM agents WHERE registered_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query pending canaries: %w", err)
 	}
@@ -398,13 +442,15 @@ func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Sel
 	var out []SelfTestCanary
 	for rows.Next() {
 		var (
-			sc       SelfTestCanary
-			kind     string
-			portsRaw string
+			sc            SelfTestCanary
+			kind          string
+			portsRaw      string
+			smbUp, snmpUp *int64
 		)
-		if err := rows.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr); err != nil {
+		if err := rows.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &smbUp, &snmpUp); err != nil {
 			return nil, fmt.Errorf("scan pending canary: %w", err)
 		}
+		sc.SMBLureUp, sc.SNMPUp = nullableBool(smbUp), nullableBool(snmpUp)
 		sc.Kind = agentkind.Kind(kind)
 		sc.Pending = true
 		sc.Ports = parsePorts(portsRaw)
@@ -423,12 +469,13 @@ func ListPendingCanariesForSelfTest(ctx context.Context, database *db.DB) ([]Sel
 // not a full table scan. ok is false when canaryID names no row.
 func SelfTestCanaryByID(ctx context.Context, database *db.DB, canaryID string) (sc SelfTestCanary, ok bool, err error) {
 	var (
-		portsRaw     string
-		kind         string
-		registeredAt *string
+		portsRaw      string
+		kind          string
+		registeredAt  *string
+		smbUp, snmpUp *int64
 	)
-	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr, registered_at FROM agents WHERE id = ?`, canaryID)
-	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &registeredAt); err != nil {
+	row := database.QueryRowContext(ctx, `SELECT id, kind, ports, last_seen_addr, registered_at, agent_smb_lure_up, agent_snmp_up FROM agents WHERE id = ?`, canaryID)
+	if err := row.Scan(&sc.ID, &kind, &portsRaw, &sc.LastSeenAddr, &registeredAt, &smbUp, &snmpUp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SelfTestCanary{}, false, nil
 		}
@@ -437,6 +484,7 @@ func SelfTestCanaryByID(ctx context.Context, database *db.DB, canaryID string) (
 	sc.Kind = agentkind.Kind(kind)
 	sc.Pending = registeredAt == nil
 	sc.Ports = parsePorts(portsRaw)
+	sc.SMBLureUp, sc.SNMPUp = nullableBool(smbUp), nullableBool(snmpUp)
 	return sc, true, nil
 }
 
@@ -614,6 +662,12 @@ type AgentHeartbeat struct {
 	// field at all -- see Canary.AgentOpenCanaryUp's doc comment for why
 	// that must stay distinct from an explicit false.
 	OpenCanaryUp *bool
+
+	// SMBLureUp and SNMPUp (#243): the agent's report of the SMB lure and
+	// the SNMP listener, stored as given -- nil overwrites with NULL,
+	// meaning that listener is configured off.
+	SMBLureUp *bool
+	SNMPUp    *bool
 }
 
 // RecordCanaryAgentHeartbeat records that canaryID's agent phoned home at
@@ -669,11 +723,12 @@ func RecordCanaryAgentHeartbeat(ctx context.Context, database *db.DB, canaryID s
 		UPDATE agents
 		SET agent_version = ?, agent_queue_depth = ?, agent_log_read_ok = ?, agent_last_event_id = ?,
 			agent_dropped = ?, agent_rejected = ?, agent_event_id_collisions = ?, agent_position_found = ?,
-			poisoner_names = ?, agent_opencanary_up = ?
+			poisoner_names = ?, agent_opencanary_up = ?,
+			agent_smb_lure_up = ?, agent_snmp_up = ?
 		WHERE id = ?`,
 		report.AgentVersion, report.QueueDepth, logReadOK, report.LastEventID,
 		report.Dropped, report.Rejected, report.EventIDCollisions, positionFound,
-		poisonerNames, openCanaryUp, canaryID); err != nil {
+		poisonerNames, openCanaryUp, boolToNullable(report.SMBLureUp), boolToNullable(report.SNMPUp), canaryID); err != nil {
 		return fmt.Errorf("update agent self-report: %w", err)
 	}
 	return nil
@@ -770,7 +825,8 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			agent_version, poisoner_names,
 			credential_dual_use_addrs, credential_dual_use_addrs_at,
 			credential_dual_use_versions, credential_dual_use_versions_at,
-			db_refresh_failing_since, db_refresh_error, agent_opencanary_up
+			db_refresh_failing_since, db_refresh_error, agent_opencanary_up,
+			agent_smb_lure_up, agent_snmp_up, maintenance_until
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query canaries: %w", err)
@@ -794,13 +850,20 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			dbFailingSince     *string
 			dbRefreshError     *string
 			agentOpenCanaryUp  *int64
+			agentSMBLureUp     *int64
+			agentSNMPUp        *int64
+			maintenanceUntil   *string
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Lane, &kind, &portsRaw, &c.HeartbeatIntervalS, &enrolledAt, &lastHeartbeatAt, &agentLogReadOK,
 			&c.AgentDropped, &c.AgentRejected, &c.AgentEventIDCollisions, &agentPositionFound, &lastSeenAddr, &registeredAt,
 			&agentVersion, &poisonerNames,
 			&c.dualUse.addrs, &c.dualUse.addrsAt, &c.dualUse.versions, &c.dualUse.versionsAt,
-			&dbFailingSince, &dbRefreshError, &agentOpenCanaryUp); err != nil {
+			&dbFailingSince, &dbRefreshError, &agentOpenCanaryUp,
+			&agentSMBLureUp, &agentSNMPUp, &maintenanceUntil); err != nil {
 			return nil, fmt.Errorf("scan canary: %w", err)
+		}
+		if c.maintenanceUntil, err = parseNullableTime(maintenanceUntil, "maintenance_until"); err != nil {
+			return nil, err
 		}
 		if c.dbRefreshFailingSince, err = parseNullableTime(dbFailingSince, "db_refresh_failing_since"); err != nil {
 			return nil, err
@@ -839,6 +902,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			up := *agentOpenCanaryUp != 0
 			c.AgentOpenCanaryUp = &up
 		}
+		c.AgentSMBLureUp, c.AgentSNMPUp = nullableBool(agentSMBLureUp), nullableBool(agentSNMPUp)
 		if registeredAt != nil {
 			t, err := time.Parse(receivedAtLayout, *registeredAt)
 			if err != nil {
@@ -846,6 +910,9 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			}
 			c.RegisteredAt = &t
 		}
+		// Pending is also filled on read (#244) so health rules that
+		// need it, applyOpenCanaryHealth, can see it.
+		c.Pending = registeredAt == nil
 		applyStatus(&c, now)
 		c.BirdcageVersion = birdcageVersion
 		canaries = append(canaries, c)
@@ -916,6 +983,7 @@ func ListCanaries(ctx context.Context, database *db.DB, now time.Time, rangeWind
 			return nil, fmt.Errorf("credential state for %s: %w", canaries[i].ID, err)
 		}
 		applyDBRefreshHealth(&canaries[i], now)
+		applyMaintenance(&canaries[i], now)
 	}
 	return canaries, nil
 }

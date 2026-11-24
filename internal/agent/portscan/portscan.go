@@ -36,8 +36,10 @@
 //
 // # What counts as a scan
 //
-// A connection attempt to a port none of OpenCanary's enabled modules
-// is listening on. The listening set is read from OpenCanary's own
+// A connection attempt to a port nothing on the canary listens on:
+// neither one of OpenCanary's enabled modules nor any other socket in
+// this network namespace (TCP LISTEN, bound UDP; /proc/net, re-read at
+// most every few seconds). The listening set is read from OpenCanary's own
 // configuration file at startup, so an operator who bind-mounts their
 // own opencanary.conf changes both at once. Five distinct such ports
 // from one source inside thirty seconds is a scan; while it continues,
@@ -108,6 +110,14 @@ type Config struct {
 
 	// Now is injected by the tests. Nil means time.Now.
 	Now func() time.Time
+
+	// ReadFile reads the /proc/net socket tables. Nil means os.ReadFile.
+	ReadFile func(name string) ([]byte, error)
+
+	// OwnPorts holds the ports the poisoner's own queries left from
+	// (issue #240); UDP datagrams to one of them are answers, not probes.
+	// Nil means no exemption.
+	OwnPorts *OwnPorts
 }
 
 // Detector watches for scans until its context is cancelled.
@@ -117,6 +127,7 @@ type Detector struct {
 	submit   Submit
 	nodeID   string
 	ignore   map[uint16]struct{}
+	sockets  *socketTable
 	now      func() time.Time
 	tracker  *tracker
 	detected atomic.Uint64
@@ -169,12 +180,13 @@ func New(cfg Config, submit Submit, log *slog.Logger) (*Detector, string) {
 	}
 
 	return &Detector{
-		cfg:    cfg,
-		log:    log,
-		submit: submit,
-		nodeID: conf.NodeID,
-		ignore: ignore,
-		now:    now,
+		cfg:     cfg,
+		log:     log,
+		submit:  submit,
+		nodeID:  conf.NodeID,
+		ignore:  ignore,
+		sockets: newSocketTable(cfg.ReadFile, now, func(m string) { log.Warn(m) }),
+		now:     now,
 		tracker: newTracker(trackerConfig{
 			Threshold:  cfg.Threshold,
 			Window:     cfg.Window,
@@ -267,7 +279,17 @@ func (d *Detector) handle(b []byte) {
 		// uninteresting packet is itself the denial of service.
 		return
 	}
+	// Socket table first so an unreadable table is noticed (and warned
+	// about) even when the config list would have skipped the packet.
+	if d.sockets.has(p.Protocol, p.DstPort) {
+		return
+	}
 	if _, listening := d.ignore[p.DstPort]; listening {
+		return
+	}
+	// A late answer to the poisoner's own query: UDP only, so a TCP SYN
+	// to the same port number still counts.
+	if p.Protocol == ProtoUDP && d.cfg.OwnPorts.Recent(p.DstPort, d.now()) {
 		return
 	}
 	det, ok := d.tracker.Observe(p)

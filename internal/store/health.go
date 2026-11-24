@@ -255,9 +255,11 @@ func openCanaryDown(c Canary) bool {
 // reports true. Clears the moment a later heartbeat's probe succeeds
 // again -- nothing here remembers a past failure once the agent reports
 // OpenCanary answering, the same immediate-clear rule applyHitsMergedHealth
-// uses.
+// uses. Not raised while c is still pending (#244): the agent's first
+// heartbeats arrive before OpenCanary has finished starting, so a probe
+// failure then is the enrolment settling, not an outage.
 func applyOpenCanaryHealth(c *Canary) {
-	if !openCanaryDown(*c) {
+	if c.Pending || !openCanaryDown(*c) {
 		return
 	}
 	addActiveStates(c, StateOpenCanaryDown)
