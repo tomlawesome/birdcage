@@ -6,8 +6,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
+	"time"
 	"unicode/utf16"
 )
+
+// preloginReplyBudget bounds the wait for the whole PRELOGIN reply
+// (#254). Generous because a loaded host can be slow to read; the
+// bound only exists so a dead target fails instead of hanging.
+const preloginReplyBudget = 5 * time.Second
 
 // probeRedis plants marker as the password in a RESP-encoded AUTH
 // command (#46 carrier table: "the username or equivalent first-
@@ -88,6 +95,11 @@ func probeMySQL(ctx context.Context, address string, port int, marker string) er
 // servers expect PRELOGIN to precede LOGIN7, and OpenCanary's mssql
 // module is expected to model that same ordering.
 //
+// LOGIN7 is held back until the whole PRELOGIN reply has arrived:
+// OpenCanary 0.9.10's mssql.py dataReceived parses one packet per
+// read, so a LOGIN7 that lands in the same read as PRELOGIN is left
+// unhandled in its buffer and never logged (#254).
+//
 // This is the carrier this build is least confident of: the LOGIN7
 // fixed-length header and offset table (94 bytes total: 36 bytes fixed
 // fields, then 9 offset/length pairs, a 6-byte ClientID, and 3 more
@@ -107,15 +119,43 @@ func probeMSSQL(ctx context.Context, address string, port int, marker string) er
 	if err := sendTDSPacket(conn, 0x12, buildPreLogin()); err != nil {
 		return fmt.Errorf("probe: mssql: prelogin: %w", err)
 	}
-	// The response's content is not needed -- only draining it so our
-	// LOGIN7 packet does not arrive while the server is still writing
-	// its own PRELOGIN response.
-	drainBriefly(conn, greetingBudget)
+	// The response's content is not needed -- only its arrival.
+	if err := readTDSPacket(ctx, conn, preloginReplyBudget); err != nil {
+		return fmt.Errorf("probe: mssql: prelogin reply: %w", err)
+	}
 
 	if err := sendTDSPacket(conn, 0x10, buildLogin7(marker)); err != nil {
 		return fmt.Errorf("probe: mssql: login7: %w", err)
 	}
 	return nil
+}
+
+// readTDSPacket reads until one whole TDS packet (8-byte header, then
+// the length the header's big-endian bytes 2-3 give, header included)
+// has arrived, across as many reads as it takes, within budget and ctx.
+func readTDSPacket(ctx context.Context, conn net.Conn, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = conn.SetReadDeadline(deadline)
+	// Wake a blocked read when ctx is cancelled before the deadline.
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Unix(1, 0)) })
+	defer stop()
+
+	hdr := make([]byte, 8)
+	if _, err := io.ReadFull(conn, hdr); err != nil {
+		return err
+	}
+	total := int(binary.BigEndian.Uint16(hdr[2:4]))
+	if total < 8 {
+		return fmt.Errorf("malformed TDS header: length %d", total)
+	}
+	_, err := io.CopyN(io.Discard, conn, int64(total-8))
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 // sendTDSPacket wraps payload in one TDS packet: an 8-byte header

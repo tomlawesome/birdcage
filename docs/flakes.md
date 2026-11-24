@@ -116,3 +116,17 @@ the whole account.
   matched at birdcage within the step's 6.5 minutes. The change under test
   touches only pending canaries, and this one was registered. Passed in
   pipeline 5241 on batch-a. Cause unknown; not touched.
+
+## staleness-check.test.sh --deadline case ran slow (lint:scripts)
+
+- 2026-11-23 · 9cda877 (batch-a) · pipeline 5268 (!186) / lint:scripts,
+  job 63167 · "--deadline: exit 1 after 7s (want 1, under 6s)": the right
+  exit code, a second over the bound, on a runner also carrying the e2e
+  journeys. The script is unchanged in batch-a's recent fixes.
+
+## Frontend tests hit Vitest's 5 s timeout (test:frontend)
+
+- 2026-11-23 · 9cda877 (batch-a) · pipeline 5268 (!186) / test:frontend,
+  job 63180 · CanaryPage.admin.svelte.test.ts:53 and
+  src/door/bars.draw.test.ts:66, each "Test timed out in 5000ms", under the
+  same load. Neither file changed in batch-a's recent fixes.
